@@ -21,6 +21,7 @@ On every pull request and push to `master` / `main`, `.github/workflows/ci.yml` 
 - **Backend tests** — `cd backend && npm run validate:env && npm test` (env examples must match `infra/env/helpudoc.env.schema.yaml`, then unit tests)
 - **Frontend** — `cd frontend && npm run lint && npm run build`
 - **Python agent** — installs `agent/requirements.txt` plus `pytest`, then runs `tests/test_agent_import_smoke.py`, `tests/test_agent_configuration.py`, `tests/test_mcp_binding.py`, and `tests/test_tool_factory.py`
+- **Office service** — runs the security, executor-contract, API, and subprocess tests; its Docker job loads the image and executes the pinned `officecli --version` binary so missing native runtime dependencies fail CI.
 - **Docker build validation (no push)** — `docker/build-push-action@v6` with GitHub Actions cache (`cache-from` / `cache-to` `type=gha`, separate scope per image). These verify Dockerfile syntax, base image pulls, installs, and copy steps; they do **not** push, vulnerability-scan, or deploy. Backend/frontend builds do not load the image into the runner. The agent job on main **loads** the image and runs `python /app/agent/scripts/smoke_import.py` inside the container.
 
 **Branch protection:** require the **`CI status`** (`ci-gate`) job so one check reflects the whole workflow (skipped jobs count as success for the gate).
@@ -45,16 +46,17 @@ When you run **Deploy Full Stack to GKE**, configure these `workflow_dispatch` i
 | `build_backend` | true | Build/push `helpudoc-backend` and patch the backend + reflection CronJob images when true. |
 | `build_frontend` | true | Build/push `helpudoc-frontend` and patch the frontend deployment when true. |
 | `build_agent` | true | Build/push `helpudoc-agent`, patch the agent container, align init-container seed images, and run the image smoke import after push. |
+| `build_office_service` | true | Build/push the internal OfficeCLI service, install/update the same-pod sidecar, and verify `/readyz` after rollout. |
 | `deploy_infra` | false | When true: RBAC preflight, `kubectl apply -f infra/gke/k8s/`, first-time demo ConfigMap bootstrap, Langfuse key patching + DB bootstrap/wait. When false: skips manifest/bootstrap work (cluster must already have `helpudoc-config`). |
 | `sync_runtime_assets` | false | Legacy `kubectl exec` sync of `skills/` and `agent/config/runtime.yaml` into PVCs. Prefer init-container seeding (see `docs/deploy.md`); leave false unless you need the old bridge. |
 | `environment` | empty | Echo-only label for operators (does not switch GitHub Environment protection rules). |
 | `image_tag_suffix` | empty | Appended to `github.sha` for all image tags in that run (for example `-hotfix1`). |
 
-At least one of `build_backend`, `build_frontend`, or `build_agent` must be true.
+At least one of `build_backend`, `build_frontend`, `build_agent`, or `build_office_service` must be true.
 
-**Buildx registry cache:** each image build uses `docker buildx build` with `--cache-from` / `--cache-to` pointing at `gcr.io/$PROJECT_ID/helpudoc-buildcache-{backend,frontend,agent}:buildcache` so repeated builds reuse layers.
+**Buildx registry cache:** each image build uses `docker buildx build` with `--cache-from` / `--cache-to` pointing at `gcr.io/$PROJECT_ID/helpudoc-buildcache-{backend,frontend,agent,office-service}:buildcache` so repeated builds reuse layers.
 
-**Post-deploy smoke checks** (always after rollout wait): an ephemeral `curlimages/curl` pod hits `http://backend.helpudoc.svc.cluster.local:3000/api/health` and fetches the frontend service root; the workflow then runs `python -c 'urllib.request.urlopen("http://127.0.0.1:8001/health")...'` inside the `agent` container of `deployment/helpudoc-app`.
+**Post-deploy smoke checks** (always after rollout wait): an ephemeral `curlimages/curl` pod hits `http://backend.helpudoc.svc.cluster.local:3000/api/health` and fetches the frontend service root; the workflow then checks the agent health endpoint and the OfficeCLI sidecar's `/readyz` from inside the pod.
 
 The smaller **Deploy Frontend / Backend / Agent to GKE** workflows still build one image at a time and patch the matching deployment. Prefer **`deploy-gke.yml`** when you want Buildx cache, component toggles, and smoke checks in one place.
 
@@ -66,13 +68,13 @@ Current app image and cache references are still tied to `gcr.io` in these deplo
 
 | Surface | Current `gcr.io` usage PR12 must address |
 | --- | --- |
-| `.github/workflows/deploy-gke.yml` | Authenticates Docker to `gcr.io`, uses Buildx cache refs under `gcr.io/$PROJECT_ID/helpudoc-buildcache-*`, builds/pushes backend/frontend/agent images under `gcr.io/$PROJECT_ID/...`, pulls the agent image for smoke import, and patches backend/frontend/agent/init-container/CronJob images to `gcr.io/$PROJECT_ID/...`. |
-| `.github/workflows/deploy-backend-gke.yml` | Authenticates to `gcr.io`, builds/pushes `helpudoc-backend`, applies `50-app.yaml` and `52-daily-reflection-cron.yaml`, then patches backend and reflection CronJob images to `gcr.io/$PROJECT_ID/...`. |
+| `.github/workflows/deploy-gke.yml` | Authenticates Docker to `gcr.io`, uses Buildx cache refs under `gcr.io/$PROJECT_ID/helpudoc-buildcache-*`, builds/pushes backend/frontend/agent/office-service images under `gcr.io/$PROJECT_ID/...`, and patches the matching workload images. |
+| `.github/workflows/deploy-backend-gke.yml` | Authenticates to `gcr.io`, builds/pushes `helpudoc-backend`, patches the backend and knowledge-worker containers without reapplying the shared pod manifest, and updates the reflection CronJob image. |
 | `.github/workflows/deploy-frontend-gke.yml` | Authenticates to `gcr.io`, builds/pushes `helpudoc-frontend`, applies `60-frontend.yaml`, then patches the frontend image to `gcr.io/$PROJECT_ID/...`. |
-| `.github/workflows/deploy-agent-gke.yml` | Authenticates to `gcr.io`, builds/runs/pushes `helpudoc-agent`, applies `50-app.yaml`, then patches the agent image to `gcr.io/$PROJECT_ID/...`. It also runs the legacy PVC sync path after deploy. |
-| `infra/cloudbuild.yaml` | Uses Cloud Build builder images from `gcr.io/cloud-builders/*`, pulls cache/source images from `gcr.io/$PROJECT_ID/...:latest`, builds/tags/pushes backend/frontend/agent images to `gcr.io/$PROJECT_ID/...`, rewrites manifest image refs with `sed`, and declares `images:` outputs under `gcr.io/$PROJECT_ID/...`. |
+| `.github/workflows/deploy-agent-gke.yml` | Authenticates to `gcr.io`, builds/runs/pushes `helpudoc-agent`, then patches the agent and its seed init containers without resetting sibling sidecars. It also runs the legacy PVC sync path after deploy. |
+| `infra/cloudbuild.yaml` | Uses Cloud Build builder images from `gcr.io/cloud-builders/*`, pulls cache/source images from `gcr.io/$PROJECT_ID/...:latest`, builds/tags/pushes backend/frontend/agent/office-service images to `gcr.io/$PROJECT_ID/...`, rewrites manifest image refs with `sed`, and declares `images:` outputs under `gcr.io/$PROJECT_ID/...`. |
 | `infra/cloudbuild-frontend.yaml` | Uses Cloud Build builder images from `gcr.io/cloud-builders/*`, pulls/builds/tags/pushes `helpudoc-frontend` to `gcr.io/$PROJECT_ID/...`, rewrites `60-frontend.yaml`, and declares a `gcr.io/$PROJECT_ID/...` image output. |
-| `infra/gke/k8s/50-app.yaml` | Checked-in defaults reference `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest` for both init containers and the agent container, plus `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest` for the backend container. |
+| `infra/gke/k8s/50-app.yaml` | Checked-in defaults include backend, agent, and office-service images; the OfficeCLI service is a same-pod sidecar sharing `workspace-pvc` and is not exposed through a Kubernetes Service or ingress. |
 | `infra/gke/k8s/52-daily-reflection-cron.yaml` | Checked-in default reflection job image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest`. |
 | `infra/gke/k8s/60-frontend.yaml` | Checked-in default frontend image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-frontend:latest`. |
 | Current docs | `docs/ci-cd.md`, `docs/deploy.md`, `docs/environment.md`, `docs/repo-cicd-restructure-plan.md`, and `infra/gke/README.md` mention Container Registry, Cloud Build, `gcr.io`, Artifact Registry planning, or manual image patch commands. PR12 should update operator-facing docs for the final registry strategy. |

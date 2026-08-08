@@ -17,6 +17,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       agent: ${{ steps.filter.outputs.agent }}
+      office_service: ${{ steps.filter.outputs.office_service }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -46,6 +47,9 @@ jobs:
               - 'tests/test_agent_*.py'
               - 'infra/env/**'
               - 'env/**'
+              - '.github/workflows/ci.yml'
+            office_service:
+              - 'office-service/**'
               - '.github/workflows/ci.yml'
 
   backend-test:
@@ -112,7 +116,55 @@ jobs:
             tests/test_agent_import_smoke.py \
             tests/test_agent_configuration.py \
             tests/test_mcp_binding.py \
-            tests/test_tool_factory.py
+            tests/test_tool_factory.py \
+            agent/tests/test_office_client.py
+
+  office-service-test:
+    name: Office-service Python tests
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.office_service == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: office-service
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: office-service/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest httpx
+      - name: Run office-service tests (no real binary)
+        run: python -m pytest tests -v
+
+  docker-office-service:
+    name: Docker build validation (office-service)
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.office_service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: office-service/Dockerfile
+          push: false
+          load: true
+          tags: helpudoc-office-service:ci-${{ github.sha }}
+          cache-from: type=gha,scope=office-service
+          cache-to: type=gha,scope=office-service,mode=max
+      - name: Smoke test office-service image
+        run: |
+          docker run --rm helpudoc-office-service:ci-${{ github.sha }} officecli --version
+          docker run --rm helpudoc-office-service:ci-${{ github.sha }} \
+            officecli create /tmp/ci-smoke.docx --force --locale en-US --json
 
   docker-backend:
     name: Docker build validation (backend)
@@ -187,9 +239,11 @@ jobs:
       - backend-test
       - frontend
       - python-agent
+      - office-service-test
       - docker-backend
       - docker-frontend
       - docker-agent
+      - docker-office-service
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -201,9 +255,11 @@ jobs:
             "backend-test:${{ needs.backend-test.result }}" \
             "frontend:${{ needs.frontend.result }}" \
             "python-agent:${{ needs.python-agent.result }}" \
+            "office-service-test:${{ needs.office-service-test.result }}" \
             "docker-backend:${{ needs.docker-backend.result }}" \
             "docker-frontend:${{ needs.docker-frontend.result }}" \
-            "docker-agent:${{ needs.docker-agent.result }}"; do
+            "docker-agent:${{ needs.docker-agent.result }}" \
+            "docker-office-service:${{ needs.docker-office-service.result }}"; do
             name="${name_result%%:*}"
             result="${name_result#*:}"
             case "$result" in

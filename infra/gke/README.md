@@ -13,6 +13,7 @@ The GKE setup covers the same services as local Compose:
 
 - backend API
 - agent service
+- OfficeCLI document-operation sidecar (internal only)
 - AWS Pricing MCP proxy
 - frontend
 - PostgreSQL
@@ -22,7 +23,7 @@ The GKE setup covers the same services as local Compose:
 - Langfuse web + worker (LLM observability)
 - Caddy ingress/proxy components
 
-The backend and agent are intentionally co-located around shared workspace/config volumes to match the current application architecture.
+The backend, agent, and OfficeCLI service are intentionally co-located around shared workspace/config volumes to match the current application architecture. The workspace PVC is `ReadWriteOnce`, so the OfficeCLI HTTP boundary is a same-pod sidecar rather than an independently scaled deployment. It has no Service or ingress route.
 
 ## Directory map
 
@@ -40,7 +41,7 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | `k8s/45-langfuse.yaml` | Langfuse web + worker + `langfuse-web` Service |
 | `k8s/49-skill-sandbox.yaml` | Skill sandbox ServiceAccount/RBAC and offline NetworkPolicy |
 | `k8s/51-aws-pricing-mcp.yaml` | AWS Pricing MCP deployment/service |
-| `k8s/50-app.yaml` | Combined backend + agent application deployment |
+| `k8s/50-app.yaml` | Combined backend + agent + internal OfficeCLI sidecar deployment |
 | `k8s/60-frontend.yaml` | Frontend deployment/service |
 | `k8s/70-caddy.yaml` | Caddy proxy deployment/service |
 | `k8s/71-ingress.yaml` | GKE ingress |

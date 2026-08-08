@@ -296,6 +296,8 @@ services:
     depends_on:
       backend:
         condition: service_started
+      office-service:
+        condition: service_healthy
     environment:
       REDIS_URL: redis://redis:6379
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -334,6 +336,7 @@ services:
       POSTGRES_DB: helpudoc
       POSTGRES_USER: helpudoc
       POSTGRES_PASSWORD: helpudoc
+      OFFICE_SERVICE_URL: http://office-service:8002
     ports:
       - "8001:8001"
     volumes:
@@ -344,6 +347,25 @@ services:
       - ../plugins:/plugins:ro
       - ../agent/config:/agent/config
       - ${HOME}/.config/gcloud/application_default_credentials.json:/var/run/google-adc/application_default_credentials.json:ro
+
+  office-service:
+    build:
+      context: ..
+      dockerfile: office-service/Dockerfile
+    environment:
+      # Must match the WORKSPACE_ROOT mount path used by the agent container
+      OFFICE_SERVICE_WORKSPACE_ROOT: /app/workspaces
+      OFFICECLI_SKIP_UPDATE: "1"
+      OFFICECLI_NO_AUTO_RESIDENT: "1"
+    expose:
+      - "8002"
+    volumes:
+      - workspace_data:/app/workspaces
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/readyz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   frontend:
     build:

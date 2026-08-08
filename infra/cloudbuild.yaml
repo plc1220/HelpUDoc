@@ -20,6 +20,12 @@ steps:
     entrypoint: 'bash'
     args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-agent:latest || true']
 
+  - id: pull-office-service-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-office-service:latest || true']
+
   - id: build-backend
     name: 'gcr.io/cloud-builders/docker'
     waitFor: ['pull-backend-cache']
@@ -78,6 +84,24 @@ steps:
         '.',
       ]
 
+  - id: build-office-service
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-office-service-cache']
+    env: ['DOCKER_BUILDKIT=1']
+    args:
+      [
+        'build',
+        '-f',
+        'office-service/Dockerfile',
+        '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-office-service:latest',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-office-service:$BUILD_ID',
+        '.',
+      ]
+
   - id: push-backend
     name: 'gcr.io/cloud-builders/docker'
     waitFor: ['build-backend']
@@ -92,6 +116,23 @@ steps:
     name: 'gcr.io/cloud-builders/docker'
     waitFor: ['build-agent']
     args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
+
+  - id: smoke-office-service
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-office-service']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        docker run --rm gcr.io/$PROJECT_ID/helpudoc-office-service:$BUILD_ID officecli --version
+        docker run --rm gcr.io/$PROJECT_ID/helpudoc-office-service:$BUILD_ID \
+          officecli create /tmp/cloudbuild-smoke.docx --force --locale en-US --json
+
+  - id: push-office-service
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['smoke-office-service']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-office-service:$BUILD_ID']
 
   # Tag :latest without pushing the same bytes twice.
   - id: tag-backend-latest
@@ -133,10 +174,23 @@ steps:
         'gcr.io/$PROJECT_ID/helpudoc-agent:latest',
       ]
 
+  - id: tag-office-service-latest
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['push-office-service']
+    args:
+      [
+        'container',
+        'images',
+        'add-tag',
+        '--quiet',
+        'gcr.io/$PROJECT_ID/helpudoc-office-service:$BUILD_ID',
+        'gcr.io/$PROJECT_ID/helpudoc-office-service:latest',
+      ]
+
   # 4. Update Image References in Manifests
   - id: rewrite-manifests
     name: 'ubuntu'
-    waitFor: ['push-backend', 'push-frontend', 'push-agent']
+    waitFor: ['push-backend', 'push-frontend', 'push-agent', 'push-office-service']
     args:
       - 'bash'
       - '-c'
@@ -145,6 +199,7 @@ steps:
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/52-daily-reflection-cron.yaml
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-agent:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
+        sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-office-service:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-office-service:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-frontend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
 
   # 5. Deploy to GKE
@@ -356,6 +411,7 @@ images:
   - 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID'
   - 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID'
   - 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/helpudoc-office-service:$BUILD_ID'
 
 substitutions:
   _GKE_CLUSTER: helpudoc-cluster

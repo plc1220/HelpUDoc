@@ -87,8 +87,16 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
-          kubectl -n helpudoc apply -f infra/gke/k8s/50-app.yaml
-          kubectl -n helpudoc set image deployment/helpudoc-app agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
+          kubectl -n helpudoc get deployment helpudoc-app >/dev/null
+          AGENT_IMAGE="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
+          kubectl -n helpudoc set image deployment/helpudoc-app agent="${AGENT_IMAGE}"
+          kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p "$(jq -n \
+            --arg image "${AGENT_IMAGE}" \
+            '{spec:{template:{spec:{initContainers:[
+              {name:"seed-skills",image:$image},
+              {name:"seed-plugins",image:$image},
+              {name:"seed-agent-config",image:$image}
+            ]}}}}')"
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
           APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | head -n1)"
           test -n "${APP_POD}"
