@@ -4,6 +4,7 @@ description: "Use this skill when a spreadsheet file is a primary input or outpu
 license: Proprietary. LICENSE.txt has complete terms
 tools:
   - document_inspection
+  - document_execute
   - run_skill_python_script
 sandbox_scripts:
   - name: recalc
@@ -16,6 +17,21 @@ sandbox_scripts:
 ---
 
 # Requirements for Outputs
+
+## Direct OfficeCLI workflow
+
+For normal deterministic XLSX creation or edits, prefer one atomic
+`document_execute` call with workspace-relative paths. Treat its `operations`
+tool schema as the canonical command/field catalogue: discover workbook targets
+with `get`, `query`, or `view`; mutate with `add`, `set`, `remove`, `move`, or
+`swap`; and supply only the fields listed for that command. The host validates
+the workbook and publishes it only after the whole batch succeeds. Re-inspect
+the result and apply the formula and visual checks below.
+
+Use the declared `recalc` sandbox script when formulas need materialization.
+Use inline `run_skill_python_script` only for transformations the typed
+OfficeCLI operations cannot express; inline mode is operator-controlled,
+Kubernetes-only, and may be disabled.
 
 ## All Excel files
 

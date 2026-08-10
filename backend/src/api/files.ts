@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import { randomUUID } from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
+import { pipeline } from 'stream/promises';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
@@ -32,6 +33,10 @@ export default function(
 
   const updateFileSchema = z.object({
     content: z.string(),
+    version: z.number().int().positive().optional(),
+  });
+
+  const restoreFileVersionSchema = z.object({
     version: z.number().int().positive().optional(),
   });
 
@@ -209,6 +214,97 @@ export default function(
       handleError(res, error, 'Failed to retrieve file content');
     }
   });
+
+  router.get('/:fileId/download', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const requestedVersion = typeof req.query.version === 'string'
+        ? Number.parseInt(req.query.version, 10)
+        : undefined;
+      if (requestedVersion !== undefined && (!Number.isInteger(requestedVersion) || requestedVersion < 1)) {
+        return res.status(400).json({ error: 'Invalid file version' });
+      }
+      const download = await fileService.getFileDownloadStream(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+        requestedVersion,
+      );
+      const safeName = download.name.replace(/["\\\r\n]/g, '_');
+      const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment';
+      res.setHeader('Content-Type', download.mimeType);
+      if (download.sizeBytes > 0) res.setHeader('Content-Length', String(download.sizeBytes));
+      res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      await pipeline(download.stream, res);
+    } catch (error) {
+      if (res.headersSent) {
+        if (!res.writableEnded) res.end();
+        return;
+      }
+      handleError(res, error, 'Failed to download file');
+    }
+  });
+
+  router.get('/:fileId/preview', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const requestedVersion = typeof req.query.version === 'string'
+        ? Number.parseInt(req.query.version, 10)
+        : undefined;
+      if (requestedVersion !== undefined && (!Number.isInteger(requestedVersion) || requestedVersion < 1)) {
+        return res.status(400).json({ error: 'Invalid file version' });
+      }
+      const preview = await fileService.getFileDownloadStream(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+        requestedVersion,
+      );
+      const safeName = preview.name.replace(/["\\\r\n]/g, '_');
+      res.setHeader('Content-Type', preview.mimeType);
+      if (preview.sizeBytes > 0) res.setHeader('Content-Length', String(preview.sizeBytes));
+      res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      await pipeline(preview.stream, res);
+    } catch (error) {
+      if (res.headersSent) {
+        if (!res.writableEnded) res.end();
+        return;
+      }
+      handleError(res, error, 'Failed to preview file');
+    }
+  });
+
+  router.get('/:fileId/versions', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const versions = await fileService.getFileVersions(Number.parseInt(req.params.fileId, 10), user.userId);
+      res.json({ versions });
+    } catch (error) {
+      handleError(res, error, 'Failed to list file versions');
+    }
+  });
+
+  router.post(
+    '/:fileId/versions/:versionId/restore',
+    async (req: Request<{ fileId: string; versionId: string }>, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        const payload = restoreFileVersionSchema.parse(req.body || {});
+        const file = await fileService.restoreFileVersion(
+          Number.parseInt(req.params.fileId, 10),
+          req.params.versionId,
+          user.userId,
+          payload.version,
+        );
+        res.json(file);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: 'Invalid restore payload' });
+        }
+        handleError(res, error, 'Failed to restore file version');
+      }
+    },
+  );
 
   router.post(
     '/',

@@ -1,11 +1,40 @@
 ---
 name: pptx
 description: Create, edit, inspect, render, and verify PowerPoint `.pptx` and Google Slides-targeted decks. Use for any `.ppt`, `.pptx`, PowerPoint, Google Slides, native slide deck, pitch deck, presentation template, existing deck edit, local PPTX output, or Google Slides-ready deck generation. This skill owns PPTX-related work; do not route those requests to `frontend-slides`.
+allow_unlisted_tools: true
+tools:
+  - document_inspection
+  - document_execute
+  - run_skill_python_script
 ---
 
 # Slides Skill
 
 Use this skill as reference material when creating or editing presentation slide decks.
+
+For a tagged or named existing `.pptx`, use `search_document` to locate slide
+text, table rows, speaker notes, or accessible alt text, then use bounded
+`inspect_document` calls with `slide_start` and `slide_end` to read the relevant
+slides. These are the same read-only inspection primitives used by the PDF,
+DOCX, and XLSX skills; this skill supplies PPTX-specific interpretation and QA,
+not a separate file-reading implementation. Stable results use
+`slide:<number>:shape:<shape-id>` locations. For questions about appearance,
+layout, cropping, charts, images, clipping, or overlap, render the selected
+slides with `container_tools/render_slides.py` and inspect the resulting images;
+do not infer visual correctness from extracted text or OOXML alone.
+
+For normal deterministic PPTX creation or edits, prefer one atomic
+`document_execute` call using workspace-relative paths and typed OfficeCLI
+operations. The host validates and publishes the deck only after the whole
+batch succeeds. Then render and inspect every slide using this skill's QA flow.
+Use `run_skill_python_script` only when the typed OfficeCLI surface cannot
+express the required transformation; inline Python still runs in the
+Kubernetes sandbox with explicitly staged inputs and declared outputs, and may
+be disabled by the operator. If disabled, use a declared reviewed script when
+one fits or report that the exceptional transformation is unavailable.
+Treat the `document_execute.operations` tool schema as the canonical OfficeCLI
+recipe: discover targets with `get`, `query`, or `view`; mutate with `add`,
+`set`, `remove`, `move`, or `swap`; and keep related writes in one atomic call.
 
 ## Important Instructions
 

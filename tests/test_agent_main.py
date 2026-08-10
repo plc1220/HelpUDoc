@@ -736,6 +736,19 @@ def client_with_stubs(monkeypatch):
         monkeypatch.setattr(api_app_module, "GeminiClientManager", GeminiClientManagerStub)
         monkeypatch.setattr(api_app_module, "ToolFactory", ToolFactoryStub)
         monkeypatch.setattr(api_app_module, "AgentRegistry", RegistryStub)
+        monkeypatch.setattr(
+            api_app_module,
+            "build_dependency_diagnostic",
+            lambda: {
+                "document_inspection": True,
+                "knowledge_navigation": True,
+                "officecli": {
+                    "ready": True,
+                    "version": "1.0.143",
+                    "binary_sha256": "test",
+                },
+            },
+        )
 
         import helpudoc_agent.app as _app_shim  # noqa: F401 — ensure shim loads after api stubs
 
@@ -1552,6 +1565,19 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
         monkeypatch.setattr(api_app_module, "GeminiClientManager", GeminiClientManagerStub)
         monkeypatch.setattr(api_app_module, "ToolFactory", ToolFactoryStub)
         monkeypatch.setattr(api_app_module, "AgentRegistry", RegistryStub)
+        monkeypatch.setattr(
+            api_app_module,
+            "build_dependency_diagnostic",
+            lambda: {
+                "document_inspection": True,
+                "knowledge_navigation": True,
+                "officecli": {
+                    "ready": True,
+                    "version": "1.0.143",
+                    "binary_sha256": "test",
+                },
+            },
+        )
 
         import helpudoc_agent.app as _app_shim  # noqa: F401
 

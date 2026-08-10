@@ -10,7 +10,7 @@ type PrivateWorkspaceLike = Pick<Workspace, 'linkedTeamWorkspaceId' | 'publicati
 
 type SharedWorkspaceLike = Pick<
   Workspace,
-  'publicationStatus' | 'currentPublishedVersionNumber' | 'pendingProposalCount'
+  'status' | 'publicationStatus' | 'currentPublishedVersionNumber' | 'pendingProposalCount' | 'purgeAfter'
 >;
 
 /** Unlinked private workspaces are just private; there is no draft relationship to describe. */
@@ -29,6 +29,7 @@ export const LINKED_DRAFT_FALLBACK_LABEL = 'My draft · Linked';
 export const getPrivateWorkspaceStatusLabel = (
   workspace: PrivateWorkspaceLike | null | undefined,
 ): string => {
+  if (workspace?.publicationStatus === 'detached') return 'My draft · Detached';
   if (!workspace?.linkedTeamWorkspaceId) return UNLINKED_PRIVATE_LABEL;
   switch (workspace.publicationStatus) {
     case 'changes_to_publish':
@@ -46,6 +47,8 @@ export const getPrivateWorkspaceStatusLabel = (
 
 /** Publication state of a Shared workspace, in the spec's `Working version` vocabulary. */
 export const getSharedWorkspacePublicationLabel = (workspace: SharedWorkspaceLike): string => {
+  if (workspace.status === 'trashed') return 'In trash';
+  if (workspace.status === 'unshared') return 'Unshared';
   if (workspace.publicationStatus === 'withdrawn') return 'No current locked version';
   const versionNumber = workspace.currentPublishedVersionNumber;
   if (versionNumber == null) return 'Working version';
@@ -59,6 +62,14 @@ export const getSharedWorkspacePublicationLabel = (workspace: SharedWorkspaceLik
 
 /** Publication state plus the pending-proposal count shown on the Shared workspace row. */
 export const getSharedWorkspaceStatusDetails = (workspace: SharedWorkspaceLike): string => {
+  if (workspace.status === 'trashed') {
+    if (!workspace.purgeAfter) return 'In trash';
+    const purgeDate = new Date(workspace.purgeAfter);
+    return Number.isNaN(purgeDate.getTime())
+      ? 'In trash'
+      : `In trash · Deletes ${purgeDate.toLocaleDateString()}`;
+  }
+  if (workspace.status === 'unshared') return 'Unshared · Only you can access it';
   const proposalCount = Number(workspace.pendingProposalCount || 0);
   return [
     getSharedWorkspacePublicationLabel(workspace),

@@ -23,6 +23,8 @@ type SyncHarnessOptions = {
   linkedTeamUpdatedAt?: string | Date | null;
   linkedTeamFilesUpdatedAt?: string | Date | null;
   publicationLinkUpdatedAt?: string | Date | null;
+  publicationLinkStatus?: 'active' | 'detached';
+  linkedTeamStatus?: 'active' | 'unshared' | 'trashed';
 };
 
 function syncStatusHarness(options: SyncHarnessOptions = {}) {
@@ -38,6 +40,8 @@ function syncStatusHarness(options: SyncHarnessOptions = {}) {
     linkedTeamUpdatedAt = null,
     linkedTeamFilesUpdatedAt = null,
     publicationLinkUpdatedAt = null,
+    publicationLinkStatus = 'active',
+    linkedTeamStatus = 'active',
   } = options;
 
   const userId = 'user-1';
@@ -74,6 +78,8 @@ function syncStatusHarness(options: SyncHarnessOptions = {}) {
     linkedTeamUpdatedAt,
     linkedTeamFilesUpdatedAt,
     publicationLinkUpdatedAt,
+    publicationLinkStatus,
+    linkedTeamStatus,
     hasUnpublishedChanges,
     linkedTeamRole: hasTeamMembership ? 'contributor' : null,
     linkedTeamGroupMemberUserId: hasTeamMembership ? userId : null,
@@ -122,11 +128,19 @@ function sharedWorkspaceHarness(options: {
   contentRevision?: number;
   publishedContentRevision?: number | null;
   updatedAt?: string;
+  status?: 'active' | 'unshared' | 'trashed';
+  unsharedAt?: string | null;
+  trashedAt?: string | null;
+  purgeAfter?: string | null;
 } = {}) {
   const {
     contentRevision = 4,
     publishedContentRevision = 4,
     updatedAt = '2026-08-06T10:00:00.000Z',
+    status = 'active',
+    unsharedAt = null,
+    trashedAt = null,
+    purgeAfter = null,
   } = options;
 
   const userId = 'user-1';
@@ -139,6 +153,10 @@ function sharedWorkspaceHarness(options: {
     visibility: 'team',
     workspaceType: 'team',
     editingPolicy: 'review',
+    status,
+    unsharedAt,
+    trashedAt,
+    purgeAfter,
     teamId: 'team-1',
     currentPublishedVersionId: 'version-1',
     contentRevision,
@@ -250,6 +268,18 @@ test('linked draft shows changes_to_publish when only private revision advances'
   const workspaces = await service.listWorkspacesForUser(userId);
   assert.equal(workspaces.length, 1);
   assert.equal(workspaces[0].publicationStatus, 'changes_to_publish');
+});
+
+test('linked draft reports detached when its publication link is detached', async () => {
+  const { service, userId } = syncStatusHarness({ publicationLinkStatus: 'detached' });
+  const workspaces = await service.listWorkspacesForUser(userId);
+  assert.equal(workspaces[0].publicationStatus, 'detached');
+});
+
+test('linked draft reports detached when the Shared workspace is not active', async () => {
+  const { service, userId } = syncStatusHarness({ linkedTeamStatus: 'unshared' });
+  const workspaces = await service.listWorkspacesForUser(userId);
+  assert.equal(workspaces[0].publicationStatus, 'detached');
 });
 
 // ─── Backwards-compatible published-version fallback ─────────────────────────
@@ -394,7 +424,7 @@ test('timestamp fallback is skipped when the Shared workspace has no timestamp',
   assert.equal(workspaces[0].publicationStatus, 'up_to_date');
 });
 
-test('timestamp fallback still respects linked team access checks', async () => {
+test('a linked draft reports detached when Shared access is revoked', async () => {
   const { service, userId } = syncStatusHarness({
     hasTeamMembership: false,
     linkedTeamContentRevision: 1,
@@ -403,7 +433,7 @@ test('timestamp fallback still respects linked team access checks', async () => 
     publicationLinkUpdatedAt: '2026-08-05T10:00:00.000Z',
   });
   const workspaces = await service.listWorkspacesForUser(userId);
-  assert.equal(workspaces[0].publicationStatus, 'up_to_date');
+  assert.equal(workspaces[0].publicationStatus, 'detached');
 });
 
 test('legacy published-version fallback still applies alongside timestamps', async () => {
@@ -426,6 +456,32 @@ test('shared workspace publication status ignores the timestamp fallback', async
   });
   const workspaces = await service.listWorkspacesForUser(userId);
   assert.equal(workspaces[0].publicationStatus, 'up_to_date');
+});
+
+test('owner lifecycle rows are read-only and expose trash metadata', async () => {
+  const trashedAt = '2026-08-07T10:00:00.000Z';
+  const purgeAfter = '2026-09-06T10:00:00.000Z';
+  const { service, userId } = sharedWorkspaceHarness({
+    status: 'trashed',
+    trashedAt,
+    purgeAfter,
+  });
+  const workspaces = await service.listWorkspacesForUser(userId);
+  assert.equal(workspaces[0].status, 'trashed');
+  assert.equal(workspaces[0].trashedAt, trashedAt);
+  assert.equal(workspaces[0].purgeAfter, purgeAfter);
+  assert.equal(workspaces[0].canEdit, false);
+  assert.equal(workspaces[0].canPublish, false);
+});
+
+test('an unshared owner can keep editing but cannot publish until reshare', async () => {
+  const { service, userId } = sharedWorkspaceHarness({
+    status: 'unshared',
+    unsharedAt: '2026-08-07T10:00:00.000Z',
+  });
+  const workspaces = await service.listWorkspacesForUser(userId);
+  assert.equal(workspaces[0].canEdit, true);
+  assert.equal(workspaces[0].canPublish, false);
 });
 
 // ─── File-level timestamp drift (direct file insertion without workspace bump) ─

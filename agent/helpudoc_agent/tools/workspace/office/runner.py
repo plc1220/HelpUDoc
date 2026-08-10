@@ -12,11 +12,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from config import ServiceConfig
-from models import BatchSummary, ExecuteResponse, OperationResult, ValidationResult
+from .config import OfficeRunnerConfig
+from .models import BatchSummary, ExecuteResponse, OperationResult, ValidationResult
 
 _cached_version: str | None = None
 _cached_sha256: str | None = None
+_cached_readiness: bool | None = None
 _output_locks: dict[str, asyncio.Lock] = {}
 _output_lock_refs: dict[str, int] = {}
 _locks_meta_lock = asyncio.Lock()
@@ -28,7 +29,7 @@ _STANDARD_SUCCESS_RETURNCODES = frozenset({0})
 
 
 class OfficeCLIOutputError(Exception):
-    """Raised when OfficeCLI output cannot be safely interpreted (502/no publish)."""
+    """Raised when OfficeCLI output cannot be safely interpreted or published."""
 
 
 async def _acquire_output_lock(output_path: str) -> asyncio.Lock:
@@ -48,7 +49,7 @@ async def _release_output_lock(output_path: str) -> None:
             _output_lock_refs.pop(output_path, None)
 
 
-def get_binary_sha256(config: ServiceConfig) -> str:
+def get_binary_sha256(config: OfficeRunnerConfig) -> str:
     global _cached_sha256
     if _cached_sha256 is not None:
         return _cached_sha256
@@ -58,12 +59,12 @@ def get_binary_sha256(config: ServiceConfig) -> str:
             for chunk in iter(lambda: f.read(8192), b""):
                 h.update(chunk)
         _cached_sha256 = h.hexdigest()
-    except FileNotFoundError:
-        _cached_sha256 = "binary-not-found"
+    except OSError:
+        return "binary-not-found"
     return _cached_sha256
 
 
-def get_officecli_version(config: ServiceConfig) -> str:
+def get_officecli_version(config: OfficeRunnerConfig) -> str:
     global _cached_version
     if _cached_version is not None:
         return _cached_version
@@ -74,19 +75,26 @@ def get_officecli_version(config: ServiceConfig) -> str:
             capture_output=True, text=True, timeout=10,
             env=_build_env(config),
         )
-        _cached_version = result.stdout.strip() or "unavailable"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        _cached_version = "unavailable"
-    return _cached_version
+        version = result.stdout.strip()
+        if result.returncode == 0 and version:
+            _cached_version = version
+            return version
+        return "unavailable"
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return "unavailable"
 
 
 def reset_caches() -> None:
-    global _cached_version, _cached_sha256
+    global _cached_version, _cached_sha256, _cached_readiness
     _cached_version = None
     _cached_sha256 = None
+    _cached_readiness = None
 
 
-def is_binary_ready(config: ServiceConfig) -> bool:
+def is_binary_ready(config: OfficeRunnerConfig) -> bool:
+    global _cached_readiness
+    if _cached_readiness is not None:
+        return _cached_readiness
     import subprocess
     try:
         result = subprocess.run(
@@ -94,12 +102,24 @@ def is_binary_ready(config: ServiceConfig) -> bool:
             capture_output=True, text=True, timeout=10,
             env=_build_env(config),
         )
-        return result.returncode == 0 and bool(result.stdout.strip())
+        version = result.stdout.strip()
+        expected_hashes = {config.expected_sha256_amd64, config.expected_sha256_arm64}
+        ready = (
+            result.returncode == 0
+            and version == config.expected_version
+            and get_binary_sha256(config) in expected_hashes
+        )
+        # OfficeCLI is an immutable, checksum-pinned image dependency. Cache the
+        # startup verdict for the process lifetime; recovery means replacing the
+        # pod/image, not repeatedly spawning a subprocess from readiness probes.
+        _cached_readiness = ready
+        return _cached_readiness
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        _cached_readiness = False
         return False
 
 
-def _build_env(config: ServiceConfig) -> dict[str, str]:
+def _build_env(config: OfficeRunnerConfig) -> dict[str, str]:
     return {
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "HOME": "/tmp/officecli-home",
@@ -136,7 +156,7 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
 
 
 async def _run_subprocess(
-    config: ServiceConfig, argv: list[str]
+    config: OfficeRunnerConfig, argv: list[str]
 ) -> tuple[str, str, int]:
     """Run OfficeCLI subprocess with bounded output and overall deadline.
 
@@ -633,15 +653,13 @@ def _parse_create_output(stdout: str, stderr: str, returncode: int) -> None:
 
 
 async def execute_batch(
-    config: ServiceConfig,
+    config: OfficeRunnerConfig,
     semaphore: asyncio.Semaphore,
     workspace_base: Path,
     source_resolved: Path | None,
     output_resolved: Path,
     operations: list[dict[str, Any]],
     create_if_missing: bool,
-    run_validate: bool,
-    best_effort: bool,
 ) -> ExecuteResponse:
     start = time.monotonic()
     output_key = str(output_resolved)
@@ -651,22 +669,20 @@ async def execute_batch(
             return await _execute_batch_inner(
                 config, semaphore, workspace_base, source_resolved,
                 output_resolved, operations, create_if_missing,
-                run_validate, best_effort, start,
+                start,
             )
     finally:
         await _release_output_lock(output_key)
 
 
 async def _execute_batch_inner(
-    config: ServiceConfig,
+    config: OfficeRunnerConfig,
     semaphore: asyncio.Semaphore,
     workspace_base: Path,
     source_resolved: Path | None,
     output_resolved: Path,
     operations: list[dict[str, Any]],
     create_if_missing: bool,
-    run_validate: bool,
-    best_effort: bool,
     start: float,
 ) -> ExecuteResponse:
     warnings: list[str] = []
@@ -683,7 +699,9 @@ async def _execute_batch_inner(
     os.close(fd)
     working_path = Path(working_path_str)
 
-    fd2, manifest_path_str = tempfile.mkstemp(suffix=".json", dir="/tmp", prefix="office-manifest-")
+    fd2, manifest_path_str = tempfile.mkstemp(
+        suffix=".json", dir=tempfile.gettempdir(), prefix="office-manifest-"
+    )
     os.close(fd2)
     manifest_path = Path(manifest_path_str)
 
@@ -699,8 +717,6 @@ async def _execute_batch_inner(
         manifest_path.write_text(json.dumps(operations, ensure_ascii=False), encoding="utf-8")
 
         argv = [config.officecli_bin, "batch", str(working_path), "--input", str(manifest_path), "--json"]
-        if best_effort:
-            argv.append("--best-effort")
 
         async with semaphore:
             stdout, stderr, returncode = await _run_subprocess(config, argv)
@@ -710,7 +726,7 @@ async def _execute_batch_inner(
         )
         warnings.extend(batch_warnings)
 
-        should_publish = contract_valid and (batch_success or best_effort)
+        should_publish = contract_valid and batch_success
         if not should_publish:
             return ExecuteResponse(
                 success=False, published=False, results=results, summary=summary,
@@ -718,35 +734,36 @@ async def _execute_batch_inner(
                 duration_ms=int((time.monotonic() - start) * 1000), warnings=warnings,
             )
 
-        validation_result: ValidationResult | None = None
-        if run_validate:
-            val_argv = [config.officecli_bin, "validate", str(working_path), "--json"]
-            async with semaphore:
-                val_stdout, val_stderr, val_rc = await _run_subprocess(config, val_argv)
-            validation_result = _parse_validate_output(val_stdout, val_stderr, val_rc)
-            if not validation_result.success:
-                return ExecuteResponse(
-                    success=False, published=False, results=results, summary=summary,
-                    validation=validation_result, officecli_version=get_officecli_version(config),
-                    duration_ms=int((time.monotonic() - start) * 1000),
-                    warnings=warnings + ["Validation failed; not published"],
-                )
+        val_argv = [config.officecli_bin, "validate", str(working_path), "--json"]
+        async with semaphore:
+            val_stdout, val_stderr, val_rc = await _run_subprocess(config, val_argv)
+        validation_result = _parse_validate_output(val_stdout, val_stderr, val_rc)
+        if not validation_result.success:
+            return ExecuteResponse(
+                success=False, published=False, results=results, summary=summary,
+                validation=validation_result, officecli_version=get_officecli_version(config),
+                duration_ms=int((time.monotonic() - start) * 1000),
+                warnings=warnings + ["Validation failed; not published"],
+            )
 
         _assert_workspace_containment(workspace_base, output_resolved, "output path")
+        os.chmod(working_path, 0o644)
         os.replace(str(working_path), str(output_resolved))
         return ExecuteResponse(
             success=batch_success, published=True, results=results, summary=summary,
             validation=validation_result, officecli_version=get_officecli_version(config),
             duration_ms=int((time.monotonic() - start) * 1000), warnings=warnings,
         )
-    except Exception:
-        working_path.unlink(missing_ok=True)
-        raise
     finally:
+        # os.replace removes working_path on successful publication. Every
+        # other return/exception path must remove the unpublished copy.
+        working_path.unlink(missing_ok=True)
         manifest_path.unlink(missing_ok=True)
 
 
-async def _run_create(config: ServiceConfig, semaphore: asyncio.Semaphore, target: Path) -> None:
+async def _run_create(
+    config: OfficeRunnerConfig, semaphore: asyncio.Semaphore, target: Path
+) -> None:
     argv = [config.officecli_bin, "create", str(target), "--force", "--locale", "en-US", "--json"]
     async with semaphore:
         stdout, stderr, returncode = await _run_subprocess(config, argv)

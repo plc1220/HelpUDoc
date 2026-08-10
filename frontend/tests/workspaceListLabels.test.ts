@@ -43,6 +43,17 @@ test('shared workspace with no publication shows "Working version"', () => {
   assert.equal(getSharedWorkspacePublicationLabel(ws), 'Working version');
 });
 
+test('unshared and trashed Shared workspaces show lifecycle state instead of lock state', () => {
+  assert.equal(
+    getSharedWorkspaceStatusDetails({ ...baseWorkspace, status: 'unshared' }),
+    'Unshared · Only you can access it',
+  );
+  assert.equal(
+    getSharedWorkspaceStatusDetails({ ...baseWorkspace, status: 'trashed' }),
+    'In trash',
+  );
+});
+
 test('shared workspace with locked version shows version number', () => {
   const ws: Workspace = {
     ...baseWorkspace,
@@ -224,6 +235,13 @@ test('shared details combine publication and proposal count', () => {
 
 test('linked draft with undefined publicationStatus falls back to "My draft · Linked"', () => {
   assert.equal(getPrivateWorkspaceStatusLabel(draft()), 'My draft · Linked');
+});
+
+test('a detached draft is labelled clearly even after its Shared link is removed', () => {
+  assert.equal(
+    getPrivateWorkspaceStatusLabel(draft({ publicationStatus: 'detached', linkedTeamWorkspaceId: null })),
+    'My draft · Detached',
+  );
 });
 
 test('a missing workspace is treated as an unlinked private workspace', () => {

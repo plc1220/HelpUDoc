@@ -624,6 +624,113 @@ test('frontend-slides gate metadata repair adds fallback previews when choices e
   assert.match(String(previews[0].html || ''), /<!doctype html>/i);
 });
 
+test('frontend-slides gate metadata repair preserves generated previews from legacy options', () => {
+  const legacyStylePreviewInterrupt = {
+    type: 'interrupt',
+    kind: 'clarification',
+    title: 'Choose a Style Preview',
+    interactionRequest: {
+      contract: 'helpudoc.interaction',
+      version: '1',
+      interactionId: 'interaction-style-preview-selection',
+      presentation: 'style_preview',
+      gateId: 'style_preview_selection',
+      skill: 'frontend-slides',
+      props: {
+        title: 'Choose a Style Preview',
+        options: [
+          {
+            id: 'style-a',
+            label: 'Blue Professional',
+            description: 'Warm cream and cobalt.',
+            preview_path: '/style-a.html',
+          },
+          {
+            id: 'style-b',
+            label: 'Signal',
+            description: 'Navy and gold.',
+            preview_path: '/style-b.html',
+          },
+          {
+            id: 'style-c',
+            label: 'Cobalt Grid',
+            description: 'Editorial cobalt grid.',
+            preview_path: '/style-c.html',
+          },
+        ],
+      },
+      metadata: {
+        skill: 'frontend-slides',
+        gateId: 'style_preview_selection',
+      },
+    },
+  };
+
+  const repaired = withFrontendSlidesGateMetadata(legacyStylePreviewInterrupt, 'style_preview_selection');
+  const props = (repaired.interactionRequest as any)?.props || {};
+
+  assert.equal(validateInterrupt(repaired, 'frontend-slides'), null);
+  assert.deepEqual(
+    props.choices.map((choice: Record<string, unknown>) => [choice.id, choice.label]),
+    [
+      ['style-a', 'Blue Professional'],
+      ['style-b', 'Signal'],
+      ['style-c', 'Cobalt Grid'],
+    ],
+  );
+  assert.deepEqual(
+    props.previews.map((preview: Record<string, unknown>) => [preview.id, preview.path]),
+    [
+      ['style-a', '/style-a.html'],
+      ['style-b', '/style-b.html'],
+      ['style-c', '/style-c.html'],
+    ],
+  );
+  assert.equal(props.previews.some((preview: Record<string, unknown>) => Boolean(preview.html)), false);
+  assert.notEqual(props.fallback, true);
+});
+
+test('synthetic style-preview continuation resolves the selected id to its generated style identity', () => {
+  const prompt = buildSyntheticClarificationFollowupPrompt(
+    '/skill frontend-slides Build a partner update deck.',
+    { selectedChoiceIds: ['style-c'] },
+    {
+      kind: 'clarification',
+      displayPayload: {
+        synthetic: true,
+        skill: 'frontend-slides',
+        gateId: 'style_preview_selection',
+      },
+      responseSpec: {
+        choices: [
+          { id: 'style-a', label: 'Style A', value: 'style-a' },
+          { id: 'style-b', label: 'Style B', value: 'style-b' },
+          { id: 'style-c', label: 'Style C', value: 'style-c' },
+        ],
+      },
+      interactionRequest: {
+        contract: 'helpudoc.interaction',
+        version: '1',
+        interactionId: 'interaction-style-preview-selection',
+        presentation: 'style_preview',
+        props: {
+          options: [
+            { id: 'style-a', label: 'Blue Professional', preview_path: '/style-a.html' },
+            { id: 'style-b', label: 'Signal', preview_path: '/style-b.html' },
+            { id: 'style-c', label: 'Cobalt Grid', preview_path: '/style-c.html' },
+          ],
+        },
+      },
+    } as any,
+    { completedGateIds: ['presentation_context', 'style_preview_selection'] },
+  );
+
+  assert.match(prompt, /Cobalt Grid/);
+  assert.match(prompt, /style-c/);
+  assert.match(prompt, /\/style-c\.html/);
+  assert.doesNotMatch(prompt, /Blue Professional style selected/i);
+});
+
 test('shouldFailResumedRunForIdle only fails resumed idle runs with no active tool', () => {
   const resumePayload = { response: { message: 'ok' } } as any;
 

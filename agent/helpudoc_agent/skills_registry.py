@@ -29,6 +29,7 @@ class SkillMetadata:
     mcp_servers: List[str]
     policy: SkillPolicy
     path: Path
+    allow_unlisted_tools: bool = False
     sandbox_scripts: List["SkillSandboxScript"] = field(default_factory=list)
     interaction_contract: dict[str, Any] | None = None
     plugin_id: str | None = None
@@ -77,6 +78,7 @@ class ResolvedSkillScope:
     mcp_servers: List[str]
     sandbox_scripts: List["SkillSandboxScript"]
     interaction_contract: dict[str, Any] | None
+    allow_unlisted_tools: bool = False
 
 
 TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
@@ -459,6 +461,11 @@ def load_skills(skills_root: Path) -> List[SkillMetadata]:
         mcp_servers = _normalize_tools(meta.get("mcp_servers"))
         plugin_id = _normalize_optional_string(meta.get("plugin") or meta.get("plugin_id") or meta.get("pluginId"))
         inherits_plugin_defaults = bool(_normalize_optional_bool(meta.get("inherits_plugin_defaults") or meta.get("inheritsPluginDefaults")))
+        allow_unlisted_tools = bool(
+            _normalize_optional_bool(
+                meta.get("allow_unlisted_tools") or meta.get("allowUnlistedTools")
+            )
+        )
         sandbox_scripts = _normalize_sandbox_scripts(meta.get("sandbox_scripts"), source_dir=skill_dir)
         interaction_contract = _load_interaction_contract(skill_dir, meta)
         policy = _infer_skill_policy(skill_id, content, meta)
@@ -471,6 +478,7 @@ def load_skills(skills_root: Path) -> List[SkillMetadata]:
                 mcp_servers=mcp_servers,
                 policy=policy,
                 path=skill_file,
+                allow_unlisted_tools=allow_unlisted_tools,
                 sandbox_scripts=sandbox_scripts,
                 interaction_contract=interaction_contract,
                 plugin_id=plugin_id,
@@ -510,6 +518,7 @@ def resolve_skill_scope(
         mcp_servers=mcp_servers,
         sandbox_scripts=list(sandbox_scripts_by_name.values()),
         interaction_contract=skill.interaction_contract,
+        allow_unlisted_tools=skill.allow_unlisted_tools,
     )
 
 
@@ -708,6 +717,7 @@ def activate_skill_context(
             }
             for script in scope.sandbox_scripts
         ],
+        "allow_unlisted_tools": scope.allow_unlisted_tools,
     }
     if scope.interaction_contract:
         context["active_skill_scope"]["interaction_contract"] = scope.interaction_contract
@@ -823,6 +833,12 @@ ALWAYS_ALLOWED_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# These capabilities cross a stronger execution boundary than ordinary built-ins.
+# An active skill must opt in even when it preserves legacy access to other tools.
+EXPLICIT_SKILL_TOOLS: frozenset[str] = frozenset(
+    {"document_execute", "run_skill_python_script"}
+)
+
 
 def _coerce_active_skill_scope(active_skill: SkillMetadata | dict[str, Any] | None) -> SkillMetadata | None:
     if active_skill is None:
@@ -843,6 +859,9 @@ def _coerce_active_skill_scope(active_skill: SkillMetadata | dict[str, Any] | No
             mcp_servers=mcp_servers,
             policy=SkillPolicy(),
             path=Path(str(active_skill.get("path") or ".")),
+            allow_unlisted_tools=bool(
+                _normalize_optional_bool(active_skill.get("allow_unlisted_tools"))
+            ),
             interaction_contract=active_skill.get("interaction_contract")
             if isinstance(active_skill.get("interaction_contract"), dict)
             else None,
@@ -877,9 +896,10 @@ def is_tool_allowed(
     Rules (in priority order):
     1. Always-allowed tools are unconditionally permitted.
     2. If no skill is active, every tool is permitted.
-    3. Built-in tools (``tool_mcp_server`` is None) are permitted only if
-       declared in the skill's ``tools`` list.
-    4. MCP tools are permitted only if their originating server name is declared
+    3. Execution-boundary tools require an explicit skill declaration.
+    4. Other built-in tools follow the skill allowlist, with an explicit legacy
+       compatibility escape hatch for skills that historically had no list.
+    5. MCP tools are permitted only if their originating server name is declared
        in the skill's ``mcp_servers`` list.
     """
     if tool_name in ALWAYS_ALLOWED_TOOLS:
@@ -888,11 +908,13 @@ def is_tool_allowed(
     if active_skill is None:
         return True
     if tool_mcp_server is None:
-        if tool_name == "run_skill_python_script":
+        if tool_name in EXPLICIT_SKILL_TOOLS:
             return tool_name in active_skill.tools
         # Empty tool allowlists are intentionally treated as unrestricted access
         # for backwards compatibility with older skills that omit `tools:`.
         if not active_skill.tools:
+            return True
+        if active_skill.allow_unlisted_tools:
             return True
         return tool_name in active_skill.tools
     # Empty MCP allowlists are likewise unrestricted for skills that omit

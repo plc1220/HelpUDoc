@@ -1734,6 +1734,7 @@ def register_chat_routes(
         context.pop("_native_dashboard_builder_executions", None)
         context.pop("_data_workspace_query_executions", None)
         context.pop("_current_sandbox_run_ids", None)
+        context.pop("_inline_sandbox_executions", None)
         reset_document_tool_run_state(context)
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0

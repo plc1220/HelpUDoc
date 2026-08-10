@@ -16,4 +16,6 @@ data:
   AWS_PRICING_MCP_LOG_LEVEL: ERROR
   ENABLE_SKILL_SANDBOX_RUNNER: "true"
   HELPUDOC_SANDBOX_BACKEND: kubernetes
+  SANDBOX_INLINE_ENABLED: "false"
+  SANDBOX_INLINE_MAX_GLOBAL_JOBS: "4"
   HELPUDOC_SANDBOX_IMAGE: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest

@@ -13,6 +13,7 @@ from ....configuration import Settings
 from ....sandbox_runner import (
     SandboxExecutionError,
     SandboxUnavailableError,
+    run_inline_python as run_inline_skill_python,
     run_skill_python_script as run_declared_skill_python_script,
 )
 from ....skills_registry import (
@@ -108,14 +109,40 @@ def _format_skill_asset_manifest(skill_id: str, asset_paths: list[str]) -> str:
 
 
 class RunSkillPythonScriptInput(BaseModel):
-    script_name: str = Field(description="Declared sandbox script name from the active skill.")
+    script_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Declared sandbox script name from the active skill. "
+            "Mutually exclusive with inline_code."
+        ),
+    )
+    inline_code: Optional[str] = Field(
+        default=None,
+        description=(
+            "Complete Python source to execute in an isolated sandbox Job. "
+            "Mutually exclusive with script_name. Inline code has no /workspace mount: read staged "
+            "inputs at their workspace-relative staged paths in the run directory and write every artifact to a declared "
+            "output_paths entry."
+        ),
+    )
     input_paths: Optional[List[str]] = Field(
         default=None,
         description="Workspace file paths to stage into the sandbox.",
     )
+    output_paths: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Required for inline_code: workspace-relative paths the code writes inside the run "
+            "directory. Only these host-validated files are published."
+        ),
+    )
     args: Optional[List[str]] = Field(
         default=None,
-        description="Command-line arguments to pass to the script.",
+        description="Command-line arguments to pass to the declared script.",
+    )
+    timeout_seconds: Optional[int] = Field(
+        default=None,
+        description="Inline-only execution timeout in seconds (default 120, maximum 300).",
     )
 
 
@@ -273,18 +300,86 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
             pass
         return tool_payload
 
+    def _run_inline(
+        *,
+        inline_code: str,
+        input_paths: List[str],
+        output_paths: List[str],
+        timeout_seconds: Optional[int],
+    ) -> str:
+        try:
+            result = run_inline_skill_python(
+                skills_root=skills_root,
+                workspace_state=workspace_state,
+                inline_code=inline_code,
+                input_paths=input_paths,
+                output_paths=output_paths,
+                timeout_seconds=timeout_seconds,
+            )
+        except SandboxUnavailableError as exc:
+            return str(exc)
+        except SandboxExecutionError as exc:
+            return f"Skill sandbox execution blocked: {exc}"
+        lines = [
+            "SKILL_SANDBOX_INLINE_RUN_COMPLETED",
+            f"Run ID: {result.run_id}",
+            f"Job: {result.job_name}",
+            f"Source SHA256: {result.source_sha256}",
+        ]
+        if result.output_files:
+            lines.append("Published workspace files:")
+            lines.extend(f"- {item.path} ({item.size} bytes)" for item in result.output_files)
+        else:
+            lines.append("Published workspace files: (none produced at the declared output paths)")
+        if result.stdout:
+            lines.append("STDOUT:")
+            lines.append(result.stdout[:8000])
+        if result.stderr:
+            lines.append("STDERR:")
+            lines.append(result.stderr[:4000])
+        return "\n".join(lines)
+
     @tool(args_schema=RunSkillPythonScriptInput)
     def run_skill_python_script(
-        script_name: str,
+        script_name: Optional[str] = None,
         input_paths: Optional[List[str]] = None,
         args: Optional[List[str]] = None,
+        inline_code: Optional[str] = None,
+        output_paths: Optional[List[str]] = None,
+        timeout_seconds: Optional[int] = None,
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        """Run a declared Python script from the active skill inside the configured sandbox."""
+        """Run a declared Python script, or inline Python, from the active skill in the sandbox."""
         blocked = tagged_files_mode_guard(workspace_state.context, "run_skill_python_script")
         if blocked:
             return blocked
-        script_name = _canonical_declared_script_name(workspace_state, script_name)
+        has_script = bool(str(script_name or "").strip())
+        has_inline = bool(str(inline_code or "").strip())
+        if has_script and has_inline:
+            return (
+                "SKILL_SANDBOX_REQUEST_INVALID\n"
+                "Provide exactly one of script_name or inline_code, not both."
+            )
+        if not has_script and not has_inline:
+            return (
+                "SKILL_SANDBOX_REQUEST_INVALID\n"
+                "Provide exactly one of script_name or inline_code."
+            )
+        if has_inline:
+            if args:
+                return "SKILL_SANDBOX_REQUEST_INVALID\nargs is only valid with script_name."
+            return _run_inline(
+                inline_code=str(inline_code),
+                input_paths=input_paths or [],
+                output_paths=output_paths or [],
+                timeout_seconds=timeout_seconds,
+            )
+        if output_paths or timeout_seconds is not None:
+            return (
+                "SKILL_SANDBOX_REQUEST_INVALID\n"
+                "output_paths and timeout_seconds are only valid with inline_code."
+            )
+        script_name = _canonical_declared_script_name(workspace_state, str(script_name))
         effective_args = list(args or [])
         if script_name == "build_native_dashboard_package":
             if "--help" in effective_args or "-h" in effective_args:
@@ -433,7 +528,14 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
 
     run_skill_python_script.name = "run_skill_python_script"
     run_skill_python_script.description = (
-        "Run a Python script declared in the active skill's sandbox_scripts frontmatter. "
-        "Scripts execute in the configured local or Kubernetes sandbox; pass input_paths as workspace files and args as argv."
+        "Run Python in the configured sandbox. Provide exactly one of script_name or inline_code. "
+        "script_name runs a script declared in the active skill's sandbox_scripts frontmatter; "
+        "declared scripts are reviewed and may receive read-only workspace access at /workspace, "
+        "and they publish their declared outputs. inline_code runs agent-authored Python with no "
+        "/workspace mount at all: only files named in input_paths are staged into the run directory "
+        "(at their workspace-relative path; a simple file is also its basename), and only files written to the paths listed in output_paths are "
+        "published back to the workspace, so hard-coded /workspace paths fail. Inline runs have no "
+        "network or package installation, accept an optional timeout_seconds, and are limited per "
+        "agent run. Pass input_paths as workspace files and args as argv for declared scripts."
     )
     return run_skill_python_script

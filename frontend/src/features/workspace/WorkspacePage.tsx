@@ -30,6 +30,13 @@ import {
   getPublishedVersionFileContent,
   getPublishedVersionSnapshot,
   syncWorkspaceWithTeam,
+  autoSyncWorkspaceWithTeam,
+  unshareWorkspace,
+  reshareWorkspace,
+  trashWorkspace,
+  restoreWorkspace,
+  leaveWorkspace,
+  reconnectWorkspace,
   WorkspaceApiError,
   type PublicationConflict,
   type PublishedWorkspaceVersion,
@@ -97,6 +104,7 @@ import type {
   SkillDefinition,
   WorkspaceSchedule,
   WorkspaceScheduleDraft,
+  TaggedFileRef,
 } from '../../types';
 import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
@@ -112,6 +120,12 @@ import {
   isDraftSyncActionable,
   isLinkedDraftWorkspace,
 } from '../../utils/workspaceDraftSync';
+import {
+  isLinkedDraftAutoSyncEligible,
+  getWorkspaceLifecycleStatus,
+  WORKSPACE_LIFECYCLE_ACTION_LABELS,
+  type WorkspaceLifecycleAction,
+} from '../../utils/workspaceLifecycle';
 import {
   canMutateWorkspaceContent,
   isPublishedVersionFileId,
@@ -909,6 +923,8 @@ export default function WorkspacePage() {
   const [busyScheduleId, setBusyScheduleId] = useState<string | null>(null);
   const [isLandingPageVisible, setIsLandingPageVisible] = useState(true);
   const selectedWorkspaceIdRef = useRef<string | null>(null);
+  const explicitWorkspaceOpenSequenceRef = useRef(0);
+  const autoSyncInFlightRef = useRef<Set<string>>(new Set());
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
   const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
@@ -936,6 +952,11 @@ export default function WorkspacePage() {
   const [draftSyncWorkspace, setDraftSyncWorkspace] = useState<Workspace | null>(null);
   const [draftSyncConflicts, setDraftSyncConflicts] = useState<PublicationConflict[]>([]);
   const [syncingDraftWorkspaceId, setSyncingDraftWorkspaceId] = useState<string | null>(null);
+  const [lifecycleBusyWorkspaceId, setLifecycleBusyWorkspaceId] = useState<string | null>(null);
+  const [explicitWorkspaceOpen, setExplicitWorkspaceOpen] = useState<{
+    workspaceId: string;
+    sequence: number;
+  } | null>(null);
   const [draftSyncError, setDraftSyncError] = useState('');
   const [publishedVersionView, setPublishedVersionView] = useState<PublishedVersionSelection | null>(null);
   /**
@@ -1018,19 +1039,26 @@ export default function WorkspacePage() {
     return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
   }, [workspaceSearchQuery, workspaces]);
   const mobilePrivateWorkspaces = useMemo(
-    () => filteredWorkspaces.filter((workspace) => workspace.visibility !== 'team').slice(0, 8),
+    () => filteredWorkspaces.filter((workspace) => (
+      workspace.visibility !== 'team' && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+    )).slice(0, 8),
     [filteredWorkspaces],
   );
   const mobileTeamWorkspaces = useMemo(
-    () => filteredWorkspaces.filter((workspace) => workspace.visibility === 'team').slice(0, 8),
+    () => filteredWorkspaces.filter((workspace) => (
+      workspace.visibility === 'team' && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+    )).slice(0, 8),
     [filteredWorkspaces],
   );
   const landingFilteredWorkspaces = useMemo(() => {
     const query = landingWorkspaceQuery.trim().toLowerCase();
     if (!query) {
-      return workspaces;
+      return workspaces.filter((workspace) => getWorkspaceLifecycleStatus(workspace) !== 'trashed');
     }
-    return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
+    return workspaces.filter((workspace) => (
+      getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+      && workspace.name.toLowerCase().includes(query)
+    ));
   }, [landingWorkspaceQuery, workspaces]);
   const landingUserName = useMemo(() => {
     const normalized = authUser?.name?.trim();
@@ -1073,13 +1101,15 @@ export default function WorkspacePage() {
       if (workspace.visibility === 'team') {
         return { ...workspace, publicationStatus: 'changes_to_publish' };
       }
-      const publicationStatus = !workspace.linkedTeamWorkspaceId
-        ? 'private_draft'
-        : workspace.publicationStatus === 'team_updates_available'
-          ? 'review_needed'
-          : workspace.publicationStatus === 'review_needed'
+      const publicationStatus = workspace.publicationStatus === 'detached'
+        ? 'detached'
+        : !workspace.linkedTeamWorkspaceId
+          ? 'private_draft'
+          : workspace.publicationStatus === 'team_updates_available'
             ? 'review_needed'
-            : 'changes_to_publish';
+            : workspace.publicationStatus === 'review_needed'
+              ? 'review_needed'
+              : 'changes_to_publish';
       return { ...workspace, publicationStatus };
     };
     setWorkspaces((current) => current.map(update));
@@ -1568,6 +1598,11 @@ export default function WorkspacePage() {
   );
 
   const handleLandingWorkspaceSelect = useCallback((workspace: Workspace) => {
+    explicitWorkspaceOpenSequenceRef.current += 1;
+    setExplicitWorkspaceOpen({
+      workspaceId: workspace.id,
+      sequence: explicitWorkspaceOpenSequenceRef.current,
+    });
     setIsWorkspaceRenameActive(false);
     setWorkspaceNameDraft(workspace.name);
     setFolderPaths([]);
@@ -2673,6 +2708,25 @@ export default function WorkspacePage() {
     return Number.isNaN(parsed) ? null : parsed;
   };
 
+  const toTaggedFileRef = (file: WorkspaceFile): TaggedFileRef | null => {
+    const fileId = toNumericFileId(file.id);
+    if (!fileId || fileId < 1) {
+      return null;
+    }
+    const version = Number(file.version);
+    const name = String(file.name || '').trim();
+    return {
+      fileId,
+      ...(Number.isInteger(version) && version > 0 ? { version } : {}),
+      ...(name ? { name } : {}),
+    };
+  };
+
+  const supportsNativeTurnAttachment = (file: WorkspaceFile): boolean => {
+    const mimeType = String(file.mimeType || '').trim().toLowerCase();
+    return mimeType === 'application/pdf' || mimeType.startsWith('image/');
+  };
+
   const refreshConversationHistory = useCallback(async (workspaceId: string) => {
     try {
       const conversations = await fetchRecentConversations(workspaceId, 5);
@@ -3179,6 +3233,11 @@ export default function WorkspacePage() {
   }, [selectedWorkspace]);
 
   const handleSelectWorkspace = useCallback((workspace: Workspace) => {
+    explicitWorkspaceOpenSequenceRef.current += 1;
+    setExplicitWorkspaceOpen({
+      workspaceId: workspace.id,
+      sequence: explicitWorkspaceOpenSequenceRef.current,
+    });
     setIsWorkspaceRenameActive(false);
     setIsEditMode(false);
     setWorkspaceNameDraft(workspace.name);
@@ -3196,7 +3255,7 @@ export default function WorkspacePage() {
 
   /**
    * Sync the Shared Working version into `My draft`. When overlapping changes exist the backend
-   * answers 409 with the conflict list, which opens `Resolve changes` in the contributor's draft
+   * returns review_needed with the conflict list, which opens `Resolve changes` in the contributor's draft
    * (spec section 9.3) rather than in the publisher's proposal view.
    */
   const runDraftSync = useCallback(async (
@@ -3208,6 +3267,23 @@ export default function WorkspacePage() {
     setDraftSyncError('');
     try {
       const result = await syncWorkspaceWithTeam(workspace.id, resolutions);
+      if (result.status === 'review_needed') {
+        setDraftSyncWorkspace({ ...workspace, publicationStatus: 'review_needed' });
+        setDraftSyncConflicts(result.conflicts || []);
+        if (!(result.conflicts || []).length) {
+          addLocalSystemMessage(
+            `${workspace.name} needs a manual review because its exact Shared Working base is unavailable.`,
+          );
+        }
+        return;
+      }
+      if (result.status === 'detached') {
+        setDraftSyncConflicts([]);
+        setDraftSyncWorkspace(null);
+        await refreshWorkspaceList();
+        addLocalSystemMessage(`${workspace.name} is detached. Reconnect it before syncing.`);
+        return;
+      }
       setDraftSyncConflicts([]);
       setDraftSyncWorkspace(null);
       // Refreshing the list re-selects the open workspace, which reloads its files.
@@ -3240,6 +3316,57 @@ export default function WorkspacePage() {
   const handleSyncDraftWorkspace = useCallback((workspace: Workspace) => {
     void runDraftSync(workspace);
   }, [runDraftSync]);
+
+  const runDraftAutoSync = useCallback(async (workspace: Workspace) => {
+    if (autoSyncInFlightRef.current.has(workspace.id)) return;
+    autoSyncInFlightRef.current.add(workspace.id);
+    setSyncingDraftWorkspaceId(workspace.id);
+    setDraftSyncError('');
+    try {
+      const result = await autoSyncWorkspaceWithTeam(workspace.id);
+      if (result.status === 'review_needed') {
+        const reviewWorkspace = { ...workspace, publicationStatus: 'review_needed' as const };
+        setDraftSyncWorkspace(reviewWorkspace);
+        setDraftSyncConflicts(result.conflicts || []);
+        return;
+      }
+      setDraftSyncConflicts([]);
+      setDraftSyncWorkspace(null);
+      await refreshWorkspaceList();
+    } catch (error) {
+      const conflicts = error instanceof WorkspaceApiError
+        ? extractSyncConflicts(error.details) as PublicationConflict[]
+        : [];
+      if (conflicts.length) {
+        const markReviewNeeded = (candidate: Workspace): Workspace => candidate.id === workspace.id
+          ? { ...candidate, publicationStatus: 'review_needed' }
+          : candidate;
+        setWorkspaces((current) => current.map(markReviewNeeded));
+        setSelectedWorkspace((current) => current ? markReviewNeeded(current) : current);
+        setDraftSyncWorkspace({ ...workspace, publicationStatus: 'review_needed' });
+        setDraftSyncConflicts(conflicts);
+        addLocalSystemMessage(
+          `${workspace.name} has overlapping Shared changes. Review the conflicts before syncing.`,
+        );
+        return;
+      }
+      addLocalSystemMessage(
+        error instanceof Error ? error.message : 'Failed to sync Shared workspace updates.',
+      );
+    } finally {
+      autoSyncInFlightRef.current.delete(workspace.id);
+      setSyncingDraftWorkspaceId((current) => current === workspace.id ? null : current);
+    }
+  }, [addLocalSystemMessage, refreshWorkspaceList]);
+
+  useEffect(() => {
+    if (!explicitWorkspaceOpen) return;
+    const request = explicitWorkspaceOpen;
+    setExplicitWorkspaceOpen(null);
+    if (!selectedWorkspace || selectedWorkspace.id !== request.workspaceId) return;
+    if (!isLinkedDraftAutoSyncEligible(selectedWorkspace, workspaces)) return;
+    void runDraftAutoSync(selectedWorkspace);
+  }, [explicitWorkspaceOpen, runDraftAutoSync, selectedWorkspace, workspaces]);
 
   /**
    * `Review changes` is the primary action for a draft holding private changes (spec section 8.3).
@@ -5123,6 +5250,7 @@ export default function WorkspacePage() {
     historyPayload: Array<{ role: string; content: string }>;
     currentTurnFileIds?: number[];
     taggedFiles?: string[];
+    taggedFileRefs?: TaggedFileRef[];
     knowledgeRefs?: Array<{ id: number }>;
     internetSearchEnabled?: boolean;
   }) => {
@@ -5135,6 +5263,7 @@ export default function WorkspacePage() {
       historyPayload,
       currentTurnFileIds,
       taggedFiles,
+      taggedFileRefs,
       knowledgeRefs,
       internetSearchEnabled,
     } = params;
@@ -5151,6 +5280,7 @@ export default function WorkspacePage() {
       {
         forceReset: true,
         taggedFiles,
+        taggedFileRefs,
         knowledgeRefs,
         currentTurnFileIds,
         internetSearchEnabled,
@@ -6348,6 +6478,7 @@ export default function WorkspacePage() {
 
       let currentTurnFileIds: number[] | undefined;
       let taggedFiles: string[] | undefined;
+      let taggedFileRefs: TaggedFileRef[] | undefined;
 
       if (hasAttachments) {
         setIsDriveImporting(true);
@@ -6373,16 +6504,17 @@ export default function WorkspacePage() {
           taggedFiles = uploadedFiles
             .map((file) => String(file.name || '').trim())
             .filter(Boolean);
+          taggedFileRefs = uploadedFiles
+            .map(toTaggedFileRef)
+            .filter((value): value is TaggedFileRef => value !== null);
           currentTurnFileIds = uploadedFiles
-            .filter((file) => {
-              const mimeType = String(file.mimeType || '').toLowerCase();
-              return mimeType.startsWith('image/');
-            })
+            .filter(supportsNativeTurnAttachment)
             .map((file) => toNumericFileId(file.id))
             .filter((value): value is number => value !== null);
           userMessageRecord = await persistUserMessageMetadata(conversationId, userMessageRecord, {
             ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
             taggedFiles,
+            taggedFileRefs,
           });
         } catch (error) {
           console.error('Failed to upload attachments', error);
@@ -6404,11 +6536,16 @@ export default function WorkspacePage() {
           ...(taggedFiles || []),
           ...mentionedFiles.map((file) => file.name).filter(Boolean),
         ]));
+        const taggedRefsById = new Map(
+          (taggedFileRefs || []).map((ref) => [ref.fileId, ref] as const),
+        );
+        mentionedFiles
+          .map(toTaggedFileRef)
+          .filter((value): value is TaggedFileRef => value !== null)
+          .forEach((ref) => taggedRefsById.set(ref.fileId, ref));
+        taggedFileRefs = Array.from(taggedRefsById.values());
         const mentionedMultimodalIds = mentionedFiles
-          .filter((file) => {
-          const mimeType = String(file.mimeType || '').toLowerCase();
-            return mimeType.startsWith('image/');
-          })
+          .filter(supportsNativeTurnAttachment)
           .map((file) => toNumericFileId(file.id))
           .filter((value): value is number => value !== null);
         currentTurnFileIds = Array.from(new Set([
@@ -6422,6 +6559,7 @@ export default function WorkspacePage() {
           userMessageRecord = await persistUserMessageMetadata(conversationId, userMessageRecord, {
             ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
             taggedFiles,
+            taggedFileRefs,
             knowledgeRefs: mentionedKnowledge,
           });
         } catch (error) {
@@ -6474,6 +6612,7 @@ export default function WorkspacePage() {
           historyPayload,
           currentTurnFileIds,
           taggedFiles,
+          taggedFileRefs,
           knowledgeRefs: mentionedKnowledge.map((item) => ({ id: item.id })),
           internetSearchEnabled: useInternetSearch,
         });
@@ -6640,6 +6779,88 @@ export default function WorkspacePage() {
       console.error('Failed to delete workspace:', error);
     }
   };
+
+  const handleWorkspaceLifecycle = useCallback(async (
+    workspace: Workspace,
+    action: WorkspaceLifecycleAction,
+  ) => {
+    const confirmation = action === 'unshare'
+      ? `Unshare "${workspace.name}"? Existing private drafts will be detached and must reconnect explicitly.`
+      : action === 'trash'
+        ? `Move "${workspace.name}" to trash? You can restore it before its scheduled deletion.`
+        : action === 'leave'
+          ? `Leave "${workspace.name}"? You will lose access to this Shared workspace.`
+          : null;
+    if (confirmation && !window.confirm(confirmation)) return;
+
+    const wasSelected = selectedWorkspaceIdRef.current === workspace.id;
+    setLifecycleBusyWorkspaceId(workspace.id);
+    try {
+      const result = action === 'unshare'
+        ? await unshareWorkspace(workspace.id)
+        : action === 'reshare'
+          ? await reshareWorkspace(workspace.id)
+          : action === 'trash'
+            ? await trashWorkspace(workspace.id)
+            : action === 'restore'
+              ? await restoreWorkspace(workspace.id)
+              : action === 'reconnect'
+                ? await reconnectWorkspace(workspace.id)
+                : await leaveWorkspace(workspace.id);
+      if (action === 'trash' || action === 'leave') {
+        if (wasSelected) {
+          cancelStreamForConversation(activeConversationId);
+          setSelectedWorkspace(null);
+          setFiles([]);
+          setFolderPaths([]);
+          setIsLandingPageVisible(true);
+        }
+      }
+      const refreshed = await refreshWorkspaceList();
+      const updatedWorkspace = result.workspace
+        ? hydrateWorkspace(result.workspace)
+        : refreshed.find((candidate) => candidate.id === workspace.id);
+      if (wasSelected && (action === 'trash' || action === 'leave')) {
+        setSelectedWorkspace(null);
+      }
+
+      if (action === 'reconnect' && result.sync?.status === 'review_needed') {
+        const reviewWorkspace = {
+          ...(updatedWorkspace || workspace),
+          publicationStatus: 'review_needed' as const,
+        };
+        setDraftSyncWorkspace(reviewWorkspace);
+        setDraftSyncConflicts(result.sync.conflicts || []);
+        addLocalSystemMessage(
+          `${workspace.name} was reconnected, but its changes need review before they can be synced.`,
+        );
+      }
+    } catch (error) {
+      const conflicts = error instanceof WorkspaceApiError
+        ? extractSyncConflicts(error.details) as PublicationConflict[]
+        : [];
+      if (action === 'reconnect' && conflicts.length) {
+        const reviewWorkspace = { ...workspace, publicationStatus: 'review_needed' as const };
+        setWorkspaces((current) => current.map((candidate) => candidate.id === workspace.id
+          ? reviewWorkspace
+          : candidate));
+        setSelectedWorkspace((current) => current?.id === workspace.id ? reviewWorkspace : current);
+        setDraftSyncWorkspace(reviewWorkspace);
+        setDraftSyncConflicts(conflicts);
+        addLocalSystemMessage(
+          `${workspace.name} could not reconnect automatically because both drafts changed. Review the conflicts first.`,
+        );
+        return;
+      }
+      addLocalSystemMessage(
+        error instanceof Error
+          ? error.message
+          : `Failed to ${WORKSPACE_LIFECYCLE_ACTION_LABELS[action].toLowerCase()} ${workspace.name}.`,
+      );
+    } finally {
+      setLifecycleBusyWorkspaceId((current) => current === workspace.id ? null : current);
+    }
+  }, [activeConversationId, addLocalSystemMessage, cancelStreamForConversation, refreshWorkspaceList]);
 
   const handleManageTeamAccess = useCallback((workspace: Workspace) => {
     if (workspace.visibility === 'team') setShareWorkspace(workspace);
@@ -7464,8 +7685,17 @@ export default function WorkspacePage() {
         </div>
         {selectedWorkspace
           && (
-            (selectedWorkspace.visibility !== 'team' && !selectedWorkspace.linkedTeamWorkspaceId)
-            || (selectedWorkspace.canPublish && selectedWorkspace.publicationStatus === 'changes_to_publish')
+            (
+              selectedWorkspace.visibility !== 'team'
+              && selectedWorkspace.publicationStatus !== 'detached'
+              && !selectedWorkspace.linkedTeamWorkspaceId
+            )
+            || (
+              selectedWorkspace.visibility === 'team'
+              && getWorkspaceLifecycleStatus(selectedWorkspace) === 'active'
+              && selectedWorkspace.canPublish
+              && selectedWorkspace.publicationStatus === 'changes_to_publish'
+            )
           ) ? (
             <button
               type="button"
@@ -7831,7 +8061,9 @@ export default function WorkspacePage() {
           onManageTeamAccess={handleManageTeamAccess}
           onSyncDraftWorkspace={handleSyncDraftWorkspace}
           onReviewDraftChanges={handleReviewDraftChanges}
+          onLifecycleWorkspace={handleWorkspaceLifecycle}
           syncingDraftWorkspaceId={syncingDraftWorkspaceId}
+          lifecycleBusyWorkspaceId={lifecycleBusyWorkspaceId}
           onSelectWorkspace={handleSelectWorkspace}
           onCreateWorkspace={() => {
             void handleCreateWorkspace();
@@ -8601,7 +8833,8 @@ export default function WorkspacePage() {
                       <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
                     </div>
                     <div className="flex items-center space-x-2">
-                      {selectedWorkspace?.linkedTeamWorkspaceId ? (
+                      {selectedWorkspace?.linkedTeamWorkspaceId
+                        && selectedWorkspace.publicationStatus !== 'detached' ? (
                         <Button
                           label="Review changes"
                           variant="secondary"

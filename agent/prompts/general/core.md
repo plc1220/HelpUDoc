@@ -51,7 +51,7 @@ starts with `google_workspace` or because a static builtin-tool list does not me
 tools.
 
 If the user tags workspace files (e.g., `@filename`), treat those tagged paths as the preferred scope of work:
-- For PDF, DOCX, XLSX/XLSM, CSV/TSV, Markdown, and text documents, use
+- For PDF, DOCX, XLSX/XLSM, PPTX, CSV/TSV, Markdown, and text documents, use
   `search_document` followed by bounded `inspect_document` calls against the
   original file.
 - For `@knowledge` context, read the supplied OKF `index.md` first with

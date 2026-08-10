@@ -1,6 +1,7 @@
 """Infer MIME types and structured output paths from tool transcripts."""
 from __future__ import annotations
 
+import json
 import mimetypes
 import re
 from typing import Any, Dict, List
@@ -46,5 +47,17 @@ def _extract_output_files_from_tool_result(name: str, text: str) -> List[Dict[st
             path = match.group("path").strip()
             if path:
                 outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
+        return outputs
+    if name == "document_execute":
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return outputs
+        if not isinstance(payload, dict) or payload.get("published") is not True:
+            return outputs
+        path = payload.get("output_path")
+        if isinstance(path, str) and path.strip():
+            normalized = path.strip().lstrip("/")
+            outputs.append({"path": normalized, "mimeType": _infer_mime_type(normalized)})
         return outputs
     return outputs

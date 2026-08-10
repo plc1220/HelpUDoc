@@ -116,8 +116,8 @@ See `docs/ci-cd.md` for more workflow details and troubleshooting.
 ### 4.3 Alternative full-stack deploy (Cloud Build)
 
 `infra/cloudbuild.yaml` remains available for local/operator-triggered deploys.
-It builds the same four app images (backend, frontend, agent, and the internal
-OfficeCLI service) in parallel, tags them with Cloud Build
+It builds the three app images (backend, frontend, and agent) in parallel; the
+agent image contains pinned OfficeCLI. It tags them with Cloud Build
 `$BUILD_ID`, rewrites app/frontend manifest image tags in the build workspace,
 applies `infra/gke/k8s/` through `gke-deploy`, bootstraps Langfuse, syncs
 PVC-backed runtime files, optionally bootstraps an admin user, and can run E2E.
@@ -144,13 +144,13 @@ The current deploy surface still has these Container Registry references:
 
 | Path | Registry surface |
 | --- | --- |
-| `.github/workflows/deploy-gke.yml` | Preferred interim deploy path; still authenticates to `gcr.io`, uses Buildx registry cache at `gcr.io/$PROJECT_ID/helpudoc-buildcache-*`, builds/pushes backend/frontend/agent/office-service images to `gcr.io/$PROJECT_ID/...`, and patches the corresponding workloads. |
+| `.github/workflows/deploy-gke.yml` | Preferred interim deploy path; authenticates to `gcr.io`, builds/pushes backend/frontend/agent images, and patches the corresponding workloads. |
 | `.github/workflows/deploy-backend-gke.yml` | One-off backend path; builds/pushes `gcr.io/$PROJECT_ID/helpudoc-backend:$GITHUB_SHA`, patches backend + knowledge-worker without reapplying the shared pod manifest, and updates the reflection CronJob. |
 | `.github/workflows/deploy-frontend-gke.yml` | One-off frontend path; builds/pushes `gcr.io/$PROJECT_ID/helpudoc-frontend:$GITHUB_SHA`, applies `60-frontend.yaml`, then patches the frontend image. |
 | `.github/workflows/deploy-agent-gke.yml` | One-off agent path; builds/runs/pushes `gcr.io/$PROJECT_ID/helpudoc-agent:$GITHUB_SHA`, patches the agent and seed init containers without resetting sibling sidecars, then runs legacy PVC sync. |
-| `infra/cloudbuild.yaml` | Full-stack Cloud Build path; uses `gcr.io/cloud-builders/*`, pulls `:latest` app images for cache, builds/tags/pushes backend/frontend/agent/office-service images under `gcr.io/$PROJECT_ID/...`, rewrites manifests in the build workspace, and declares `gcr.io/$PROJECT_ID/...` outputs. |
+| `infra/cloudbuild.yaml` | Full-stack Cloud Build path; builds/tags/pushes backend/frontend/agent images and rewrites manifests in the build workspace. |
 | `infra/cloudbuild-frontend.yaml` | Frontend-only Cloud Build path; uses `gcr.io/cloud-builders/*`, pulls/builds/tags/pushes frontend under `gcr.io/$PROJECT_ID/...`, rewrites `60-frontend.yaml`, and declares a `gcr.io/$PROJECT_ID/...` output. |
-| `infra/gke/k8s/50-app.yaml` | Checked-in defaults point backend, agent, agent init containers, and the internal office-service sidecar at `gcr.io/my-rd-coe-demo-gen-ai/...:latest`. |
+| `infra/gke/k8s/50-app.yaml` | Checked-in defaults point backend, agent, and agent init containers at `gcr.io/my-rd-coe-demo-gen-ai/...:latest`; OfficeCLI is in the agent image. |
 | `infra/gke/k8s/52-daily-reflection-cron.yaml` | Checked-in default reflection job image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest`. |
 | `infra/gke/k8s/60-frontend.yaml` | Checked-in default frontend image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-frontend:latest`. |
 
@@ -219,6 +219,11 @@ Storage notes:
   needs Kubernetes RBAC for these resources and Cloud IAM permissions such as
   `container.roles.*` and `container.roleBindings.*` (or
   `roles/container.admin` for a dedicated deploy service account).
+- `SANDBOX_INLINE_ENABLED` defaults to `false`. Enable it in `helpudoc-config`
+  only after the isolated Job and deny-egress checks pass in the target cluster;
+  declared skill scripts continue to work while it is disabled.
+- `SANDBOX_INLINE_MAX_GLOBAL_JOBS` defaults to `4`; lower it if sandbox Job
+  startup pressure is visible before raising agent replicas or cluster capacity.
 - `infra/gke/k8s/51-aws-pricing-mcp.yaml` runs a FastMCP HTTP proxy in front of
   the `awslabs.aws-pricing-mcp-server` stdio process so the agent can consume it
   as a normal remote MCP server inside the cluster.
@@ -243,8 +248,7 @@ IMAGE_TAG="<commit-sha-or-build-id>"
 kubectl -n helpudoc set image deployment/helpudoc-app \
   backend="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" \
   knowledge-worker="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" \
-  agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
-  office-service="gcr.io/${PROJECT_ID}/helpudoc-office-service:${IMAGE_TAG}"
+  agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
 kubectl -n helpudoc set image deployment/helpudoc-frontend \
   frontend="gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}"
 ```

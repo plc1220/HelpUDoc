@@ -1,0 +1,761 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpudoc-app
+  namespace: helpudoc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: helpudoc-app
+  template:
+    metadata:
+      labels:
+        app: helpudoc-app
+    spec:
+      serviceAccountName: helpudoc-agent
+      initContainers:
+        # Copy image-bundled skills/config into PVCs only when the mount is empty,
+        # so admin edits on the PVC are preserved across restarts.
+        - name: seed-skills
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ -f /pvc-skills/research/SKILL.md ]; then
+                echo "seed-skills: PVC already has skills; skipping."
+                exit 0
+              fi
+              echo "seed-skills: copying from image to PVC..."
+              mkdir -p /pvc-skills
+              cp -a /app/skills-source/. /pvc-skills/
+              if [ -f /app/skills-source/.HELPUDOC_SOURCE_REVISION ]; then
+                cp /app/skills-source/.HELPUDOC_SOURCE_REVISION /pvc-skills/.HELPUDOC_IMAGE_SOURCE_REVISION || true
+              fi
+          volumeMounts:
+            - name: skills-data
+              mountPath: /pvc-skills
+        - name: seed-plugins
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ -f /pvc-plugins/data-analytics/plugin.yaml ]; then
+                echo "seed-plugins: PVC already has plugins; skipping."
+                exit 0
+              fi
+              echo "seed-plugins: copying from image to PVC..."
+              mkdir -p /pvc-plugins
+              cp -a /app/plugins-source/. /pvc-plugins/
+              if [ -f /app/plugins-source/.HELPUDOC_SOURCE_REVISION ]; then
+                cp /app/plugins-source/.HELPUDOC_SOURCE_REVISION /pvc-plugins/.HELPUDOC_IMAGE_SOURCE_REVISION || true
+              fi
+          volumeMounts:
+            - name: plugins-data
+              mountPath: /pvc-plugins
+        - name: seed-agent-config
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ -f /pvc-agent-config/runtime.yaml ]; then
+                echo "seed-agent-config: PVC already has runtime.yaml; skipping."
+                exit 0
+              fi
+              echo "seed-agent-config: copying runtime.yaml from image to PVC..."
+              mkdir -p /pvc-agent-config
+              cp /app/agent-config-source/runtime.yaml /pvc-agent-config/runtime.yaml
+              if [ -f /app/agent-config-source/.HELPUDOC_SOURCE_REVISION ]; then
+                cp /app/agent-config-source/.HELPUDOC_SOURCE_REVISION /pvc-agent-config/.HELPUDOC_IMAGE_SOURCE_REVISION || true
+              fi
+          volumeMounts:
+            - name: agent-config-data
+              mountPath: /pvc-agent-config
+      containers:
+        - name: backend
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          ports:
+            - containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            periodSeconds: 30
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              # The worker shares this pod's scheduling budget. Keep the
+              # combined backend + worker request at the pre-worker footprint.
+              cpu: "200m"
+              memory: "384Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: KNOWLEDGE_DEDICATED_WORKER
+              value: "true"
+            - name: KNOWLEDGE_RETRIEVAL_MODE
+              value: lexical-graph
+            - name: KNOWLEDGE_VECTOR_ENABLED
+              value: "false"
+            - name: KNOWLEDGE_MULTIMODAL_EMBEDDINGS
+              value: "false"
+            - name: KNOWLEDGE_EMBEDDING_DIMENSIONS
+              value: "768"
+            - name: AGENT_URL
+              value: http://localhost:8001
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: SESSION_SECRET
+            - name: SESSION_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SESSION_NAME
+            - name: SESSION_TTL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SESSION_TTL_SECONDS
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: ANALYTICS_TIMEZONE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: ANALYTICS_TIMEZONE
+                  optional: true
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_BUCKET_NAME
+            - name: S3_ENDPOINT
+              value: http://minio:9000
+            - name: S3_PUBLIC_ENDPOINT
+              value: https://www.lc-demo.com
+            - name: S3_FORCE_PATH_STYLE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_FORCE_PATH_STYLE
+            - name: KNOWLEDGE_UPLOAD_MAX_BYTES
+              value: "1073741824"
+            - name: KNOWLEDGE_UPLOAD_TTL_SECONDS
+              value: "1800"
+            - name: WORKSPACE_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WORKSPACE_ROOT
+            - name: SKILLS_ROOT
+              value: /app/skills
+            - name: PLUGINS_ROOT
+              value: /app/plugins
+            - name: AGENT_CONFIG_PATH
+              value: /agent/config/runtime.yaml
+            - name: AGENT_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AGENT_JWT_SECRET
+            - name: AUTH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: AUTH_MODE
+            - name: SESSION_COOKIE_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SESSION_COOKIE_DOMAIN
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_CLIENT_ID
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GOOGLE_OAUTH_CLIENT_SECRET
+                  optional: true
+            - name: GOOGLE_OAUTH_REDIRECT_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_REDIRECT_URI
+                  optional: true
+            - name: GOOGLE_OAUTH_POST_LOGIN_REDIRECT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_POST_LOGIN_REDIRECT
+                  optional: true
+            - name: GOOGLE_OAUTH_SCOPES
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_SCOPES
+                  optional: true
+            - name: GOOGLE_WORKSPACE_MCP_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_WORKSPACE_MCP_URL
+                  optional: true
+            - name: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+                  optional: true
+            - name: GCP_COST_SERVICE_ACCOUNT_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GCP_COST_SERVICE_ACCOUNT_JSON
+                  optional: true
+            - name: GCP_COST_SERVICE_ACCOUNT_JSON_B64
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GCP_COST_SERVICE_ACCOUNT_JSON_B64
+                  optional: true
+            - name: OAUTH_TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: OAUTH_TOKEN_ENCRYPTION_KEY
+                  optional: true
+            - name: ENABLE_SKILL_SANDBOX_RUNNER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: ENABLE_SKILL_SANDBOX_RUNNER
+                  optional: true
+          volumeMounts:
+            - name: workspace-data
+              mountPath: /app/workspaces
+            - name: skills-data
+              mountPath: /app/skills
+            - name: plugins-data
+              mountPath: /app/plugins
+            - name: agent-config-data
+              mountPath: /agent/config
+        - name: knowledge-worker
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          command: ["npm"]
+          args: ["run", "worker:knowledge"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: AGENT_URL
+              value: http://localhost:8001
+            - name: KNOWLEDGE_DEDICATED_WORKER
+              value: "true"
+            - name: KNOWLEDGE_WORKER_CONCURRENCY
+              value: "2"
+            - name: KNOWLEDGE_ENRICHMENT_MODE
+              value: gemini-lite
+            - name: KNOWLEDGE_RETRIEVAL_MODE
+              value: lexical-graph
+            - name: KNOWLEDGE_VECTOR_ENABLED
+              value: "false"
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: AGENT_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AGENT_JWT_SECRET
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_BUCKET_NAME
+            - name: S3_ENDPOINT
+              value: http://minio:9000
+            - name: S3_FORCE_PATH_STYLE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_FORCE_PATH_STYLE
+            - name: WORKSPACE_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WORKSPACE_ROOT
+          volumeMounts:
+            - name: workspace-data
+              mountPath: /app/workspaces
+        - name: agent
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          ports:
+            - containerPort: 8001
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            periodSeconds: 30
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "750m"
+              memory: "4Gi"
+            limits:
+              cpu: "1500m"
+              memory: "8Gi"
+          env:
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: AGENT_CONFIG_PATH
+              value: /agent/config/runtime.yaml
+            - name: KNOWLEDGE_MARKITDOWN_MODE
+              value: primary
+            - name: KNOWLEDGE_OCR_MODE
+              value: auto
+            - name: KNOWLEDGE_OCR_TEXT_THRESHOLD
+              value: "40"
+            - name: KNOWLEDGE_OCR_BATCH_SIZE
+              value: "6"
+            - name: KNOWLEDGE_OCR_CONCURRENCY
+              value: "4"
+            - name: KNOWLEDGE_EMBEDDING_MODEL
+              value: gemini-embedding-2
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: POSTGRES_PASSWORD
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GEMINI_API_KEY
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: AGENT_STORE_DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: WORKSPACE_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WORKSPACE_ROOT
+            - name: SKILLS_ROOT
+              value: /app/skills
+            - name: PLUGINS_ROOT
+              value: /app/plugins
+            - name: S3_ENDPOINT
+              value: http://minio:9000
+            - name: MINIO_ENDPOINT
+              value: http://minio:9000
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_BUCKET_NAME
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: BQ_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: BQ_ACCESS_TOKEN
+                  optional: true
+            - name: AGENT_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AGENT_JWT_SECRET
+            - name: AUTH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: AUTH_MODE
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_CLIENT_ID
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GOOGLE_OAUTH_CLIENT_SECRET
+                  optional: true
+            - name: GOOGLE_OAUTH_REDIRECT_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_REDIRECT_URI
+                  optional: true
+            - name: GOOGLE_OAUTH_POST_LOGIN_REDIRECT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_POST_LOGIN_REDIRECT
+                  optional: true
+            - name: GOOGLE_OAUTH_SCOPES
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_SCOPES
+                  optional: true
+            - name: GOOGLE_WORKSPACE_MCP_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_WORKSPACE_MCP_URL
+                  optional: true
+            - name: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+                  optional: true
+            - name: GCP_COST_SERVICE_ACCOUNT_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GCP_COST_SERVICE_ACCOUNT_JSON
+                  optional: true
+            - name: GCP_COST_SERVICE_ACCOUNT_JSON_B64
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GCP_COST_SERVICE_ACCOUNT_JSON_B64
+                  optional: true
+            - name: OAUTH_TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: OAUTH_TOKEN_ENCRYPTION_KEY
+                  optional: true
+            - name: LANGFUSE_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_BASE_URL
+                  optional: true
+            - name: LANGFUSE_TRACING_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_TRACING_ENABLED
+                  optional: true
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+            - name: LANGFUSE_NEXTAUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_NEXTAUTH_URL
+                  optional: true
+            - name: HELPUDOC_SANDBOX_NAMESPACE
+              value: helpudoc
+            - name: HELPUDOC_SANDBOX_WORKSPACE_PVC
+              value: workspace-pvc
+            - name: HELPUDOC_SANDBOX_RUNTIME_CLASS
+              value: gvisor
+            - name: HELPUDOC_SANDBOX_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: HELPUDOC_SANDBOX_IMAGE
+                  optional: true
+            - name: HELPUDOC_SANDBOX_BACKEND
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: HELPUDOC_SANDBOX_BACKEND
+                  optional: true
+            - name: OFFICE_SERVICE_URL
+              value: http://localhost:8002
+          volumeMounts:
+            - name: workspace-data
+              mountPath: /app/workspaces
+            - name: skills-data
+              mountPath: /app/skills
+            - name: skills-data
+              mountPath: /skills
+            - name: plugins-data
+              mountPath: /app/plugins
+            - name: plugins-data
+              mountPath: /plugins
+            - name: agent-config-data
+              mountPath: /agent/config
+        - name: office-service
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-office-service:latest
+          ports:
+            - containerPort: 8002
+          env:
+            - name: OFFICE_SERVICE_WORKSPACE_ROOT
+              value: /app/workspaces
+            - name: OFFICECLI_SKIP_UPDATE
+              value: "1"
+            - name: OFFICECLI_NO_AUTO_RESIDENT
+              value: "1"
+            - name: HOME
+              value: /tmp/officecli-home
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: 8002
+            periodSeconds: 3
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8002
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8002
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: workspace-data
+              mountPath: /app/workspaces
+            - name: office-service-tmp
+              mountPath: /tmp
+        - name: google-workspace-mcp
+          image: python:3.13-slim
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          env:
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_CLIENT_ID
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GOOGLE_OAUTH_CLIENT_SECRET
+                  optional: true
+            - name: MCP_ENABLE_OAUTH21
+              value: "true"
+            - name: EXTERNAL_OAUTH21_PROVIDER
+              value: "true"
+            - name: WORKSPACE_MCP_STATELESS_MODE
+              value: "true"
+            - name: WORKSPACE_MCP_HOST
+              value: "0.0.0.0"
+            - name: WORKSPACE_MCP_PORT
+              value: "8000"
+            - name: WORKSPACE_MCP_BASE_URI
+              value: "http://localhost"
+            - name: PORT
+              value: "8000"
+          command:
+            - /bin/sh
+            - -lc
+            - pip install --no-cache-dir workspace-mcp && workspace-mcp --transport streamable-http --tools gmail drive calendar sheets
+      volumes:
+        - name: workspace-data
+          persistentVolumeClaim:
+            claimName: workspace-pvc
+        - name: skills-data
+          persistentVolumeClaim:
+            claimName: skills-pvc
+        - name: plugins-data
+          persistentVolumeClaim:
+            claimName: plugins-pvc
+        - name: agent-config-data
+          persistentVolumeClaim:
+            claimName: agent-config-pvc
+        - name: office-service-tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: helpudoc
+spec:
+  selector:
+    app: helpudoc-app
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: backend
+    - port: 8001
+      targetPort: 8001
+      name: agent

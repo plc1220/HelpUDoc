@@ -1,4 +1,4 @@
-"""Path resolution and security validation for office-service."""
+"""Workspace path and OfficeCLI operation validation."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from models import (
+from .models import (
     ALLOWED_COMMANDS,
     BLOCKED_FIELDS,
     BLOCKED_NESTED_KEYS,
@@ -126,12 +126,16 @@ def validate_operations(operations: list[dict[str, Any]], max_operations: int) -
                 f"Operation at index {i} contains blocked fields: {sorted(blocked_found)}"
             )
 
-        # Require props to be a dict (object) if present
+        # OfficeCLI accepts either a JSON object or key=value string array.
         if "props" in op_dict:
-            if not isinstance(op_dict["props"], dict):
+            props = op_dict["props"]
+            valid_array = isinstance(props, list) and all(
+                isinstance(item, str) and "=" in item for item in props
+            )
+            if not isinstance(props, dict) and not valid_array:
                 raise InvalidOperationError(
-                    f"Operation '{cmd_name}' at index {i}: 'props' must be an object (dict), "
-                    f"got {type(op_dict['props']).__name__}"
+                    f"Operation '{cmd_name}' at index {i}: 'props' must be an object or "
+                    f"a key=value string array, got {type(props).__name__}"
                 )
 
         # Per-command field allowlist
@@ -176,3 +180,10 @@ def _validate_nested(obj: Any, op_index: int, cmd_name: str, depth: int = 0) -> 
         for item in obj:
             if isinstance(item, (dict, list)):
                 _validate_nested(item, op_index, cmd_name, depth + 1)
+            elif isinstance(item, str) and "=" in item:
+                key = item.split("=", 1)[0].strip().lower()
+                if key in BLOCKED_NESTED_KEYS:
+                    raise InvalidOperationError(
+                        f"Operation '{cmd_name}' at index {op_index}: "
+                        f"nested key '{key}' is blocked (potential filesystem/network reference)"
+                    )

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { WorkspaceService } from '../services/workspaceService';
 import { WorkspacePublicationService } from '../services/workspacePublicationService';
 import { UserService } from '../services/userService';
-import { HttpError } from '../errors';
+import { ConflictError, HttpError } from '../errors';
 
 const createWorkspaceSchema = z.object({
   name: z.string().trim().max(255).optional(),
@@ -42,6 +42,10 @@ const shareWorkspaceSchema = z.object({
 const workspaceEditingPolicySchema = z.object({
   editingPolicy: z.enum(['direct', 'review']),
 });
+
+const transferWorkspaceOwnershipSchema = z.object({
+  userId: z.string().uuid(),
+}).strict();
 
 const teamAccessSchema = z.object({
   teamId: z.string().uuid(),
@@ -88,6 +92,13 @@ export default function workspaceRoutes(
     }
     console.error(fallbackMessage, error);
     return res.status(500).json({ error: fallbackMessage });
+  };
+
+  const requireListedWorkspace = async (workspaceId: string, userId: string) => {
+    const workspace = (await workspaceService.listWorkspacesForUser(userId))
+      .find((candidate) => candidate.id === workspaceId);
+    if (!workspace) throw new HttpError(500, 'Workspace lifecycle state is unavailable');
+    return workspace;
   };
 
   router.get('/', async (req, res) => {
@@ -246,6 +257,40 @@ export default function workspaceRoutes(
     }
   });
 
+  // Autosync is deliberately resolution-free. It may fast-forward or merge
+  // non-overlapping changes, but overlapping edits are surfaced as a conflict
+  // so opening a draft can never silently choose one side.
+  router.post('/:workspaceId/autosync', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await publicationService.sync(req.params.workspaceId, user.userId, {});
+      if (result.status === 'review_needed') {
+        throw new ConflictError('Review overlapping workspace changes before syncing', {
+          code: 'REVIEW_NEEDED',
+          conflicts: result.conflicts,
+        });
+      }
+      res.json(result);
+    } catch (error) {
+      handleError(res, error, 'Failed to autosync Shared workspace updates');
+    }
+  });
+
+  router.post('/:workspaceId/reconnect', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const sync = await publicationService.reconnect(req.params.workspaceId, user.userId);
+      const workspace = (await workspaceService.listWorkspacesForUser(user.userId))
+        .find((candidate) => candidate.id === req.params.workspaceId);
+      if (!workspace) {
+        throw new ConflictError('The private workspace could not be reconnected');
+      }
+      res.json({ workspace, sync });
+    } catch (error) {
+      handleError(res, error, 'Failed to reconnect private workspace');
+    }
+  });
+
   router.get('/:workspaceId/history', async (req, res) => {
     try {
       const user = requireUserContext(req);
@@ -334,6 +379,78 @@ export default function workspaceRoutes(
       res.status(204).send();
     } catch (error) {
       handleError(res, error, 'Failed to delete workspace');
+    }
+  });
+
+  router.post('/:workspaceId/trash', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      await workspaceService.deleteWorkspace(req.params.workspaceId, user.userId);
+      const workspace = await requireListedWorkspace(req.params.workspaceId, user.userId);
+      res.json({ workspace });
+    } catch (error) {
+      handleError(res, error, 'Failed to trash workspace');
+    }
+  });
+
+  router.post('/:workspaceId/unshare', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      await workspaceService.unshareWorkspace(req.params.workspaceId, user.userId);
+      const workspace = await requireListedWorkspace(req.params.workspaceId, user.userId);
+      res.json({ workspace });
+    } catch (error) {
+      handleError(res, error, 'Failed to unshare workspace');
+    }
+  });
+
+  router.post('/:workspaceId/reshare', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      await workspaceService.reshareWorkspace(req.params.workspaceId, user.userId);
+      const workspace = await requireListedWorkspace(req.params.workspaceId, user.userId);
+      res.json({ workspace });
+    } catch (error) {
+      handleError(res, error, 'Failed to reshare workspace');
+    }
+  });
+
+  router.post('/:workspaceId/restore', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      await workspaceService.restoreWorkspace(req.params.workspaceId, user.userId);
+      const workspace = await requireListedWorkspace(req.params.workspaceId, user.userId);
+      res.json({ workspace });
+    } catch (error) {
+      handleError(res, error, 'Failed to restore workspace');
+    }
+  });
+
+  router.post('/:workspaceId/leave', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      await workspaceService.leaveWorkspace(req.params.workspaceId, user.userId);
+      res.json({ leftWorkspaceId: req.params.workspaceId });
+    } catch (error) {
+      handleError(res, error, 'Failed to leave workspace');
+    }
+  });
+
+  router.post('/:workspaceId/transfer-ownership', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = transferWorkspaceOwnershipSchema.parse(req.body || {});
+      await workspaceService.transferWorkspaceOwnership(
+        req.params.workspaceId,
+        user.userId,
+        payload.userId,
+      );
+      res.status(204).send();
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid ownership transfer payload' });
+      }
+      handleError(res, error, 'Failed to transfer workspace ownership');
     }
   });
 

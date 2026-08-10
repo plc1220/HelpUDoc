@@ -40,8 +40,8 @@ export const isDraftReviewChangesActionable = (
 ): boolean => isLinkedDraftWorkspace(workspace) && workspace?.publicationStatus === 'changes_to_publish';
 
 /**
- * Extract the conflict list from a failed sync attempt. The backend answers a sync that has
- * unresolved overlaps with HTTP 409 and `details.conflicts`, which drives `Resolve changes`.
+ * Extract the conflict list from an autosync HTTP conflict. Manual sync returns
+ * the same conflicts in a normal `review_needed` result.
  */
 export const extractSyncConflicts = (details: unknown): Array<{ path: string }> => {
   if (!details || typeof details !== 'object') return [];

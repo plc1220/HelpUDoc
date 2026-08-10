@@ -397,13 +397,13 @@ spec:
             - containerPort: 8001
           startupProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8001
             periodSeconds: 5
             failureThreshold: 120
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8001
             periodSeconds: 10
             timeoutSeconds: 2
@@ -417,11 +417,11 @@ spec:
             failureThreshold: 3
           resources:
             requests:
-              cpu: "750m"
+              cpu: "800m"
               memory: "4Gi"
             limits:
-              cpu: "1500m"
-              memory: "8Gi"
+              cpu: "2"
+              memory: "9Gi"
           env:
             - name: REDIS_URL
               value: redis://redis:6379
@@ -619,8 +619,18 @@ spec:
                   name: helpudoc-config
                   key: HELPUDOC_SANDBOX_BACKEND
                   optional: true
-            - name: OFFICE_SERVICE_URL
-              value: http://localhost:8002
+            - name: SANDBOX_INLINE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SANDBOX_INLINE_ENABLED
+                  optional: true
+            - name: SANDBOX_INLINE_MAX_GLOBAL_JOBS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SANDBOX_INLINE_MAX_GLOBAL_JOBS
+                  optional: true
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
@@ -634,57 +644,6 @@ spec:
               mountPath: /plugins
             - name: agent-config-data
               mountPath: /agent/config
-        - name: office-service
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-office-service:latest
-          ports:
-            - containerPort: 8002
-          env:
-            - name: OFFICE_SERVICE_WORKSPACE_ROOT
-              value: /app/workspaces
-            - name: OFFICECLI_SKIP_UPDATE
-              value: "1"
-            - name: OFFICECLI_NO_AUTO_RESIDENT
-              value: "1"
-            - name: HOME
-              value: /tmp/officecli-home
-          startupProbe:
-            httpGet:
-              path: /readyz
-              port: 8002
-            periodSeconds: 3
-            failureThreshold: 10
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8002
-            periodSeconds: 30
-            timeoutSeconds: 3
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: 8002
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
-          resources:
-            requests:
-              cpu: "50m"
-              memory: "128Mi"
-            limits:
-              cpu: "500m"
-              memory: "512Mi"
-          securityContext:
-            readOnlyRootFilesystem: true
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-          volumeMounts:
-            - name: workspace-data
-              mountPath: /app/workspaces
-            - name: office-service-tmp
-              mountPath: /tmp
         - name: google-workspace-mcp
           image: python:3.13-slim
           ports:
@@ -740,9 +699,6 @@ spec:
         - name: agent-config-data
           persistentVolumeClaim:
             claimName: agent-config-pvc
-        - name: office-service-tmp
-          emptyDir:
-            sizeLimit: 256Mi
 ---
 apiVersion: v1
 kind: Service

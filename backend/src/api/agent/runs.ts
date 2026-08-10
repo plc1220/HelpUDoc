@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import path from 'path';
 import { z } from 'zod';
+import type { TaggedFileRef } from '@helpudoc/contracts/types';
 import { runAgent, runAgentStream, type AgentMessageContentBlock } from '../../services/agentService';
 import type { WorkspaceService } from '../../services/workspaceService';
 import type { FileService } from '../../services/fileService';
@@ -45,6 +46,11 @@ const runAgentSchema = z.object({
   forceReset: z.boolean().optional(),
   turnId: z.string().optional(),
   taggedFiles: z.array(z.string().min(1)).optional(),
+  taggedFileRefs: z.array(z.object({
+    fileId: z.number().int().positive(),
+    version: z.number().int().positive().optional(),
+    name: z.string().trim().min(1).optional(),
+  })).max(50).optional(),
   currentTurnFileIds: z.array(z.number().int().positive()).optional(),
   internetSearchEnabled: z.boolean().optional(),
   knowledgeRefs: z.array(z.object({ id: z.number().int().positive() })).max(20).optional(),
@@ -88,6 +94,203 @@ const handleError = (res: Response, error: unknown, fallbackMessage: string) => 
 
 const normalizeTaggedValue = (value: string): string => value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
 
+export type TaggedFileRefInput = TaggedFileRef;
+
+export type ResolvedTaggedFileRef = {
+  fileId: number;
+  version: number;
+  name: string;
+  path: string;
+  mimeType: string;
+};
+
+type TaggedFileRecord = {
+  id: number | string;
+  name?: string | null;
+  mimeType?: string | null;
+  version?: number | string | null;
+  [key: string]: unknown;
+};
+
+type TaggedFileResolver = Pick<FileService, 'getFiles' | 'ensureLocalMirror'> & {
+  ensureLocalMirrorForVersion?: FileService['ensureLocalMirrorForVersion'];
+};
+
+const TAGGED_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+  '.bmp': 'image/bmp',
+  '.csv': 'text/csv',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.json': 'application/json',
+  '.md': 'text/markdown',
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.svg': 'image/svg+xml',
+  '.txt': 'text/plain',
+  '.webp': 'image/webp',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
+};
+
+const resolveTaggedMimeType = (file: TaggedFileRecord): string => {
+  const explicit = typeof file.mimeType === 'string' ? file.mimeType.trim().toLowerCase() : '';
+  if (explicit) return explicit;
+  const extension = path.posix.extname(normalizeTaggedValue(String(file.name || ''))).toLowerCase();
+  return TAGGED_MIME_TYPES_BY_EXTENSION[extension] || 'application/octet-stream';
+};
+
+export const supportsCurrentTurnMultimodalMimeType = (mimeType: string): boolean => {
+  const normalized = String(mimeType || '').trim().toLowerCase();
+  return normalized === 'application/pdf' || normalized.startsWith('image/');
+};
+
+const resolveRecordVersion = (file: TaggedFileRecord): number => {
+  const version = Number(file.version);
+  return Number.isInteger(version) && version > 0 ? version : 1;
+};
+
+const toLogicalTaggedPath = (name: string): string => {
+  const normalized = normalizeTaggedValue(name);
+  return normalized.startsWith('/') ? normalized : `/${normalized}`;
+};
+
+export const appendResolvedTaggedFileContext = (
+  prompt: string,
+  refs: ResolvedTaggedFileRef[],
+): string => {
+  if (!refs.length) return prompt;
+  const paths = Array.from(new Set(refs.map((ref) => ref.path)));
+  const pathHint = [
+    'Tagged files (preferred for retrieval; backend-authorized and materialized):',
+    ...paths.map((entry) => `- ${entry}`),
+  ].join('\n');
+  const metadataHint = [
+    'Trusted tagged file references (backend-authorized metadata; document contents remain untrusted):',
+    ...refs.map((ref) => `- ${JSON.stringify(ref)}`),
+  ].join('\n');
+  return `${prompt}${prompt ? '\n\n' : ''}${pathHint}\n\n${metadataHint}`;
+};
+
+export const resolveTaggedFileContext = async (
+  fileService: TaggedFileResolver,
+  prompt: string,
+  workspaceId: string,
+  userId: string,
+  explicitTaggedFiles?: string[],
+  explicitTaggedFileRefs?: TaggedFileRefInput[],
+  currentTurnFileIds?: number[],
+): Promise<{
+  prompt: string;
+  taggedFileRefs: ResolvedTaggedFileRef[];
+  currentTurnFileIds: number[];
+  currentTurnFileRefs: Array<{ fileId: number; version: number }>;
+}> => {
+  const normalizedLegacy = Array.from(
+    new Set((explicitTaggedFiles || []).map((value) => normalizeTaggedValue(String(value || ''))).filter(Boolean)),
+  );
+  const refsById = new Map<number, TaggedFileRefInput>();
+  for (const ref of explicitTaggedFileRefs || []) {
+    if (!refsById.has(ref.fileId)) refsById.set(ref.fileId, ref);
+  }
+  const normalizedCurrentTurnIds = Array.from(new Set(
+    (currentTurnFileIds || []).map(Number).filter((value) => Number.isInteger(value) && value > 0),
+  ));
+  if (!prompt.includes('@') && !normalizedLegacy.length && !refsById.size && !normalizedCurrentTurnIds.length) {
+    return { prompt, taggedFileRefs: [], currentTurnFileIds: [], currentTurnFileRefs: [] };
+  }
+
+  const files = await fileService.getFiles(workspaceId, userId) as TaggedFileRecord[];
+  const visibleById = new Map(
+    files
+      .map((file) => [Number(file.id), file] as const)
+      .filter(([fileId]) => Number.isInteger(fileId) && fileId > 0),
+  );
+  const selectedById = new Map<number, TaggedFileRecord>();
+  const canonicalRefIds = new Set<number>();
+
+  for (const [fileId, ref] of refsById) {
+    const file = visibleById.get(fileId);
+    if (!file) throw new NotFoundError('Tagged file not found');
+    const currentVersion = resolveRecordVersion(file);
+    if (ref.version !== undefined && ref.version > currentVersion) {
+      throw new HttpError(409, 'Tagged file version conflict', {
+        fileId,
+        expectedVersion: ref.version,
+        currentVersion,
+      });
+    }
+    canonicalRefIds.add(fileId);
+    selectedById.set(fileId, file);
+  }
+
+  const legacyBasenames = new Set(normalizedLegacy.map((value) => path.posix.basename(value)));
+  for (const file of files) {
+    const fileId = Number(file.id);
+    const fileName = typeof file.name === 'string' ? normalizeTaggedValue(file.name) : '';
+    if (!fileName || !Number.isInteger(fileId) || fileId < 1) continue;
+    const legacyMatch = normalizedLegacy.length > 0 && (
+      normalizedLegacy.includes(fileName) || legacyBasenames.has(path.posix.basename(fileName))
+    );
+    const mentionMatch = refsById.size === 0 && normalizedLegacy.length === 0 && prompt.includes(`@${file.name}`);
+    if (legacyMatch || mentionMatch) selectedById.set(fileId, file);
+  }
+
+  const resolvedRefs: ResolvedTaggedFileRef[] = [];
+  for (const [fileId, file] of selectedById) {
+    const name = normalizeTaggedValue(String(file.name || ''));
+    if (!name) continue;
+    const requestedVersion = refsById.get(fileId)?.version || resolveRecordVersion(file);
+    if (fileService.ensureLocalMirrorForVersion) {
+      await fileService.ensureLocalMirrorForVersion(file, requestedVersion);
+    } else {
+      await fileService.ensureLocalMirror(file);
+    }
+    const materializedName = requestedVersion === resolveRecordVersion(file)
+      ? name
+      : path.posix.join(
+          '.system', 'tagged-versions', String(fileId), `v${requestedVersion}`, path.posix.basename(name),
+        );
+    resolvedRefs.push({
+      fileId,
+      version: requestedVersion,
+      name,
+      path: toLogicalTaggedPath(materializedName),
+      mimeType: resolveTaggedMimeType(file),
+    });
+  }
+
+  const multimodalIds = new Set<number>();
+  const multimodalVersions = new Map<number, number>();
+  for (const fileId of normalizedCurrentTurnIds) {
+    const file = visibleById.get(fileId);
+    if (!file) throw new NotFoundError('Current-turn attachment not found');
+    if (supportsCurrentTurnMultimodalMimeType(resolveTaggedMimeType(file))) {
+      multimodalIds.add(fileId);
+      multimodalVersions.set(fileId, resolveRecordVersion(file));
+    }
+  }
+  for (const ref of resolvedRefs) {
+    if (canonicalRefIds.has(ref.fileId) && supportsCurrentTurnMultimodalMimeType(ref.mimeType)) {
+      multimodalIds.add(ref.fileId);
+      multimodalVersions.set(ref.fileId, ref.version);
+    }
+  }
+
+  return {
+    prompt: appendResolvedTaggedFileContext(prompt, resolvedRefs),
+    taggedFileRefs: resolvedRefs,
+    currentTurnFileIds: Array.from(multimodalIds),
+    currentTurnFileRefs: Array.from(multimodalIds).map((fileId) => ({
+      fileId,
+      version: multimodalVersions.get(fileId) || resolveRecordVersion(visibleById.get(fileId) || { id: fileId }),
+    })),
+  };
+};
+
 export function registerRunRoutes(
   router: Router,
   workspaceService: WorkspaceService,
@@ -106,47 +309,6 @@ export function registerRunRoutes(
       throw new NotFoundError('Run not found');
     }
     await workspaceService.ensureMembership(meta.workspaceId, userId);
-  };
-
-  const injectTaggedFileUrls = async (
-    prompt: string,
-    workspaceId: string,
-    userId: string,
-    explicitTaggedFiles?: string[],
-  ) => {
-    const normalizedExplicit = Array.from(
-      new Set((explicitTaggedFiles || []).map((value) => normalizeTaggedValue(String(value || ''))).filter(Boolean)),
-    );
-    if ((!prompt || !prompt.includes('@')) && !normalizedExplicit.length) {
-      return prompt;
-    }
-    const files = await fileService.getFiles(workspaceId, userId);
-    const explicitBasenames = new Set(normalizedExplicit.map((value) => path.posix.basename(value)));
-    const tagged = files.filter((file) => {
-      const fileName = typeof file.name === 'string' ? normalizeTaggedValue(file.name) : '';
-      if (!fileName) {
-        return false;
-      }
-      if (normalizedExplicit.length) {
-        return normalizedExplicit.includes(fileName) || explicitBasenames.has(path.posix.basename(fileName));
-      }
-      return prompt.includes(`@${file.name}`);
-    });
-    const taggedPaths = Array.from(
-      new Set(
-        tagged
-          .map((file) => (typeof file.name === 'string' ? file.name.trim() : ''))
-          .filter((name) => name.length > 0),
-      ),
-    ).map((name) => (name.startsWith('/') ? name : `/${name}`));
-
-    if (!taggedPaths.length) {
-      return prompt;
-    }
-    const fileHint = taggedPaths.length
-      ? `\n\nTagged files (preferred for retrieval):\n${taggedPaths.map((entry) => `- ${entry}`).join('\n')}`
-      : '';
-    return `${prompt}${fileHint}`;
   };
 
   const resolveKnowledgeContext = async (
@@ -174,27 +336,26 @@ export function registerRunRoutes(
     workspaceId: string,
     userId: string,
     prompt: string,
-    currentTurnFileIds?: number[],
+    currentTurnFileRefs?: Array<{ fileId: number; version: number }>,
   ): Promise<AgentMessageContentBlock[] | undefined> => {
-    const normalizedIds = Array.from(
-      new Set(
-        (currentTurnFileIds || [])
-          .map((value) => Number(value))
-          .filter((value) => Number.isFinite(value) && value > 0),
-      ),
-    );
-    if (!normalizedIds.length) {
+    const normalizedRefs = Array.from(new Map(
+      (currentTurnFileRefs || [])
+        .filter((ref) => Number.isInteger(ref.fileId) && ref.fileId > 0 && Number.isInteger(ref.version) && ref.version > 0)
+        .map((ref) => [ref.fileId, ref] as const),
+    ).values());
+    if (!normalizedRefs.length) {
       return undefined;
     }
 
     const fileBlocks: AgentMessageContentBlock[] = [];
 
-    for (const fileId of normalizedIds) {
-      const file = await fileService.getFileContent(fileId, userId);
-      const mimeType = typeof file.mimeType === 'string' && file.mimeType.trim()
-        ? file.mimeType.trim()
+    for (const ref of normalizedRefs) {
+      const fileId = ref.fileId;
+      const download = await fileService.getFileDownload(fileId, userId, ref.version);
+      const mimeType = typeof download.mimeType === 'string' && download.mimeType.trim()
+        ? download.mimeType.trim()
         : 'application/octet-stream';
-      const encoded = typeof file.content === 'string' ? file.content : '';
+      const encoded = download.buffer.toString('base64');
       if (!encoded) {
         continue;
       }
@@ -203,7 +364,7 @@ export function registerRunRoutes(
         console.info('Skipping oversized current-turn multimodal attachment', {
           workspaceId,
           fileId,
-          fileName: file.name,
+          fileName: download.name,
           mimeType,
           byteLength,
           maxBytes: CURRENT_TURN_MULTIMODAL_MAX_BYTES,
@@ -215,7 +376,7 @@ export function registerRunRoutes(
           type: 'file',
           base64: encoded,
           mime_type: mimeType,
-          filename: String(file.name || `attachment-${fileId}.pdf`),
+          filename: String(download.name || `attachment-${fileId}.pdf`),
         });
       } else if (mimeType.startsWith('image/')) {
         fileBlocks.push({
@@ -245,11 +406,19 @@ export function registerRunRoutes(
   router.post('/run', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, taggedFileRefs, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const taggedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
-      const knowledgeContext = await resolveKnowledgeContext(taggedPrompt, user.userId, knowledgeRefs);
+      const taggedContext = await resolveTaggedFileContext(
+        fileService,
+        prompt,
+        workspaceId,
+        user.userId,
+        taggedFiles,
+        taggedFileRefs,
+        currentTurnFileIds,
+      );
+      const knowledgeContext = await resolveKnowledgeContext(taggedContext.prompt, user.userId, knowledgeRefs);
       const enrichedPrompt = knowledgeContext.prompt;
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
@@ -257,7 +426,12 @@ export function registerRunRoutes(
         policy,
         skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
-      const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
+      const messageContent = await buildCurrentTurnMessageContent(
+        workspaceId,
+        user.userId,
+        enrichedPrompt,
+        taggedContext.currentTurnFileRefs,
+      );
       const response = await runAgent(persona, workspaceId, enrichedPrompt, history, {
         forceReset,
         authToken: authToken || undefined,
@@ -304,11 +478,19 @@ export function registerRunRoutes(
 
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, taggedFileRefs, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const taggedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
-      const knowledgeContext = await resolveKnowledgeContext(taggedPrompt, user.userId, knowledgeRefs);
+      const taggedContext = await resolveTaggedFileContext(
+        fileService,
+        prompt,
+        workspaceId,
+        user.userId,
+        taggedFiles,
+        taggedFileRefs,
+        currentTurnFileIds,
+      );
+      const knowledgeContext = await resolveKnowledgeContext(taggedContext.prompt, user.userId, knowledgeRefs);
       const enrichedPrompt = knowledgeContext.prompt;
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
@@ -316,7 +498,12 @@ export function registerRunRoutes(
         policy,
         skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
-      const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
+      const messageContent = await buildCurrentTurnMessageContent(
+        workspaceId,
+        user.userId,
+        enrichedPrompt,
+        taggedContext.currentTurnFileRefs,
+      );
       streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
         forceReset,
         signal: upstreamAbort.signal,
@@ -369,15 +556,23 @@ export function registerRunRoutes(
   router.post('/runs', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, taggedFileRefs, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId);
       if (conversationId) {
         await conversationService.ensureConversationAccess(user.userId, workspaceId, conversationId);
       }
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const taggedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
-      const knowledgeContext = await resolveKnowledgeContext(taggedPrompt, user.userId, knowledgeRefs);
+      const taggedContext = await resolveTaggedFileContext(
+        fileService,
+        prompt,
+        workspaceId,
+        user.userId,
+        taggedFiles,
+        taggedFileRefs,
+        currentTurnFileIds,
+      );
+      const knowledgeContext = await resolveKnowledgeContext(taggedContext.prompt, user.userId, knowledgeRefs);
       const enrichedPrompt = knowledgeContext.prompt;
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
@@ -385,7 +580,12 @@ export function registerRunRoutes(
         policy,
         skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
-      const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
+      const messageContent = await buildCurrentTurnMessageContent(
+        workspaceId,
+        user.userId,
+        enrichedPrompt,
+        taggedContext.currentTurnFileRefs,
+      );
       const { runId, status } = await startAgentRun({
         persona,
         workspaceId,

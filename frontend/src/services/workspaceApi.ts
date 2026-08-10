@@ -1,4 +1,6 @@
 import { API_URL, apiFetch } from './apiClient';
+import type { Workspace, WorkspaceLifecycleAction } from '../types';
+export type { WorkspaceLifecycleAction } from '../types';
 
 export class WorkspaceApiError extends Error {
   status: number;
@@ -72,6 +74,26 @@ export const deleteWorkspace = async (workspaceId: string) => {
     throw new Error('Failed to delete workspace');
   }
 };
+
+const updateWorkspaceLifecycle = async (
+  workspaceId: string,
+  action: WorkspaceLifecycleAction,
+): Promise<{ workspace?: Workspace; sync?: WorkspaceSyncResult }> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/${action}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, `Failed to ${action} workspace`);
+  }
+  return response.status === 204 ? {} : response.json();
+};
+
+export const unshareWorkspace = (workspaceId: string) => updateWorkspaceLifecycle(workspaceId, 'unshare');
+export const reshareWorkspace = (workspaceId: string) => updateWorkspaceLifecycle(workspaceId, 'reshare');
+export const trashWorkspace = (workspaceId: string) => updateWorkspaceLifecycle(workspaceId, 'trash');
+export const restoreWorkspace = (workspaceId: string) => updateWorkspaceLifecycle(workspaceId, 'restore');
+export const leaveWorkspace = (workspaceId: string) => updateWorkspaceLifecycle(workspaceId, 'leave');
+export const reconnectWorkspace = (workspaceId: string) => updateWorkspaceLifecycle(workspaceId, 'reconnect');
 
 export type DirectoryUser = {
   id: string;
@@ -351,6 +373,13 @@ export type WorkspaceReviewChanges = {
   proposal: { id: string; status: string; title: string | null; updatedAt: string } | null;
 };
 
+export type WorkspaceSyncResult = {
+  workspaceId: string;
+  teamWorkspaceId: string;
+  status: 'up_to_date' | 'synced' | 'reviewed' | 'review_needed' | 'detached';
+  conflicts: PublicationConflict[];
+};
+
 export const getWorkspaceReviewChanges = async (
   privateWorkspaceId: string,
 ): Promise<WorkspaceReviewChanges> => {
@@ -364,7 +393,7 @@ export const getWorkspaceReviewChanges = async (
 export const syncWorkspaceWithTeam = async (
   privateWorkspaceId: string,
   resolutions: Record<string, 'private' | 'team'> = {},
-) => {
+): Promise<WorkspaceSyncResult> => {
   const response = await apiFetch(`${API_URL}/workspaces/${privateWorkspaceId}/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -372,6 +401,16 @@ export const syncWorkspaceWithTeam = async (
   });
   if (!response.ok) {
     return throwWorkspaceApiError(response, 'Failed to sync team updates');
+  }
+  return response.json();
+};
+
+export const autoSyncWorkspaceWithTeam = async (privateWorkspaceId: string): Promise<WorkspaceSyncResult> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${privateWorkspaceId}/autosync`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to sync Shared workspace updates');
   }
   return response.json();
 };

@@ -1,480 +1,383 @@
-/**
- * Tests for the Shared Working sync path in WorkspacePublicationService.sync().
- *
- * Covers:
- * - Modern links (baseSharedContentRevision > 0) sync from live Shared Working
- *   content without requiring a published version.
- * - Unchanged Shared Working returns up_to_date immediately.
- * - Mixed changes (both sides advanced, no usable published base) fail closed
- *   with REVIEW_NEEDED.
- */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { WorkspacePublicationService } from '../src/services/workspacePublicationService.ts';
+import { AccessDeniedError } from '../src/errors';
+import { WorkspacePublicationService } from '../src/services/workspacePublicationService';
 
-type SyncHarnessOptions = {
-  privateContentRevision?: number;
-  basePrivateContentRevision?: number;
-  baseSharedContentRevision?: number;
-  basePublishedVersionId?: string | null;
+type FileSpec = Record<string, string>;
+
+type HarnessOptions = {
+  baseFiles?: FileSpec;
+  privateFiles?: FileSpec;
+  sharedFiles?: FileSpec;
+  baseFolders?: string[];
+  privateFolders?: string[];
+  sharedFolders?: string[];
+  baseWorkingManifest?: boolean;
+  privateRevision?: number;
+  basePrivateRevision?: number;
+  sharedRevision?: number;
+  baseSharedRevision?: number;
   hasUnpublishedChanges?: boolean;
-  teamContentRevision?: number;
-  teamCurrentPublishedVersionId?: string | null;
-  teamUpdatedAt?: string | Date | null;
-  teamFilesUpdatedAt?: string | Date | null;
-  linkUpdatedAt?: string | Date | null;
+  linkStatus?: 'active' | 'detached';
+  privateStatus?: 'active' | 'archived' | 'unshared' | 'trashed';
+  sharedStatus?: 'active' | 'archived' | 'unshared' | 'trashed';
+  sharedVisibility?: 'team' | 'private';
+  sharedExists?: boolean;
+  sharedAccess?: boolean;
 };
 
-function sharedWorkingSyncHarness(options: SyncHarnessOptions = {}) {
-  const {
-    privateContentRevision = 3,
-    basePrivateContentRevision = 3,
-    baseSharedContentRevision = 5,
-    basePublishedVersionId = null,
-    hasUnpublishedChanges = false,
-    teamContentRevision = 6,
-    teamCurrentPublishedVersionId = null,
-    teamUpdatedAt = '2026-08-06T00:00:00.000Z',
-    teamFilesUpdatedAt = null as string | Date | null,
-    linkUpdatedAt = '2026-08-05T00:00:00.000Z',
-  } = options;
+function hash(value: string): string {
+  return `hash:${value}`;
+}
 
+function makeContent(files: FileSpec, folders: string[] = []) {
+  return {
+    files: new Map(Object.entries(files).map(([name, value]) => [name, {
+      name,
+      mimeType: 'text/plain',
+      buffer: Buffer.from(value),
+      hash: hash(value),
+      size: Buffer.byteLength(value),
+      fileVersionId: `version:${name}:${hash(value)}`,
+      objectKey: `objects/${name}/${hash(value)}`,
+      objectProvider: 's3',
+      providerVersion: `provider:${hash(value)}`,
+    }])),
+    folders,
+  };
+}
+
+function makeManifest(files: FileSpec, folders: string[] = []) {
+  return {
+    files: Object.entries(files).map(([name, value]) => ({
+      name,
+      mimeType: 'text/plain',
+      hash: hash(value),
+      size: Buffer.byteLength(value),
+      fileVersionId: `version:${name}:${hash(value)}`,
+      objectKey: `objects/${name}/${hash(value)}`,
+      objectProvider: 's3',
+      providerVersion: `provider:${hash(value)}`,
+    })),
+    folders,
+  };
+}
+
+function syncHarness(options: HarnessOptions = {}) {
   const userId = 'user-1';
   const privateWorkspaceId = 'ws-private';
   const teamWorkspaceId = 'ws-team';
+  const baseFiles = options.baseFiles ?? { 'notes.txt': 'base' };
+  const privateFiles = options.privateFiles ?? baseFiles;
+  const sharedFiles = options.sharedFiles ?? baseFiles;
+  const privateRevision = options.privateRevision ?? 3;
+  const sharedRevision = options.sharedRevision ?? 5;
 
   const privateWorkspace = {
     id: privateWorkspaceId,
-    name: 'My Draft',
-    slug: 'my-draft',
+    name: 'Private draft',
+    slug: 'private-draft',
     ownerId: userId,
     visibility: 'private' as const,
-    contentRevision: privateContentRevision,
+    status: options.privateStatus ?? 'active',
+    contentRevision: privateRevision,
+    createdAt: '2026-08-01T00:00:00Z',
+    updatedAt: '2026-08-01T00:00:00Z',
   };
-
-  const teamWorkspace = {
+  const sharedWorkspace = options.sharedExists === false ? undefined : {
     id: teamWorkspaceId,
-    name: 'Shared workspace',
-    slug: 'shared-workspace',
+    name: 'Shared Working',
+    slug: 'shared-working',
     ownerId: userId,
-    visibility: 'team' as const,
-    contentRevision: teamContentRevision,
-    currentPublishedVersionId: teamCurrentPublishedVersionId,
-    updatedAt: teamUpdatedAt,
+    visibility: options.sharedVisibility ?? 'team',
+    status: options.sharedStatus ?? 'active',
+    contentRevision: sharedRevision,
+    currentPublishedVersionId: null,
+    createdAt: '2026-08-01T00:00:00Z',
+    updatedAt: '2026-08-02T00:00:00Z',
   };
-
-  const link = {
+  const link: any = {
     privateWorkspaceId,
     teamWorkspaceId,
     userId,
-    basePublishedVersionId,
-    basePrivateContentRevision,
-    baseSharedContentRevision,
-    hasUnpublishedChanges,
-    createdAt: '2026-08-01T00:00:00.000Z',
-    updatedAt: linkUpdatedAt,
+    basePublishedVersionId: null,
+    basePrivateContentRevision: options.basePrivateRevision ?? 3,
+    baseSharedContentRevision: options.baseSharedRevision ?? 5,
+    baseWorkingManifest: options.baseWorkingManifest === false
+      ? null
+      : makeManifest(baseFiles, options.baseFolders),
+    hasUnpublishedChanges: options.hasUnpublishedChanges ?? false,
+    status: options.linkStatus ?? 'active',
+    detachedAt: options.linkStatus === 'detached' ? '2026-08-03T00:00:00Z' : null,
+    createdAt: '2026-08-01T00:00:00Z',
+    updatedAt: '2026-08-01T00:00:00Z',
   };
 
-  let replaceContentCalled = false;
-  let linkUpdates: Record<string, unknown> = {};
+  let replaceCalls = 0;
+  let readCalls = 0;
+  let replacement: any = null;
+  const linkUpdates: Record<string, unknown>[] = [];
 
-  const db = ((table: string) => {
+  const updateLink = async (payload: Record<string, unknown>) => {
+    linkUpdates.push(payload);
+    Object.assign(link, payload);
+    return 1;
+  };
+  const query = (table: string) => {
     if (table === 'workspace_publication_links') {
       return {
-        where: () => ({
-          first: async () => link,
-          update: async (payload: Record<string, unknown>) => {
-            linkUpdates = payload;
-            return 1;
-          },
-        }),
+        where: () => ({ first: async () => link, update: updateLink }),
       };
     }
-    if (table === 'files') {
+    if (table === 'workspaces') {
       return {
-        where: () => ({
-          max: () => ({
-            first: async () => ({ maxUpdatedAt: teamFilesUpdatedAt }),
-          }),
+        where: (predicate: { id?: string }) => ({
+          first: async () => predicate.id === teamWorkspaceId ? sharedWorkspace : privateWorkspace,
         }),
       };
     }
-    throw new Error(`Unexpected table: ${table}`);
-  }) as any;
+    throw new Error(`Unexpected table ${table}`);
+  };
+  const db = query as any;
   db.fn = { now: () => 'NOW()' };
 
-  const service = Object.create(WorkspacePublicationService.prototype) as WorkspacePublicationService;
+  const privateContent = makeContent(privateFiles, options.privateFolders);
+  const sharedContent = makeContent(sharedFiles, options.sharedFolders);
+  const fakeTx = ((table: string) => {
+    if (table === 'workspace_publication_links') {
+      return { where: () => ({ update: updateLink }) };
+    }
+    throw new Error(`Unexpected transaction table ${table}`);
+  }) as any;
+  fakeTx.fn = { now: () => 'NOW()' };
+
+  const service = Object.create(WorkspacePublicationService.prototype) as any;
   Object.assign(service, {
     db,
     workspaceService: {
-      ensureMembership: async (workspaceId: string, _userId: string, _opts?: unknown) => {
+      ensureMembership: async (workspaceId: string) => {
         if (workspaceId === privateWorkspaceId) {
           return { workspace: privateWorkspace, membership: { role: 'owner' } };
         }
-        return { workspace: teamWorkspace, membership: { role: 'contributor' } };
+        if (options.sharedAccess === false) throw new AccessDeniedError('revoked');
+        if (!sharedWorkspace) throw new Error('Shared workspace missing');
+        return { workspace: sharedWorkspace, membership: { role: 'contributor' } };
       },
     },
-    readWorkspaceContent: async (_id: string) => ({
-      files: new Map([
-        ['testing2.txt', {
-          name: 'testing2.txt',
-          mimeType: 'text/plain',
-          buffer: Buffer.from('shared content'),
-          hash: 'hash-shared',
-          size: 14,
-        }],
-      ]),
-      folders: [],
-    }),
+    readWorkspaceContent: async (workspaceId: string) => {
+      readCalls += 1;
+      return workspaceId === privateWorkspaceId ? privateContent : sharedContent;
+    },
+    ensureContentObjects: async () => undefined,
+    assertSharedWorkingRevision: async () => undefined,
+    copyPublishedSkillPinsToWorkspace: async () => undefined,
     replaceWorkspaceContent: async (
       _workspaceId: string,
-      _content: unknown,
-      _userId: string,
-      _tx?: unknown,
-      afterUpdate?: (tx: unknown, rev: number) => Promise<void>,
+      content: any,
+      _actor: string,
+      _transaction?: unknown,
+      afterUpdate?: (tx: unknown, revision: number) => Promise<void>,
     ) => {
-      replaceContentCalled = true;
-      const fakeTx = ((table: string) => {
-        if (table === 'workspace_publication_links') {
-          return {
-            where: () => ({
-              update: async (payload: Record<string, unknown>) => {
-                linkUpdates = payload;
-                return 1;
-              },
-            }),
-          };
-        }
-        return { where: () => ({ del: async () => 0, insert: async () => [] }) };
-      }) as any;
-      fakeTx.fn = { now: () => 'NOW()' };
-      if (afterUpdate) await afterUpdate(fakeTx, teamContentRevision + 1);
-      return teamContentRevision + 1;
+      replaceCalls += 1;
+      replacement = content;
+      await afterUpdate?.(fakeTx, privateRevision + 1);
+      return privateRevision + 1;
     },
-    copyPublishedSkillPinsToWorkspace: async () => {},
   });
 
-  return { service, userId, replaceContentCalled: () => replaceContentCalled, linkUpdates: () => linkUpdates };
+  return {
+    service,
+    link,
+    privateWorkspaceId,
+    userId,
+    replaceCalls: () => replaceCalls,
+    readCalls: () => readCalls,
+    replacement: () => replacement,
+    linkUpdates,
+  };
 }
 
-// ─── Shared-only drift: sync successfully without a published version ────────
-
-test('sync replaces private draft with Shared Working content when only shared side advanced', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 6,
-    teamCurrentPublishedVersionId: null,
-    basePublishedVersionId: null,
-    hasUnpublishedChanges: false,
+test('clean private Working fast-forwards from the exact Shared Working manifest', async () => {
+  const harness = syncHarness({
+    sharedFiles: { 'notes.txt': 'shared-v2' },
+    sharedRevision: 6,
   });
 
-  const result = await harness.service.sync('ws-private', 'user-1');
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
 
   assert.equal(result.status, 'synced');
-  assert.equal(result.workspaceId, 'ws-private');
-  assert.equal(result.teamWorkspaceId, 'ws-team');
+  assert.equal(harness.replaceCalls(), 1);
+  assert.equal(harness.replacement().files.get('notes.txt').hash, hash('shared-v2'));
+  assert.equal(harness.link.baseSharedContentRevision, 6);
+  assert.equal(harness.link.hasUnpublishedChanges, false);
+  assert.equal(harness.link.baseWorkingManifest.files[0].objectKey, 'objects/notes.txt/hash:shared-v2');
+});
+
+test('divergent non-overlapping Working changes merge automatically', async () => {
+  const harness = syncHarness({
+    baseFiles: { 'private.txt': 'base-private', 'shared.txt': 'base-shared' },
+    privateFiles: { 'private.txt': 'private-v2', 'shared.txt': 'base-shared' },
+    sharedFiles: { 'private.txt': 'base-private', 'shared.txt': 'shared-v2' },
+    privateRevision: 4,
+    sharedRevision: 6,
+  });
+
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
+
+  assert.equal(result.status, 'synced');
   assert.deepEqual(result.conflicts, []);
-  assert.ok(harness.replaceContentCalled());
-
-  const updates = harness.linkUpdates();
-  assert.equal(updates.baseSharedContentRevision, 6);
-  assert.equal(updates.hasUnpublishedChanges, false);
-  assert.equal(updates.basePublishedVersionId, null);
+  assert.equal(harness.replacement().files.get('private.txt').hash, hash('private-v2'));
+  assert.equal(harness.replacement().files.get('shared.txt').hash, hash('shared-v2'));
+  assert.equal(harness.link.hasUnpublishedChanges, true);
+  const baseByName = new Map(harness.link.baseWorkingManifest.files.map((file: any) => [file.name, file]));
+  assert.equal((baseByName.get('private.txt') as any).objectKey, 'objects/private.txt/hash:base-private');
+  assert.equal((baseByName.get('shared.txt') as any).objectKey, 'objects/shared.txt/hash:shared-v2');
 });
 
-// ─── Unchanged Shared Working returns up_to_date ─────────────────────────────
-
-test('sync returns up_to_date when Shared Working revision has not advanced', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamCurrentPublishedVersionId: null,
-    basePublishedVersionId: null,
-    hasUnpublishedChanges: false,
-    teamUpdatedAt: '2026-08-05T00:00:00.000Z',
-    linkUpdatedAt: '2026-08-05T00:00:00.000Z',
+test('overlapping Working changes return review_needed without overwriting private content', async () => {
+  const harness = syncHarness({
+    privateFiles: { 'notes.txt': 'private-v2' },
+    sharedFiles: { 'notes.txt': 'shared-v2' },
+    privateRevision: 4,
+    sharedRevision: 6,
   });
 
-  const result = await harness.service.sync('ws-private', 'user-1');
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
 
-  assert.equal(result.status, 'up_to_date');
-  assert.deepEqual(result.conflicts, []);
-  assert.ok(!harness.replaceContentCalled());
+  assert.equal(result.status, 'review_needed');
+  assert.equal(result.conflicts.length, 1);
+  assert.equal(result.conflicts[0].path, 'notes.txt');
+  assert.equal(harness.replaceCalls(), 0);
+  assert.equal(harness.link.baseSharedContentRevision, 5);
 });
 
-// ─── Mixed changes fail closed with REVIEW_NEEDED ────────────────────────────
-
-test('sync throws REVIEW_NEEDED when both Shared and private have changed without a published base', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 4,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 6,
-    teamCurrentPublishedVersionId: null,
-    basePublishedVersionId: null,
-    hasUnpublishedChanges: false,
+test('an explicit conflict resolution merges and advances the exact Working base', async () => {
+  const harness = syncHarness({
+    privateFiles: { 'notes.txt': 'private-v2' },
+    sharedFiles: { 'notes.txt': 'shared-v2' },
+    privateRevision: 4,
+    sharedRevision: 6,
   });
 
-  await assert.rejects(
-    () => harness.service.sync('ws-private', 'user-1'),
-    (error: any) => {
-      assert.equal(error.statusCode, 409);
-      assert.match(error.message, /Review and merge manually/);
-      assert.equal(error.details?.code, 'REVIEW_NEEDED');
-      assert.equal(error.details?.privateContentRevision, 4);
-      assert.equal(error.details?.sharedContentRevision, 6);
-      return true;
-    },
+  const result = await harness.service.sync(
+    harness.privateWorkspaceId,
+    harness.userId,
+    { 'notes.txt': 'team' },
   );
-  assert.ok(!harness.replaceContentCalled());
+
+  assert.equal(result.status, 'reviewed');
+  assert.equal(harness.replacement().files.get('notes.txt').hash, hash('shared-v2'));
+  assert.equal(harness.link.hasUnpublishedChanges, false);
 });
 
-test('sync throws REVIEW_NEEDED when hasUnpublishedChanges is true even if revision matches', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 6,
-    teamCurrentPublishedVersionId: null,
-    basePublishedVersionId: null,
-    hasUnpublishedChanges: true,
+test('exact hashes detect Shared changes even when contentRevision does not move', async () => {
+  const harness = syncHarness({
+    sharedFiles: { 'notes.txt': 'changed-without-revision' },
+    sharedRevision: 5,
   });
 
-  await assert.rejects(
-    () => harness.service.sync('ws-private', 'user-1'),
-    (error: any) => {
-      assert.equal(error.details?.code, 'REVIEW_NEEDED');
-      return true;
-    },
-  );
-});
-
-// ─── Timestamp-only Shared Working changes trigger sync ──────────────────────
-
-test('sync detects Shared Working file changes via timestamp when contentRevision did not increment', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5, // same as base — no revision bump
-    teamCurrentPublishedVersionId: null,
-    basePublishedVersionId: null,
-    hasUnpublishedChanges: false,
-    teamUpdatedAt: '2026-08-06T12:00:00.000Z',
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
-  });
-
-  const result = await harness.service.sync('ws-private', 'user-1');
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
 
   assert.equal(result.status, 'synced');
-  assert.equal(result.workspaceId, 'ws-private');
-  assert.equal(result.teamWorkspaceId, 'ws-team');
-  assert.deepEqual(result.conflicts, []);
-  assert.ok(harness.replaceContentCalled());
-
-  const updates = harness.linkUpdates();
-  assert.equal(updates.baseSharedContentRevision, 5);
-  assert.equal(updates.hasUnpublishedChanges, false);
+  assert.equal(harness.replaceCalls(), 1);
 });
 
-test('sync detects timestamp change with Date instances from the database driver', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: new Date('2026-08-06T12:00:00.000Z'),
-    linkUpdatedAt: new Date('2026-08-05T10:00:00.000Z'),
-  });
+test('a revision bump with byte-identical Working content is a no-op', async () => {
+  const harness = syncHarness({ sharedRevision: 9 });
 
-  const result = await harness.service.sync('ws-private', 'user-1');
-  assert.equal(result.status, 'synced');
-  assert.ok(harness.replaceContentCalled());
-});
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
 
-test('sync remains up_to_date when timestamps are equal and revision unchanged', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-05T10:00:00.000Z',
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
-  });
-
-  const result = await harness.service.sync('ws-private', 'user-1');
   assert.equal(result.status, 'up_to_date');
-  assert.ok(!harness.replaceContentCalled());
+  assert.equal(harness.replaceCalls(), 0);
 });
 
-test('sync remains up_to_date when link timestamp is later than Shared workspace', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-05T10:00:00.000Z',
-    linkUpdatedAt: '2026-08-06T10:00:00.000Z',
-  });
+test('detached links never read or mutate workspace content', async () => {
+  const harness = syncHarness({ linkStatus: 'detached', sharedFiles: { 'notes.txt': 'shared-v2' } });
 
-  const result = await harness.service.sync('ws-private', 'user-1');
-  assert.equal(result.status, 'up_to_date');
-  assert.ok(!harness.replaceContentCalled());
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
+
+  assert.equal(result.status, 'detached');
+  assert.equal(harness.readCalls(), 0);
+  assert.equal(harness.replaceCalls(), 0);
+  assert.equal(harness.linkUpdates.length, 0);
 });
 
-test('sync skips timestamp fallback when Shared workspace has no timestamp', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: null,
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
-  });
-
-  const result = await harness.service.sync('ws-private', 'user-1');
-  assert.equal(result.status, 'up_to_date');
-  assert.ok(!harness.replaceContentCalled());
+test('archived or unshared Shared workspaces detach without touching private content', async () => {
+  for (const option of [
+    { sharedStatus: 'archived' as const },
+    { sharedStatus: 'unshared' as const },
+    { sharedStatus: 'trashed' as const },
+    { sharedVisibility: 'private' as const },
+    { sharedExists: false },
+  ]) {
+    const harness = syncHarness(option);
+    const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
+    assert.equal(result.status, 'detached');
+    assert.equal(harness.replaceCalls(), 0);
+    assert.equal(harness.link.status, 'detached');
+    assert.equal(harness.link.detachedAt, 'NOW()');
+  }
 });
 
-test('sync skips timestamp fallback when link has no timestamp', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-06T10:00:00.000Z',
-    linkUpdatedAt: null,
-  });
-
-  const result = await harness.service.sync('ws-private', 'user-1');
-  assert.equal(result.status, 'up_to_date');
-  assert.ok(!harness.replaceContentCalled());
+test('non-active private workspaces detach without reading or replacing content', async () => {
+  for (const privateStatus of ['archived', 'unshared', 'trashed'] as const) {
+    const harness = syncHarness({ privateStatus });
+    const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
+    assert.equal(result.status, 'detached');
+    assert.equal(harness.readCalls(), 0);
+    assert.equal(harness.replaceCalls(), 0);
+    assert.equal(harness.link.status, 'detached');
+  }
 });
 
-test('timestamp-only change with private changes throws REVIEW_NEEDED', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 4,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-06T12:00:00.000Z',
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
-  });
+test('revoked Shared access detaches the link without overwriting', async () => {
+  const harness = syncHarness({ sharedAccess: false });
 
-  await assert.rejects(
-    () => harness.service.sync('ws-private', 'user-1'),
-    (error: any) => {
-      assert.equal(error.details?.code, 'REVIEW_NEEDED');
-      return true;
-    },
-  );
-  assert.ok(!harness.replaceContentCalled());
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
+
+  assert.equal(result.status, 'detached');
+  assert.equal(harness.replaceCalls(), 0);
+  assert.equal(harness.link.status, 'detached');
 });
 
-// ─── Legacy links still use the published-version path ───────────────────────
-
-test('sync with baseSharedContentRevision=0 falls back to published-version path and throws if none', async () => {
-  const harness = sharedWorkingSyncHarness({
-    baseSharedContentRevision: 0,
-    teamCurrentPublishedVersionId: null,
-    basePublishedVersionId: null,
+test('reconnect reactivates a valid link but preserves divergent conflicts for review', async () => {
+  const harness = syncHarness({
+    linkStatus: 'detached',
+    privateFiles: { 'notes.txt': 'private-v2' },
+    sharedFiles: { 'notes.txt': 'shared-v2' },
+    privateRevision: 4,
+    sharedRevision: 6,
   });
 
-  await assert.rejects(
-    () => harness.service.sync('ws-private', 'user-1'),
-    /No published Team version is available to sync/,
-  );
+  const result = await harness.service.reconnect(harness.privateWorkspaceId, harness.userId);
+
+  assert.equal(result.status, 'review_needed');
+  assert.equal(harness.link.status, 'active');
+  assert.equal(harness.link.detachedAt, null);
+  assert.equal(harness.link.reconnectToken, null);
+  assert.equal(harness.replaceCalls(), 0);
 });
 
-// ─── File-level timestamp drift (direct file insertion without workspace bump) ─
-
-test('sync detects file-level updatedAt drift when workspace updatedAt is stale', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-04T10:00:00.000Z',
-    teamFilesUpdatedAt: '2026-08-06T12:00:00.000Z',
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
+test('legacy clean links initialize an exact base while dirty legacy links fail closed', async () => {
+  const clean = syncHarness({
+    baseWorkingManifest: false,
+    sharedFiles: { 'notes.txt': 'shared-v2' },
+    sharedRevision: 6,
   });
+  const cleanResult = await clean.service.sync(clean.privateWorkspaceId, clean.userId);
+  assert.equal(cleanResult.status, 'synced');
+  assert.ok(clean.link.baseWorkingManifest);
 
-  const result = await harness.service.sync('ws-private', 'user-1');
-  assert.equal(result.status, 'synced');
-  assert.ok(harness.replaceContentCalled());
-});
-
-test('sync stays up_to_date when file-level updatedAt equals link updatedAt', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-04T10:00:00.000Z',
-    teamFilesUpdatedAt: '2026-08-05T10:00:00.000Z',
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
+  const dirty = syncHarness({
+    baseWorkingManifest: false,
+    privateFiles: { 'notes.txt': 'private-v2' },
+    sharedFiles: { 'notes.txt': 'shared-v2' },
+    privateRevision: 4,
+    sharedRevision: 6,
   });
-
-  const result = await harness.service.sync('ws-private', 'user-1');
-  assert.equal(result.status, 'up_to_date');
-  assert.ok(!harness.replaceContentCalled());
-});
-
-test('sync stays up_to_date when file-level updatedAt is older than link', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-04T10:00:00.000Z',
-    teamFilesUpdatedAt: '2026-08-04T00:00:00.000Z',
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
-  });
-
-  const result = await harness.service.sync('ws-private', 'user-1');
-  assert.equal(result.status, 'up_to_date');
-  assert.ok(!harness.replaceContentCalled());
-});
-
-test('file-level drift with private changes throws REVIEW_NEEDED', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 4,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-04T10:00:00.000Z',
-    teamFilesUpdatedAt: '2026-08-06T12:00:00.000Z',
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
-  });
-
-  await assert.rejects(
-    () => harness.service.sync('ws-private', 'user-1'),
-    (error: any) => {
-      assert.equal(error.details?.code, 'REVIEW_NEEDED');
-      return true;
-    },
-  );
-  assert.ok(!harness.replaceContentCalled());
-});
-
-test('file-level drift null falls back to workspace-level timestamp only', async () => {
-  const harness = sharedWorkingSyncHarness({
-    privateContentRevision: 3,
-    basePrivateContentRevision: 3,
-    baseSharedContentRevision: 5,
-    teamContentRevision: 5,
-    teamUpdatedAt: '2026-08-04T10:00:00.000Z',
-    teamFilesUpdatedAt: null,
-    linkUpdatedAt: '2026-08-05T10:00:00.000Z',
-  });
-
-  const result = await harness.service.sync('ws-private', 'user-1');
-  assert.equal(result.status, 'up_to_date');
-  assert.ok(!harness.replaceContentCalled());
+  const dirtyResult = await dirty.service.sync(dirty.privateWorkspaceId, dirty.userId);
+  assert.equal(dirtyResult.status, 'review_needed');
+  assert.equal(dirtyResult.reason, 'BASE_WORKING_MANIFEST_UNAVAILABLE');
+  assert.equal(dirty.replaceCalls(), 0);
 });

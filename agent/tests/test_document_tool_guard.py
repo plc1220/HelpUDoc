@@ -35,6 +35,8 @@ def test_signature_normalizes_key_order_whitespace_and_defaults() -> None:
         sheet_name="Data",
         page_start=1,
         page_end=5,
+        slide_start=1,
+        slide_end=5,
         item_start=1,
         item_end=40,
         cell_range=None,
@@ -63,6 +65,9 @@ def test_signature_keeps_meaningfully_different_calls_distinct() -> None:
         "inspect_document", file_path="/b.xlsx", sheet_name="S", cell_range="A1:B2"
     ) != _signature(
         "inspect_document", file_path="/b.xlsx", sheet_name="S", cell_range="A1:B3"
+    )
+    assert _signature("inspect_document", file_path="deck.pptx", slide_start=1, slide_end=2) != (
+        _signature("inspect_document", file_path="deck.pptx", slide_start=2, slide_end=2)
     )
     assert _signature("search_document", file_path="/b.xlsx", query="revenue") != _signature(
         "search_document", file_path="/b.xlsx", query="revenue 2025"

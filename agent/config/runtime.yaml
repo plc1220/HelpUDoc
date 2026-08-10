@@ -75,6 +75,9 @@ tools:
     kind: builtin
     description: Inspect and search original PDF, DOCX, XLSX, and text workspace
       files on demand
+  - name: document_execute
+    kind: builtin
+    description: Atomically create or edit DOCX, XLSX, and PPTX workspace artifacts with pinned OfficeCLI
   - name: knowledge_navigation
     kind: builtin
     description: Search and progressively read published OKF workspace knowledge

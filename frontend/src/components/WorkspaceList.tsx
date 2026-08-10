@@ -16,7 +16,9 @@ import {
 } from '@mui/material';
 import {
   Delete,
+  DeleteOutline,
   Difference,
+  ExitToApp,
   ExpandLess,
   ExpandMore,
   Groups,
@@ -26,6 +28,9 @@ import {
   MoreHoriz,
   Publish,
   Share,
+  LinkOff,
+  Link,
+  RestoreFromTrash,
   Sync,
   Unpublished,
 } from '@mui/icons-material';
@@ -42,6 +47,12 @@ import {
   getSharedWorkspaceStatusDetails,
   getSharedWorkspacePublicationLabel,
 } from '../utils/workspaceStatusLabels';
+import {
+  getSharedWorkspaceLifecycleActions,
+  getWorkspaceLifecycleStatus,
+  WORKSPACE_LIFECYCLE_ACTION_LABELS,
+  type WorkspaceLifecycleAction,
+} from '../utils/workspaceLifecycle';
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -54,7 +65,9 @@ interface WorkspaceListProps {
   onManageTeamAccess?: (workspace: Workspace) => void;
   onSyncDraftWorkspace?: (workspace: Workspace) => void;
   onReviewDraftChanges?: (workspace: Workspace) => void;
+  onLifecycleWorkspace?: (workspace: Workspace, action: WorkspaceLifecycleAction) => void;
   syncingDraftWorkspaceId?: string | null;
+  lifecycleBusyWorkspaceId?: string | null;
 }
 
 const COLLAPSE_STORAGE_KEY = 'helpudoc.workspace-sections';
@@ -70,11 +83,18 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   onManageTeamAccess,
   onSyncDraftWorkspace,
   onReviewDraftChanges,
+  onLifecycleWorkspace,
   syncingDraftWorkspaceId = null,
+  lifecycleBusyWorkspaceId = null,
 }) => {
-  const privateWorkspaces = workspaces.filter((workspace) => workspace.visibility !== 'team');
-  const sharedWorkspaces = workspaces.filter((workspace) => workspace.visibility === 'team');
-  const [expanded, setExpanded] = useState({ private: true, shared: true });
+  const privateWorkspaces = workspaces.filter((workspace) => (
+    workspace.visibility !== 'team' && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+  ));
+  const sharedWorkspaces = workspaces.filter((workspace) => (
+    workspace.visibility === 'team' && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+  ));
+  const trashedWorkspaces = workspaces.filter((workspace) => getWorkspaceLifecycleStatus(workspace) === 'trashed');
+  const [expanded, setExpanded] = useState({ private: true, shared: true, trash: false });
   const [actionAnchorEl, setActionAnchorEl] = useState<null | HTMLElement>(null);
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
 
@@ -87,7 +107,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     }
   }, []);
 
-  const setSectionExpanded = (section: 'private' | 'shared', value: boolean) => {
+  const setSectionExpanded = (section: 'private' | 'shared' | 'trash', value: boolean) => {
     setExpanded((current) => {
       const next = { ...current, [section]: value };
       try {
@@ -102,6 +122,8 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   const renderWorkspace = (workspace: Workspace) => {
     const isPrivate = workspace.visibility !== 'team';
     const isOwner = workspace.role === 'owner';
+    const lifecycleStatus = getWorkspaceLifecycleStatus(workspace);
+    const isLifecycleBusy = lifecycleBusyWorkspaceId === workspace.id;
     const isSelected = selectedWorkspace?.id === workspace.id;
     const hasChangesToPublish = workspace.publicationStatus === 'changes_to_publish';
     const isWithdrawn = workspace.publicationStatus === 'withdrawn';
@@ -111,7 +133,32 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     const canReviewDraftChanges = isDraftReviewChangesActionable(workspace)
       && Boolean(onReviewDraftChanges);
     const isSyncingDraft = syncingDraftWorkspaceId === workspace.id;
+    const lifecycleIcons: Record<WorkspaceLifecycleAction, React.ReactNode> = {
+      unshare: <LinkOff fontSize="small" />,
+      reshare: <Share fontSize="small" />,
+      trash: <DeleteOutline fontSize="small" />,
+      restore: <RestoreFromTrash fontSize="small" />,
+      leave: <ExitToApp fontSize="small" />,
+      reconnect: <Link fontSize="small" />,
+    };
+    const lifecycleActions = onLifecycleWorkspace
+      ? getSharedWorkspaceLifecycleActions(workspace).map((action) => ({
+        label: WORKSPACE_LIFECYCLE_ACTION_LABELS[action],
+        icon: lifecycleIcons[action],
+        disabled: isLifecycleBusy,
+        onClick: () => onLifecycleWorkspace(workspace, action),
+      }))
+      : [];
     const actions = [
+      isPrivate
+        && lifecycleStatus === 'active'
+        && workspace.publicationStatus === 'detached'
+        && onLifecycleWorkspace ? {
+          label: WORKSPACE_LIFECYCLE_ACTION_LABELS.reconnect,
+          icon: lifecycleIcons.reconnect,
+          disabled: isLifecycleBusy,
+          onClick: () => onLifecycleWorkspace(workspace, 'reconnect'),
+        } : null,
       canSyncDraft && onSyncDraftWorkspace ? {
         label: DRAFT_SYNC_ACTION_LABEL,
         icon: <Sync fontSize="small" />,
@@ -122,7 +169,10 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         icon: <Difference fontSize="small" />,
         onClick: () => onReviewDraftChanges(workspace),
       } : null,
-      isPrivate && !workspace.linkedTeamWorkspaceId && onPublishWorkspace ? {
+      isPrivate
+        && workspace.publicationStatus !== 'detached'
+        && !workspace.linkedTeamWorkspaceId
+        && onPublishWorkspace ? {
         label: `Share workspace`,
         icon: <Share fontSize="small" />,
         onClick: () => onPublishWorkspace(workspace),
@@ -135,32 +185,38 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
           if (linked) onSelectWorkspace(linked);
         },
       } : null,
-      !isPrivate && workspace.canPublish && (hasChangesToPublish || isWithdrawn) && onPublishWorkspace ? {
+      !isPrivate && lifecycleStatus === 'active' && workspace.canPublish && (hasChangesToPublish || isWithdrawn) && onPublishWorkspace ? {
         label: 'Lock current changes',
         icon: <Publish fontSize="small" />,
         onClick: () => onPublishWorkspace(workspace),
       } : null,
-      !isPrivate && hasPublishedVersions && onHistoryWorkspace ? {
+      !isPrivate && lifecycleStatus !== 'trashed' && hasPublishedVersions && onHistoryWorkspace ? {
         label: `View locked versions`,
         icon: <History fontSize="small" />,
         onClick: () => onHistoryWorkspace(workspace),
       } : null,
-      !isPrivate && workspace.canPublish && workspace.currentPublishedVersionNumber != null && onWithdrawWorkspace ? {
+      !isPrivate && lifecycleStatus === 'active' && workspace.canPublish && workspace.currentPublishedVersionNumber != null && onWithdrawWorkspace ? {
         label: `Withdraw current lock`,
         icon: <Unpublished fontSize="small" />,
         onClick: () => onWithdrawWorkspace(workspace),
       } : null,
-      !isPrivate && isOwner && onManageTeamAccess ? {
+      !isPrivate && lifecycleStatus === 'active' && isOwner && onManageTeamAccess ? {
         label: `Manage access`,
         icon: <ManageAccounts fontSize="small" />,
         onClick: () => onManageTeamAccess(workspace),
       } : null,
-      (isPrivate || isOwner) ? {
+      isPrivate ? {
         label: `Delete workspace`,
         icon: <Delete fontSize="small" />,
         onClick: () => onDeleteWorkspace(workspace.id),
       } : null,
-    ].filter(Boolean) as Array<{ label: string; icon: React.ReactNode; onClick: () => void }>;
+      ...lifecycleActions,
+    ].filter(Boolean) as Array<{
+      label: string;
+      icon: React.ReactNode;
+      onClick: () => void;
+      disabled?: boolean;
+    }>;
 
     const publicationLabel = getSharedWorkspacePublicationLabel(workspace);
     const sharedDetails = getSharedWorkspaceStatusDetails(workspace);
@@ -168,13 +224,17 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     const draftStatusColor = canSyncDraft
       ? 'warning.main'
       : canReviewDraftChanges ? 'info.main' : 'text.secondary';
-    const statusColor = isWithdrawn
-      ? 'text.secondary'
-      : workspace.currentPublishedVersionNumber == null
-        ? 'text.secondary'
-        : hasChangesToPublish
-          ? 'warning.main'
-          : 'success.main';
+    const statusColor = lifecycleStatus === 'trashed'
+      ? 'error.main'
+      : lifecycleStatus === 'unshared'
+        ? 'warning.main'
+        : isWithdrawn
+          ? 'text.secondary'
+          : workspace.currentPublishedVersionNumber == null
+            ? 'text.secondary'
+            : hasChangesToPublish
+              ? 'warning.main'
+              : 'success.main';
     const isActionMenuOpen = actionWorkspaceId === workspace.id;
 
     return (
@@ -203,7 +263,10 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       >
         <ListItemButton
           selected={isSelected}
-          onClick={() => onSelectWorkspace(workspace)}
+          disabled={lifecycleStatus === 'trashed'}
+          onClick={() => {
+            if (lifecycleStatus !== 'trashed') onSelectWorkspace(workspace);
+          }}
           sx={{
             minWidth: 0,
             minHeight: 68,
@@ -379,6 +442,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
           {actions.map((action) => (
             <MenuItem
               key={action.label}
+              disabled={action.disabled}
               onClick={() => {
                 setActionAnchorEl(null);
                 setActionWorkspaceId(null);
@@ -396,7 +460,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   };
 
   const renderSection = (
-    key: 'private' | 'shared',
+    key: 'private' | 'shared' | 'trash',
     title: string,
     icon: React.ReactNode,
     items: Workspace[],
@@ -440,6 +504,9 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     <List disablePadding>
       {renderSection('private', 'Private workspaces', <Lock sx={{ fontSize: 16 }} />, privateWorkspaces, 'No private workspaces')}
       {renderSection('shared', 'Shared workspaces', <Groups sx={{ fontSize: 16 }} />, sharedWorkspaces, 'No shared workspaces')}
+      {trashedWorkspaces.length
+        ? renderSection('trash', 'Trash', <DeleteOutline sx={{ fontSize: 16 }} />, trashedWorkspaces, 'Trash is empty')
+        : null}
     </List>
   );
 };

@@ -2,18 +2,12 @@
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-os.environ.setdefault("OFFICE_SERVICE_WORKSPACE_ROOT", "/tmp/test")
-os.environ.setdefault("OFFICE_SERVICE_OFFICECLI_BIN", "/tmp/fake")
-
-from executor import (
+from agent.helpudoc_agent.tools.workspace.office.runner import (
     OfficeCLIOutputError,
     _assert_workspace_containment,
     _parse_batch_output,

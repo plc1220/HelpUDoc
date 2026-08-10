@@ -7,6 +7,9 @@ from pathlib import Path
 
 from openpyxl import Workbook
 from docx import Document
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.util import Inches
 
 from helpudoc_agent.state import WorkspaceState
 from helpudoc_agent.tools.workspace.builtins.document_inspection import (
@@ -31,6 +34,55 @@ def _strip_dimension_elements(path: Path, only: set[str] | None = None) -> None:
             ):
                 data = re.sub(rb"<dimension[^>]*/>", b"", data)
             target.writestr(item, data)
+
+
+def _set_pptx_alt_text(shape, *, title: str, description: str) -> None:
+    for child in shape._element.iter():
+        if str(child.tag).rsplit("}", 1)[-1] == "cNvPr":
+            child.set("title", title)
+            child.set("descr", description)
+            return
+    raise AssertionError("shape has no cNvPr node")
+
+
+def _create_inspection_deck(path: Path) -> dict[str, int]:
+    presentation = Presentation()
+    presentation.core_properties.title = "Launch review"
+    presentation.core_properties.author = "HelpUDoc QA"
+
+    first = presentation.slides.add_slide(presentation.slide_layouts[5])
+    first.shapes.title.text = "Malaysia launch"
+    body = first.shapes.add_textbox(Inches(0.8), Inches(1.5), Inches(5), Inches(1))
+    body.text_frame.text = "Revenue grows by thirty percent."
+    table_shape = first.shapes.add_table(2, 2, Inches(0.8), Inches(3), Inches(5), Inches(1.5))
+    table_shape.table.cell(0, 0).text = "Market"
+    table_shape.table.cell(0, 1).text = "Owner"
+    table_shape.table.cell(1, 0).text = "Malaysia"
+    table_shape.table.cell(1, 1).text = "Aisha"
+    first.notes_slide.notes_text_frame.text = (
+        "Speaker-only launch date is 15 September. " + ("context " * 180) + "notes-tail-token"
+    )
+
+    second = presentation.slides.add_slide(presentation.slide_layouts[6])
+    visual = second.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(1),
+        Inches(1),
+        Inches(3),
+        Inches(2),
+    )
+    visual.text = "Roadmap visual"
+    _set_pptx_alt_text(
+        visual,
+        title="Accessible roadmap",
+        description=(
+            "Confidential roadmap illustration for enterprise rollout "
+            + ("context " * 180)
+            + "alt-tail-token"
+        ),
+    )
+    presentation.save(path)
+    return {"body": body.shape_id, "table": table_shape.shape_id, "visual": visual.shape_id}
 
 
 def test_document_tools_search_and_inspect_original_workbook(tmp_path) -> None:
@@ -257,6 +309,140 @@ def test_document_tools_keep_docx_search_locations_addressable(tmp_path) -> None
     )
     assert inspected["selectedItems"][0]["index"] == paragraph
     assert "30 days" in inspected["selectedItems"][0]["text"]
+
+
+def test_document_tools_inspect_bounded_pptx_slides_and_deck_metadata(tmp_path) -> None:
+    deck_path = tmp_path / "launch.pptx"
+    shape_ids = _create_inspection_deck(deck_path)
+    workspace = WorkspaceState(workspace_id="docs", root_path=tmp_path)
+    tools = {tool.name: tool for tool in build_document_inspection_tools(workspace)}
+
+    inspected = json.loads(
+        tools["inspect_document"].invoke(
+            {"file_path": "launch.pptx", "slide_start": 1, "slide_end": 1}
+        )
+    )
+
+    assert inspected["status"] == "ok"
+    assert inspected["kind"] == "pptx"
+    assert inspected["file"] == "/launch.pptx"
+    assert inspected["slideCount"] == 2
+    assert inspected["selectedSlides"] == [1, 1]
+    assert inspected["metadata"]["title"] == "Launch review"
+    assert inspected["slideSize"]["widthInches"] > inspected["slideSize"]["heightInches"]
+    assert [entry["slide"] for entry in inspected["slideInventory"]] == [1, 2]
+    assert inspected["slideInventory"][0]["title"] == "Malaysia launch"
+    assert len(inspected["slides"]) == 1
+
+    selected = inspected["slides"][0]
+    body = next(item for item in selected["shapes"] if item["shapeId"] == str(shape_ids["body"]))
+    assert body["paragraphs"][0]["location"] == (
+        f"slide:1:shape:{shape_ids['body']}:paragraph:1"
+    )
+    table = next(item for item in selected["shapes"] if item["shapeId"] == str(shape_ids["table"]))
+    assert table["table"]["rows"][1]["location"] == (
+        f"slide:1:shape:{shape_ids['table']}:table:row:2"
+    )
+    assert table["table"]["rows"][1]["values"] == ["Malaysia", "Aisha"]
+    assert selected["speakerNotes"][0]["location"] == "slide:1:note:paragraph:1"
+    assert "15 September" in selected["speakerNotes"][0]["text"]
+    assert inspected["visualInspection"]["rendered"] is False
+    assert inspected["visualInspection"]["renderRequiredForVisualQuestions"] is True
+    assert inspected["visualInspection"]["slides"] == [1]
+
+
+def test_document_tools_search_pptx_text_tables_notes_and_alt_text(tmp_path) -> None:
+    deck_path = tmp_path / "launch.pptx"
+    shape_ids = _create_inspection_deck(deck_path)
+    workspace = WorkspaceState(workspace_id="docs", root_path=tmp_path)
+    tools = {tool.name: tool for tool in build_document_inspection_tools(workspace)}
+
+    text = json.loads(
+        tools["search_document"].invoke({"file_path": "launch.pptx", "query": "thirty percent"})
+    )
+    assert text["status"] == "ok"
+    assert text["results"][0]["kind"] == "slideText"
+    assert text["results"][0]["location"] == f"slide:1:shape:{shape_ids['body']}:paragraph:1"
+
+    table = json.loads(
+        tools["search_document"].invoke({"file_path": "launch.pptx", "query": "Malaysia Aisha"})
+    )
+    assert table["results"][0]["kind"] == "tableRow"
+    assert table["results"][0]["location"] == f"slide:1:shape:{shape_ids['table']}:table:row:2"
+
+    notes = json.loads(
+        tools["search_document"].invoke({"file_path": "launch.pptx", "query": "15 September"})
+    )
+    assert notes["results"][0]["kind"] == "speakerNote"
+    assert notes["results"][0]["location"] == "slide:1:note:paragraph:1"
+    notes_tail = json.loads(
+        tools["search_document"].invoke({"file_path": "launch.pptx", "query": "notes-tail-token"})
+    )
+    assert notes_tail["results"][0]["kind"] == "speakerNote"
+
+    alt_text = json.loads(
+        tools["search_document"].invoke(
+            {"file_path": "launch.pptx", "query": "confidential enterprise rollout"}
+        )
+    )
+    assert alt_text["results"][0]["kind"] == "altText"
+    assert alt_text["results"][0]["location"] == f"slide:2:shape:{shape_ids['visual']}:alt-text"
+    assert alt_text["results"][0]["altTextFields"] == ["title", "description"]
+    assert "Confidential roadmap" in alt_text["results"][0]["snippet"]
+    alt_tail = json.loads(
+        tools["search_document"].invoke({"file_path": "launch.pptx", "query": "alt-tail-token"})
+    )
+    assert alt_tail["results"][0]["kind"] == "altText"
+
+
+def test_document_tools_bound_pptx_slide_ranges_and_describe_support(tmp_path, monkeypatch) -> None:
+    from helpudoc_agent.tools.workspace.builtins import document_inspection
+
+    deck_path = tmp_path / "launch.pptx"
+    _create_inspection_deck(deck_path)
+    workspace = WorkspaceState(workspace_id="docs", root_path=tmp_path)
+    tools = {tool.name: tool for tool in build_document_inspection_tools(workspace)}
+
+    past_end = json.loads(
+        tools["inspect_document"].invoke(
+            {"file_path": "launch.pptx", "slide_start": 3, "slide_end": 3}
+        )
+    )
+    assert past_end["status"] == "error"
+    assert past_end["errorCode"] == "INVALID_RANGE"
+    assert "2 slides" in past_end["message"]
+    assert "slide_start=1" in past_end["suggestedNextCall"]
+
+    monkeypatch.setattr(document_inspection, "_MAX_PPTX_INSPECT_SLIDES", 1)
+    oversized = json.loads(
+        tools["inspect_document"].invoke(
+            {"file_path": "launch.pptx", "slide_start": 1, "slide_end": 2}
+        )
+    )
+    assert oversized["status"] == "error"
+    assert oversized["errorCode"] == "RANGE_TOO_LARGE"
+    assert "at most 1 slides" in oversized["message"]
+    assert "slide_end=1" in oversized["suggestedNextCall"]
+    assert "PPTX" in tools["inspect_document"].description
+    assert "speaker-note" in tools["search_document"].description
+
+    monkeypatch.setattr(document_inspection, "_MAX_PPTX_SCAN_UNITS", 1)
+    truncated = json.loads(
+        tools["search_document"].invoke(
+            {"file_path": "launch.pptx", "query": "not present anywhere"}
+        )
+    )
+    assert truncated["status"] == "ok"
+    assert truncated["results"] == []
+    assert truncated["scanTruncated"] is True
+
+    monkeypatch.setattr(document_inspection, "_MAX_PPTX_INSPECT_SLIDES", 20)
+    monkeypatch.setattr(document_inspection, "_MAX_OUTPUT_CHARS", 3000)
+    bounded_raw = tools["inspect_document"].invoke({"file_path": "launch.pptx"})
+    bounded = json.loads(bounded_raw)
+    assert bounded["status"] == "ok"
+    assert bounded["outputTruncated"] is True
+    assert len(bounded_raw) < 4000
 
 
 def test_document_tools_reject_paths_outside_workspace(tmp_path) -> None:

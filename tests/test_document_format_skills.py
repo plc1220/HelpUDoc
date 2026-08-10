@@ -28,6 +28,7 @@ def test_document_skills_use_on_demand_inspection() -> None:
     pdf_content = (REPO_ROOT / "skills" / "pdf" / "SKILL.md").read_text(encoding="utf-8")
     docx_content = (REPO_ROOT / "skills" / "docx" / "SKILL.md").read_text(encoding="utf-8")
     xlsx_content = (REPO_ROOT / "skills" / "xlsx" / "SKILL.md").read_text(encoding="utf-8")
+    pptx_content = (REPO_ROOT / "skills" / "pptx" / "SKILL.md").read_text(encoding="utf-8")
     general_prompt = (REPO_ROOT / "agent" / "prompts" / "general" / "core.md").read_text(encoding="utf-8")
     runtime_prompt = (REPO_ROOT / "agent" / "helpudoc_agent" / "runtime" / "agent_registry.py").read_text(
         encoding="utf-8"
@@ -45,11 +46,16 @@ def test_document_skills_use_on_demand_inspection() -> None:
     assert "document_inspection" in skills["xlsx"].tools
     assert "search_document" in xlsx_content
     assert "inspect_document" in xlsx_content
+    assert "document_inspection" in skills["pptx"].tools
+    assert "search_document" in pptx_content
+    assert "slide_start" in pptx_content
+    assert "container_tools/render_slides.py" in pptx_content
     assert "For a tagged or named `.pdf`, load the `pdf` skill." in general_prompt
     assert "for DOCX or Word documents load the docx skill" in runtime_prompt
     assert "For `@knowledge` context" in general_prompt
     assert "search_document" in resolve_skill_scope(skills["pdf"]).runtime_tools
     assert "inspect_document" in resolve_skill_scope(skills["xlsx"]).runtime_tools
+    assert "inspect_document" in resolve_skill_scope(skills["pptx"]).runtime_tools
 
 
 def test_pptx_requests_route_to_pptx_not_frontend_slides() -> None:
