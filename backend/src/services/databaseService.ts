@@ -36,6 +36,7 @@ export class DatabaseService {
     await this.createMcpConnectionsTable();
     await this.createMcpConnectionGrantsTable();
     await this.createFilesTable();
+    await this.createFileVersionsTable();
     await this.createWorkspaceFileRevisionsTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
@@ -385,9 +386,10 @@ export class DatabaseService {
         table.uuid('createdBy').references('id').inTable('users');
         table.uuid('updatedBy').references('id').inTable('users');
         table.integer('version').notNullable().defaultTo(1);
+        table.uuid('currentVersionId');
+        table.timestamp('deletedAt', { useTz: true });
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
-        table.unique(['workspaceId', 'name']);
         table.index(['workspaceId', 'updatedAt'], 'files_workspace_updated_idx');
         table.index(
           ['workspaceId', 'sourceProvider', 'sourceExternalId', 'sourceVersionFingerprint'],
@@ -397,6 +399,44 @@ export class DatabaseService {
       console.log('Created "files" table.');
     } else {
       await this.ensureFilesTableColumns();
+    }
+    // A deleted logical file must not reserve its old workspace path forever.
+    // Existing installations used a table-level unique constraint, so replace
+    // it with a partial unique index that applies only to live files.
+    await this.db.raw('ALTER TABLE "files" DROP CONSTRAINT IF EXISTS "files_workspaceid_name_unique"');
+    await this.db.raw(
+      'CREATE UNIQUE INDEX IF NOT EXISTS files_workspace_live_name_idx ON "files" ("workspaceId", "name") WHERE "deletedAt" IS NULL',
+    );
+  }
+
+  private async createFileVersionsTable(): Promise<void> {
+    if (!await this.db.schema.hasTable('file_versions')) {
+      await this.db.schema.createTable('file_versions', (table) => {
+        table.uuid('id').primary();
+        table.integer('fileId').notNullable().references('id').inTable('files').onDelete('CASCADE');
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.integer('version').notNullable();
+        table.text('name').notNullable();
+        table.string('mimeType');
+        table.text('objectKey').notNullable();
+        table.string('objectProvider', 32).notNullable().defaultTo('s3');
+        table.string('providerVersion');
+        table.string('sha256', 64);
+        table.bigInteger('sizeBytes').notNullable().defaultTo(0);
+        table.string('changeKind', 32).notNullable().defaultTo('content');
+        table.integer('baseVersion');
+        table.uuid('createdBy').references('id').inTable('users').onDelete('SET NULL');
+        table.string('sourceRunId');
+        table.string('operationId');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['fileId', 'version']);
+        table.index(['workspaceId', 'createdAt'], 'file_versions_workspace_created_idx');
+        table.index(['fileId', 'createdAt'], 'file_versions_file_created_idx');
+      });
+      await this.db.raw(
+        'CREATE UNIQUE INDEX file_versions_operation_idx ON "file_versions" ("workspaceId", "operationId") WHERE "operationId" IS NOT NULL',
+      );
+      console.log('Created "file_versions" table.');
     }
   }
 
@@ -484,6 +524,13 @@ export class DatabaseService {
         table.uuid('basePublishedVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
         table.integer('basePrivateContentRevision').notNullable().defaultTo(0);
         table.integer('baseSharedContentRevision').notNullable().defaultTo(0);
+        // An exact, immutable view of Shared Working at the last successful
+        // synchronization. Published versions are release checkpoints and are
+        // not necessarily the base of a user's current private draft.
+        table.jsonb('baseWorkingManifest');
+        table.string('status', 16).notNullable().defaultTo('active');
+        table.timestamp('detachedAt', { useTz: true });
+        table.uuid('reconnectToken');
         table.boolean('hasUnpublishedChanges').notNullable().defaultTo(false);
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
@@ -501,6 +548,26 @@ export class DatabaseService {
         'workspace_publication_links',
         'baseSharedContentRevision',
         (table) => table.integer('baseSharedContentRevision').notNullable().defaultTo(0),
+      );
+      await this.ensureColumn(
+        'workspace_publication_links',
+        'baseWorkingManifest',
+        (table) => table.jsonb('baseWorkingManifest'),
+      );
+      await this.ensureColumn(
+        'workspace_publication_links',
+        'status',
+        (table) => table.string('status', 16).notNullable().defaultTo('active'),
+      );
+      await this.ensureColumn(
+        'workspace_publication_links',
+        'detachedAt',
+        (table) => table.timestamp('detachedAt', { useTz: true }),
+      );
+      await this.ensureColumn(
+        'workspace_publication_links',
+        'reconnectToken',
+        (table) => table.uuid('reconnectToken'),
       );
     }
   }
@@ -1095,6 +1162,8 @@ export class DatabaseService {
     await this.ensureColumn('files', 'createdBy', (table) => table.uuid('createdBy'));
     await this.ensureColumn('files', 'updatedBy', (table) => table.uuid('updatedBy'));
     await this.ensureColumn('files', 'version', (table) => table.integer('version').notNullable().defaultTo(1));
+    await this.ensureColumn('files', 'currentVersionId', (table) => table.uuid('currentVersionId'));
+    await this.ensureColumn('files', 'deletedAt', (table) => table.timestamp('deletedAt', { useTz: true }));
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS files_workspace_source_version_idx ON files ("workspaceId", "sourceProvider", "sourceExternalId", "sourceVersionFingerprint")',
     );
@@ -1589,6 +1658,26 @@ export class DatabaseService {
       table.string('editingPolicy', 16));
     await this.ensureColumn('workspaces', 'status', (table) =>
       table.string('status', 16).notNullable().defaultTo('active'));
+    await this.ensureColumn('workspaces', 'unsharedAt', (table) =>
+      table.timestamp('unsharedAt', { useTz: true }));
+    await this.ensureColumn('workspaces', 'unsharedByUserId', (table) =>
+      table.uuid('unsharedByUserId').references('id').inTable('users').onDelete('SET NULL'));
+    await this.ensureColumn('workspaces', 'trashedAt', (table) =>
+      table.timestamp('trashedAt', { useTz: true }));
+    await this.ensureColumn('workspaces', 'trashedByUserId', (table) =>
+      table.uuid('trashedByUserId').references('id').inTable('users').onDelete('SET NULL'));
+    await this.ensureColumn('workspaces', 'purgeAfter', (table) =>
+      table.timestamp('purgeAfter', { useTz: true }));
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspaces_trash_purge_idx ON workspaces ("purgeAfter") WHERE status = \'trashed\' AND "purgeAfter" IS NOT NULL',
+    );
+
+    // `archived` was the earlier shared-workspace lifecycle value. Preserve
+    // the workspace and access metadata, but give it the clearer unshared
+    // semantics introduced by the reversible share lifecycle.
+    await this.db('workspaces')
+      .where({ visibility: 'team', status: 'archived' })
+      .update({ status: 'unshared' });
 
     await this.db.raw(`
       UPDATE workspaces

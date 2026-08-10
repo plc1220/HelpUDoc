@@ -1,4 +1,4 @@
-"""Pydantic request/response models for POST /v1/execute."""
+"""Internal result models for direct OfficeCLI execution."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 # Blocked: raw, raw-set, add-part, import, meta, open, close, save, watch, unwatch, refresh
 # ---------------------------------------------------------------------------
 ALLOWED_COMMANDS = frozenset(
-    {"add", "set", "get", "query", "remove", "move", "swap", "view", "validate"}
+    {"add", "set", "get", "query", "remove", "move", "swap", "view"}
 )
 
 # ---------------------------------------------------------------------------
@@ -28,7 +28,6 @@ COMMAND_FIELD_ALLOWLISTS: dict[str, frozenset[str]] = {
     "move": frozenset({"path", "to", "after", "before", "index", "props"}),
     "swap": frozenset({"path", "path2", "to"}),
     "view": frozenset({"mode"}),
-    "validate": frozenset(),
 }
 
 # ---------------------------------------------------------------------------
@@ -45,24 +44,6 @@ BLOCKED_FIELDS = frozenset(
 BLOCKED_NESTED_KEYS = frozenset(
     {"src", "file", "path", "url", "uri", "href", "fallback"}
 )
-
-
-class ExecuteRequest(BaseModel):
-    """Request body for POST /v1/execute."""
-
-    workspace_id: str = Field(..., pattern=r"^[a-zA-Z0-9_\-]+$", max_length=128)
-    source_path: Optional[str] = Field(default=None, description="Workspace-relative source document")
-    output_path: str = Field(..., description="Workspace-relative output document path")
-    operations: list[dict[str, Any]] = Field(..., min_length=1)
-    create_if_missing: bool = Field(default=False)
-    run_validate: bool = Field(
-        default=True,
-        alias="validate",
-        description="Run OfficeCLI validate after operations",
-    )
-    best_effort: bool = Field(default=False)
-
-    model_config = {"populate_by_name": True, "extra": "forbid"}
 
 
 class OperationResult(BaseModel):
@@ -98,7 +79,7 @@ class ValidationResult(BaseModel):
 
 
 class ExecuteResponse(BaseModel):
-    """Response body for POST /v1/execute."""
+    """Structured result returned by the direct OfficeCLI runner."""
 
     success: bool
     published: bool = False
@@ -108,18 +89,3 @@ class ExecuteResponse(BaseModel):
     officecli_version: str
     duration_ms: int
     warnings: list[str] = Field(default_factory=list)
-
-
-class HealthResponse(BaseModel):
-    """Response body for GET /healthz."""
-
-    status: str
-    officecli_version: str
-    binary_sha256: str
-
-
-class ErrorResponse(BaseModel):
-    """Standard error response."""
-
-    error: str
-    detail: Optional[str] = None

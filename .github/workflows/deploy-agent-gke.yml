@@ -80,6 +80,9 @@ jobs:
           set -euo pipefail
           docker build -f agent/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" .
           docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" python /app/agent/scripts/smoke_import.py
+          docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" officecli --version
+          docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
+            python /app/agent/scripts/smoke_officecli.py
           docker push "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
 
       - name: Deploy Agent
@@ -90,6 +93,33 @@ jobs:
           kubectl -n helpudoc get deployment helpudoc-app >/dev/null
           AGENT_IMAGE="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
           kubectl -n helpudoc set image deployment/helpudoc-app agent="${AGENT_IMAGE}"
+          kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p '
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: agent
+                      startupProbe:
+                        httpGet: {path: /ready, port: 8001}
+                        periodSeconds: 5
+                        failureThreshold: 120
+                      readinessProbe:
+                        httpGet: {path: /ready, port: 8001}
+                        periodSeconds: 10
+                        timeoutSeconds: 2
+                        failureThreshold: 3
+                      resources:
+                        requests: {cpu: 800m, memory: 4Gi}
+                        limits: {cpu: "2", memory: 9Gi}
+                      env:
+                        - name: OFFICE_SERVICE_URL
+                          $patch: delete
+                    - name: office-service
+                      $patch: delete
+                  volumes:
+                    - name: office-service-tmp
+                      $patch: delete
+          '
           kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p "$(jq -n \
             --arg image "${AGENT_IMAGE}" \
             '{spec:{template:{spec:{initContainers:[
@@ -97,6 +127,9 @@ jobs:
               {name:"seed-plugins",image:$image},
               {name:"seed-agent-config",image:$image}
             ]}}}}')"
+          kubectl -n helpudoc patch configmap helpudoc-config --type merge -p "$(jq -n \
+            --arg image "${AGENT_IMAGE}" \
+            '{data:{HELPUDOC_SANDBOX_IMAGE:$image}}')"
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
           APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | head -n1)"
           test -n "${APP_POD}"
@@ -113,6 +146,24 @@ jobs:
             kubectl -n helpudoc logs "pod/${APP_POD}" -c agent --previous --tail=200 || true
             exit 1
           fi
+
+      - name: Gate direct OfficeCLI in the shared agent cgroup
+        run: |
+          set -euo pipefail
+          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{" "}{.status.containerStatuses[?(@.name=="agent")].ready}{"\n"}{end}' \
+            | awk '$2 == "Running" && $3 == "true" {print $1; exit}')"
+          test -n "${APP_POD}"
+          RESTARTS_BEFORE="$(kubectl -n helpudoc get pod "${APP_POD}" \
+            -o jsonpath='{.status.containerStatuses[?(@.name=="agent")].restartCount}')"
+          kubectl -n helpudoc exec "${APP_POD}" -c agent -- \
+            python /app/agent/scripts/smoke_officecli.py
+          kubectl -n helpudoc exec "${APP_POD}" -c agent -- \
+            env HELPUDOC_NON_DOCUMENT_P99_SLO_MS=50 \
+            python /app/agent/scripts/gate_officecli_shared_cgroup.py
+          RESTARTS_AFTER="$(kubectl -n helpudoc get pod "${APP_POD}" \
+            -o jsonpath='{.status.containerStatuses[?(@.name=="agent")].restartCount}')"
+          test "${RESTARTS_AFTER}" = "${RESTARTS_BEFORE}"
 
       - name: Sync Skills PVC
         run: |

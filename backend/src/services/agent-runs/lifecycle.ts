@@ -5,6 +5,7 @@ import { RunTelemetryService } from '../runTelemetryService';
 import { UserMemoryService } from '../userMemoryService';
 import type { SkillEvolutionService } from '../skillEvolutionService';
 import type { ConversationService } from '../conversationService';
+import type { FileService, WorkspaceArtifactBaseline } from '../fileService';
 import {
   runAgentStream,
   resumeAgentStream,
@@ -32,6 +33,7 @@ import {
   requiredGateIdsForSkill,
 } from './workflowContracts';
 import { safeErrorForLog, safeTelemetryForPersistence } from '../../lib/safeError';
+import { WorkspaceRunLeaseManager } from './workspaceRunLease';
 
 export type AgentRunStatus =
   | 'queued'
@@ -164,10 +166,12 @@ const DEBUG_AGENT_RUN_STREAM =
 
 const runAbortControllers = new Map<string, AbortController>();
 const runContexts = new Map<string, RunContext>();
+const workspaceRunLease = new WorkspaceRunLeaseManager(redisClient);
 let runTelemetryService: RunTelemetryService | null = null;
 let userMemoryService: UserMemoryService | null = null;
 let skillEvolutionService: SkillEvolutionService | null = null;
 let conversationService: ConversationService | null = null;
+let fileService: FileService | null = null;
 let agentStreamClient = {
   runAgentStream,
   resumeAgentStream,
@@ -180,6 +184,7 @@ export function configureAgentRunServices(services: {
   userMemoryService?: UserMemoryService | null;
   skillEvolutionService?: SkillEvolutionService | null;
   conversationService?: ConversationService | null;
+  fileService?: FileService | null;
   agentStreamClient?: Partial<typeof agentStreamClient> | null;
 }) {
   if ('telemetryService' in services) {
@@ -193,6 +198,9 @@ export function configureAgentRunServices(services: {
   }
   if ('conversationService' in services) {
     conversationService = services.conversationService || null;
+  }
+  if ('fileService' in services) {
+    fileService = services.fileService || null;
   }
   if ('agentStreamClient' in services) {
     agentStreamClient = {
@@ -344,6 +352,81 @@ const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boo
   );
 };
 
+const nonEmptyRecordString = (
+  record: Record<string, unknown> | undefined,
+  keys: string[],
+): string => {
+  if (!record) return '';
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+};
+
+const interactionChoiceRecords = (interrupt?: RunPendingInterrupt): Array<Record<string, unknown>> => {
+  const props = getPayloadRecord(interrupt?.interactionRequest?.props);
+  const sources = [
+    props?.choices,
+    props?.options,
+    interrupt?.responseSpec?.choices,
+  ];
+  return sources.flatMap((source) => (
+    Array.isArray(source)
+      ? source.map(getPayloadRecord).filter((item): item is Record<string, unknown> => Boolean(item))
+      : []
+  ));
+};
+
+const interactionPreviewRecords = (interrupt?: RunPendingInterrupt): Array<Record<string, unknown>> => {
+  const props = getPayloadRecord(interrupt?.interactionRequest?.props);
+  const sources = [props?.previews, props?.options];
+  return sources.flatMap((source) => (
+    Array.isArray(source)
+      ? source.map(getPayloadRecord).filter((item): item is Record<string, unknown> => Boolean(item))
+      : []
+  ));
+};
+
+const resolveSelectedChoiceDescriptions = (
+  selectedChoiceIds: string[] | undefined,
+  previousInterrupt?: RunPendingInterrupt,
+): string[] => {
+  if (!selectedChoiceIds?.length) return [];
+  const choices = interactionChoiceRecords(previousInterrupt);
+  const previews = interactionPreviewRecords(previousInterrupt);
+  return selectedChoiceIds.map((rawChoiceId) => {
+    const choiceId = String(rawChoiceId || '').trim();
+    const matchesId = (record: Record<string, unknown>) => {
+      const recordId = nonEmptyRecordString(record, ['id', 'choiceId', 'value']);
+      return recordId === choiceId;
+    };
+    const choice = choices.find(matchesId);
+    const preview = previews.find(matchesId);
+    const label = nonEmptyRecordString(choice || preview, ['label', 'name', 'title']) || choiceId;
+    const previewPath = nonEmptyRecordString(preview || choice, [
+      'path',
+      'preview_path',
+      'previewPath',
+      'filePath',
+      'file',
+    ]);
+    const identity = label === choiceId ? choiceId : `${label} (id: ${choiceId})`;
+    return previewPath ? `${identity}; preview: ${previewPath}` : identity;
+  }).filter(Boolean);
+};
+
+const enrichClarificationResponseWithChoiceIdentity = (
+  response: AgentInterruptResponse,
+  previousInterrupt?: RunPendingInterrupt,
+): AgentInterruptResponse => {
+  if (response.selectedValues?.length || !response.selectedChoiceIds?.length) {
+    return response;
+  }
+  const selectedValues = resolveSelectedChoiceDescriptions(response.selectedChoiceIds, previousInterrupt);
+  return selectedValues.length ? { ...response, selectedValues } : response;
+};
+
 export const extractInteractionGateIdFromPendingInterrupt = (
   interrupt?: RunPendingInterrupt,
 ): string | undefined => {
@@ -396,15 +479,7 @@ const formatClarificationResponseForPrompt = (
   if (response.selectedValues?.length) {
     lines.push(`Selected values: ${response.selectedValues.join(', ')}`);
   } else if (response.selectedChoiceIds?.length) {
-    const choices = Array.isArray(previousInterrupt?.responseSpec?.choices)
-      ? previousInterrupt.responseSpec.choices
-      : [];
-    const labels = response.selectedChoiceIds
-      .map((choiceId) => {
-        const choice = choices.find((item) => item.id === choiceId);
-        return choice?.value || choice?.label || choiceId;
-      })
-      .filter(Boolean);
+    const labels = resolveSelectedChoiceDescriptions(response.selectedChoiceIds, previousInterrupt);
     if (labels.length) {
       lines.push(`Selected values: ${labels.join(', ')}`);
     }
@@ -1012,7 +1087,6 @@ export const withFrontendSlidesGateMetadata = (
     id: choice.id,
     label: choice.label,
     description: choice.description,
-    path: `.frontend-slides/slide-previews/${choice.id}.html`,
     html: buildFallbackStylePreviewHtml(choice),
   }));
   const buildStylePreviewsForChoices = (choices: unknown): Array<Record<string, unknown>> | undefined => {
@@ -1042,12 +1116,24 @@ export const withFrontendSlidesGateMetadata = (
           : typeof record.summary === 'string' && record.summary.trim()
             ? record.summary.trim()
             : undefined;
+        const sourcePath = nonEmptyRecordString(record, [
+          'path',
+          'preview_path',
+          'previewPath',
+          'filePath',
+          'file',
+        ]);
+        const existingHtml = nonEmptyRecordString(record, ['html', 'srcDoc', 'srcdoc', 'content']);
         return {
           id,
           label,
           ...(description ? { description } : {}),
-          path: `.frontend-slides/slide-previews/${id}.html`,
-          html: buildFallbackStylePreviewHtml({ id, label, description }),
+          ...(sourcePath ? { path: sourcePath } : {}),
+          ...(existingHtml
+            ? { html: existingHtml }
+            : sourcePath
+              ? {}
+              : { html: buildFallbackStylePreviewHtml({ id, label, description }) }),
         };
       })
       .filter((preview): preview is NonNullable<typeof preview> => preview !== null);
@@ -1090,12 +1176,24 @@ export const withFrontendSlidesGateMetadata = (
                 : typeof record.content === 'string' && record.content.trim()
                   ? record.content
                   : undefined;
+        const sourcePath = nonEmptyRecordString(record, [
+          'path',
+          'preview_path',
+          'previewPath',
+          'filePath',
+          'file',
+        ]);
         return {
           ...record,
           id,
           label,
           ...(description ? { description } : {}),
-          html: existingHtml || buildFallbackStylePreviewHtml({ id, label, description }),
+          ...(sourcePath ? { path: sourcePath } : {}),
+          ...(existingHtml
+            ? { html: existingHtml }
+            : sourcePath
+              ? { html: undefined }
+              : { html: buildFallbackStylePreviewHtml({ id, label, description }) }),
         };
       })
       .filter((preview): preview is NonNullable<typeof preview> => preview !== null);
@@ -1124,6 +1222,29 @@ export const withFrontendSlidesGateMetadata = (
     }
     const hasChoices = Array.isArray(record.choices) && record.choices.length > 0;
     const hasPreviews = Array.isArray(record.previews) && record.previews.length > 0;
+    const hasOptions = Array.isArray(record.options) && record.options.length > 0;
+    if (hasOptions && !hasChoices && !hasPreviews) {
+      const choices = (record.options as unknown[])
+        .map((option, index) => {
+          const optionRecord = getRecord(option);
+          if (!optionRecord) return null;
+          const id = nonEmptyRecordString(optionRecord, ['id', 'choiceId', 'value'])
+            || `style-${String.fromCharCode(97 + index)}`;
+          const label = nonEmptyRecordString(optionRecord, ['label', 'name', 'title'])
+            || `Style ${String.fromCharCode(65 + index)}`;
+          const description = nonEmptyRecordString(optionRecord, ['description', 'summary']);
+          const value = nonEmptyRecordString(optionRecord, ['value']) || id;
+          return { id, label, value, ...(description ? { description } : {}) };
+        })
+        .filter((choice): choice is NonNullable<typeof choice> => choice !== null);
+      const previews = enrichStylePreviews(record.options);
+      return {
+        ...record,
+        choices,
+        ...(previews?.length ? { previews } : {}),
+        fallback: false,
+      };
+    }
     if (hasChoices && !hasPreviews) {
       return {
         ...record,
@@ -2898,6 +3019,15 @@ const cleanupRun = (runId: string, upstream?: IncomingMessage) => {
   }
 };
 
+const cleanupRunWorker = async (runId: string, upstream?: IncomingMessage) => {
+  try {
+    await workspaceRunLease.release(runId);
+  } catch (error) {
+    console.error('Failed to release workspace run lock', safeErrorForLog(error));
+  }
+  cleanupRun(runId, upstream);
+};
+
 const markRunFinished = async (runId: string, status: AgentRunStatus, error?: string): Promise<string> => {
   const completedAt = new Date().toISOString();
   await persistMeta(runId, {
@@ -2973,7 +3103,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
   }
 
   // Fire and forget worker
-  void runAgentRunWorker(runId, params);
+  launchAgentRunWorker(runId, params);
 
   return { runId, status: 'queued' };
 }
@@ -3017,6 +3147,28 @@ async function runAgentRunWorker(
 ) {
   const controller = new AbortController();
   runAbortControllers.set(runId, controller);
+  try {
+    await workspaceRunLease.acquire(runId, params.workspaceId, controller);
+  } catch (error) {
+    const persistedStatus = await redisClient.hGet(buildMetaKey(runId), 'status').catch(() => undefined);
+    if (!persistedStatus || ['queued', 'running'].includes(persistedStatus)) {
+      const cancelled = controller.signal.aborted;
+      await markRunFinished(
+        runId,
+        cancelled ? 'cancelled' : 'failed',
+        cancelled ? undefined : error instanceof Error ? error.message : 'Failed to acquire workspace execution lock',
+      );
+    }
+    await cleanupRunWorker(runId);
+    return;
+  }
+  if (fileService && params.userId) {
+    await fileService.reconcileWorkspaceMirror(
+      params.workspaceId,
+      params.userId,
+      () => workspaceRunLease.assertOwned(runId),
+    );
+  }
   const startedAt = new Date().toISOString();
   const runProgress = resumePayload && runTelemetryService
     ? await runTelemetryService.getRunProgress(runId)
@@ -3094,6 +3246,22 @@ async function runAgentRunWorker(
   const toolEvents: ToolEvent[] = [];
   const progressEvents: RunProgressEvent[] = [];
   const workflowActions: WorkflowActionEvent[] = [];
+  let artifactsCommitted = false;
+  let artifactBaseline: WorkspaceArtifactBaseline | null = null;
+
+  const commitRunArtifacts = async () => {
+    if (artifactsCommitted || !fileService || !params.userId) return;
+    await workspaceRunLease.assertOwned(runId);
+    const touchedPaths = toolEvents.flatMap((event) => (
+      event.outputFiles || []
+    )).map((file) => file.path);
+    await fileService.commitWorkspaceArtifacts(params.workspaceId, params.userId, runId, {
+      baseline: artifactBaseline,
+      touchedPaths,
+      assertLeaseOwned: () => workspaceRunLease.assertOwned(runId),
+    });
+    artifactsCommitted = true;
+  };
 
   const snapshotConversationRun = (overrides: Partial<ConversationRunSnapshot> = {}): ConversationRunSnapshot => ({
     assistantText,
@@ -3312,6 +3480,16 @@ async function runAgentRunWorker(
 
     let effectiveStatus = status;
     let effectiveError = error;
+    if (status === 'completed' || status === 'failed') {
+      try {
+        await commitRunArtifacts();
+      } catch (artifactError) {
+        effectiveStatus = 'failed';
+        effectiveError = `Failed to commit generated workspace files: ${
+          artifactError instanceof Error ? artifactError.message : 'unknown storage error'
+        }`;
+      }
+    }
 
     const missingGate = getFrontendSlidesMissingRequiredGate({
       skillId,
@@ -3362,7 +3540,7 @@ async function runAgentRunWorker(
           });
         }
         await updateConversationFromRun('awaiting_approval', { pendingInterrupt });
-        cleanupRun(runId, upstream || undefined);
+        await cleanupRunWorker(runId, upstream || undefined);
         return;
       }
     }
@@ -3431,7 +3609,7 @@ async function runAgentRunWorker(
           pendingInterrupt,
           implicitInput,
         });
-        cleanupRun(runId, upstream || undefined);
+        await cleanupRunWorker(runId, upstream || undefined);
         return;
       }
     }
@@ -3478,7 +3656,7 @@ async function runAgentRunWorker(
           },
         });
       }
-      cleanupRun(runId, upstream || undefined);
+      await cleanupRunWorker(runId, upstream || undefined);
       return;
     }
     await markRunFinished(runId, effectiveStatus, effectiveError);
@@ -3538,10 +3716,11 @@ async function runAgentRunWorker(
           });
         });
     }
-    cleanupRun(runId, upstream || undefined);
+    await cleanupRunWorker(runId, upstream || undefined);
   };
 
   const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
+    await commitRunArtifacts();
     const normalizedInterrupt = normalizeInterruptPayloadRecord(parsed);
     const pendingGateId = extractInteractionGateId(normalizedInterrupt);
     const pendingInterrupt = parsePendingInterrupt(JSON.stringify(normalizedInterrupt));
@@ -3870,6 +4049,12 @@ async function runAgentRunWorker(
   traceContext.skillId = skillId || undefined;
 
   try {
+    if (fileService && params.userId) {
+      artifactBaseline = await fileService.captureWorkspaceArtifactBaseline(
+        params.workspaceId,
+        params.userId,
+      );
+    }
     const response =
       resumePayload && 'decisions' in resumePayload && resumePayload.decisions
       ? await agentStreamClient.resumeAgentStream(params.persona, params.workspaceId, resumePayload.decisions, {
@@ -3909,62 +4094,70 @@ async function runAgentRunWorker(
       }
       void enqueueProcessBuffer();
     });
-    upstream.on('end', async () => {
-      if (DEBUG_AGENT_RUN_STREAM) {
-        console.info('[agent-run-stream] end', { runId, remainingBytes: buffer.length });
-      }
-      await processingQueue;
-      if (buffer.trim()) {
-        await processTailBuffer();
-      }
+    await new Promise<void>((resolve, reject) => {
+      let terminalHandled = false;
+      const handleTerminal = (handler: () => Promise<void>) => {
+        if (terminalHandled) return;
+        terminalHandled = true;
+        void handler().then(resolve, reject);
+      };
+      upstream!.once('end', () => handleTerminal(async () => {
+        if (DEBUG_AGENT_RUN_STREAM) {
+          console.info('[agent-run-stream] end', { runId, remainingBytes: buffer.length });
+        }
+        await processingQueue;
+        if (buffer.trim()) await processTailBuffer();
 
-      if (sawInterruptPayload) {
-        console.info('[AgentInterrupt] upstream drained with deferred interrupt', { runId });
-      }
-
-      const disposition = resolveStreamCloseDisposition({
-        sawInterruptPayload,
-        loopErrorMessage,
-        stallErrorMessage,
-        streamErrorMessage,
-        aborted: controller.signal.aborted,
-        contractErrorMessage,
-      });
-
-      if (disposition.preserveInterrupt && sawInterruptPayload) {
-        await publishDeferredInterrupt(sawInterruptPayload);
-        cleanupRun(runId, upstream || undefined);
-        return;
-      }
-
-      await finalizeRun(disposition.status, disposition.error);
-    });
-    upstream.on('error', async (error: Error) => {
-      const disposition = resolveStreamCloseDisposition({
-        sawInterruptPayload,
-        loopErrorMessage,
-        stallErrorMessage,
-        streamErrorMessage,
-        aborted: controller.signal.aborted,
-      });
-
-      if (disposition.preserveInterrupt && sawInterruptPayload) {
-        await publishDeferredInterrupt(sawInterruptPayload);
-        cleanupRun(runId, upstream || undefined);
-        return;
-      }
-
-      if (disposition.status !== 'completed') {
+        if (sawInterruptPayload) {
+          console.info('[AgentInterrupt] upstream drained with deferred interrupt', { runId });
+        }
+        const disposition = resolveStreamCloseDisposition({
+          sawInterruptPayload,
+          loopErrorMessage,
+          stallErrorMessage,
+          streamErrorMessage,
+          aborted: controller.signal.aborted,
+          contractErrorMessage,
+        });
+        if (disposition.preserveInterrupt && sawInterruptPayload) {
+          await publishDeferredInterrupt(sawInterruptPayload);
+          return;
+        }
         await finalizeRun(disposition.status, disposition.error);
-        return;
-      }
-
-      const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
-      if (!controller.signal.aborted) {
-        const errorPayload = JSON.stringify({ type: 'error', message: error.message || 'Agent stream failed.' });
-        await appendStreamEvent(runId, errorPayload);
-      }
-      await finalizeRun(status, error.message);
+      }));
+      upstream!.once('error', (error: Error) => handleTerminal(async () => {
+        const disposition = resolveStreamCloseDisposition({
+          sawInterruptPayload,
+          loopErrorMessage,
+          stallErrorMessage,
+          streamErrorMessage,
+          aborted: controller.signal.aborted,
+        });
+        if (disposition.preserveInterrupt && sawInterruptPayload) {
+          await publishDeferredInterrupt(sawInterruptPayload);
+          return;
+        }
+        if (disposition.status !== 'completed') {
+          await finalizeRun(disposition.status, disposition.error);
+          return;
+        }
+        const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
+        if (!controller.signal.aborted) {
+          const errorPayload = JSON.stringify({ type: 'error', message: error.message || 'Agent stream failed.' });
+          await appendStreamEvent(runId, errorPayload);
+        }
+        await finalizeRun(status, error.message);
+      }));
+      const handlePrematureClose = (reason: string) => handleTerminal(async () => {
+        const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
+        const message = controller.signal.aborted ? undefined : `Agent stream ${reason} before completion`;
+        if (message) await appendStreamEvent(runId, JSON.stringify({ type: 'error', message }));
+        await finalizeRun(status, message);
+      });
+      upstream!.once('aborted', () => handlePrematureClose('aborted'));
+      upstream!.once('close', () => {
+        if (!upstream!.complete && !upstream!.readableEnded) handlePrematureClose('closed');
+      });
     });
   } catch (error: any) {
     const status: AgentRunStatus = streamErrorMessage
@@ -3972,13 +4165,43 @@ async function runAgentRunWorker(
       : controller.signal.aborted
         ? 'cancelled'
         : 'failed';
+    const failureMessage = streamErrorMessage || error?.message || 'Agent run failed';
     if (!controller.signal.aborted && !streamErrorMessage) {
       const message = buildAgentErrorPayload(error, params.persona);
       const errorPayload = JSON.stringify({ type: 'error', message });
       await appendStreamEvent(runId, errorPayload);
     }
-    await finalizeRun(status, streamErrorMessage || error?.message || 'Agent run failed');
+    if (settled) {
+      await markRunFinished(runId, status, failureMessage);
+    } else {
+      await finalizeRun(status, failureMessage);
+    }
+  } finally {
+    await cleanupRunWorker(runId, upstream || undefined);
   }
+}
+
+function launchAgentRunWorker(
+  runId: string,
+  params: StartRunParams,
+  resumePayload?: ResumePayload,
+  previousInterrupt?: RunPendingInterrupt,
+) {
+  void runAgentRunWorker(runId, params, resumePayload, previousInterrupt).catch(async (error) => {
+    console.error('Agent run worker failed before stream ownership was established', safeErrorForLog(error));
+    try {
+      const status = await redisClient.hGet(buildMetaKey(runId), 'status');
+      if (!status || !['completed', 'failed', 'cancelled', 'awaiting_approval'].includes(status)) {
+        const message = error instanceof Error ? error.message : 'Agent run worker failed';
+        await appendStreamEvent(runId, JSON.stringify({ type: 'error', message }));
+        await markRunFinished(runId, 'failed', message);
+      }
+    } catch (persistError) {
+      console.error('Failed to persist agent run worker failure', safeErrorForLog(persistError));
+    } finally {
+      await cleanupRunWorker(runId);
+    }
+  });
 }
 
 export async function resumeAgentRun(
@@ -3999,7 +4222,7 @@ export async function resumeAgentRun(
     pendingInterrupt: '',
     runContext: serializeRunContext(nextParams),
   });
-  void runAgentRunWorker(runId, nextParams, {
+  launchAgentRunWorker(runId, nextParams, {
     decisions,
     interruptId: options?.interruptId,
   });
@@ -4032,7 +4255,8 @@ export async function resumeAgentRunWithResponse(
       )
     : baseParams;
   const interruptId = options?.previousInterrupt?.interruptId?.trim() || '';
-  const serializedResponse = JSON.stringify(response);
+  const enrichedResponse = enrichClarificationResponseWithChoiceIdentity(response, options?.previousInterrupt);
+  const serializedResponse = JSON.stringify(enrichedResponse);
   const responseHash = createHash('sha256').update(serializedResponse).digest('hex');
   const acceptedAt = new Date().toISOString();
   runContexts.set(runId, { params: nextParams });
@@ -4041,6 +4265,14 @@ export async function resumeAgentRunWithResponse(
     interruptId: interruptId || undefined,
     responseHash,
     acceptedAt,
+  }));
+  await appendStreamEvent(runId, JSON.stringify({
+    type: 'progress',
+    phase: 'routing',
+    label: 'Response received',
+    detail: 'Continuing with your selection.',
+    status: 'running',
+    timestamp: acceptedAt,
   }));
   await persistMeta(runId, {
     status: 'queued',
@@ -4055,10 +4287,10 @@ export async function resumeAgentRunWithResponse(
     interactionResponseAcceptedAt: acceptedAt,
     interactionResponseConsumedAt: '',
   });
-  void runAgentRunWorker(
+  launchAgentRunWorker(
     runId,
     nextParams,
-    previousInterruptIsSynthetic ? undefined : { response, interruptId: interruptId || undefined },
+    previousInterruptIsSynthetic ? undefined : { response: enrichedResponse, interruptId: interruptId || undefined },
     options?.previousInterrupt,
   );
   return { runId, status: 'queued' };
@@ -4082,7 +4314,7 @@ export async function resumeAgentRunWithAction(
     pendingInterrupt: '',
     runContext: serializeRunContext(nextParams),
   });
-  void runAgentRunWorker(runId, nextParams, { action });
+  launchAgentRunWorker(runId, nextParams, { action });
   return { runId, status: 'queued' };
 }
 
@@ -4112,12 +4344,12 @@ const buildStaleRunErrorMessage = (
   return 'Agent run stalled without a terminal event. Please retry the run.';
 };
 
-const abortActiveRunWorker = (runId: string) => {
+const abortActiveRunWorker = async (runId: string) => {
   const controller = runAbortControllers.get(runId);
   if (controller && !controller.signal.aborted) {
     controller.abort();
   }
-  cleanupRun(runId);
+  await cleanupRunWorker(runId);
 };
 
 const reconcileActiveRunMetaFromStream = async (
@@ -4206,7 +4438,7 @@ const reconcileActiveRunMetaFromStream = async (
         })),
       }));
     }
-    cleanupRun(runId);
+    await cleanupRunWorker(runId);
     meta.status = terminalEvent.status;
     meta.completedAt = completedAt;
     meta.error = terminalEvent.error || '';
@@ -4236,7 +4468,7 @@ const reconcileActiveRunMetaFromStream = async (
       error,
     });
   }
-  abortActiveRunWorker(runId);
+  await abortActiveRunWorker(runId);
   meta.status = 'failed';
   meta.completedAt = completedAt;
   meta.error = error;

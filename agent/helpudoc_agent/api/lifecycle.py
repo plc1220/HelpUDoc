@@ -28,15 +28,37 @@ def load_process_env_files() -> None:
 
 
 def build_dependency_diagnostic() -> Dict[str, Any]:
+    from helpudoc_agent.tools.workspace.office.config import OfficeRunnerConfig
+    from helpudoc_agent.tools.workspace.office.runner import (
+        get_binary_sha256,
+        get_officecli_version,
+        is_binary_ready,
+    )
+
+    office_config = OfficeRunnerConfig()
+    office_ready = is_binary_ready(office_config)
     return {
         "document_inspection": True,
         "knowledge_navigation": True,
+        "officecli": {
+            "ready": office_ready,
+            "version": get_officecli_version(office_config),
+            "binary_sha256": get_binary_sha256(office_config),
+        },
     }
 
 
-def register_app_lifecycle(app: FastAPI, memory_store_manager: MemoryStoreManager) -> None:
+def register_app_lifecycle(
+    app: FastAPI,
+    memory_store_manager: MemoryStoreManager,
+    *,
+    workspace_root: Any = None,
+) -> None:
     @app.on_event("startup")
     async def _startup() -> None:
+        from helpudoc_agent.sandbox_runner import cleanup_stale_inline_run_dirs_under_root
+
+        cleanup_stale_inline_run_dirs_under_root(workspace_root)
         try:
             memory_store_manager.start()
         except Exception:

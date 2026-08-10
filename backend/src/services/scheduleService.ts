@@ -62,6 +62,7 @@ type ParsedCron = {
 };
 
 const SCHEDULER_POLL_INTERVAL_MS = 30_000;
+const WORKSPACE_TRASH_PURGE_INTERVAL_MS = 60 * 60 * 1000;
 const SCHEDULE_LOCK_TIMEOUT_MINUTES = 15;
 const MAX_DUE_SCHEDULES_PER_TICK = 10;
 const MAX_IN_FLIGHT_RUNS_PER_TICK = 25;
@@ -270,6 +271,7 @@ export class ScheduleService {
   private googleOAuthService: GoogleOAuthService;
   private interval?: NodeJS.Timeout;
   private ticking = false;
+  private lastWorkspaceTrashPurgeAt = 0;
 
   constructor(
     databaseService: DatabaseService,
@@ -473,6 +475,15 @@ export class ScheduleService {
     }
     this.ticking = true;
     try {
+      const now = Date.now();
+      if (now - this.lastWorkspaceTrashPurgeAt >= WORKSPACE_TRASH_PURGE_INTERVAL_MS) {
+        // Advance before running so a transient failure does not turn the
+        // 30-second scheduler into a tight retry loop.
+        this.lastWorkspaceTrashPurgeAt = now;
+        await this.workspaceService.purgeExpiredTrashedWorkspaces().catch((error) => {
+          console.error('Expired workspace trash purge failed', error);
+        });
+      }
       await this.refreshInFlightRuns();
       const dueSchedules = await this.claimDueSchedules();
       for (const schedule of dueSchedules) {

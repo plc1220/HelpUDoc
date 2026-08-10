@@ -3,7 +3,6 @@ import * as path from 'path';
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
-import { S3Service } from './s3Service';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
@@ -74,13 +73,22 @@ export interface WorkspaceRecord {
   visibility: 'private' | 'team';
   workspaceType?: 'private' | 'team';
   editingPolicy?: 'direct' | 'review' | null;
-  status?: 'active' | 'archived';
+  status?: 'active' | 'unshared' | 'trashed' | 'archived';
+  unsharedAt?: string | Date | null;
+  unsharedByUserId?: string | null;
+  trashedAt?: string | Date | null;
+  trashedByUserId?: string | null;
+  purgeAfter?: string | Date | null;
   teamId?: string | null;
   currentPublishedVersionId?: string | null;
   contentRevision: number;
   createdAt: string;
   updatedAt: string;
 }
+
+const isSharedWorkspaceRecord = (workspace: Pick<WorkspaceRecord, 'visibility' | 'workspaceType'>): boolean => (
+  workspace.workspaceType === 'team' || workspace.visibility === 'team'
+);
 
 export interface WorkspaceMembershipRecord {
   workspaceId: string;
@@ -114,11 +122,9 @@ export type McpServerPolicy = {
 
 export class WorkspaceService {
   private db: Knex;
-  private s3Service: S3Service;
 
   constructor(databaseService: DatabaseService) {
     this.db = databaseService.getDb();
-    this.s3Service = new S3Service();
     this.ensureWorkspaceDir();
   }
 
@@ -136,7 +142,7 @@ export class WorkspaceService {
     canPublish: boolean;
     teamName?: string | null;
     audienceType: 'private' | 'selected_people' | 'team';
-    publicationStatus: 'private_draft' | 'up_to_date' | 'changes_to_publish' | 'withdrawn' | 'team_updates_available' | 'review_needed';
+    publicationStatus: 'private_draft' | 'up_to_date' | 'changes_to_publish' | 'withdrawn' | 'detached' | 'team_updates_available' | 'review_needed';
     linkedTeamWorkspaceId?: string | null;
     privateCopyWorkspaceId?: string | null;
     currentPublishedVersionNumber?: number | null;
@@ -166,7 +172,9 @@ export class WorkspaceService {
           .andOnVal('linked_team_group_member.userId', '=', userId);
       })
       .leftJoin('workspace_publication_links as team_link', function joinPrivateCopy() {
-        this.on('team_link.teamWorkspaceId', '=', 'w.id').andOnVal('team_link.userId', '=', userId);
+        this.on('team_link.teamWorkspaceId', '=', 'w.id')
+          .andOnVal('team_link.userId', '=', userId)
+          .andOnVal('team_link.status', '=', 'active');
       })
       .leftJoin(
         'workspace_published_versions as published',
@@ -183,6 +191,12 @@ export class WorkspaceService {
         'w.visibility',
         'w.workspaceType',
         'w.editingPolicy',
+        'w.status',
+        'w.unsharedAt',
+        'w.unsharedByUserId',
+        'w.trashedAt',
+        'w.trashedByUserId',
+        'w.purgeAfter',
         'w.teamId',
         'w.currentPublishedVersionId',
         'w.contentRevision',
@@ -196,7 +210,10 @@ export class WorkspaceService {
         'private_link.teamWorkspaceId as linkedTeamWorkspaceId',
         'linked_team.teamId as linkedTeamId',
         'linked_team.currentPublishedVersionId as linkedTeamCurrentPublishedVersionId',
+        'linked_team.visibility as linkedTeamVisibility',
+        'linked_team.status as linkedTeamStatus',
         'private_link.basePublishedVersionId',
+        'private_link.status as publicationLinkStatus',
         'private_link.basePrivateContentRevision',
         'private_link.hasUnpublishedChanges',
         'linked_team.contentRevision as linkedTeamContentRevision',
@@ -239,6 +256,7 @@ export class WorkspaceService {
               .andWhere((accessQuery) => {
                 accessQuery
                   .whereNotNull('wm.userId')
+                  .orWhere('w.ownerId', userId)
                   .orWhere((groupBackedQuery) => {
                     groupBackedQuery.whereNotNull('w.teamId').whereNotNull('gm.userId');
                   });
@@ -246,6 +264,15 @@ export class WorkspaceService {
           });
       })
       .andWhere('w.isSystem', false)
+      .andWhere((statusQuery) => {
+        statusQuery
+          .where('w.status', 'active')
+          .orWhere((ownerLifecycleQuery) => {
+            ownerLifecycleQuery
+              .where('w.ownerId', userId)
+              .whereIn('w.status', ['unshared', 'trashed']);
+          });
+      })
       .orderBy('w.updatedAt', 'desc');
 
     return rows.map((row: any) => {
@@ -264,7 +291,17 @@ export class WorkspaceService {
         );
       const linkedTeamAccessible = visibility === 'private'
         && row.linkedTeamWorkspaceId
+        && (row.linkedTeamVisibility || 'team') === 'team'
+        && (row.linkedTeamStatus || 'active') === 'active'
+        && (row.publicationLinkStatus || 'active') === 'active'
         && (Boolean(row.linkedTeamRole) || Boolean(row.linkedTeamGroupMemberUserId));
+      const linkedTeamDetached = visibility === 'private'
+        && Boolean(row.linkedTeamWorkspaceId)
+        && (
+          (row.linkedTeamStatus || 'active') !== 'active'
+          || (row.publicationLinkStatus || 'active') !== 'active'
+          || !linkedTeamAccessible
+        );
       const sharedContentRevisionKnown = visibility === 'private'
         && row.linkedTeamWorkspaceId
         && row.baseSharedContentRevision != null
@@ -308,6 +345,8 @@ export class WorkspaceService {
             : 'up_to_date'
         : !row.linkedTeamWorkspaceId
           ? 'private_draft'
+          : linkedTeamDetached
+            ? 'detached'
           : needsInitialPublication
             ? 'changes_to_publish'
           : privateChanged && teamChanged
@@ -325,19 +364,27 @@ export class WorkspaceService {
         ownerId: row.ownerId,
         lastModifiedBy: row.lastModifiedBy,
         visibility,
-        workspaceType: visibility === 'team' ? 'team' : 'private',
+        workspaceType: row.workspaceType === 'team' ? 'team' : 'private',
         editingPolicy: visibility === 'team' ? (row.editingPolicy || 'review') : null,
+        status: row.status || 'active',
+        unsharedAt: row.unsharedAt || null,
+        unsharedByUserId: row.unsharedByUserId || null,
+        trashedAt: row.trashedAt || null,
+        trashedByUserId: row.trashedByUserId || null,
+        purgeAfter: row.purgeAfter || null,
         teamId: row.teamId,
         currentPublishedVersionId: row.currentPublishedVersionId,
         contentRevision: Number(row.contentRevision || 0),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         role: effectiveRole,
-        canEdit: visibility === 'private'
-          || effectiveRole === 'owner'
-          || effectiveRole === 'editor'
-          || effectiveRole === 'contributor',
-        canPublish: visibility === 'team'
+        canEdit: (row.status || 'active') !== 'trashed'
+          && (visibility === 'private'
+            || effectiveRole === 'owner'
+            || effectiveRole === 'editor'
+            || effectiveRole === 'contributor'),
+        canPublish: (row.status || 'active') === 'active'
+          && visibility === 'team'
           && (row.directRole === 'owner' || row.directRole === 'editor'),
         teamName: row.teamName || null,
         audienceType: visibility === 'private' ? 'private' : row.teamId ? 'team' : 'selected_people',
@@ -456,6 +503,16 @@ export class WorkspaceService {
       skipPlanApprovals?: boolean;
     };
     const normalizedWorkspace: WorkspaceRecord = workspaceRest;
+
+    if (normalizedWorkspace.status === 'trashed') {
+      throw new NotFoundError('Workspace is in trash');
+    }
+    if (
+      (normalizedWorkspace.status === 'unshared' || normalizedWorkspace.status === 'archived')
+      && normalizedWorkspace.ownerId !== userId
+    ) {
+      throw new AccessDeniedError('This Shared workspace is no longer shared');
+    }
 
     // Resolve private workspaces before any administrator override. A private
     // workspace is an owner-only boundary, not merely a UI visibility flag.
@@ -605,7 +662,223 @@ export class WorkspaceService {
       throw new AccessDeniedError('Only workspace owners can delete a workspace');
     }
 
+    if (isSharedWorkspaceRecord(workspace)) {
+      await this.db.transaction(async (tx) => {
+        const lockedWorkspace = await tx<WorkspaceRecord>('workspaces')
+          .where({ id: workspaceId })
+          .forUpdate()
+          .first();
+        if (!lockedWorkspace) throw new NotFoundError('Workspace not found');
+        if (!isSharedWorkspaceRecord(lockedWorkspace)) {
+          throw new ConflictError('Workspace is no longer Shared');
+        }
+        if (lockedWorkspace.ownerId !== userId) {
+          throw new AccessDeniedError('Only workspace owners can delete a workspace');
+        }
+        if (lockedWorkspace.status === 'trashed') return;
+        await tx('workspaces').where({ id: workspaceId }).update({
+          status: 'trashed',
+          trashedAt: tx.fn.now(),
+          trashedByUserId: userId,
+          purgeAfter: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          updatedAt: tx.fn.now(),
+          lastModifiedBy: userId,
+        });
+        await tx('workspace_publication_links').where({ teamWorkspaceId: workspaceId }).update({
+          status: 'detached',
+          detachedAt: tx.fn.now(),
+          reconnectToken: null,
+          updatedAt: tx.fn.now(),
+        });
+        await this.recordWorkspaceLifecycleAudit(tx, workspaceId, userId, 'workspace.trashed');
+      });
+      return;
+    }
+
     await this.performWorkspaceDeletion(workspace.id);
+  }
+
+  async unshareWorkspace(workspaceId: string, actingUserId: string): Promise<void> {
+    await this.ensureMembership(workspaceId, actingUserId);
+
+    await this.db.transaction(async (tx) => {
+      const workspace = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspaceId })
+        .forUpdate()
+        .first();
+      if (!workspace) throw new NotFoundError('Workspace not found');
+      if (!isSharedWorkspaceRecord(workspace)) {
+        throw new ConflictError('Only Shared workspaces can be unshared');
+      }
+      if (workspace.ownerId !== actingUserId) {
+        throw new AccessDeniedError('Only the Shared workspace owner can unshare it');
+      }
+      if (workspace.status === 'trashed') {
+        throw new ConflictError('Restore the Shared workspace before unsharing it');
+      }
+      if (workspace.status === 'unshared') return;
+      await tx('workspaces').where({ id: workspaceId }).update({
+        status: 'unshared',
+        unsharedAt: tx.fn.now(),
+        unsharedByUserId: actingUserId,
+        updatedAt: tx.fn.now(),
+        lastModifiedBy: actingUserId,
+      });
+      await tx('workspace_publication_links').where({ teamWorkspaceId: workspaceId }).update({
+        status: 'detached',
+        detachedAt: tx.fn.now(),
+        reconnectToken: null,
+        updatedAt: tx.fn.now(),
+      });
+      await this.recordWorkspaceLifecycleAudit(tx, workspaceId, actingUserId, 'workspace.unshared');
+    });
+  }
+
+  async reshareWorkspace(workspaceId: string, actingUserId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const workspace = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspaceId })
+        .forUpdate()
+        .first();
+      if (!workspace) throw new NotFoundError('Workspace not found');
+      if (!isSharedWorkspaceRecord(workspace)) throw new ConflictError('Only Shared workspaces can be reshared');
+      if (workspace.ownerId !== actingUserId) {
+        throw new AccessDeniedError('Only the Shared workspace owner can reshare it');
+      }
+      if (workspace.status === 'trashed') {
+        throw new ConflictError('Restore the Shared workspace before resharing it');
+      }
+      if ((workspace.status || 'active') === 'active') return;
+      await tx('workspaces').where({ id: workspaceId }).update({
+        status: 'active',
+        unsharedAt: null,
+        unsharedByUserId: null,
+        updatedAt: tx.fn.now(),
+        lastModifiedBy: actingUserId,
+      });
+      await this.recordWorkspaceLifecycleAudit(tx, workspaceId, actingUserId, 'workspace.reshared');
+    });
+  }
+
+  async restoreWorkspace(workspaceId: string, actingUserId: string): Promise<void> {
+    const restoredStatus = 'unshared';
+
+    await this.db.transaction(async (tx) => {
+      const workspace = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspaceId })
+        .forUpdate()
+        .first();
+      if (!workspace) throw new NotFoundError('Workspace not found');
+      if (!isSharedWorkspaceRecord(workspace)) {
+        throw new ConflictError('Only trashed Shared workspaces can be restored');
+      }
+      if (workspace.ownerId !== actingUserId) {
+        throw new AccessDeniedError('Only the Shared workspace owner can restore it');
+      }
+      if (workspace.status !== 'trashed') return;
+      await tx('workspaces').where({ id: workspaceId }).update({
+        status: restoredStatus,
+        unsharedAt: workspace.unsharedAt || tx.fn.now(),
+        unsharedByUserId: workspace.unsharedByUserId || actingUserId,
+        trashedAt: null,
+        trashedByUserId: null,
+        purgeAfter: null,
+        updatedAt: tx.fn.now(),
+        lastModifiedBy: actingUserId,
+      });
+      await this.recordWorkspaceLifecycleAudit(tx, workspaceId, actingUserId, 'workspace.restored', {
+        restoredStatus,
+      });
+    });
+  }
+
+  async leaveWorkspace(workspaceId: string, userId: string): Promise<void> {
+    await this.ensureMembership(workspaceId, userId);
+
+    await this.db.transaction(async (tx) => {
+      const workspace = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspaceId })
+        .forUpdate()
+        .first();
+      if (!workspace) throw new NotFoundError('Workspace not found');
+      if (!isSharedWorkspaceRecord(workspace) || workspace.status !== 'active') {
+        throw new ConflictError('Only active Shared workspace access can be left');
+      }
+      if (workspace.ownerId === userId) {
+        throw new ConflictError('Transfer ownership before leaving this workspace');
+      }
+      const directMembership = await tx('workspace_members').where({ workspaceId, userId }).first();
+      if (!directMembership) throw new NotFoundError('No direct workspace access to leave');
+      if (workspace.teamId) {
+        const teamMembership = await tx('group_members').where({
+          groupId: workspace.teamId,
+          userId,
+        }).first();
+        if (teamMembership) {
+          throw new ConflictError('Access is managed by your Team. Leave the Team to leave this workspace.');
+        }
+      }
+      await tx('workspace_members').where({ workspaceId, userId }).del();
+      await tx('workspace_user_grants').where({ workspaceId, userId }).del();
+      await tx('workspace_publication_links')
+        .where({ teamWorkspaceId: workspaceId, userId })
+        .update({ status: 'detached', detachedAt: tx.fn.now(), reconnectToken: null, updatedAt: tx.fn.now() });
+      await this.recordWorkspaceLifecycleAudit(tx, workspaceId, userId, 'workspace.left', {}, 'workspace_member');
+    });
+  }
+
+  async transferWorkspaceOwnership(
+    workspaceId: string,
+    actingUserId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    await this.ensureMembership(workspaceId, actingUserId);
+    if (targetUserId === actingUserId) return;
+    const targetUser = await this.db('users').where({ id: targetUserId }).first();
+    if (!targetUser) throw new NotFoundError('New owner not found');
+
+    await this.db.transaction(async (tx) => {
+      const workspace = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspaceId })
+        .forUpdate()
+        .first();
+      if (!workspace) throw new NotFoundError('Workspace not found');
+      if (!isSharedWorkspaceRecord(workspace)) {
+        throw new ConflictError('Only Shared workspace ownership can be transferred');
+      }
+      if (workspace.ownerId !== actingUserId) {
+        throw new AccessDeniedError('Only the Shared workspace owner can transfer ownership');
+      }
+      if (workspace.status === 'trashed') {
+        throw new ConflictError('Restore the Shared workspace before transferring ownership');
+      }
+      const formerOwnerCanEdit = workspace.editingPolicy === 'direct';
+      await tx('workspaces').where({ id: workspaceId }).update({
+        ownerId: targetUserId,
+        lastModifiedBy: actingUserId,
+        updatedAt: tx.fn.now(),
+      });
+      await tx('workspace_members')
+        .insert({ workspaceId, userId: targetUserId, role: 'owner', canEdit: true })
+        .onConflict(['workspaceId', 'userId'])
+        .merge({ role: 'owner', canEdit: true, updatedAt: tx.fn.now() });
+      await tx('workspace_members')
+        .where({ workspaceId, userId: actingUserId })
+        .update({ role: 'editor', canEdit: formerOwnerCanEdit, updatedAt: tx.fn.now() });
+      await tx('workspace_user_grants')
+        .insert({
+          workspaceId,
+          userId: targetUserId,
+          role: 'publisher',
+          grantedByUserId: actingUserId,
+        })
+        .onConflict(['workspaceId', 'userId'])
+        .merge({ role: 'publisher', grantedByUserId: actingUserId, updatedAt: tx.fn.now() });
+      await this.recordWorkspaceLifecycleAudit(tx, workspaceId, actingUserId, 'workspace.ownership_transferred', {
+        previousOwnerUserId: actingUserId,
+        newOwnerUserId: targetUserId,
+      });
+    });
   }
 
   async deleteWorkspaceForCleanup(workspaceId: string): Promise<boolean> {
@@ -702,7 +975,7 @@ export class WorkspaceService {
   }
 
   async removeCollaborator(workspaceId: string, actingUserId: string, targetUserId: string): Promise<void> {
-    const { membership } = await this.ensureMembership(workspaceId, actingUserId);
+    const { workspace, membership } = await this.ensureMembership(workspaceId, actingUserId);
     if (membership.role !== 'owner') {
       throw new AccessDeniedError('Only workspace owners can remove collaborators');
     }
@@ -717,9 +990,18 @@ export class WorkspaceService {
       throw new AccessDeniedError('Cannot remove workspace owner');
     }
 
+    const retainsTeamAccess = Boolean(workspace?.teamId && await this.db('group_members').where({
+      groupId: workspace.teamId,
+      userId: targetUserId,
+    }).first());
     await this.db.transaction(async (tx) => {
       await tx('workspace_members').where({ workspaceId, userId: targetUserId }).del();
       await tx('workspace_user_grants').where({ workspaceId, userId: targetUserId }).del();
+      if (!retainsTeamAccess) {
+        await tx('workspace_publication_links')
+          .where({ teamWorkspaceId: workspaceId, userId: targetUserId })
+          .update({ status: 'detached', detachedAt: tx.fn.now(), reconnectToken: null, updatedAt: tx.fn.now() });
+      }
       await tx('audit_events').insert({
         id: uuidv4(),
         actorUserId: actingUserId,
@@ -800,6 +1082,25 @@ export class WorkspaceService {
     }
 
     await this.db.transaction(async (tx) => {
+      const teamOnlyLinks = await tx('workspace_publication_links as link')
+        .leftJoin('workspace_members as direct', function joinDirectWorkspaceAccess() {
+          this.on('direct.workspaceId', '=', 'link.teamWorkspaceId')
+            .andOn('direct.userId', '=', 'link.userId');
+        })
+        .where('link.teamWorkspaceId', workspaceId)
+        .whereNull('direct.userId')
+        .select('link.privateWorkspaceId') as Array<{ privateWorkspaceId: string }>;
+      const detachedPrivateWorkspaceIds = teamOnlyLinks.map((link) => String(link.privateWorkspaceId));
+      if (detachedPrivateWorkspaceIds.length) {
+        await tx('workspace_publication_links')
+          .whereIn('privateWorkspaceId', detachedPrivateWorkspaceIds)
+          .update({
+            status: 'detached',
+            detachedAt: tx.fn.now(),
+            reconnectToken: null,
+            updatedAt: tx.fn.now(),
+          });
+      }
       await tx('workspaces')
         .where({ id: workspaceId, teamId })
         .update({ teamId: null, updatedAt: tx.fn.now() });
@@ -908,6 +1209,25 @@ export class WorkspaceService {
       });
   }
 
+  private async recordWorkspaceLifecycleAudit(
+    tx: Knex.Transaction,
+    workspaceId: string,
+    actorUserId: string,
+    action: string,
+    metadata: Record<string, unknown> = {},
+    actorRole = 'workspace_owner',
+  ): Promise<void> {
+    await tx('audit_events').insert({
+      id: uuidv4(),
+      actorUserId,
+      actorRole,
+      action,
+      resourceType: 'workspace',
+      resourceId: workspaceId,
+      metadata,
+    });
+  }
+
   private async createWorkspaceDirectory(workspaceId: string): Promise<void> {
     const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
     await fs.mkdir(workspacePath, { recursive: true });
@@ -915,6 +1235,48 @@ export class WorkspaceService {
 
   async cleanupWorkspaceArtifacts(workspaceId: string): Promise<void> {
     await this.performWorkspaceCleanup(workspaceId);
+  }
+
+  /**
+   * Permanently removes expired Shared-workspace rows in a bounded batch.
+   * `FOR UPDATE SKIP LOCKED` lets every API pod run the same sweep without
+   * double-purging. Durable objects are intentionally retained until the
+   * reference-aware object GC can account for file versions, publications,
+   * and exact Working-base manifests.
+   */
+  async purgeExpiredTrashedWorkspaces(limit = 25): Promise<string[]> {
+    const batchSize = Math.max(1, Math.min(100, Math.floor(limit)));
+    const purged = await this.db.transaction(async (tx) => {
+      const workspaces = await tx('workspaces')
+        .select('id')
+        .where({ status: 'trashed', isSystem: false })
+        .whereNotNull('purgeAfter')
+        .andWhere('purgeAfter', '<=', tx.fn.now())
+        .orderBy('purgeAfter', 'asc')
+        .forUpdate()
+        .skipLocked()
+        .limit(batchSize) as Array<{ id: string }>;
+      const workspaceIds = workspaces.map((workspace) => String(workspace.id));
+      if (!workspaceIds.length) return { workspaceIds, publishedVersionIds: [] as string[] };
+      const publishedVersions = await tx('workspace_published_versions')
+        .select('id')
+        .whereIn('teamWorkspaceId', workspaceIds) as Array<{ id: string }>;
+      await tx('workspaces').whereIn('id', workspaceIds).del();
+      return {
+        workspaceIds,
+        publishedVersionIds: publishedVersions.map((version) => String(version.id)),
+      };
+    });
+
+    await Promise.all([
+      ...purged.workspaceIds.map((workspaceId) => this.performWorkspaceCleanup(workspaceId)),
+      ...purged.publishedVersionIds.map((versionId) =>
+        fs.rm(path.join(WORKSPACE_DIR, '.published-versions', versionId), {
+          recursive: true,
+          force: true,
+        })),
+    ]);
+    return purged.workspaceIds;
   }
 
   private async performWorkspaceDeletion(workspaceId: string): Promise<void> {
@@ -937,11 +1299,8 @@ export class WorkspaceService {
   private async performWorkspaceCleanup(workspaceId: string): Promise<void> {
     const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
     await fs.rm(workspacePath, { recursive: true, force: true });
-    try {
-      await this.s3Service.deletePrefix(`${workspaceId}/`);
-    } catch (error) {
-      console.error(`Failed to delete S3 objects for workspace: ${workspaceId}`, error);
-    }
+    // Immutable file versions may be referenced by publications or another
+    // workspace. Durable objects are retained until reference-aware GC exists.
   }
 
   private normalizeWorkspaceName(name?: string | null): string {

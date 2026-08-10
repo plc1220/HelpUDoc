@@ -1,7 +1,13 @@
+export type WorkspaceLifecycleAction = 'unshare' | 'reshare' | 'trash' | 'restore' | 'leave' | 'reconnect';
+
 export interface Workspace {
   id: string;
   name: string;
   lastUsed: string;
+  status?: 'active' | 'unshared' | 'trashed';
+  unsharedAt?: string | null;
+  trashedAt?: string | null;
+  purgeAfter?: string | null;
   slug?: string;
   role?: 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
   canEdit?: boolean;
@@ -19,7 +25,8 @@ export interface Workspace {
     | 'changes_to_publish'
     | 'withdrawn'
     | 'team_updates_available'
-    | 'review_needed';
+    | 'review_needed'
+    | 'detached';
   linkedTeamWorkspaceId?: string | null;
   privateCopyWorkspaceId?: string | null;
   currentPublishedVersionId?: string | null;
@@ -42,7 +49,16 @@ export interface File {
   publicUrl?: string | null;
   content?: string;
   version?: number;
+  currentVersionId?: string | null;
+  deletedAt?: string | null;
   staleOverwrite?: boolean;
+}
+
+/** Stable reference to a workspace file used by chat and agent-run payloads. */
+export interface TaggedFileRef {
+  fileId: number;
+  version?: number;
+  name?: string;
 }
 
 export type GoogleDrivePickerScope = 'recent' | 'my-drive' | 'shared';
@@ -234,6 +250,7 @@ export interface ConversationMessageMetadata {
     prePlanSearchUsed?: number;
   };
   taggedFiles?: string[];
+  taggedFileRefs?: TaggedFileRef[];
   knowledgeRefs?: Array<{
     id: number;
     title: string;

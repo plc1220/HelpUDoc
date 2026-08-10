@@ -1,24 +1,14 @@
-"""Shared test fixtures for office-service tests."""
+"""Shared test fixtures for direct OfficeCLI runner tests."""
 
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
-# Add the office-service root to path so imports work
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-os.environ.setdefault("OFFICE_SERVICE_WORKSPACE_ROOT", "/tmp/office-test-workspaces")
-os.environ.setdefault("OFFICE_SERVICE_OFFICECLI_BIN", "/tmp/fake-officecli")
-
-
 @pytest.fixture
 def workspace_root(tmp_path):
     """Provide a temporary workspace root directory."""
-    os.environ["OFFICE_SERVICE_WORKSPACE_ROOT"] = str(tmp_path)
     yield tmp_path
-    os.environ.pop("OFFICE_SERVICE_WORKSPACE_ROOT", None)
 
 
 @pytest.fixture
@@ -143,6 +133,4 @@ echo '{"success":false,"data":"Unknown command: '"$1"'"}'
 exit 1
 ''')
     bin_path.chmod(0o755)
-    os.environ["OFFICE_SERVICE_OFFICECLI_BIN"] = str(bin_path)
     yield bin_path
-    os.environ.pop("OFFICE_SERVICE_OFFICECLI_BIN", None)

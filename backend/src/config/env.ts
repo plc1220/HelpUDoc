@@ -84,6 +84,15 @@ const backendEnvSchema = z.object({
     accessKeyId: z.string().min(1),
     secretAccessKey: z.string().min(1),
   }),
+  objectStore: z.object({
+    provider: z.enum(['s3', 'gcs']),
+    gcs: z.object({
+      bucketName: z.string().min(1),
+      projectId: z.string().optional(),
+      keyFilename: z.string().optional(),
+      apiEndpoint: z.string().optional(),
+    }),
+  }),
   googleOauth: z.object({
     clientId: z.string().optional(),
     clientSecret: z.string().optional(),
@@ -155,6 +164,15 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
         trimEnv(e, 'AWS_SECRET_ACCESS_KEY')
         || trimEnv(e, 'MINIO_ROOT_PASSWORD')
         || 'minioadmin',
+    },
+    objectStore: {
+      provider: trimEnv(e, 'OBJECT_STORE_PROVIDER') === 'gcs' ? 'gcs' : 's3',
+      gcs: {
+        bucketName: trimEnv(e, 'GCS_BUCKET_NAME') || bucket,
+        projectId: trimEnv(e, 'GCS_PROJECT_ID') || trimEnv(e, 'GOOGLE_CLOUD_PROJECT'),
+        keyFilename: trimEnv(e, 'GCS_KEY_FILENAME'),
+        apiEndpoint: trimEnv(e, 'GCS_API_ENDPOINT'),
+      },
     },
     googleOauth: {
       clientId: trimEnv(e, 'GOOGLE_OAUTH_CLIENT_ID'),

@@ -392,6 +392,25 @@ class TestRuntimeEnforcement:
         skill = self._make_skill(tools=["data_agent_tools", "run_sql_query"], mcp_servers=[])
         assert is_tool_allowed("web_search", skill, tool_mcp_server=None) is False
 
+    def test_allow_unlisted_tools_preserves_ordinary_builtins_not_execution_tools(
+        self, tmp_path: Path
+    ) -> None:
+        from agent.helpudoc_agent.skills_registry import is_tool_allowed, load_skills
+
+        skill_dir = tmp_path / "legacy-doc"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: legacy-doc\nallow_unlisted_tools: true\ntools:\n"
+            "  - document_execute\n---\n",
+            encoding="utf-8",
+        )
+        skill = load_skills(tmp_path)[0]
+
+        assert skill.allow_unlisted_tools is True
+        assert is_tool_allowed("append_to_report", skill) is True
+        assert is_tool_allowed("document_execute", skill) is True
+        assert is_tool_allowed("run_skill_python_script", skill) is False
+
     def test_dict_scope_is_supported_for_runtime_context(self) -> None:
         from agent.helpudoc_agent.skills_registry import is_tool_allowed
 

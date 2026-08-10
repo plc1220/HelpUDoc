@@ -19,10 +19,6 @@ on:
         description: Build and push agent image
         type: boolean
         default: true
-      build_office_service:
-        description: Build and push office-service image
-        type: boolean
-        default: true
       deploy_infra:
         description: Apply manifests, RBAC checks, ConfigMap/Langfuse bootstrap (use sparingly)
         type: boolean
@@ -60,8 +56,8 @@ jobs:
       - name: Require at least one component build
         run: |
           set -euo pipefail
-          if [[ "${{ inputs.build_backend }}" != "true" && "${{ inputs.build_frontend }}" != "true" && "${{ inputs.build_agent }}" != "true" && "${{ inputs.build_office_service }}" != "true" ]]; then
-            echo "Select at least one of build_backend, build_frontend, build_agent, or build_office_service." >&2
+          if [[ "${{ inputs.build_backend }}" != "true" && "${{ inputs.build_frontend }}" != "true" && "${{ inputs.build_agent }}" != "true" ]]; then
+            echo "Select at least one of build_backend, build_frontend, or build_agent." >&2
             exit 1
           fi
       - name: Echo operator environment label
@@ -255,76 +251,19 @@ jobs:
           docker pull "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
           docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
             python /app/agent/scripts/smoke_import.py
-
-  build-office-service:
-    name: Build and push office-service
-    needs: [guard]
-    if: ${{ inputs.build_office_service }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v5
-      - name: Select Google auth mode
-        id: auth_mode
-        env:
-          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
-          WIF_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
-        run: |
-          set -euo pipefail
-          has_wif=false
-          has_json=false
-          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then has_wif=true; fi
-          if [[ -n "${CREDENTIALS_JSON}" ]]; then has_json=true; fi
-          if [[ "${has_wif}" == "true" && "${has_json}" == "true" ]]; then
-            echo "Configure only one auth method: WIF OR GCP_CREDENTIALS_JSON." >&2
-            exit 1
-          fi
-          if [[ "${has_wif}" == "true" ]]; then echo "mode=wif" >> "${GITHUB_OUTPUT}"; exit 0; fi
-          if [[ "${has_json}" == "true" ]]; then echo "mode=json" >> "${GITHUB_OUTPUT}"; exit 0; fi
-          echo "Missing GCP auth secrets." >&2
-          exit 1
-      - name: Authenticate to Google Cloud (Workload Identity)
-        if: ${{ steps.auth_mode.outputs.mode == 'wif' }}
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - name: Authenticate to Google Cloud (Service Account Key)
-        if: ${{ steps.auth_mode.outputs.mode == 'json' }}
-        uses: google-github-actions/auth@v3
-        with:
-          credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
-      - uses: google-github-actions/setup-gcloud@v3
-      - uses: docker/setup-buildx-action@v4
-      - name: Configure Docker Auth
-        run: gcloud auth configure-docker gcr.io --quiet
-      - name: Build and push office-service
-        env:
-          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
-        run: |
-          set -euo pipefail
-          CACHE_REF="gcr.io/${PROJECT_ID}/helpudoc-buildcache-office-service:buildcache"
-          docker buildx build \
-            -f office-service/Dockerfile \
-            --cache-from "type=registry,ref=${CACHE_REF}" \
-            --cache-to "type=registry,ref=${CACHE_REF},mode=max" \
-            -t "gcr.io/${PROJECT_ID}/helpudoc-office-service:${IMAGE_TAG}" \
-            --push \
-            .
+          docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" officecli --version
+          docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
+            python /app/agent/scripts/smoke_officecli.py
 
   deploy:
     name: Deploy to GKE
-    needs: [guard, build-backend, build-frontend, build-agent, build-office-service]
+    needs: [guard, build-backend, build-frontend, build-agent]
     if: >
       always()
       && needs.guard.result == 'success'
       && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped')
       && (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
       && (needs.build-agent.result == 'success' || needs.build-agent.result == 'skipped')
-      && (needs.build-office-service.result == 'success' || needs.build-office-service.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -393,10 +332,6 @@ jobs:
           fi
           if kubectl -n helpudoc get deployment helpudoc-frontend >/dev/null 2>&1; then
             echo "CURRENT_FRONTEND_IMG=$(kubectl -n helpudoc get deployment helpudoc-frontend -o jsonpath='{.spec.template.spec.containers[?(@.name=="frontend")].image}')" >> "${GITHUB_ENV}"
-          fi
-          CURRENT_OFFICE_SERVICE_IMG=$(kubectl -n helpudoc get deployment helpudoc-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="office-service")].image}' 2>/dev/null || true)
-          if [[ -n "${CURRENT_OFFICE_SERVICE_IMG}" ]]; then
-            echo "CURRENT_OFFICE_SERVICE_IMG=${CURRENT_OFFICE_SERVICE_IMG}" >> "${GITHUB_ENV}"
           fi
 
       - name: Ensure helpudoc-config exists (app deploys only)
@@ -559,45 +494,68 @@ jobs:
             --arg enc_key "${OAUTH_TOKEN_ENCRYPTION_KEY}" \
             '{stringData:{GOOGLE_OAUTH_CLIENT_SECRET:$client_secret,OAUTH_TOKEN_ENCRYPTION_KEY:$enc_key}}')"
 
-      - name: Ensure office-service sidecar exists
-        if: ${{ inputs.build_office_service }}
-        env:
-          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
+      - name: Capture pre-removal Office rollback state
+        id: office_rollback
+        if: ${{ inputs.build_agent }}
         run: |
           set -euo pipefail
-          if kubectl -n helpudoc get deployment helpudoc-app \
-            -o jsonpath='{.spec.template.spec.containers[*].name}' | tr ' ' '\n' | grep -qx office-service; then
+          echo "sidecar_present=false" >> "${GITHUB_OUTPUT}"
+          if ! kubectl -n helpudoc get deployment helpudoc-app -o json > "${RUNNER_TEMP}/helpudoc-app.json"; then
+            echo "No existing app deployment; no Office sidecar rollback state to capture."
             exit 0
           fi
-          OFFICE_IMAGE="gcr.io/${PROJECT_ID}/helpudoc-office-service:${IMAGE_TAG}"
-          kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p "$(jq -n \
-            --arg image "${OFFICE_IMAGE}" \
-            '{spec:{template:{spec:{
-              containers:[
-                {name:"agent",env:[{name:"OFFICE_SERVICE_URL",value:"http://localhost:8002"}]},
-                {
-                  name:"office-service",
-                  image:$image,
-                  ports:[{containerPort:8002}],
-                  env:[
-                    {name:"OFFICE_SERVICE_WORKSPACE_ROOT",value:"/app/workspaces"},
-                    {name:"OFFICECLI_SKIP_UPDATE",value:"1"},
-                    {name:"OFFICECLI_NO_AUTO_RESIDENT",value:"1"},
-                    {name:"HOME",value:"/tmp/officecli-home"}
-                  ],
-                  startupProbe:{httpGet:{path:"/readyz",port:8002},periodSeconds:3,failureThreshold:10},
-                  livenessProbe:{httpGet:{path:"/healthz",port:8002},periodSeconds:30,timeoutSeconds:3,failureThreshold:3},
-                  readinessProbe:{httpGet:{path:"/readyz",port:8002},periodSeconds:10,timeoutSeconds:3,failureThreshold:3},
-                  resources:{requests:{cpu:"50m",memory:"128Mi"},limits:{cpu:"500m",memory:"512Mi"}},
-                  securityContext:{readOnlyRootFilesystem:true,allowPrivilegeEscalation:false,capabilities:{drop:["ALL"]}},
-                  volumeMounts:[
-                    {name:"workspace-data",mountPath:"/app/workspaces"},
-                    {name:"office-service-tmp",mountPath:"/tmp"}
-                  ]
-                }
-              ],
-              volumes:[{name:"office-service-tmp",emptyDir:{sizeLimit:"256Mi"}}]
-            }}}}')"
+          if ! jq -e '.spec.template.spec.containers[] | select(.name == "office-service")' \
+            "${RUNNER_TEMP}/helpudoc-app.json" >/dev/null; then
+            echo "Office sidecar already absent; skipping one-time rollback capture."
+            exit 0
+          fi
+          echo "sidecar_present=true" >> "${GITHUB_OUTPUT}"
+          BUNDLE="${RUNNER_TEMP}/office-sidecar-rollback-${GITHUB_SHA}"
+          mkdir -p "${BUNDLE}"
+          kubectl -n helpudoc get deployment helpudoc-app -o yaml > "${BUNDLE}/helpudoc-app.live.yaml"
+          jq '{images:[.spec.template.spec.containers[]|{name,image}]}' \
+            "${RUNNER_TEMP}/helpudoc-app.json" \
+            > "${BUNDLE}/images.json"
+          jq '{OFFICE_SERVICE_URL: ([.spec.template.spec.containers[] | select(.name == "agent") | .env[]? | select(.name == "OFFICE_SERVICE_URL") | .value][0] // null)}' \
+            "${RUNNER_TEMP}/helpudoc-app.json" \
+            > "${BUNDLE}/office-config.json"
+          cp infra/gke/rollback/office-sidecar-v1.0.143/README.md "${BUNDLE}/README.md"
+          cp infra/gke/rollback/office-sidecar-v1.0.143/50-app.yaml "${BUNDLE}/50-app.yaml"
+
+      - name: Publish pre-removal Office rollback bundle
+        if: ${{ inputs.build_agent && steps.office_rollback.outputs.sidecar_present == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: office-sidecar-rollback-${{ github.sha }}
+          path: ${{ runner.temp }}/office-sidecar-rollback-${{ github.sha }}
+          retention-days: 90
+
+      - name: Apply direct OfficeCLI agent runtime contract
+        if: ${{ inputs.build_agent }}
+        run: |
+          set -euo pipefail
+          kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p '
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: agent
+                      startupProbe:
+                        httpGet: {path: /ready, port: 8001}
+                        periodSeconds: 5
+                        failureThreshold: 120
+                      readinessProbe:
+                        httpGet: {path: /ready, port: 8001}
+                        periodSeconds: 10
+                        timeoutSeconds: 2
+                        failureThreshold: 3
+                      resources:
+                        requests: {cpu: 800m, memory: 4Gi}
+                        limits: {cpu: "2", memory: 9Gi}
+                      env:
+                        - name: OFFICE_SERVICE_URL
+                          $patch: delete
+          '
 
       - name: Update workload images
         env:
@@ -621,11 +579,6 @@ jobs:
             APP_ARGS+=("agent=${AGENT_IMG}")
           elif [[ -n "${CURRENT_AGENT_IMG:-}" ]]; then
             APP_ARGS+=("agent=${CURRENT_AGENT_IMG}")
-          fi
-          if [[ "${{ inputs.build_office_service }}" == "true" ]]; then
-            APP_ARGS+=("office-service=gcr.io/${PROJECT_ID}/helpudoc-office-service:${IMAGE_TAG}")
-          elif [[ -n "${CURRENT_OFFICE_SERVICE_IMG:-}" ]]; then
-            APP_ARGS+=("office-service=${CURRENT_OFFICE_SERVICE_IMG}")
           fi
           if (( ${#APP_ARGS[@]} > 0 )); then
             kubectl -n helpudoc set image deployment/helpudoc-app "${APP_ARGS[@]}"
@@ -742,6 +695,45 @@ jobs:
             kubectl -n helpudoc rollout status deployment/helpudoc-caddy --timeout=5m
           fi
 
+      - name: Gate direct OfficeCLI in the shared agent cgroup
+        if: ${{ inputs.build_agent }}
+        run: |
+          set -euo pipefail
+          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{" "}{.status.containerStatuses[?(@.name=="agent")].ready}{"\n"}{end}' \
+            | awk '$2 == "Running" && $3 == "true" {print $1; exit}')"
+          test -n "${APP_POD}"
+          RESTARTS_BEFORE="$(kubectl -n helpudoc get pod "${APP_POD}" \
+            -o jsonpath='{.status.containerStatuses[?(@.name=="agent")].restartCount}')"
+          kubectl -n helpudoc exec "${APP_POD}" -c agent -- \
+            python /app/agent/scripts/smoke_officecli.py
+          kubectl -n helpudoc exec "${APP_POD}" -c agent -- \
+            env HELPUDOC_NON_DOCUMENT_P99_SLO_MS=50 \
+            python /app/agent/scripts/gate_officecli_shared_cgroup.py
+          RESTARTS_AFTER="$(kubectl -n helpudoc get pod "${APP_POD}" \
+            -o jsonpath='{.status.containerStatuses[?(@.name=="agent")].restartCount}')"
+          if [[ "${RESTARTS_AFTER}" != "${RESTARTS_BEFORE}" ]]; then
+            echo "Agent restarted during direct OfficeCLI gate (${RESTARTS_BEFORE} -> ${RESTARTS_AFTER})." >&2
+            exit 1
+          fi
+
+      - name: Remove obsolete Office HTTP sidecar after direct-path gates
+        if: ${{ inputs.build_agent && steps.office_rollback.outputs.sidecar_present == 'true' }}
+        run: |
+          set -euo pipefail
+          kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p '
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: office-service
+                      $patch: delete
+                  volumes:
+                    - name: office-service-tmp
+                      $patch: delete
+          '
+          kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
+
       - name: Collect rollout diagnostics
         if: ${{ failure() }}
         run: |
@@ -841,7 +833,11 @@ jobs:
           import urllib.request
           import urllib.error
 
-          url = "http://127.0.0.1:8001/health"
+          url = (
+              "http://127.0.0.1:8001/ready"
+              if "${{ inputs.build_agent }}" == "true"
+              else "http://127.0.0.1:8001/health"
+          )
           for attempt in range(1, 31):
               try:
                   with urllib.request.urlopen(url, timeout=2) as response:
@@ -861,18 +857,6 @@ jobs:
             kubectl -n helpudoc logs deploy/helpudoc-app -c agent --tail=200 || true
             exit 1
           fi
-
-      - name: Post-deploy smoke (office-service readiness)
-        run: |
-          set -euo pipefail
-          if ! kubectl -n helpudoc get deployment helpudoc-app \
-            -o jsonpath='{.spec.template.spec.containers[*].name}' | tr ' ' '\n' | grep -qx office-service; then
-            echo "office-service is not installed; skipping readiness smoke."
-            exit 0
-          fi
-          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
-          test -n "${APP_POD}"
-          kubectl -n helpudoc exec "${APP_POD}" -c office-service -- python -c "import urllib.request; r=urllib.request.urlopen('http://localhost:8002/readyz'); assert r.status==200"
 
       - name: Post-deploy smoke (Gemini model)
         run: |

@@ -1,14 +1,10 @@
-"""Security and path validation tests for office-service."""
+"""Security and path validation tests for the direct OfficeCLI runner."""
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from security import (
+from agent.helpudoc_agent.tools.workspace.office.security import (
     InvalidOperationError,
     PathTraversalError,
     resolve_workspace_path,
@@ -92,6 +88,16 @@ class TestValidateOperations:
         ops = [{"command": "set", "path": "/body/p[1]", "props": {"bold": "true"}}]
         validate_operations(ops, max_operations=50)
 
+    def test_valid_safe_key_value_props(self):
+        ops = [{"command": "set", "path": "/body/p[1]", "props": ["bold=true"]}]
+        validate_operations(ops, max_operations=50)
+
+    @pytest.mark.parametrize("key", ["src", "SRC", "Path", "URL"])
+    def test_rejects_blocked_key_value_props_case_insensitively(self, key):
+        ops = [{"command": "set", "path": "/body/p[1]", "props": [f"{key}=/etc/passwd"]}]
+        with pytest.raises(InvalidOperationError, match="nested key"):
+            validate_operations(ops, max_operations=50)
+
     def test_valid_get(self):
         ops = [{"command": "get", "path": "/body/p[1]", "depth": 2}]
         validate_operations(ops, max_operations=50)
@@ -116,9 +122,10 @@ class TestValidateOperations:
         ops = [{"command": "view", "mode": "outline"}]
         validate_operations(ops, max_operations=50)
 
-    def test_valid_validate(self):
+    def test_rejects_model_requested_validate(self):
         ops = [{"command": "validate"}]
-        validate_operations(ops, max_operations=50)
+        with pytest.raises(InvalidOperationError, match="not allowed"):
+            validate_operations(ops, max_operations=50)
 
     def test_rejects_too_many(self):
         ops = [{"command": "get", "path": "/body"}] * 10

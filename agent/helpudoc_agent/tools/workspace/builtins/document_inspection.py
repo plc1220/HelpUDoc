@@ -36,9 +36,13 @@ _MAX_OUTPUT_CHARS = int(os.getenv("DOCUMENT_INSPECTION_MAX_OUTPUT_CHARS", "30000
 _MAX_SEARCH_RESULTS = int(os.getenv("DOCUMENT_INSPECTION_MAX_SEARCH_RESULTS", "40"))
 _MAX_SPREADSHEET_INSPECT_CELLS = int(os.getenv("DOCUMENT_INSPECTION_MAX_RANGE_CELLS", "10000"))
 _MAX_SPREADSHEET_SCAN_CELLS = int(os.getenv("DOCUMENT_INSPECTION_MAX_SPREADSHEET_CELLS", "250000"))
+_MAX_PPTX_INSPECT_SLIDES = int(os.getenv("DOCUMENT_INSPECTION_MAX_PPTX_SLIDES", "20"))
+_MAX_PPTX_INVENTORY_SLIDES = int(os.getenv("DOCUMENT_INSPECTION_MAX_PPTX_INVENTORY_SLIDES", "50"))
+_MAX_PPTX_SHAPES_PER_SLIDE = int(os.getenv("DOCUMENT_INSPECTION_MAX_PPTX_SHAPES_PER_SLIDE", "200"))
+_MAX_PPTX_SCAN_UNITS = int(os.getenv("DOCUMENT_INSPECTION_MAX_PPTX_SCAN_UNITS", "250000"))
 _DEFAULT_XLSX_RANGE = "A1:J25"
 
-_SUPPORTED_TYPES_HINT = "Supported: PDF, DOCX, XLSX/XLSM, and text/Markdown/CSV."
+_SUPPORTED_TYPES_HINT = "Supported: PDF, DOCX, XLSX/XLSM, PPTX, and text/Markdown/CSV."
 
 # Stable machine-readable error codes. Callers (skills, prompts, and the
 # runtime loop guard) branch on these, so values must not be renamed.
@@ -83,7 +87,7 @@ def _default_next_call(code: str, tool_name: str) -> str:
     if code in {ERROR_FILE_NOT_FOUND, ERROR_AMBIGUOUS_FILE_PATH, ERROR_PATH_OUTSIDE_WORKSPACE}:
         return "ls(path='/') to confirm the exact workspace-relative file path"
     if code == ERROR_UNSUPPORTED_DOCUMENT_TYPE:
-        return "none: ask the user for a supported export (PDF, DOCX, XLSX, CSV, or text)"
+        return "none: ask the user for a supported export (PDF, DOCX, XLSX, PPTX, CSV, or text)"
     if code == ERROR_UNKNOWN_SHEET:
         return "inspect_document(file_path=<same file>) to list the available sheets"
     if code in {ERROR_INVALID_RANGE, ERROR_RANGE_TOO_LARGE}:
@@ -434,6 +438,376 @@ def _inspect_xlsx(path: Path, sheet_name: Optional[str], cell_range: Optional[st
         workbook.close()
 
 
+def _pptx_core_properties(presentation: Any) -> dict[str, Any]:
+    properties = getattr(presentation, "core_properties", None)
+    if properties is None:
+        return {}
+    metadata: dict[str, Any] = {}
+    for field in (
+        "title",
+        "subject",
+        "author",
+        "keywords",
+        "comments",
+        "category",
+        "language",
+        "created",
+        "modified",
+        "last_modified_by",
+        "revision",
+        "version",
+    ):
+        try:
+            value = getattr(properties, field, None)
+        except Exception:
+            continue
+        if value not in (None, ""):
+            serialized = value.isoformat() if hasattr(value, "isoformat") else value
+            metadata[field] = _snippet(str(serialized), "", 500)
+    return metadata
+
+
+def _pptx_slide_title(slide: Any) -> Optional[str]:
+    try:
+        title_shape = slide.shapes.title
+        text = str(getattr(title_shape, "text", "") or "").strip() if title_shape else ""
+        return _snippet(text, "", 300) if text else None
+    except Exception:
+        return None
+
+
+def _pptx_notes(slide: Any) -> list[dict[str, Any]]:
+    try:
+        if not bool(getattr(slide, "has_notes_slide", False)):
+            return []
+        text_frame = getattr(slide.notes_slide, "notes_text_frame", None)
+        paragraphs = getattr(text_frame, "paragraphs", ()) or ()
+    except Exception:
+        return []
+    notes: list[dict[str, Any]] = []
+    for paragraph_index, paragraph in enumerate(paragraphs, start=1):
+        text = str(getattr(paragraph, "text", "") or "").strip()
+        if text:
+            notes.append({"paragraph": paragraph_index, "text": text})
+    return notes
+
+
+def _pptx_alt_text(shape: Any) -> dict[str, str]:
+    """Return accessible title/description from a shape's OOXML cNvPr node."""
+    element = getattr(shape, "_element", None)
+    if element is None:
+        return {}
+    try:
+        for child in element.iter():
+            if str(getattr(child, "tag", "")).rsplit("}", 1)[-1] != "cNvPr":
+                continue
+            values = {
+                "title": str(child.get("title") or "").strip(),
+                "description": str(child.get("descr") or "").strip(),
+            }
+            return {key: value for key, value in values.items() if value}
+    except Exception:
+        return {}
+    return {}
+
+
+def _walk_pptx_shapes(shapes: Any, index_prefix: tuple[int, ...] = ()) -> Iterable[tuple[Any, tuple[int, ...]]]:
+    """Yield top-level and grouped shapes in deterministic XML order."""
+    for index, shape in enumerate(shapes or (), start=1):
+        index_path = index_prefix + (index,)
+        yield shape, index_path
+        children = getattr(shape, "shapes", None)
+        if children is not None:
+            yield from _walk_pptx_shapes(children, index_path)
+
+
+def _pptx_shape_id(shape: Any, index_path: tuple[int, ...]) -> str:
+    try:
+        return str(int(shape.shape_id))
+    except Exception:
+        # Malformed decks may omit the non-visual shape ID. The XML-order path
+        # remains deterministic and addressable within the inspected file.
+        return "index-" + ".".join(str(item) for item in index_path)
+
+
+def _pptx_shape_entry(
+    shape: Any,
+    *,
+    slide_number: int,
+    index_path: tuple[int, ...],
+    remaining_chars: list[int],
+) -> dict[str, Any]:
+    shape_id = _pptx_shape_id(shape, index_path)
+    location = f"slide:{slide_number}:shape:{shape_id}"
+    entry: dict[str, Any] = {
+        "location": location,
+        "shapeId": shape_id,
+        "shapeIndexPath": ".".join(str(item) for item in index_path),
+        "name": _snippet(str(getattr(shape, "name", "") or ""), "", 200),
+        "shapeType": str(getattr(shape, "shape_type", "") or ""),
+    }
+    bounds: dict[str, int] = {}
+    for key in ("left", "top", "width", "height"):
+        try:
+            value = getattr(shape, key, None)
+            if value is not None:
+                bounds[key] = int(value)
+        except Exception:
+            continue
+    if bounds:
+        entry["boundsEmu"] = bounds
+
+    raw_alt_text = _pptx_alt_text(shape)
+    if raw_alt_text:
+        alt_text = {key: _snippet(value, "", 1200) for key, value in raw_alt_text.items()}
+        entry["altText"] = alt_text
+        remaining_chars[0] -= sum(len(value) for value in alt_text.values())
+
+    if bool(getattr(shape, "has_text_frame", False)):
+        paragraphs = []
+        try:
+            source_paragraphs = shape.text_frame.paragraphs
+        except Exception:
+            source_paragraphs = ()
+        for paragraph_index, paragraph in enumerate(source_paragraphs, start=1):
+            text = str(getattr(paragraph, "text", "") or "").strip()
+            if not text:
+                continue
+            clipped = _snippet(text, "", min(1200, max(120, remaining_chars[0])))
+            paragraphs.append(
+                {
+                    "location": f"{location}:paragraph:{paragraph_index}",
+                    "paragraph": paragraph_index,
+                    "text": clipped,
+                }
+            )
+            remaining_chars[0] -= len(clipped) + 100
+            if remaining_chars[0] <= 0:
+                entry["contentTruncated"] = True
+                break
+        if paragraphs:
+            entry["paragraphs"] = paragraphs
+
+    if bool(getattr(shape, "has_table", False)) and remaining_chars[0] > 0:
+        try:
+            table = shape.table
+            rows = []
+            for row_index, row in enumerate(table.rows, start=1):
+                values = []
+                for cell in row.cells:
+                    value = _snippet(str(getattr(cell, "text", "") or "").strip(), "", 500)
+                    values.append(value)
+                    remaining_chars[0] -= len(value) + 20
+                rows.append(
+                    {
+                        "location": f"{location}:table:row:{row_index}",
+                        "row": row_index,
+                        "values": values,
+                    }
+                )
+                if remaining_chars[0] <= 0:
+                    entry["contentTruncated"] = True
+                    break
+            entry["table"] = {
+                "rowCount": len(table.rows),
+                "columnCount": len(table.columns),
+                "rows": rows,
+            }
+        except Exception as exc:
+            entry["tableReadError"] = _short_error(exc)
+    return entry
+
+
+def _pptx_slide_inventory(slide: Any, slide_number: int) -> dict[str, Any]:
+    notes = _pptx_notes(slide)
+    try:
+        layout_name = _snippet(str(getattr(slide.slide_layout, "name", "") or ""), "", 120)
+    except Exception:
+        layout_name = ""
+    try:
+        slide_id = int(slide.slide_id)
+    except Exception:
+        slide_id = None
+    try:
+        hidden = str(slide._element.get("show") or "1") == "0"
+    except Exception:
+        hidden = False
+    return {
+        "location": f"slide:{slide_number}",
+        "slide": slide_number,
+        "slideId": slide_id,
+        "title": _pptx_slide_title(slide),
+        "layout": layout_name,
+        "shapeCount": len(slide.shapes),
+        "hasSpeakerNotes": bool(notes),
+        "hidden": hidden,
+    }
+
+
+def _trim_pptx_inspection_payload(payload: dict[str, Any]) -> None:
+    """Trim optional PPTX detail while preserving a valid JSON envelope."""
+    if _MAX_OUTPUT_CHARS <= 0:
+        return
+    target = max(2000, _MAX_OUTPUT_CHARS - 1500)
+
+    def serialized_size() -> int:
+        return len(json.dumps(payload, ensure_ascii=False, default=str))
+
+    trimmed = False
+    while serialized_size() > target:
+        inventory = payload.get("slideInventory")
+        if isinstance(inventory, list) and inventory:
+            inventory.pop()
+            payload["inventoryTruncated"] = True
+            trimmed = True
+            continue
+        removed = False
+        for slide in reversed(payload.get("slides") or []):
+            shapes = slide.get("shapes") if isinstance(slide, dict) else None
+            if isinstance(shapes, list) and shapes:
+                shapes.pop()
+                slide["contentTruncated"] = True
+                removed = trimmed = True
+                break
+        if removed:
+            continue
+        for slide in reversed(payload.get("slides") or []):
+            notes = slide.get("speakerNotes") if isinstance(slide, dict) else None
+            if isinstance(notes, list) and notes:
+                notes.pop()
+                slide["contentTruncated"] = True
+                removed = trimmed = True
+                break
+        if removed:
+            continue
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            metadata.pop(next(reversed(metadata)))
+            trimmed = True
+            continue
+        break
+    if trimmed:
+        payload["outputTruncated"] = True
+
+
+def _inspect_pptx(path: Path, slide_start: int, slide_end: int) -> dict[str, Any]:
+    from pptx import Presentation  # type: ignore
+
+    presentation = Presentation(str(path))
+    slide_count = len(presentation.slides)
+    width = int(presentation.slide_width)
+    height = int(presentation.slide_height)
+    inventory_limit = max(0, _MAX_PPTX_INVENTORY_SLIDES)
+    inventory = []
+    for slide_number, slide in enumerate(presentation.slides, start=1):
+        if slide_number > inventory_limit:
+            break
+        inventory.append(_pptx_slide_inventory(slide, slide_number))
+    payload: dict[str, Any] = {
+        "kind": "pptx",
+        "slideCount": slide_count,
+        "slideSize": {
+            "widthEmu": width,
+            "heightEmu": height,
+            "widthInches": round(width / 914400, 3),
+            "heightInches": round(height / 914400, 3),
+        },
+        "metadata": _pptx_core_properties(presentation),
+        "slideInventory": inventory,
+        "inventoryTruncated": slide_count > len(inventory),
+    }
+    if slide_count == 0:
+        payload.update({"selectedSlides": [], "slides": []})
+        return payload
+
+    start = max(1, int(slide_start))
+    if start > slide_count:
+        raise DocumentToolError(
+            ERROR_INVALID_RANGE,
+            f"PPTX slide_start {start} exceeds the deck's {slide_count} slides",
+            suggested_next_call=(
+                f"inspect_document(file_path=<same file>, slide_start=1, "
+                f"slide_end={min(slide_count, 5)})"
+            ),
+        )
+    end = min(slide_count, max(start, int(slide_end)))
+    requested_count = end - start + 1
+    if requested_count > _MAX_PPTX_INSPECT_SLIDES:
+        raise DocumentToolError(
+            ERROR_RANGE_TOO_LARGE,
+            f"PPTX inspection range is too large ({requested_count} slides); "
+            f"request at most {_MAX_PPTX_INSPECT_SLIDES} slides",
+            suggested_next_call=(
+                f"inspect_document(file_path=<same file>, slide_start={start}, "
+                f"slide_end={start + _MAX_PPTX_INSPECT_SLIDES - 1})"
+            ),
+        )
+
+    # Keep the serialized JSON below the shared tool-output ceiling while
+    # returning valid, addressable structure rather than clipping mid-JSON.
+    remaining_chars = [max(2000, min(10000, _MAX_OUTPUT_CHARS // 3))]
+    selected = []
+    selected_numbers = list(range(start, end + 1))
+    for slide_number in selected_numbers:
+        slide = presentation.slides[slide_number - 1]
+        summary = _pptx_slide_inventory(slide, slide_number)
+        shapes = []
+        shapes_truncated = False
+        for shape_number, (shape, index_path) in enumerate(_walk_pptx_shapes(slide.shapes), start=1):
+            if shape_number > _MAX_PPTX_SHAPES_PER_SLIDE or remaining_chars[0] <= 0:
+                shapes_truncated = True
+                break
+            shapes.append(
+                _pptx_shape_entry(
+                    shape,
+                    slide_number=slide_number,
+                    index_path=index_path,
+                    remaining_chars=remaining_chars,
+                )
+            )
+            remaining_chars[0] -= 180
+        notes = []
+        for note in _pptx_notes(slide):
+            if remaining_chars[0] <= 0:
+                shapes_truncated = True
+                break
+            text = _snippet(note["text"], "", min(1200, max(120, remaining_chars[0])))
+            notes.append(
+                {
+                    "location": f"slide:{slide_number}:note:paragraph:{note['paragraph']}",
+                    "paragraph": note["paragraph"],
+                    "text": text,
+                }
+            )
+            remaining_chars[0] -= len(text) + 100
+        summary.update(
+            {
+                "shapes": shapes,
+                "speakerNotes": notes,
+                "contentTruncated": shapes_truncated,
+            }
+        )
+        selected.append(summary)
+    payload.update(
+        {
+            "selectedSlides": [start, end],
+            "slides": selected,
+            "visualInspection": {
+                "rendered": False,
+                "renderRequiredForVisualQuestions": True,
+                "slides": selected_numbers,
+                "reason": (
+                    "Text and OOXML extraction do not preserve final layout, clipping, "
+                    "overlap, chart appearance, or image content. Render these selected "
+                    "slides with the PPTX skill QA flow for appearance-sensitive questions."
+                ),
+            },
+        }
+    )
+    _trim_pptx_inspection_payload(payload)
+    return payload
+
+
 def _inspect_text(path: Path, line_start: int, line_end: int) -> dict[str, Any]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     if not lines:
@@ -541,6 +915,114 @@ def _search_xlsx(path: Path, phrase: str, tokens: list[str], limit: int) -> tupl
     return results, truncated
 
 
+def _search_pptx(path: Path, phrase: str, tokens: list[str], limit: int) -> tuple[list[dict[str, Any]], bool]:
+    from pptx import Presentation  # type: ignore
+
+    presentation = Presentation(str(path))
+    results: list[dict[str, Any]] = []
+    scanned = 0
+
+    def scan_unit(cost: int = 1) -> bool:
+        nonlocal scanned
+        scanned += max(1, cost)
+        return scanned <= _MAX_PPTX_SCAN_UNITS
+
+    for slide_number, slide in enumerate(presentation.slides, start=1):
+        for shape, index_path in _walk_pptx_shapes(slide.shapes):
+            if not scan_unit():
+                return results, True
+            shape_id = _pptx_shape_id(shape, index_path)
+            base_location = f"slide:{slide_number}:shape:{shape_id}"
+            shape_name = _snippet(str(getattr(shape, "name", "") or ""), "", 200)
+
+            if bool(getattr(shape, "has_text_frame", False)):
+                try:
+                    paragraphs = shape.text_frame.paragraphs
+                except Exception:
+                    paragraphs = ()
+                for paragraph_index, paragraph in enumerate(paragraphs, start=1):
+                    if not scan_unit():
+                        return results, True
+                    text = str(getattr(paragraph, "text", "") or "")
+                    if _matches(text, phrase, tokens):
+                        results.append(
+                            {
+                                "kind": "slideText",
+                                "location": f"{base_location}:paragraph:{paragraph_index}",
+                                "slide": slide_number,
+                                "shapeId": shape_id,
+                                "shapeName": shape_name,
+                                "paragraph": paragraph_index,
+                                "snippet": _snippet(text, phrase, 350),
+                            }
+                        )
+                    if len(results) >= limit:
+                        return results, False
+
+            if bool(getattr(shape, "has_table", False)):
+                try:
+                    rows = shape.table.rows
+                except Exception:
+                    rows = ()
+                for row_index, row in enumerate(rows, start=1):
+                    cells = list(getattr(row, "cells", ()) or ())
+                    if not scan_unit(len(cells)):
+                        return results, True
+                    text = " | ".join(str(getattr(cell, "text", "") or "").strip() for cell in cells)
+                    if _matches(text, phrase, tokens):
+                        results.append(
+                            {
+                                "kind": "tableRow",
+                                "location": f"{base_location}:table:row:{row_index}",
+                                "slide": slide_number,
+                                "shapeId": shape_id,
+                                "shapeName": shape_name,
+                                "row": row_index,
+                                "snippet": _snippet(text, phrase, 350),
+                            }
+                        )
+                    if len(results) >= limit:
+                        return results, False
+
+            alt_text = _pptx_alt_text(shape)
+            if alt_text:
+                if not scan_unit(len(alt_text)):
+                    return results, True
+                text = " | ".join(value for value in alt_text.values() if value)
+                if _matches(text, phrase, tokens):
+                    results.append(
+                        {
+                            "kind": "altText",
+                            "location": f"{base_location}:alt-text",
+                            "slide": slide_number,
+                            "shapeId": shape_id,
+                            "shapeName": shape_name,
+                            "altTextFields": list(alt_text),
+                            "snippet": _snippet(text, phrase, 350),
+                        }
+                    )
+                if len(results) >= limit:
+                    return results, False
+
+        for note in _pptx_notes(slide):
+            if not scan_unit():
+                return results, True
+            text = note["text"]
+            if _matches(text, phrase, tokens):
+                results.append(
+                    {
+                        "kind": "speakerNote",
+                        "location": f"slide:{slide_number}:note:paragraph:{note['paragraph']}",
+                        "slide": slide_number,
+                        "paragraph": note["paragraph"],
+                        "snippet": _snippet(text, phrase, 350),
+                    }
+                )
+            if len(results) >= limit:
+                return results, False
+    return results, False
+
+
 def _search_text(path: Path, phrase: str, tokens: list[str], limit: int) -> list[dict[str, Any]]:
     results = []
     for line_number, line in enumerate(
@@ -568,12 +1050,14 @@ def build_inspect_document_tool(workspace_state: WorkspaceState) -> Tool:
         file_path: str,
         page_start: int = 1,
         page_end: int = 5,
+        slide_start: int = 1,
+        slide_end: int = 5,
         item_start: int = 1,
         item_end: int = 40,
         sheet_name: Optional[str] = None,
         cell_range: Optional[str] = None,
     ) -> str:
-        """Inspect a bounded range of a PDF, DOCX, XLSX, or text workspace file."""
+        """Inspect a bounded range of a PDF, DOCX, XLSX, PPTX, or text workspace file."""
         try:
             path = _resolve_document(root, file_path)
             suffix = path.suffix.lower()
@@ -583,6 +1067,8 @@ def build_inspect_document_tool(workspace_state: WorkspaceState) -> Tool:
                 payload = _inspect_docx(path, item_start, item_end)
             elif suffix in {".xlsx", ".xlsm"}:
                 payload = _inspect_xlsx(path, sheet_name, cell_range)
+            elif suffix == ".pptx":
+                payload = _inspect_pptx(path, slide_start, slide_end)
             elif suffix in _TEXT_SUFFIXES:
                 payload = _inspect_text(path, item_start, item_end)
             else:
@@ -598,8 +1084,10 @@ def build_inspect_document_tool(workspace_state: WorkspaceState) -> Tool:
     inspect_document.name = "inspect_document"
     inspect_document.description = (
         "Read a bounded range from an original workspace PDF, DOCX, XLSX/XLSM, "
-        "or text file. Start with metadata/headings/sheet inventory, then request "
-        "only the pages, paragraphs, sheet, or cells needed. Returns JSON with "
+        "PPTX, or text file. Start with metadata/headings/sheet or slide inventory, "
+        "then request only the pages, paragraphs, slides, speaker notes, sheet, or "
+        "cells needed. PPTX inspection returns render-needed metadata for visual "
+        "questions. Returns JSON with "
         "status='ok', or status='error' plus errorCode, retryable, and "
         "suggestedNextCall. Do not repeat a call whose error is not retryable."
     )
@@ -630,6 +1118,8 @@ def build_search_document_tool(workspace_state: WorkspaceState) -> Tool:
                 results = _search_docx(path, phrase, tokens, limit)
             elif suffix in {".xlsx", ".xlsm"}:
                 results, truncated = _search_xlsx(path, phrase, tokens, limit)
+            elif suffix == ".pptx":
+                results, truncated = _search_pptx(path, phrase, tokens, limit)
             elif suffix in _TEXT_SUFFIXES:
                 results = _search_text(path, phrase, tokens, limit)
             else:
@@ -650,8 +1140,9 @@ def build_search_document_tool(workspace_state: WorkspaceState) -> Tool:
 
     search_document.name = "search_document"
     search_document.description = (
-        "Search inside an original PDF, DOCX, XLSX/XLSM, or text workspace file. "
-        "Returns page, paragraph, table-row, sheet/cell, or line locations for grounded follow-up inspection. "
+        "Search inside an original PDF, DOCX, XLSX/XLSM, PPTX, or text workspace file. "
+        "Returns page, paragraph, table-row, slide/shape, speaker-note, alt-text, "
+        "sheet/cell, or line locations for grounded follow-up inspection. "
         "Returns JSON with status='ok', or status='error' plus errorCode, retryable, "
         "and suggestedNextCall. Do not repeat a call whose error is not retryable."
     )

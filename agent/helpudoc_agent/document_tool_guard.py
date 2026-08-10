@@ -36,6 +36,8 @@ _DEFAULT_ARGS: Dict[str, Dict[str, Any]] = {
     "inspect_document": {
         "page_start": 1,
         "page_end": 5,
+        "slide_start": 1,
+        "slide_end": 5,
         "item_start": 1,
         "item_end": 40,
         "sheet_name": None,

@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Readable } from 'node:stream';
 
 import { WorkspacePublicationService } from '../src/services/workspacePublicationService.ts';
 
@@ -185,4 +186,43 @@ test('published file reads reject traversal attempts in the requested path', asy
     () => service.readVersionFile('workspace-shared', 'version-2', '../../etc/passwd', 'owner-user'),
     /Invalid workspace content path/,
   );
+});
+
+test('published file reads use immutable object references when present', async () => {
+  const manifest = {
+    files: [{
+      name: 'scope.md',
+      mimeType: 'text/markdown',
+      hash: 'hash-scope',
+      size: 16,
+      fileVersionId: 'file-version-7',
+      objectKey: 'workspace/.system/file-versions/file-version-7',
+      objectProvider: 's3',
+      providerVersion: 'provider-version-1',
+    }],
+    folders: [],
+  };
+  const { service } = snapshotHarness({ manifest });
+  const reads: Array<{ key: string; providerVersion?: string }> = [];
+  Object.assign(service, {
+    objectStore: {
+      provider: 's3',
+      getStream: async (key: string, options: { providerVersion?: string }) => {
+        reads.push({ key, providerVersion: options.providerVersion });
+        return { stream: Readable.from(Buffer.from('immutable scope')), metadata: {} };
+      },
+    },
+  });
+
+  const file = await service.readVersionFile(
+    'workspace-shared',
+    'version-2',
+    'scope.md',
+    'owner-user',
+  );
+  assert.equal(file.content, 'immutable scope');
+  assert.deepEqual(reads, [{
+    key: 'workspace/.system/file-versions/file-version-7',
+    providerVersion: 'provider-version-1',
+  }]);
 });

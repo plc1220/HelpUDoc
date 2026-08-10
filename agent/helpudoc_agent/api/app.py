@@ -65,7 +65,11 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
     register_health_routes(app, dependency_diag)
-    register_app_lifecycle(app, memory_store_manager)
+    register_app_lifecycle(
+        app,
+        memory_store_manager,
+        workspace_root=settings.backend.workspace_root,
+    )
     register_internal_routes(
         app,
         settings=settings,

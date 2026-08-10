@@ -105,16 +105,27 @@ stateDiagram-v2
     Shared --> Shared: Change access or editing policy
     Shared --> Published: Create published version
     Published --> Shared: Continue live work
-    Shared --> Private: Make private when no other access remains
+    Shared --> Unshared: Unshare
+    Unshared --> Shared: Re-share
+    Shared --> Trashed: Move to trash
+    Unshared --> Trashed: Move to trash
+    Trashed --> Unshared: Restore
+    Trashed --> [*]: Purge after retention
 ```
 
 `Published` in this diagram is a version state, not a separate workspace type. The Shared workspace remains the durable identity and continues to own the working revision and publication history.
 
-An owner may make a Shared workspace private again only when:
+Unshare is an access-state change, not a destructive conversion. It preserves
+the Shared workspace, grants, publication history, and private drafts while
+immediately denying non-owner access. Existing private links become detached.
+Re-share restores the audience but does not reconnect those drafts; reconnect
+is an explicit, conflict-checked action.
 
-- no other user or Team has access;
-- there are no open review proposals that would become inaccessible; and
-- the owner acknowledges that other users may already have viewed or copied content.
+Deleting a Shared workspace moves it to trash for 30 days. Restore always lands
+in the owner-only Unshared state. The bounded purge removes expired relational
+workspace state, while durable objects remain until reference-aware garbage
+collection proves that no file version, publication, or Working sync base uses
+them.
 
 ## 6. Access and roles
 
@@ -235,6 +246,18 @@ When access is revoked:
 - any private working copy they already created remains private but becomes detached;
 - HelpUDoc cannot recall content the user already viewed or copied.
 
+### Sync a linked private draft
+
+- Autosync runs only when an active linked draft is explicitly opened and the
+  active Shared Working version may have advanced.
+- Every link stores an exact immutable manifest of Shared Working from its last
+  successful sync; a published version is never substituted as that base.
+- A clean draft fast-forwards. Divergent non-overlapping files merge with a
+  three-way comparison. Overlapping whole-file changes return `review_needed`
+  without modifying the draft.
+- Unshared, trashed, inaccessible, and detached links never autosync. An
+  explicit reconnect verifies access and uses the same conflict-safe merge.
+
 ## 9. Publication flow
 
 ### Create a published version
@@ -323,6 +346,9 @@ Search indexes and derived previews are rebuilt from authorized content.
 | Private Review copy has changes | Private copy differs from its Shared base | Review changes |
 | Review proposals pending | One or more proposals await action | Review changes |
 | Published history available | At least one immutable version exists | View published versions |
+| Shared, unshared | Owner has revoked the audience | Re-share or move to trash |
+| Shared, trashed | Within the restore window | Restore |
+| Private draft detached | Sharing or access ended | Reconnect after access is restored |
 
 These states are badges and actions within the two pane sections. They are not additional workspace categories.
 
@@ -394,6 +420,9 @@ Each published version stores:
 - Publication verifies Publisher or Owner permission at execution time.
 - Published manifests use an explicit allowlist and never copy an entire workspace directory blindly.
 - Access changes, live edits, proposals, publications, restores, and revocations are audited.
+- Shared lifecycle transitions lock and revalidate the workspace row so
+  concurrent unshare, re-share, trash, and restore requests cannot overwrite
+  one another.
 - Server logs and errors must not expose private paths or content.
 
 ## 14. Existing workspace migration

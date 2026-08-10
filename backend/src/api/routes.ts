@@ -47,7 +47,7 @@ export default function(
   );
   const fileService = new FileService(dbService, workspaceService);
   const conversationService = new ConversationService(dbService, workspaceService);
-  configureAgentRunServices({ conversationService });
+  configureAgentRunServices({ conversationService, fileService });
   const knowledgeService = new KnowledgeService(dbService, workspaceService, fileService);
   const userOAuthTokenService = new UserOAuthTokenService(dbService);
   const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);

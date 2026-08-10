@@ -4,6 +4,7 @@ import { Add, CalendarMonth, ChevronLeft, Settings, LightMode, DarkMode, Logout 
 import WorkspaceList from './WorkspaceList';
 import type { Workspace } from '../types';
 import type { PaletteMode } from '@mui/material';
+import type { WorkspaceLifecycleAction } from '../utils/workspaceLifecycle';
 
 interface CollapsibleDrawerProps {
   open: boolean;
@@ -19,7 +20,9 @@ interface CollapsibleDrawerProps {
   onManageTeamAccess?: (workspace: Workspace) => void;
   onSyncDraftWorkspace?: (workspace: Workspace) => void;
   onReviewDraftChanges?: (workspace: Workspace) => void;
+  onLifecycleWorkspace?: (workspace: Workspace, action: WorkspaceLifecycleAction) => void;
   syncingDraftWorkspaceId?: string | null;
+  lifecycleBusyWorkspaceId?: string | null;
   onSelectWorkspace: (workspace: Workspace) => void;
   onCreateWorkspace: () => void | Promise<void>;
   onOpenSchedules?: () => void;
@@ -46,7 +49,9 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   onManageTeamAccess,
   onSyncDraftWorkspace,
   onReviewDraftChanges,
+  onLifecycleWorkspace,
   syncingDraftWorkspaceId = null,
+  lifecycleBusyWorkspaceId = null,
   onSelectWorkspace,
   onCreateWorkspace,
   onOpenSchedules,
@@ -187,7 +192,9 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               onManageTeamAccess={onManageTeamAccess}
               onSyncDraftWorkspace={onSyncDraftWorkspace}
               onReviewDraftChanges={onReviewDraftChanges}
+              onLifecycleWorkspace={onLifecycleWorkspace}
               syncingDraftWorkspaceId={syncingDraftWorkspaceId}
+              lifecycleBusyWorkspaceId={lifecycleBusyWorkspaceId}
             />
           </Box>
           <Box

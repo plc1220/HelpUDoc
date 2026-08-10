@@ -137,6 +137,77 @@ def _record_completed_interaction_gate(workspace_state: WorkspaceState, interact
     )
 
 
+def _normalize_style_preview_props(props: Dict[str, Any]) -> Dict[str, Any]:
+    """Project the legacy options/preview_path shape onto the Interaction contract."""
+    options = props.get("options")
+    if not isinstance(options, list) or not options:
+        return props
+
+    choices: List[Dict[str, Any]] = []
+    previews: List[Dict[str, Any]] = []
+    for index, raw_option in enumerate(options):
+        if not isinstance(raw_option, dict):
+            continue
+        option_id = str(
+            raw_option.get("id")
+            or raw_option.get("choiceId")
+            or raw_option.get("value")
+            or f"style-{chr(ord('a') + index)}"
+        ).strip()
+        label = str(
+            raw_option.get("label")
+            or raw_option.get("name")
+            or raw_option.get("title")
+            or f"Style {chr(ord('A') + index)}"
+        ).strip()
+        description = str(
+            raw_option.get("description") or raw_option.get("summary") or ""
+        ).strip()
+        value = str(raw_option.get("value") or option_id).strip()
+        choice: Dict[str, Any] = {
+            "id": option_id,
+            "label": label,
+            "value": value,
+        }
+        if description:
+            choice["description"] = description
+        choices.append(choice)
+
+        preview_path = str(
+            raw_option.get("path")
+            or raw_option.get("preview_path")
+            or raw_option.get("previewPath")
+            or raw_option.get("filePath")
+            or raw_option.get("file")
+            or ""
+        ).strip()
+        preview_html = str(
+            raw_option.get("html")
+            or raw_option.get("srcDoc")
+            or raw_option.get("content")
+            or ""
+        ).strip()
+        preview: Dict[str, Any] = {
+            "id": option_id,
+            "label": label,
+        }
+        if description:
+            preview["description"] = description
+        if preview_path:
+            preview["path"] = preview_path
+        if preview_html:
+            preview["html"] = preview_html
+        if preview_path or preview_html:
+            previews.append(preview)
+
+    normalized = dict(props)
+    if choices and not normalized.get("choices"):
+        normalized["choices"] = choices
+    if previews and not normalized.get("previews"):
+        normalized["previews"] = previews
+    return normalized
+
+
 def _build_interaction_interrupt_payload(
     *,
     presentation: str,
@@ -155,6 +226,8 @@ def _build_interaction_interrupt_payload(
 
     skill = parsed_context.get("skill") or parsed_context.get("skillId") or ""
     gate = (gate_id or parsed_context.get("gateId") or parsed_context.get("gate_id") or "").strip()
+    if str(skill or "").strip().lower() == "frontend-slides" and gate == "style_preview_selection":
+        parsed_props = _normalize_style_preview_props(parsed_props)
     if str(skill or "").strip().lower() == "frontend-slides" and gate == "outline_confirmation":
         for key in ("outlineMarkdown", "slideOutline", "slides", "outline"):
             if key not in parsed_props and parsed_context.get(key):

@@ -1263,7 +1263,7 @@ export class KnowledgeService {
     const indexFile = await this.db('files').where({
       workspaceId: String(knowledge.workspaceId),
       name: path.posix.join(bundlePath, 'index.md'),
-    }).first();
+    }).whereNull('deletedAt').first();
     if (!indexFile) throw new ConflictError('Snapshot bundle is unavailable and cannot be published');
     const publishedAt = new Date().toISOString();
     await this.fileService.upsertInternalTextFile(
@@ -1406,7 +1406,10 @@ export class KnowledgeService {
       status: 'pending',
       uploadUrl: directUpload.uploadUrl,
       expiresAt: expiresAt.toISOString(),
-      headers: { 'Content-Type': mimeType },
+      headers: {
+        'Content-Type': mimeType,
+        ...directUpload.uploadHeaders,
+      },
       fileName: directUpload.requestedFileName,
       sizeBytes: input.sizeBytes,
     };
@@ -1581,11 +1584,11 @@ export class KnowledgeService {
       .limit(Math.max(1, Math.min(250, limit)));
     for (const row of rows) {
       const storedFile = row.fileId
-        ? await this.db('files').where({ id: Number(row.fileId) }).first()
+        ? await this.db('files').where({ id: Number(row.fileId) }).whereNull('deletedAt').first()
         : await this.db('files').where({
             workspaceId: row.workspaceId,
             path: row.objectKey,
-          }).first();
+          }).whereNull('deletedAt').first();
       const knowledge = storedFile
         ? await this.db('knowledge_sources').where({ fileId: Number(storedFile.id), isGlobal: true }).first()
         : null;
@@ -2952,6 +2955,7 @@ export class KnowledgeService {
     }
     const rows = await this.db('files')
       .where({ workspaceId: knowledge.workspaceId })
+      .whereNull('deletedAt')
       .whereLike('name', `${bundlePath}/%`)
       .orderBy('name', 'asc');
     const prefix = `${bundlePath}/`;
@@ -3018,7 +3022,7 @@ export class KnowledgeService {
     const row = await this.db('files').where({
       workspaceId: knowledge.workspaceId,
       name: fullPath,
-    }).first();
+    }).whereNull('deletedAt').first();
     if (!row) {
       throw new NotFoundError('OKF bundle file not found');
     }
@@ -3049,6 +3053,7 @@ export class KnowledgeService {
     }
     const rows = await this.db('files')
       .where({ workspaceId })
+      .whereNull('deletedAt')
       .whereLike('name', `${bundlePath}/%`);
     for (const row of rows) {
       if (!retainedPaths.has(String(row.name))) {
@@ -3473,7 +3478,7 @@ export class KnowledgeService {
   }
 
   private async assertFileInWorkspace(fileId: number, workspaceId: string) {
-    const file = await this.db('files').where({ id: fileId, workspaceId }).first();
+    const file = await this.db('files').where({ id: fileId, workspaceId }).whereNull('deletedAt').first();
     if (!file) {
       throw new ConflictError('File does not belong to this workspace');
     }

@@ -116,6 +116,11 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
         write_denied = context.get("can_write_workspace") is False
         if not (is_published or write_denied):
             return None
+        if is_published:
+            return (
+                f"Cannot {operation} '{file_path}' in a published workspace. "
+                "Use the published workspace for analysis or edit its Working version."
+            )
         return (
             f"Cannot {operation} '{file_path}' with the current workspace access or editing policy. "
             "Ask an owner to grant edit access or review the proposed change."

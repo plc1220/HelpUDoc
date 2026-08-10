@@ -1,6 +1,11 @@
 ---
 name: docx
 description: Create, edit, redline, comment on, and visually verify `.docx`, Word, and Google Docs-targeted document artifacts. Use for Word documents, `.docx` files, document creation, document edits, tracked changes, comments, render QA, and Google Docs-ready local DOCX generation.
+allow_unlisted_tools: true
+tools:
+  - document_inspection
+  - document_execute
+  - run_skill_python_script
 ---
 
 # Documents Skill (Read • Create • Edit • Redline • Comment)
@@ -18,6 +23,22 @@ them visually.
   original file on demand; do not wait for background parsing or require a
   vector index.
 - For document creation and deterministic OOXML edits, it is still acceptable to use the bundled Python/OOXML helper scripts in this skill package when the JS surface is incomplete.
+- For normal deterministic DOCX creation and edits, prefer one atomic
+  `document_execute` call with workspace-relative `source_path`/`output_path`
+  and typed OfficeCLI operations. The host creates or copies a working file,
+  runs the batch, validates the result, and publishes only on success. Re-open
+  the result with `search_document`/`inspect_document` and complete the visual
+  render gate below. Use `run_skill_python_script` only when the typed OfficeCLI
+  operations cannot express the transformation; inline Python still runs in
+  the Kubernetes sandbox and must declare staged inputs and published outputs.
+  Inline mode is operator-controlled and may be disabled; if so, use a declared
+  reviewed script when one fits or report that the exceptional transformation
+  is unavailable.
+- Treat the `document_execute.operations` tool schema as the canonical OfficeCLI
+  recipe. Use `get`, `query`, or `view` to discover stable targets; use `add`,
+  `set`, `remove`, `move`, or `swap` for mutations; supply only the fields listed
+  for that command. Keep related writes in one call so validation and publication
+  remain atomic.
 - Run any builder or helper file from a writable workspace or temp directory, not from the managed dependency directory itself.
 - Final user-facing responses should describe only the requested document result
   and link only to the final `.docx`, Word, or Google Docs deliverable unless

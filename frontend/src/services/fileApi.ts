@@ -20,6 +20,43 @@ export const getFileContent = async (workspaceId: string, fileId: string) => {
   return response.json();
 };
 
+export const getFileDownloadUrl = (workspaceId: string, fileId: string | number, version?: number) => {
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/${fileId}/download`);
+  if (version) url.searchParams.set('version', String(version));
+  return url.toString();
+};
+
+export const getFilePreviewUrl = (workspaceId: string, fileId: string | number, version?: number) => {
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/${fileId}/preview`);
+  if (version) url.searchParams.set('version', String(version));
+  return url.toString();
+};
+
+export const getFileVersions = async (workspaceId: string, fileId: string | number) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/${fileId}/versions`);
+  if (!response.ok) throw new Error('Failed to fetch file versions');
+  const payload = await response.json();
+  return Array.isArray(payload?.versions) ? payload.versions : [];
+};
+
+export const restoreFileVersion = async (
+  workspaceId: string,
+  fileId: string | number,
+  versionId: string,
+  expectedVersion?: number,
+) => {
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${workspaceId}/files/${fileId}/versions/${versionId}/restore`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: expectedVersion }),
+    },
+  );
+  if (!response.ok) throw new Error('Failed to restore file version');
+  return response.json();
+};
+
 export const getWorkspaceFilePreview = async (workspaceId: string, relativePath: string) => {
   const url = buildApiUrl(`/workspaces/${workspaceId}/files/preview`);
   url.searchParams.set('path', relativePath);

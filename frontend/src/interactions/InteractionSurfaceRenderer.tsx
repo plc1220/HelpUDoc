@@ -225,11 +225,13 @@ export function InteractionSurfaceRenderer({
           ].map(normalizeKey).filter(Boolean);
           return keys.some((key) => previewKeys.includes(key));
         }) || previews[index];
-        const html = String(preview?.html || preview?.srcDoc || preview?.content || '').trim();
         const sourcePath = String(
           preview?.path || preview?.file || preview?.filePath || preview?.previewPath || '',
         ).trim();
         const previewUrl = sourcePath ? workspacePreviewUrl(workspaceId, sourcePath) : undefined;
+        const html = previewUrl
+          ? ''
+          : String(preview?.html || preview?.srcDoc || preview?.content || '').trim();
         const isSelected = selectedChoiceId === id;
         return (
           <Stack key={id} direction="vertical" gap={2} width="100%">

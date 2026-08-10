@@ -25,6 +25,7 @@ _PREFERRED_MCP_ONLY_BUILTINS = {
 _WORKSPACE_MUTATING_TOOLS = {
     "append_to_report",
     "create_pdf_from_images",
+    "document_execute",
     "export_bigquery_query",
     "gemini_image",
     "run_skill_python_script",
@@ -142,6 +143,11 @@ class GuardedTool(BaseTool):
         write_denied = context.get("can_write_workspace") is False
         if not (is_published or write_denied) or self.name not in _WORKSPACE_MUTATING_TOOLS:
             return None
+        if is_published:
+            return (
+                f"Tool '{self.name}' cannot write into a published workspace. "
+                "Use the published workspace for analysis or edit its Working version."
+            )
         return (
             f"Tool '{self.name}' cannot write into this workspace with the current access or editing policy. "
             "Use the workspace for analysis, or ask an owner to grant edit access or review the proposed change."

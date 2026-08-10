@@ -210,6 +210,72 @@ def test_workflow_action_frontend_slides_gate_forces_clarification_resume(monkey
     assert payload["interactionRequest"]["resumeAction"]["endpoint"] == "respond"
 
 
+def test_workflow_action_normalizes_legacy_style_preview_options(monkeypatch, tmp_path):
+    workspace = WorkspaceState(workspace_id="workflow-style-options", root_path=tmp_path)
+    captured = {}
+
+    def fake_interrupt(payload):
+        captured["payload"] = payload
+        return {
+            "interactionId": "interaction-style_preview_selection",
+            "actionId": "submit",
+            "values": {"selectedChoiceId": "style-c"},
+        }
+
+    monkeypatch.setattr("helpudoc_agent.tools_and_schemas.interrupt", fake_interrupt)
+
+    tool = build_workflow_action_tool(workspace)
+    result = tool.invoke(
+        {
+            "action": "request_user_interaction",
+            "gate_id": "style_preview_selection",
+            "presentation": "style_preview",
+            "props_json": json.dumps(
+                {
+                    "title": "Choose Presentation Style",
+                    "options": [
+                        {
+                            "id": "style-a",
+                            "label": "Blue Professional",
+                            "preview_path": "/style-a.html",
+                        },
+                        {
+                            "id": "style-b",
+                            "label": "Signal",
+                            "preview_path": "/style-b.html",
+                        },
+                        {
+                            "id": "style-c",
+                            "label": "Cobalt Grid",
+                            "preview_path": "/style-c.html",
+                        },
+                    ],
+                }
+            ),
+            "context_json": json.dumps(
+                {
+                    "skill": "frontend-slides",
+                    "gateId": "style_preview_selection",
+                    "interactionContract": "helpudoc.interaction",
+                }
+            ),
+        }
+    )
+
+    assert json.loads(result)["actionId"] == "submit"
+    props = captured["payload"]["interactionRequest"]["props"]
+    assert [(choice["id"], choice["label"]) for choice in props["choices"]] == [
+        ("style-a", "Blue Professional"),
+        ("style-b", "Signal"),
+        ("style-c", "Cobalt Grid"),
+    ]
+    assert [(preview["id"], preview["path"]) for preview in props["previews"]] == [
+        ("style-a", "/style-a.html"),
+        ("style-b", "/style-b.html"),
+        ("style-c", "/style-c.html"),
+    ]
+
+
 def test_workflow_action_rejects_outline_gate_without_embedded_outline(tmp_path):
     workspace = WorkspaceState(workspace_id="workflow-interaction", root_path=tmp_path)
     tool = build_workflow_action_tool(workspace)

@@ -1,37 +1,18 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { Readable } from 'stream';
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { DatabaseService } from './databaseService';
-import { S3Service } from './s3Service';
+import type { ObjectStore } from './objectStore';
+import { getObjectStore } from './objectStoreFactory';
 import { WorkspaceRecord, WorkspaceRole, WorkspaceService } from './workspaceService';
 import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
 
-/**
- * Normalizes a database timestamp (Date, ISO string, or epoch number) into
- * epoch milliseconds. Returns null when the value is missing or unparseable so
- * callers can skip timestamp-based comparisons instead of treating them as 0.
- * Mirrors the identical helper in workspaceService for status derivation.
- */
-const toEpochMillis = (value: unknown): number | null => {
-  if (value == null) return null;
-  if (value instanceof Date) {
-    const time = value.getTime();
-    return Number.isNaN(time) ? null : time;
-  }
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-  if (typeof value === 'string') {
-    const time = new Date(value).getTime();
-    return Number.isNaN(time) ? null : time;
-  }
-  return null;
-};
 import {
   namedGrantToLegacyWorkspaceRole,
   normalizeSelectedWorkspaceUsers,
@@ -47,7 +28,7 @@ import {
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
 const VERSION_ROOT = path.join(WORKSPACE_DIR, '.published-versions');
-const INTERNAL_WORKSPACE_DIR_NAMES = new Set(['.system']);
+const INTERNAL_WORKSPACE_DIR_NAMES = new Set(['.system', 'sandbox-runs']);
 
 type PublishResolution = 'private' | 'team';
 
@@ -57,6 +38,10 @@ type ContentFile = {
   buffer: Buffer;
   hash: string;
   size: number;
+  fileVersionId?: string | null;
+  objectKey?: string | null;
+  objectProvider?: string | null;
+  providerVersion?: string | null;
 };
 
 type PublicationManifestFile = {
@@ -64,6 +49,10 @@ type PublicationManifestFile = {
   mimeType: string | null;
   hash: string;
   size: number;
+  fileVersionId?: string | null;
+  objectKey?: string | null;
+  objectProvider?: string | null;
+  providerVersion?: string | null;
 };
 
 type PublicationManifest = {
@@ -90,7 +79,11 @@ type PublicationLinkRecord = {
   basePublishedVersionId: string | null;
   basePrivateContentRevision: number;
   baseSharedContentRevision: number;
+  baseWorkingManifest?: PublicationManifest | PublicationManifestFile[] | string | null;
   hasUnpublishedChanges: boolean;
+  status?: 'active' | 'detached';
+  detachedAt?: string | null;
+  reconnectToken?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -103,12 +96,12 @@ type WorkspaceContent = {
 export class WorkspacePublicationService {
   private readonly db: Knex;
   private readonly workspaceService: WorkspaceService;
-  private readonly s3Service: S3Service;
+  private readonly objectStore: ObjectStore;
 
   constructor(databaseService: DatabaseService, workspaceService: WorkspaceService) {
     this.db = databaseService.getDb();
     this.workspaceService = workspaceService;
-    this.s3Service = new S3Service();
+    this.objectStore = getObjectStore();
   }
 
   async publish(
@@ -339,26 +332,21 @@ export class WorkspacePublicationService {
         .where({ id: existing.privateWorkspaceId })
         .first();
       if (workspace) {
-        const privateCopyIsClean = Number(workspace.contentRevision || 0)
-          === Number(existing.basePrivateContentRevision || 0);
-        const sharedCopyAdvanced = Number(teamWorkspace.contentRevision || 0)
-          !== Number(existing.baseSharedContentRevision || 0);
-        if (privateCopyIsClean && sharedCopyAdvanced) {
-          const content = await this.readWorkspaceContent(teamWorkspace.id);
-          const contentRevision = await this.replaceWorkspaceContent(workspace.id, content, userId);
-          await this.db('workspace_publication_links')
-            .where({ privateWorkspaceId: workspace.id, teamWorkspaceId, userId })
-            .update({
-              basePublishedVersionId: teamWorkspace.currentPublishedVersionId || null,
-              basePrivateContentRevision: contentRevision,
-              baseSharedContentRevision: Number(teamWorkspace.contentRevision || 0),
-              hasUnpublishedChanges: false,
-              updatedAt: this.db.fn.now(),
-            });
-          workspace = await this.db<WorkspaceRecord>('workspaces')
-            .where({ id: existing.privateWorkspaceId })
-            .first() as WorkspaceRecord;
+        if (existing.status === 'detached') {
+          await this.reconnect(existing.privateWorkspaceId, userId);
+        } else if (this.isActiveWorkspace(workspace) && this.isActiveSharedWorkspace(teamWorkspace)) {
+          await this.syncFromSharedWorking(
+            existing.privateWorkspaceId,
+            workspace,
+            teamWorkspace,
+            existing,
+            userId,
+            {},
+          );
         }
+        workspace = await this.db<WorkspaceRecord>('workspaces')
+          .where({ id: existing.privateWorkspaceId })
+          .first() as WorkspaceRecord;
         return this.toPrivateWorkspaceResponse(workspace, teamWorkspaceId);
       }
     }
@@ -410,6 +398,10 @@ export class WorkspacePublicationService {
         basePublishedVersionId: currentVersion?.id || null,
         basePrivateContentRevision: contentRevision,
         baseSharedContentRevision: Number(teamWorkspace.contentRevision || 0),
+        baseWorkingManifest: this.manifestFromContent(content),
+        hasUnpublishedChanges: false,
+        status: 'active',
+        detachedAt: null,
       });
     } catch (error) {
       await this.db('workspaces').where({ id: privateWorkspaceId }).del();
@@ -596,7 +588,10 @@ export class WorkspacePublicationService {
         .update({
           basePrivateContentRevision: sourceRevision,
           baseSharedContentRevision: appliedRevision,
+          baseWorkingManifest: this.manifestFromContent(content),
           hasUnpublishedChanges: false,
+          status: 'active',
+          detachedAt: null,
           updatedAt: tx.fn.now(),
         });
       await tx('audit_events').insert({
@@ -632,16 +627,138 @@ export class WorkspacePublicationService {
     if (!link) {
       throw new ConflictError('This private workspace is not linked to a Shared workspace');
     }
+    if (link.status === 'active' && link.reconnectToken) {
+      throw new ConflictError('This private workspace is already reconnecting');
+    }
 
-    const { workspace: teamWorkspace } = await this.workspaceService.ensureMembership(link.teamWorkspaceId, userId);
+    if (link.status === 'detached') {
+      return this.detachedSyncResult(privateWorkspaceId, link.teamWorkspaceId);
+    }
+    if (!this.isActiveWorkspace(privateWorkspace)) {
+      return this.detachPublicationLink(link);
+    }
 
-    const isModernLink = Number(link.baseSharedContentRevision || 0) > 0;
+    const sharedWorkspace = await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: link.teamWorkspaceId })
+      .first();
+    if (!this.isActiveSharedWorkspace(sharedWorkspace)) {
+      return this.detachPublicationLink(link);
+    }
 
-    if (isModernLink) {
+    let teamWorkspace: WorkspaceRecord;
+    try {
+      ({ workspace: teamWorkspace } = await this.workspaceService.ensureMembership(link.teamWorkspaceId, userId));
+    } catch (error) {
+      if (error instanceof AccessDeniedError || error instanceof NotFoundError) {
+        return this.detachPublicationLink(link);
+      }
+      throw error;
+    }
+
+    if (link.baseWorkingManifest) {
       return this.syncFromSharedWorking(privateWorkspaceId, privateWorkspace, teamWorkspace, link, userId, resolutions);
     }
 
-    return this.syncFromPublishedVersion(privateWorkspaceId, teamWorkspace, link, userId, resolutions);
+    // Legacy links may not have an exact Working base. A clean private copy can
+    // safely initialize one by fast-forwarding; a dirty copy must not guess
+    // that a release snapshot was its Working ancestor.
+    const privateIsClean = Number(privateWorkspace.contentRevision || 0)
+      === Number(link.basePrivateContentRevision || 0)
+      && !link.hasUnpublishedChanges;
+    if (privateIsClean) {
+      return this.syncFromSharedWorking(privateWorkspaceId, privateWorkspace, teamWorkspace, link, userId, resolutions);
+    }
+    return this.reviewNeededSyncResult(privateWorkspaceId, teamWorkspace.id, [], {
+      reason: 'BASE_WORKING_MANIFEST_UNAVAILABLE',
+    });
+  }
+
+  async reconnect(privateWorkspaceId: string, userId: string) {
+    const { workspace: privateWorkspace } = await this.workspaceService.ensureMembership(
+      privateWorkspaceId,
+      userId,
+      { requireEdit: true },
+    );
+    if (
+      privateWorkspace.visibility !== 'private'
+      || privateWorkspace.ownerId !== userId
+      || !this.isActiveWorkspace(privateWorkspace)
+    ) {
+      throw new AccessDeniedError('Only an active private workspace owner can reconnect');
+    }
+    const link = await this.db<PublicationLinkRecord>('workspace_publication_links')
+      .where({ privateWorkspaceId, userId })
+      .first();
+    if (!link) {
+      throw new ConflictError('This private workspace is not linked to a Shared workspace');
+    }
+    if (link.status === 'active' && link.reconnectToken) {
+      throw new ConflictError('This private workspace is already reconnecting');
+    }
+    const sharedWorkspace = await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: link.teamWorkspaceId })
+      .first();
+    if (!this.isActiveSharedWorkspace(sharedWorkspace)) {
+      return this.detachPublicationLink(link);
+    }
+    try {
+      await this.workspaceService.ensureMembership(link.teamWorkspaceId, userId);
+    } catch (error) {
+      if (error instanceof AccessDeniedError || error instanceof NotFoundError) {
+        return this.detachPublicationLink(link);
+      }
+      throw error;
+    }
+    const reconnectToken = uuidv4();
+    const activated = link.status === 'detached'
+      ? await this.db('workspace_publication_links')
+        .where({ privateWorkspaceId, userId, status: 'detached' })
+        .update({
+          status: 'active',
+          detachedAt: null,
+          reconnectToken,
+          updatedAt: this.db.fn.now(),
+        })
+      : 0;
+    if (link.status === 'detached' && activated !== 1) {
+      throw new ConflictError('The private workspace link changed while reconnecting');
+    }
+    try {
+      const result = await this.syncFromSharedWorking(
+        privateWorkspaceId,
+        privateWorkspace,
+        sharedWorkspace!,
+        {
+          ...link,
+          status: 'active',
+          detachedAt: null,
+          reconnectToken: activated === 1 ? reconnectToken : link.reconnectToken,
+        },
+        userId,
+        {},
+      );
+      if (activated === 1) {
+        await this.db('workspace_publication_links')
+          .where({ privateWorkspaceId, userId, reconnectToken })
+          .update({ reconnectToken: null, updatedAt: this.db.fn.now() });
+      }
+      return result;
+    } catch (error) {
+      // A failed comparison must not leave a previously detached draft looking
+      // connected. The conditional update cannot undo a concurrent unshare,
+      // which will already have moved the link back to detached itself.
+      if (activated === 1) {
+        await this.db('workspace_publication_links')
+          .where({ privateWorkspaceId, userId, status: 'active', reconnectToken })
+          .update({
+            status: 'detached',
+            detachedAt: this.db.fn.now(),
+            reconnectToken: null,
+            updatedAt: this.db.fn.now(),
+          });
+      }
+      throw error;
+    }
   }
 
   private async syncFromSharedWorking(
@@ -653,112 +770,35 @@ export class WorkspacePublicationService {
     resolutions: Record<string, PublishResolution>,
   ) {
     const currentSharedRevision = Number(teamWorkspace.contentRevision || 0);
-    const revisionChanged = currentSharedRevision !== Number(link.baseSharedContentRevision || 0);
+    const [privateContent, sharedContent] = await Promise.all([
+      this.readWorkspaceContent(privateWorkspaceId),
+      this.readWorkspaceContent(teamWorkspace.id),
+    ]);
+    const baseContent = link.baseWorkingManifest
+      ? this.workspaceContentFromManifest(link.baseWorkingManifest)
+      : null;
+    const privateChanged = baseContent
+      ? !this.workspaceContentsMatch(baseContent, privateContent)
+      : Number(privateWorkspace.contentRevision || 0) !== Number(link.basePrivateContentRevision || 0)
+        || link.hasUnpublishedChanges;
 
-    // Conservative fallback matching workspaceService list status: Shared
-    // Working edits that did not bump contentRevision are still detectable if
-    // the workspace updatedAt (or the latest file updatedAt) moved past the
-    // link's last sync timestamp. Direct file insertions may only touch
-    // files.updatedAt without bumping workspace revision/updatedAt.
-    const teamUpdatedAtMillis = toEpochMillis(teamWorkspace.updatedAt);
-    const linkUpdatedAtMillis = toEpochMillis(link.updatedAt);
-    const maxFilesRow = await this.db('files')
-      .where({ workspaceId: teamWorkspace.id })
-      .max('updatedAt as maxUpdatedAt')
-      .first();
-    const teamFilesUpdatedAtMillis = toEpochMillis(maxFilesRow?.maxUpdatedAt);
-    const latestSharedTimestamp = Math.max(
-      teamUpdatedAtMillis ?? 0,
-      teamFilesUpdatedAtMillis ?? 0,
-    ) || null;
-    const sharedUpdatedAfterLink = linkUpdatedAtMillis != null
-      && latestSharedTimestamp != null
-      && latestSharedTimestamp > linkUpdatedAtMillis;
-
-    if (!revisionChanged && !sharedUpdatedAfterLink) {
-      return {
-        workspaceId: privateWorkspaceId,
-        teamWorkspaceId: teamWorkspace.id,
-        status: 'up_to_date' as const,
-        conflicts: [],
-      };
-    }
-
-    const privateRevision = Number(privateWorkspace.contentRevision || 0);
-    const privateHasChanges = privateRevision !== Number(link.basePrivateContentRevision || 0)
-      || link.hasUnpublishedChanges;
-
-    if (!privateHasChanges) {
-      const sharedContent = await this.readWorkspaceContent(teamWorkspace.id);
-      await this.replaceWorkspaceContent(
+    if (!baseContent) {
+      if (privateChanged) {
+        return this.reviewNeededSyncResult(privateWorkspaceId, teamWorkspace.id, [], {
+          reason: 'BASE_WORKING_MANIFEST_UNAVAILABLE',
+        });
+      }
+      return this.fastForwardSharedWorking(
         privateWorkspaceId,
+        teamWorkspace,
+        link,
         sharedContent,
         userId,
-        undefined,
-        async (tx, contentRevision) => {
-          const updated = await tx('workspace_publication_links')
-            .where({ privateWorkspaceId, userId })
-            .update({
-              basePublishedVersionId: teamWorkspace.currentPublishedVersionId || null,
-              basePrivateContentRevision: contentRevision,
-              baseSharedContentRevision: currentSharedRevision,
-              hasUnpublishedChanges: false,
-              updatedAt: tx.fn.now(),
-            });
-          if (updated !== 1) {
-            throw new ConflictError('The private workspace link changed while syncing');
-          }
-          if (teamWorkspace.currentPublishedVersionId) {
-            await this.copyPublishedSkillPinsToWorkspace(
-              tx,
-              teamWorkspace.currentPublishedVersionId,
-              privateWorkspaceId,
-              userId,
-            );
-          }
-        },
       );
-
-      return {
-        workspaceId: privateWorkspaceId,
-        teamWorkspaceId: teamWorkspace.id,
-        status: 'synced' as const,
-        conflicts: [],
-      };
     }
 
-    // Both sides changed — try published-base merge if a published version exists
-    if (teamWorkspace.currentPublishedVersionId && link.basePublishedVersionId) {
-      return this.syncFromPublishedVersion(privateWorkspaceId, teamWorkspace, link, userId, resolutions);
-    }
-
-    throw new ConflictError(
-      'Both the Shared workspace and your private draft have changed. Review and merge manually before syncing.',
-      {
-        code: 'REVIEW_NEEDED',
-        privateContentRevision: Number(privateWorkspace.contentRevision || 0),
-        basePrivateContentRevision: Number(link.basePrivateContentRevision || 0),
-        sharedContentRevision: currentSharedRevision,
-        baseSharedContentRevision: Number(link.baseSharedContentRevision || 0),
-      },
-    );
-  }
-
-  private async syncFromPublishedVersion(
-    privateWorkspaceId: string,
-    teamWorkspace: WorkspaceRecord,
-    link: PublicationLinkRecord,
-    userId: string,
-    resolutions: Record<string, PublishResolution>,
-  ) {
-    if (!teamWorkspace.currentPublishedVersionId) {
-      throw new ConflictError('No published Team version is available to sync');
-    }
-    const latestVersion = await this.getPublishedVersion(
-      teamWorkspace.currentPublishedVersionId,
-      teamWorkspace.id,
-    );
-    if (latestVersion.id === link.basePublishedVersionId) {
+    const sharedChanged = !this.workspaceContentsMatch(baseContent, sharedContent);
+    if (!sharedChanged) {
       return {
         workspaceId: privateWorkspaceId,
         teamWorkspaceId: teamWorkspace.id,
@@ -766,64 +806,197 @@ export class WorkspacePublicationService {
         conflicts: [],
       };
     }
-
-    const baseVersion = link.basePublishedVersionId
-      ? await this.getPublishedVersion(link.basePublishedVersionId, teamWorkspace.id)
-      : null;
-    const [privateContent, teamContent, baseContent] = await Promise.all([
-      this.readWorkspaceContent(privateWorkspaceId),
-      this.readPublishedVersionContent(latestVersion),
-      baseVersion ? this.readPublishedVersionContent(baseVersion) : Promise.resolve({ files: new Map(), folders: [] }),
-    ]);
+    if (!privateChanged) {
+      return this.fastForwardSharedWorking(
+        privateWorkspaceId,
+        teamWorkspace,
+        link,
+        sharedContent,
+        userId,
+      );
+    }
 
     const conflicts = findPublicationConflicts(
       this.toHashMap(baseContent),
       this.toHashMap(privateContent),
-      this.toHashMap(teamContent),
+      this.toHashMap(sharedContent),
     );
     const unresolved = conflicts.filter((conflict) => !resolutions[conflict.path]);
     if (unresolved.length) {
-      throw new ConflictError('Review overlapping workspace changes before syncing', {
-        code: 'REVIEW_NEEDED',
-        conflicts: this.presentConflicts(unresolved, privateContent, teamContent),
-      });
+      return this.reviewNeededSyncResult(
+        privateWorkspaceId,
+        teamWorkspace.id,
+        this.presentConflicts(unresolved, privateContent, sharedContent),
+      );
     }
 
-    const merged = this.mergeWorkspaceContent(baseContent, privateContent, teamContent, resolutions);
+    const merged = this.mergeWorkspaceContent(baseContent, privateContent, sharedContent, resolutions);
+    await this.ensureContentObjects(teamWorkspace.id, sharedContent);
+    const baseWorkingManifest = this.manifestFromContent(sharedContent);
     await this.replaceWorkspaceContent(
       privateWorkspaceId,
       merged,
       userId,
       undefined,
       async (tx, contentRevision) => {
+        await this.assertSharedWorkingRevision(tx, teamWorkspace.id, currentSharedRevision);
         const updated = await tx('workspace_publication_links')
-          .where({ privateWorkspaceId, userId })
+          .where({
+            privateWorkspaceId,
+            userId,
+            status: 'active',
+            baseSharedContentRevision: Number(link.baseSharedContentRevision || 0),
+          })
           .update({
-            basePublishedVersionId: latestVersion.id,
+            basePublishedVersionId: teamWorkspace.currentPublishedVersionId || null,
             basePrivateContentRevision: contentRevision,
-            baseSharedContentRevision: Number(teamWorkspace.contentRevision || 0),
-            hasUnpublishedChanges: !this.workspaceContentsMatch(merged, teamContent),
+            baseSharedContentRevision: currentSharedRevision,
+            baseWorkingManifest,
+            hasUnpublishedChanges: !this.workspaceContentsMatch(merged, sharedContent),
+            detachedAt: null,
+            reconnectToken: null,
             updatedAt: tx.fn.now(),
           });
         if (updated !== 1) {
           throw new ConflictError('The private workspace link changed while syncing');
         }
-        await this.copyPublishedSkillPinsToWorkspace(
-          tx,
-          latestVersion.id,
-          privateWorkspaceId,
-          userId,
-        );
       },
     );
 
     return {
       workspaceId: privateWorkspaceId,
       teamWorkspaceId: teamWorkspace.id,
-      status: conflicts.length ? 'reviewed' : 'synced',
+      status: conflicts.length ? 'reviewed' as const : 'synced' as const,
       conflicts,
-      publishedVersionId: latestVersion.id,
-      publishedVersionNumber: Number(latestVersion.versionNumber),
+    };
+  }
+
+  private async fastForwardSharedWorking(
+    privateWorkspaceId: string,
+    teamWorkspace: WorkspaceRecord,
+    link: PublicationLinkRecord,
+    sharedContent: WorkspaceContent,
+    userId: string,
+  ) {
+    const currentSharedRevision = Number(teamWorkspace.contentRevision || 0);
+    await this.ensureContentObjects(teamWorkspace.id, sharedContent);
+    const baseWorkingManifest = this.manifestFromContent(sharedContent);
+    await this.replaceWorkspaceContent(
+      privateWorkspaceId,
+      sharedContent,
+      userId,
+      undefined,
+      async (tx, contentRevision) => {
+        await this.assertSharedWorkingRevision(tx, teamWorkspace.id, currentSharedRevision);
+        const updated = await tx('workspace_publication_links')
+          .where({
+            privateWorkspaceId,
+            userId,
+            status: 'active',
+            baseSharedContentRevision: Number(link.baseSharedContentRevision || 0),
+          })
+          .update({
+            basePublishedVersionId: teamWorkspace.currentPublishedVersionId || null,
+            basePrivateContentRevision: contentRevision,
+            baseSharedContentRevision: currentSharedRevision,
+            baseWorkingManifest,
+            hasUnpublishedChanges: false,
+            detachedAt: null,
+            reconnectToken: null,
+            updatedAt: tx.fn.now(),
+          });
+        if (updated !== 1) {
+          throw new ConflictError('The private workspace link changed while syncing');
+        }
+        if (teamWorkspace.currentPublishedVersionId) {
+          await this.copyPublishedSkillPinsToWorkspace(
+            tx,
+            teamWorkspace.currentPublishedVersionId,
+            privateWorkspaceId,
+            userId,
+          );
+        }
+      },
+    );
+    return {
+      workspaceId: privateWorkspaceId,
+      teamWorkspaceId: teamWorkspace.id,
+      status: 'synced' as const,
+      conflicts: [],
+    };
+  }
+
+  private async assertSharedWorkingRevision(
+    tx: Knex.Transaction,
+    teamWorkspaceId: string,
+    expectedRevision: number,
+  ): Promise<void> {
+    const current = await tx<WorkspaceRecord>('workspaces')
+      .select('contentRevision', 'visibility', 'status')
+      .where({ id: teamWorkspaceId })
+      .forShare()
+      .first();
+    if (
+      !this.isActiveSharedWorkspace(current)
+      || Number(current!.contentRevision || 0) !== expectedRevision
+    ) {
+      throw new ConflictError('Shared Working changed while syncing. Try again.', {
+        code: 'SHARED_WORKING_CHANGED',
+      });
+    }
+  }
+
+  private isActiveSharedWorkspace(
+    workspace: Pick<WorkspaceRecord, 'visibility' | 'status'> | null | undefined,
+  ): workspace is Pick<WorkspaceRecord, 'visibility' | 'status'> {
+    return Boolean(
+      workspace
+      && workspace.visibility === 'team'
+      && this.isActiveWorkspace(workspace),
+    );
+  }
+
+  private isActiveWorkspace(
+    workspace: Pick<WorkspaceRecord, 'status'> | null | undefined,
+  ): boolean {
+    return Boolean(workspace && (workspace.status == null || workspace.status === 'active'));
+  }
+
+  private detachedSyncResult(privateWorkspaceId: string, teamWorkspaceId: string) {
+    return {
+      workspaceId: privateWorkspaceId,
+      teamWorkspaceId,
+      status: 'detached' as const,
+      conflicts: [],
+    };
+  }
+
+  private async detachPublicationLink(link: PublicationLinkRecord) {
+    if (link.status !== 'detached') {
+      await this.db('workspace_publication_links')
+        .where({ privateWorkspaceId: link.privateWorkspaceId, userId: link.userId })
+        .update({
+          status: 'detached',
+          detachedAt: this.db.fn.now(),
+          reconnectToken: null,
+          updatedAt: this.db.fn.now(),
+        });
+    }
+    return this.detachedSyncResult(link.privateWorkspaceId, link.teamWorkspaceId);
+  }
+
+  private reviewNeededSyncResult(
+    privateWorkspaceId: string,
+    teamWorkspaceId: string,
+    conflicts: unknown[],
+    details: Record<string, unknown> = {},
+  ) {
+    return {
+      workspaceId: privateWorkspaceId,
+      teamWorkspaceId,
+      status: 'review_needed' as const,
+      conflicts,
+      ...details,
     };
   }
 
@@ -869,6 +1042,8 @@ export class WorkspacePublicationService {
           storageType: 'local' as const,
           mimeType: file.mimeType || null,
           size: Number(file.size || 0),
+          fileVersionId: file.fileVersionId || null,
+          sha256: file.hash,
           publishedVersionId: version.id,
         };
       })
@@ -906,13 +1081,20 @@ export class WorkspacePublicationService {
     if (!entry) {
       throw new NotFoundError('File not found in this published version');
     }
-    const buffer = await fs.readFile(path.join(this.versionDirectory(version.id), safeName));
+    if (entry.objectKey) this.assertObjectProvider(entry.objectProvider);
+    const buffer = entry.objectKey
+      ? await this.readObjectBuffer(entry.objectKey, entry.providerVersion || undefined)
+      : await fs.readFile(path.join(this.versionDirectory(version.id), safeName));
     const contentFile: ContentFile = {
       name: safeName,
       mimeType: entry.mimeType || null,
       buffer,
       hash: entry.hash,
       size: Number(entry.size || buffer.length),
+      fileVersionId: entry.fileVersionId || null,
+      objectKey: entry.objectKey || null,
+      objectProvider: entry.objectProvider || null,
+      providerVersion: entry.providerVersion || null,
     };
     return {
       id: `published:${version.id}:${safeName}`,
@@ -1272,7 +1454,12 @@ export class WorkspacePublicationService {
 
         try {
           const versionNumber = await this.getNextVersionNumber(lockedTeam.id, tx);
-          await this.replaceWorkspaceContent(lockedTeam.id, content, input.userId, tx);
+          const appliedSharedRevision = await this.replaceWorkspaceContent(
+            lockedTeam.id,
+            content,
+            input.userId,
+            tx,
+          );
           const [version] = await tx<PublishedVersionRecord>('workspace_published_versions')
             .insert({
               id: versionId,
@@ -1333,7 +1520,11 @@ export class WorkspacePublicationService {
             userId: input.userId,
             basePublishedVersionId: version.id,
             basePrivateContentRevision: Number(currentPrivate?.contentRevision || 0),
+            baseSharedContentRevision: appliedSharedRevision,
+            baseWorkingManifest: manifest,
             hasUnpublishedChanges: false,
+            status: 'active',
+            detachedAt: null,
             updatedAt: tx.fn.now(),
           };
           if (input.existingLink) {
@@ -1540,38 +1731,106 @@ export class WorkspacePublicationService {
     };
   }
 
+  private manifestFromContent(content: WorkspaceContent): PublicationManifest {
+    return {
+      files: [...content.files.values()]
+        .map((file) => ({
+          name: file.name,
+          mimeType: file.mimeType,
+          hash: file.hash,
+          size: file.size,
+          fileVersionId: file.fileVersionId || null,
+          objectKey: file.objectKey || null,
+          objectProvider: file.objectProvider || null,
+          providerVersion: file.providerVersion || null,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      folders: [...new Set(content.folders)].sort((left, right) => left.localeCompare(right)),
+    };
+  }
+
+  private workspaceContentFromManifest(
+    value: PublicationManifest | PublicationManifestFile[] | string,
+  ): WorkspaceContent {
+    const manifest = this.normalizeManifest(value);
+    const files = new Map<string, ContentFile>();
+    for (const file of manifest.files) {
+      const name = this.normalizeRelativePath(file.name);
+      files.set(name, {
+        name,
+        mimeType: file.mimeType || null,
+        buffer: Buffer.alloc(0),
+        hash: file.hash,
+        size: Number(file.size || 0),
+        fileVersionId: file.fileVersionId || null,
+        objectKey: file.objectKey || null,
+        objectProvider: file.objectProvider || null,
+        providerVersion: file.providerVersion || null,
+      });
+    }
+    return {
+      files,
+      folders: manifest.folders.map((folder) => this.normalizeRelativePath(folder)),
+    };
+  }
+
   private async readPublishedVersionContent(version: PublishedVersionRecord): Promise<WorkspaceContent> {
     const manifest = this.normalizeManifest(version.manifest);
     const files = new Map<string, ContentFile>();
     for (const file of manifest.files) {
       const safeName = this.normalizeRelativePath(file.name);
-      const buffer = await fs.readFile(path.join(this.versionDirectory(version.id), safeName));
+      if (file.objectKey) this.assertObjectProvider(file.objectProvider);
+      const buffer = file.objectKey
+        ? await this.readObjectBuffer(file.objectKey, file.providerVersion || undefined)
+        : await fs.readFile(path.join(this.versionDirectory(version.id), safeName));
       files.set(safeName, {
         name: safeName,
         mimeType: file.mimeType || null,
         buffer,
         hash: file.hash,
         size: Number(file.size || buffer.length),
+        fileVersionId: file.fileVersionId || null,
+        objectKey: file.objectKey || null,
+        objectProvider: file.objectProvider || null,
+        providerVersion: file.providerVersion || null,
       });
     }
     return { files, folders: manifest.folders.map((folder) => this.normalizeRelativePath(folder)) };
   }
 
   private async readWorkspaceContent(workspaceId: string): Promise<WorkspaceContent> {
-    const rows = await this.db('files').where({ workspaceId }).orderBy('name', 'asc');
+    const rows = await this.db('files as file')
+      .leftJoin('file_versions as version', 'file.currentVersionId', 'version.id')
+      .select(
+        'file.*',
+        'version.id as fileVersionId',
+        'version.objectKey as versionObjectKey',
+        'version.objectProvider as versionObjectProvider',
+        'version.providerVersion as versionProviderVersion',
+        'version.sha256 as versionSha256',
+        'version.sizeBytes as versionSizeBytes',
+      )
+      .where({ 'file.workspaceId': workspaceId })
+      .whereNull('file.deletedAt')
+      .orderBy('file.name', 'asc');
     const files = new Map<string, ContentFile>();
     for (const row of rows) {
       if (this.isInternalWorkspacePath(String(row.name || ''))) continue;
       const name = this.normalizeRelativePath(row.name);
+      if (row.storageType !== 'local') this.assertObjectProvider(row.versionObjectProvider);
       const buffer = row.storageType === 'local'
         ? await fs.readFile(row.path)
-        : await this.s3Service.getFile(row.path);
+        : await this.readObjectBuffer(row.path, row.versionProviderVersion || undefined);
       files.set(name, {
         name,
         mimeType: row.mimeType || null,
         buffer,
-        hash: this.hashBuffer(buffer),
-        size: buffer.length,
+        hash: row.versionSha256 || this.hashBuffer(buffer),
+        size: Number(row.versionSizeBytes || buffer.length),
+        fileVersionId: row.fileVersionId || null,
+        objectKey: row.versionObjectKey || (row.storageType === 's3' ? row.path : null),
+        objectProvider: row.versionObjectProvider || (row.storageType === 's3' ? this.objectStore.provider : null),
+        providerVersion: row.versionProviderVersion || null,
       });
     }
     return {
@@ -1581,24 +1840,54 @@ export class WorkspacePublicationService {
   }
 
   private async writeVersionSnapshot(versionId: string, content: WorkspaceContent): Promise<PublicationManifest> {
-    const target = this.versionDirectory(versionId);
-    await fs.mkdir(target, { recursive: true });
     const manifestFiles: PublicationManifestFile[] = [];
     for (const file of content.files.values()) {
-      const destination = path.join(target, this.normalizeRelativePath(file.name));
-      await fs.mkdir(path.dirname(destination), { recursive: true });
-      await fs.writeFile(destination, file.buffer);
+      let objectKey = file.objectKey || null;
+      let objectProvider = file.objectProvider || null;
+      let providerVersion = file.providerVersion || null;
+      if (!objectKey) {
+        objectKey = path.posix.join('published-versions', versionId, this.normalizeRelativePath(file.name));
+        const written = await this.objectStore.putStream(objectKey, Readable.from(file.buffer), {
+          mimeType: file.mimeType || undefined,
+          contentLength: file.buffer.length,
+          sha256: file.hash,
+          ifAbsent: true,
+        });
+        objectProvider = this.objectStore.provider;
+        providerVersion = written.providerVersion;
+      }
       manifestFiles.push({
         name: file.name,
         mimeType: file.mimeType,
         hash: file.hash,
         size: file.size,
+        fileVersionId: file.fileVersionId || null,
+        objectKey,
+        objectProvider,
+        providerVersion,
       });
     }
     return {
       files: manifestFiles.sort((left, right) => left.name.localeCompare(right.name)),
       folders: [...new Set(content.folders)].sort(),
     };
+  }
+
+  private async readObjectBuffer(objectKey: string, providerVersion?: string): Promise<Buffer> {
+    const { stream } = await this.objectStore.getStream(objectKey, { providerVersion });
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+
+  private assertObjectProvider(provider?: string | null): void {
+    if (provider && provider !== this.objectStore.provider) {
+      throw new ConflictError(
+        `Published object is stored in ${provider}; migrate and verify it before switching to ${this.objectStore.provider}`,
+      );
+    }
   }
 
   private async replaceWorkspaceContent(
@@ -1608,6 +1897,7 @@ export class WorkspacePublicationService {
     transaction?: Knex.Transaction,
     afterDatabaseUpdate?: (transaction: Knex.Transaction, contentRevision: number) => Promise<void>,
   ): Promise<number> {
+    await this.ensureContentObjects(workspaceId, content);
     const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
     const stagePath = path.join(WORKSPACE_DIR, `.workspace-stage-${uuidv4()}`);
     const backupPath = path.join(WORKSPACE_DIR, `.workspace-backup-${uuidv4()}`);
@@ -1635,25 +1925,112 @@ export class WorkspacePublicationService {
 
       try {
         const updateDatabaseRecords = async (tx: Knex | Knex.Transaction) => {
-          const existingFiles = await tx('files').where({ workspaceId });
-          const visibleIds = existingFiles
-            .filter((file) => !this.isInternalWorkspacePath(String(file.name || '')))
-            .map((file) => file.id);
-          if (visibleIds.length) {
-            await tx('files').whereIn('id', visibleIds).del();
-          }
-          if (content.files.size) {
-            await tx('files').insert([...content.files.values()].map((file) => ({
-              name: file.name,
-              workspaceId,
-              storageType: 'local',
-              path: path.join(workspacePath, file.name),
-              mimeType: file.mimeType,
-              publicUrl: null,
-              createdBy: userId,
+          const existingFiles = await tx('files')
+            .where({ workspaceId })
+            .whereNull('deletedAt');
+          const visibleFiles = existingFiles
+            .filter((file) => !this.isInternalWorkspacePath(String(file.name || '')));
+          const currentVersionIds = visibleFiles
+            .map((file) => file.currentVersionId)
+            .filter((versionId): versionId is string => typeof versionId === 'string' && versionId.length > 0);
+          const currentVersions = currentVersionIds.length
+            ? await tx('file_versions').whereIn('id', currentVersionIds)
+            : [];
+          const currentVersionById = new Map(
+            currentVersions.map((version) => [String(version.id), version]),
+          );
+          const incomingNames = new Set(content.files.keys());
+          const removedFiles = visibleFiles
+            .filter((file) => !incomingNames.has(String(file.name)));
+          for (const removed of removedFiles) {
+            const currentVersion = removed.currentVersionId
+              ? currentVersionById.get(String(removed.currentVersionId))
+              : undefined;
+            const nextVersion = Number(removed.version || 1) + 1;
+            const tombstoneVersionId = uuidv4();
+            if (currentVersion?.objectKey) {
+              await tx('file_versions').insert({
+                id: tombstoneVersionId,
+                fileId: removed.id,
+                workspaceId,
+                version: nextVersion,
+                name: String(removed.name),
+                mimeType: removed.mimeType || currentVersion.mimeType || null,
+                objectKey: currentVersion.objectKey,
+                objectProvider: currentVersion.objectProvider || this.objectStore.provider,
+                providerVersion: currentVersion.providerVersion || null,
+                sha256: currentVersion.sha256 || null,
+                sizeBytes: currentVersion.sizeBytes || 0,
+                changeKind: 'delete',
+                baseVersion: Number(removed.version || 1),
+                createdBy: userId,
+              });
+            }
+            await tx('files').where({ id: removed.id }).update({
+              ...(currentVersion?.objectKey ? { currentVersionId: tombstoneVersionId } : {}),
+              version: nextVersion,
+              deletedAt: tx.fn.now(),
               updatedBy: userId,
-              version: 1,
-            })));
+              updatedAt: tx.fn.now(),
+            });
+          }
+          const existingByName = new Map(visibleFiles.map((file) => [String(file.name), file]));
+          for (const file of content.files.values()) {
+            const existing = existingByName.get(file.name);
+            const currentVersion = existing?.currentVersionId
+              ? currentVersionById.get(String(existing.currentVersionId))
+              : undefined;
+            const contentIsUnchanged = Boolean(existing && currentVersion)
+              && String(currentVersion.sha256 || '') === file.hash
+              && String(currentVersion.name || existing.name) === file.name
+              && (currentVersion.mimeType || null) === (file.mimeType || null);
+            if (contentIsUnchanged) continue;
+            const nextVersion = existing ? Number(existing.version || 1) + 1 : 1;
+            const versionId = uuidv4();
+            let fileId: number;
+            if (existing) {
+              fileId = Number(existing.id);
+              await tx('files').where({ id: fileId }).update({
+                storageType: 's3',
+                path: file.objectKey,
+                mimeType: file.mimeType,
+                publicUrl: null,
+                currentVersionId: versionId,
+                updatedBy: userId,
+                updatedAt: tx.fn.now(),
+                version: nextVersion,
+              });
+            } else {
+              const [created] = await tx('files').insert({
+                name: file.name,
+                workspaceId,
+                storageType: 's3',
+                path: file.objectKey,
+                mimeType: file.mimeType,
+                publicUrl: null,
+                currentVersionId: versionId,
+                createdBy: userId,
+                updatedBy: userId,
+                version: nextVersion,
+              }).returning('id');
+              fileId = Number(created.id);
+            }
+            await tx('file_versions').insert({
+              id: versionId,
+              fileId,
+              workspaceId,
+              version: nextVersion,
+              name: file.name,
+              mimeType: file.mimeType,
+              objectKey: file.objectKey,
+              objectProvider: file.objectProvider || this.objectStore.provider,
+              providerVersion: file.providerVersion || null,
+              sha256: file.hash,
+              sizeBytes: file.size,
+              changeKind: existing ? 'content' : 'create',
+              baseVersion: existing ? Number(existing.version || 1) : null,
+              createdBy: userId,
+            });
           }
           const [updated] = await tx('workspaces')
             .where({ id: workspaceId })
@@ -1685,6 +2062,23 @@ export class WorkspacePublicationService {
     } finally {
       await fs.rm(stagePath, { recursive: true, force: true });
       await fs.rm(backupPath, { recursive: true, force: true });
+    }
+  }
+
+  private async ensureContentObjects(workspaceId: string, content: WorkspaceContent): Promise<void> {
+    for (const file of content.files.values()) {
+      if (file.objectKey) continue;
+      const versionId = uuidv4();
+      const objectKey = path.posix.join(workspaceId, '.system', 'file-versions', versionId);
+      const written = await this.objectStore.putStream(objectKey, Readable.from(file.buffer), {
+        mimeType: file.mimeType || undefined,
+        contentLength: file.buffer.length,
+        sha256: file.hash,
+        ifAbsent: true,
+      });
+      file.objectKey = objectKey;
+      file.objectProvider = this.objectStore.provider;
+      file.providerVersion = written.providerVersion;
     }
   }
 
