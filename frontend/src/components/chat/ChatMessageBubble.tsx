@@ -1869,7 +1869,11 @@ export default function ChatMessageBubble({
   const toolExpandedClassName = isDarkMode
     ? 'mt-3 space-y-3 text-xs text-slate-200'
     : 'mt-3 space-y-3 text-xs text-slate-600';
-  const userPathPillClassName = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-medium text-white';
+  const userPathPillClassName = `inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+    isDarkMode
+      ? 'border-white/20 bg-white/10 text-white'
+      : 'border-sky-900/15 bg-white/45 text-sky-950'
+  }`;
   const userBubbleClassName = 'lumo-user-content';
   const messageActionBarClassName = 'lumo-message-actions';
   const messageActionButtonClassName = 'lumo-message-action-button';

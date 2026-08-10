@@ -9,17 +9,12 @@ import {
   ChevronRight,
   Eye,
   History,
-  Lock,
   Maximize2,
   MessageSquareText,
   Minimize2,
   Plus,
   StickyNote,
 } from 'lucide-react';
-import type { ChangeEvent } from 'react';
-
-import type { AgentPersona } from '../../types';
-
 export type SharedChatMode = 'team' | 'private';
 
 export default function PublishedWorkspaceChatHeader({
@@ -27,11 +22,8 @@ export default function PublishedWorkspaceChatHeader({
   isAgentPaneVisible,
   isAgentPaneFullScreen,
   mode,
-  personas,
-  selectedPersona,
   onToggleVisibility,
   onModeChange,
-  onPersonaChange,
   onToggleHistory,
   onNewChat,
   onOpenCollaboration,
@@ -41,11 +33,8 @@ export default function PublishedWorkspaceChatHeader({
   isAgentPaneVisible: boolean;
   isAgentPaneFullScreen: boolean;
   mode: SharedChatMode;
-  personas: AgentPersona[];
-  selectedPersona: string;
   onToggleVisibility: () => void;
   onModeChange: (mode: SharedChatMode) => void;
-  onPersonaChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
   onNewChat: () => void;
   onOpenCollaboration: () => void;
@@ -135,36 +124,6 @@ export default function PublishedWorkspaceChatHeader({
           <span className="text-[11px] leading-snug">
             Visible to workspace members. Lumo reads the Shared Working version.
           </span>
-        </div>
-      ) : null}
-
-      {isAgentPaneVisible && mode === 'private' ? (
-        <div className={`mt-2 flex items-center justify-between gap-3 rounded-xl px-2.5 py-1.5 ${
-          isDarkMode ? 'bg-slate-900 text-slate-300' : 'bg-slate-50 text-slate-600'
-        }`}>
-          <div className="flex min-w-0 items-center gap-2">
-            <Lock size={13} className="shrink-0 text-violet-500" />
-            <span className="truncate text-[11px] leading-snug">
-              Visible only to you. Lumo edits My draft, not the Shared workspace.
-            </span>
-          </div>
-          <select
-            value={selectedPersona}
-            onChange={onPersonaChange}
-            className={`h-7 shrink-0 rounded-lg border px-2 text-[11px] font-semibold outline-none ${
-              isDarkMode
-                ? 'border-slate-700 bg-slate-950 text-slate-200'
-                : 'border-slate-200 bg-white text-slate-700'
-            }`}
-            aria-label="Select private Lumo mode"
-            disabled={!personas.length}
-          >
-            {personas.map((persona) => (
-              <option key={persona.name} value={persona.name}>
-                {persona.displayName || persona.name}
-              </option>
-            ))}
-          </select>
         </div>
       ) : null}
     </div>

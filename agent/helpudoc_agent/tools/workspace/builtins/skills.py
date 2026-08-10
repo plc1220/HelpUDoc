@@ -34,6 +34,47 @@ MAX_SKILL_ASSET_MANIFEST_ITEMS = 40
 MAX_DATA_WORKSPACE_QUERIES_PER_TURN = 10
 
 
+def _skill_sandbox_error(
+    error_code: str,
+    message: str,
+    suggested_next_call: str,
+) -> str:
+    """Return a machine-readable, non-retryable sandbox failure.
+
+    The stream runtime only marks structured ``status=error`` tool results as
+    failures.  Plain-text failures look like successful tool completions and
+    invite the model to issue the same sandbox call again.
+    """
+    return json.dumps(
+        {
+            "status": "error",
+            "tool": "run_skill_python_script",
+            "message": str(message or "Skill sandbox execution failed.").strip(),
+            "errorCode": str(error_code or "SKILL_SANDBOX_EXECUTION_FAILED").strip(),
+            "retryable": False,
+            "suggestedNextCall": str(suggested_next_call).strip(),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _sandbox_exception_error(exc: Exception, *, unavailable: bool = False) -> str:
+    message = str(exc).strip() or "Skill sandbox execution failed."
+    prefix = message.partition(":")[0].strip()
+    error_code = (
+        prefix
+        if prefix and prefix.replace("_", "").isalnum() and prefix.upper() == prefix
+        else "SKILL_SANDBOX_UNAVAILABLE" if unavailable
+        else "SKILL_SANDBOX_EXECUTION_BLOCKED"
+    )
+    return _skill_sandbox_error(
+        error_code,
+        message,
+        "Do not repeat the same sandbox call. Use outputs already produced, choose a different declared action, or report the blocker to the user.",
+    )
+
+
 def _data_workspace_action(args: List[str]) -> str:
     raw = ""
     if "--request-json" in args:
@@ -317,9 +358,9 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 timeout_seconds=timeout_seconds,
             )
         except SandboxUnavailableError as exc:
-            return str(exc)
+            return _sandbox_exception_error(exc, unavailable=True)
         except SandboxExecutionError as exc:
-            return f"Skill sandbox execution blocked: {exc}"
+            return _sandbox_exception_error(exc)
         lines = [
             "SKILL_SANDBOX_INLINE_RUN_COMPLETED",
             f"Run ID: {result.run_id}",
@@ -352,22 +393,32 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
         """Run a declared Python script, or inline Python, from the active skill in the sandbox."""
         blocked = tagged_files_mode_guard(workspace_state.context, "run_skill_python_script")
         if blocked:
-            return blocked
+            return _skill_sandbox_error(
+                "TAGGED_FILE_POLICY_BLOCKED",
+                blocked,
+                "Do not repeat the same sandbox call. Use only the tagged files allowed for this task or explain the policy blocker.",
+            )
         has_script = bool(str(script_name or "").strip())
         has_inline = bool(str(inline_code or "").strip())
         if has_script and has_inline:
-            return (
-                "SKILL_SANDBOX_REQUEST_INVALID\n"
-                "Provide exactly one of script_name or inline_code, not both."
+            return _skill_sandbox_error(
+                "SKILL_SANDBOX_REQUEST_INVALID",
+                "Provide exactly one of script_name or inline_code, not both.",
+                "Correct the arguments once; do not repeat this invalid call.",
             )
         if not has_script and not has_inline:
-            return (
-                "SKILL_SANDBOX_REQUEST_INVALID\n"
-                "Provide exactly one of script_name or inline_code."
+            return _skill_sandbox_error(
+                "SKILL_SANDBOX_REQUEST_INVALID",
+                "Provide exactly one of script_name or inline_code.",
+                "Provide one valid execution mode once; do not repeat this invalid call.",
             )
         if has_inline:
             if args:
-                return "SKILL_SANDBOX_REQUEST_INVALID\nargs is only valid with script_name."
+                return _skill_sandbox_error(
+                    "SKILL_SANDBOX_REQUEST_INVALID",
+                    "args is only valid with script_name.",
+                    "Remove args from the inline call; do not repeat this invalid call.",
+                )
             return _run_inline(
                 inline_code=str(inline_code),
                 input_paths=input_paths or [],
@@ -375,9 +426,10 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 timeout_seconds=timeout_seconds,
             )
         if output_paths or timeout_seconds is not None:
-            return (
-                "SKILL_SANDBOX_REQUEST_INVALID\n"
-                "output_paths and timeout_seconds are only valid with inline_code."
+            return _skill_sandbox_error(
+                "SKILL_SANDBOX_REQUEST_INVALID",
+                "output_paths and timeout_seconds are only valid with inline_code.",
+                "Remove inline-only arguments from the declared-script call; do not repeat this invalid call.",
             )
         script_name = _canonical_declared_script_name(workspace_state, str(script_name))
         effective_args = list(args or [])
@@ -392,10 +444,10 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 workspace_state.context.get("_native_dashboard_builder_executions") or 0
             )
             if execution_count >= 1:
-                return (
-                    "NATIVE_DASHBOARD_BUILDER_DUPLICATE_BLOCKED\n"
-                    "The native dashboard builder already executed once for this task. "
-                    "Do not call it again."
+                return _skill_sandbox_error(
+                    "NATIVE_DASHBOARD_BUILDER_DUPLICATE_BLOCKED",
+                    "The native dashboard builder already executed once for this task.",
+                    "Use the dashboard output already produced; do not call the builder again.",
                 )
             approved_output_path = str(
                 workspace_state.context.get("host_dashboard_output_path") or ""
@@ -474,11 +526,10 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 workspace_state.context.get("_data_workspace_query_executions") or 0
             )
             if query_count >= MAX_DATA_WORKSPACE_QUERIES_PER_TURN:
-                return (
-                    "DATA_WORKSPACE_QUERY_LIMIT_REACHED\n"
-                    f"This task already executed {MAX_DATA_WORKSPACE_QUERIES_PER_TURN} "
-                    "bounded data_workspace queries. Use the existing results or explain "
-                    "that the analysis limit was reached."
+                return _skill_sandbox_error(
+                    "DATA_WORKSPACE_QUERY_LIMIT_REACHED",
+                    f"This task already executed {MAX_DATA_WORKSPACE_QUERIES_PER_TURN} bounded data_workspace queries.",
+                    "Use the existing results or explain that the analysis limit was reached; do not query again.",
                 )
         try:
             result = run_declared_skill_python_script(
@@ -490,9 +541,9 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 args=effective_args,
             )
         except SandboxUnavailableError as exc:
-            return str(exc)
+            return _sandbox_exception_error(exc, unavailable=True)
         except SandboxExecutionError as exc:
-            return f"Skill sandbox execution blocked: {exc}"
+            return _sandbox_exception_error(exc)
         if data_workspace_action in {"query", "export"}:
             workspace_state.context["_data_workspace_query_executions"] = (
                 int(workspace_state.context.get("_data_workspace_query_executions") or 0) + 1

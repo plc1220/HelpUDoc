@@ -1353,8 +1353,15 @@ def test_inline_tool_rejects_both_and_neither_modes(
     both = tool_obj.func(script_name="run", inline_code="print('hi')\n")
     neither = tool_obj.func()
 
-    assert "SKILL_SANDBOX_REQUEST_INVALID" in both
-    assert "SKILL_SANDBOX_REQUEST_INVALID" in neither
+    from helpudoc_agent.api.routes.chat import _is_terminal_tool_failure
+
+    for response in (both, neither):
+        payload = json.loads(response)
+        assert payload["status"] == "error"
+        assert payload["errorCode"] == "SKILL_SANDBOX_REQUEST_INVALID"
+        assert payload["retryable"] is False
+        assert payload["suggestedNextCall"]
+        assert _is_terminal_tool_failure("run_skill_python_script", response) is True
 
 
 def test_tool_rejects_arguments_from_the_other_execution_mode(

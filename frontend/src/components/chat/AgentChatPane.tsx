@@ -293,11 +293,8 @@ export default function AgentChatPane({
           isAgentPaneVisible={isAgentPaneVisible}
           isAgentPaneFullScreen={isAgentPaneFullScreen}
           mode={sharedMode}
-          personas={personas}
-          selectedPersona={selectedPersona}
           onToggleVisibility={onToggleAgentPaneVisibility}
           onModeChange={handleSharedModeChange}
-          onPersonaChange={onModeChange}
           onToggleHistory={onToggleHistory}
           onNewChat={onNewChat}
           onOpenCollaboration={onOpenCollaboration || (() => undefined)}

@@ -3238,6 +3238,7 @@ async function runAgentRunWorker(
   let processingQueue: Promise<void> = Promise.resolve();
   let activeToolCalls = 0;
   let lastRealActivityAt = Date.now();
+  const skillSandboxFailureCounts = new Map<string, number>();
   let assistantText = '';
   let thinkingText = '';
   let conversationRunPolicy: ConversationRunPolicy | undefined;
@@ -3882,6 +3883,7 @@ async function runAgentRunWorker(
       }
     }
     if (parsed?.type === 'tool_start' || parsed?.type === 'tool_end' || parsed?.type === 'tool_error') {
+      let repeatedSkillSandboxFailure = '';
       if (parsed.type === 'tool_start') {
         activeToolCalls += 1;
         toolCallCount += 1;
@@ -3895,6 +3897,15 @@ async function runAgentRunWorker(
       if (parsed.type === 'tool_error') {
         activeToolCalls = Math.max(0, activeToolCalls - 1);
         toolErrorCount += 1;
+        if (parsed.name === 'run_skill_python_script') {
+          const signature = `${coerceText(parsed.name).trim()}\u0000${coerceText(parsed.content).trim()}`;
+          const failureCount = (skillSandboxFailureCounts.get(signature) || 0) + 1;
+          skillSandboxFailureCounts.set(signature, failureCount);
+          if (failureCount >= 2) {
+            repeatedSkillSandboxFailure =
+              'Agent stopped because the skill sandbox returned the same terminal error twice. Retrying the same request cannot succeed.';
+          }
+        }
       }
       if (parsed.type === 'tool_end') {
         activeToolCalls = Math.max(0, activeToolCalls - 1);
@@ -3928,6 +3939,18 @@ async function runAgentRunWorker(
             error: safeErrorForLog(telemetryError),
           });
         }
+      }
+      if (repeatedSkillSandboxFailure) {
+        loopErrorMessage = repeatedSkillSandboxFailure;
+        await appendStreamEvent(
+          runId,
+          JSON.stringify(normalizeInterruptPayloadRecord(parsed)),
+        );
+        await appendStreamEvent(runId, JSON.stringify({ type: 'error', message: loopErrorMessage }));
+        if (upstream && !upstream.destroyed) {
+          upstream.destroy();
+        }
+        return 'stop';
       }
     }
     if (parsed?.type === 'tool_end' && parsed.name === 'workflow_action') {

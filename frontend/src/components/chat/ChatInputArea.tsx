@@ -190,9 +190,9 @@ export default function ChatInputArea({
               </div>
             </ChatComposerDrawer>
           ) : undefined}
-          headerContext={isStreaming || isPreparingAttachments ? (
+          headerContext={isPreparingAttachments ? (
             <span className="lumo-composer-status" role="status" aria-live="polite">
-              {isStreaming ? 'Working' : 'Preparing context…'}
+              Preparing context…
             </span>
           ) : undefined}
           input={(
