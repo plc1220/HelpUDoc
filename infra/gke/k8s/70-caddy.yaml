@@ -47,7 +47,6 @@ spec:
           image: caddy:2-alpine
           ports:
             - containerPort: 80
-            - containerPort: 443
           resources:
             requests:
               cpu: "50m"
@@ -79,14 +78,14 @@ metadata:
   namespace: helpudoc
   annotations:
     cloud.google.com/backend-config: '{"default":"helpudoc-caddy-backendconfig"}'
+    # The GCE Ingress reaches this Service through a container-native NEG.
+    # Do not expose a second public L4 load balancer for Caddy.
+    cloud.google.com/neg: '{"ingress":true}'
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: helpudoc-caddy
   ports:
     - name: http
       port: 80
       targetPort: 80
-    - name: https
-      port: 443
-      targetPort: 443
