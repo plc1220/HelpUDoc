@@ -22,6 +22,11 @@ data:
   GOOGLE_OAUTH_POST_LOGIN_REDIRECT: https://lc-demo.com/login
   GOOGLE_OAUTH_SCOPES: openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly
   GOOGLE_WORKSPACE_MCP_URL: ""
+  GEMINI_SEARCH_HTTP_TIMEOUT_SECONDS: "90"
+  GOOGLE_SEARCH_TIMEOUT_SECONDS: "100"
+  GOOGLE_SEARCH_MAX_ATTEMPTS: "2"
+  GOOGLE_SEARCH_MAX_CONSECUTIVE_FAILURES: "2"
+  GOOGLE_SEARCH_RETRY_BASE_DELAY_SECONDS: "1"
   # In-cluster Langfuse API (agent SDK); Langfuse web listens on Service langfuse-web:80 -> pod 3000.
   LANGFUSE_BASE_URL: http://langfuse-web
   LANGFUSE_TRACING_ENABLED: "true"

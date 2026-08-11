@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage
@@ -13,13 +15,83 @@ from ...state import WorkspaceState
 from ...utils import SourceTracker, extract_web_url
 from .policy import apply_search_policy_guard
 from .schemas import StructuredWebAnswer
-from .timeouts import DEFAULT_SEARCH_TIMEOUT, invoke_lc_with_timeout
+from .timeouts import (
+    DEFAULT_SEARCH_MAX_ATTEMPTS,
+    DEFAULT_SEARCH_MAX_CONSECUTIVE_FAILURES,
+    DEFAULT_SEARCH_TIMEOUT,
+    invoke_lc_with_timeout,
+    search_retry_delay,
+)
+
+logger = logging.getLogger(__name__)
+
+_TRANSIENT_SEARCH_MARKERS = (
+    "timeout",
+    "deadline",
+    "429",
+    "resource_exhausted",
+    "500",
+    "502",
+    "503",
+    "504",
+    "internal error",
+    "service unavailable",
+    "temporarily unavailable",
+    "unavailable",
+    "no grounded sources",
+)
+
+
+def _is_transient_search_error(error_text: str) -> bool:
+    normalized = str(error_text or "").strip().lower()
+    return any(marker in normalized for marker in _TRANSIENT_SEARCH_MARKERS)
+
+
+def _search_error_code(error_text: str) -> str:
+    normalized = str(error_text or "").strip().lower()
+    if "timeout" in normalized or "deadline" in normalized:
+        return "SEARCH_TIMEOUT"
+    if "no grounded sources" in normalized:
+        return "SEARCH_NO_SOURCES"
+    if _is_transient_search_error(normalized):
+        return "SEARCH_TRANSIENT_ERROR"
+    return "SEARCH_FAILED"
+
+
+def _search_error_envelope(
+    *,
+    error_text: str,
+    attempts: int,
+    retryable: bool,
+) -> str:
+    safe_error = str(error_text or "unknown error")[:300]
+    if retryable:
+        next_call = "google_search: retry once with a narrower query"
+        message = f"Google Search failed after {attempts} attempt(s): {safe_error}."
+    else:
+        next_call = "none: report that live web research is unavailable for this run"
+        message = (
+            f"Google Search is unavailable after {attempts} attempt(s): {safe_error}. "
+            "Do not claim a sourced research result without successfully retrieved sources."
+        )
+    return json.dumps(
+        {
+            "status": "error",
+            "tool": "google_search",
+            "errorCode": _search_error_code(error_text),
+            "message": message,
+            "retryable": retryable,
+            "attempts": attempts,
+            "timeoutSeconds": DEFAULT_SEARCH_TIMEOUT,
+            "suggestedNextCall": next_call,
+        }
+    )
 
 
 def sources_from_grounding_dict(grounding: dict) -> List[Dict[str, str]]:
     sources: List[Dict[str, str]] = []
     seen: set[str] = set()
-    for chunk in grounding.get("groundingChunks") or []:
+    for chunk in grounding.get("groundingChunks") or grounding.get("grounding_chunks") or []:
         if not isinstance(chunk, dict):
             continue
         web = chunk.get("web")
@@ -76,6 +148,22 @@ def sources_from_citation_annotations(ai_message: Any) -> List[Dict[str, str]]:
             title = str(title_raw).strip() if title_raw else "Untitled"
             sources.append({"title": title or "Untitled", "url": url})
             seen.add(url)
+    return sources
+
+
+def verified_google_search_sources(ai_message: Any) -> List[Dict[str, str]]:
+    """Return only URLs emitted by Gemini's grounding/citation metadata."""
+    metadata = getattr(ai_message, "response_metadata", None) or {}
+    grounding = (metadata.get("grounding_metadata") or {}) if isinstance(metadata, dict) else {}
+    candidates = sources_from_grounding_dict(grounding) + sources_from_citation_annotations(ai_message)
+    sources: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for item in candidates:
+        url = str(item.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        sources.append({"title": item.get("title") or "Untitled", "url": url})
     return sources
 
 
@@ -177,42 +265,73 @@ def build_google_search_tool(
             max_results = 5
         search_prompt = (
             f"Search the web for information about: {query}\n\n"
-            f"Return JSON with a factual summary (field summary) and up to {max_results} "
-            f"distinct sources each with url and optional title."
+            f"Return a concise factual summary grounded in up to {max_results} distinct web sources. "
+            "The API grounding metadata is the authoritative source list."
         )
         llm_search = llm.bind(
             tools=[{"google_search": {}}],
-            response_mime_type="application/json",
-            response_schema=StructuredWebAnswer.model_json_schema(),
         )
-        response, error = invoke_lc_with_timeout(
-            lambda: llm_search.invoke([HumanMessage(content=search_prompt)], temperature=0),
-            timeout_s=DEFAULT_SEARCH_TIMEOUT,
-            label=search_label,
-        )
-        if error or response is None:
+        response = None
+        summary = ""
+        sources: List[Dict[str, str]] = []
+        error_text = ""
+        attempts = 0
+        for attempt in range(1, DEFAULT_SEARCH_MAX_ATTEMPTS + 1):
+            attempts = attempt
+            workspace_state.context["google_search_upstream_attempt_count"] = (
+                int(workspace_state.context.get("google_search_upstream_attempt_count", 0) or 0) + 1
+            )
+            response, error = invoke_lc_with_timeout(
+                lambda: llm_search.invoke([HumanMessage(content=search_prompt)], temperature=0),
+                timeout_s=DEFAULT_SEARCH_TIMEOUT,
+                label=f"{search_label} attempt={attempt}",
+            )
+            if not error and response is not None:
+                summary, _ = parse_structured_web_answer(response)
+                # Model-authored JSON URLs are not evidence. Only accept sources
+                # carried by Gemini's native grounding/citation metadata.
+                sources = verified_google_search_sources(response)
+                if sources:
+                    workspace_state.context["google_search_consecutive_failures"] = 0
+                    workspace_state.context["google_search_success_count"] = (
+                        int(workspace_state.context.get("google_search_success_count", 0) or 0) + 1
+                    )
+                    workspace_state.context["google_search_source_count"] = (
+                        int(workspace_state.context.get("google_search_source_count", 0) or 0) + len(sources)
+                    )
+                    workspace_state.context.pop("google_search_terminal_error", None)
+                    break
+                response = None
+                error = "no grounded sources returned"
+
             error_text = str(error or "unknown error")
-            safe_error_text = error_text[:300].replace('"', "'")
-            if "timeout" in error_text.lower() or "deadline" in error_text.lower():
+            failures = int(workspace_state.context.get("google_search_consecutive_failures", 0) or 0) + 1
+            workspace_state.context["google_search_consecutive_failures"] = failures
+            transient = _is_transient_search_error(error_text)
+            terminal = not transient or failures >= DEFAULT_SEARCH_MAX_CONSECUTIVE_FAILURES
+            if terminal:
                 workspace_state.context["google_search_terminal_error"] = True
-                return (
-                    "{"
-                    '"ok": false, '
-                    '"error_type": "timeout", '
-                    f'"message": "Google search timed out after {DEFAULT_SEARCH_TIMEOUT}s. '
-                    'Do not retry google_search in this run; continue from available context or ask the user to retry later."'
-                    "}"
+                break
+            if attempt < DEFAULT_SEARCH_MAX_ATTEMPTS:
+                delay = search_retry_delay(attempt)
+                logger.warning(
+                    "%s transient failure on attempt %s/%s; retrying in %.2fs: %s",
+                    search_label,
+                    attempt,
+                    DEFAULT_SEARCH_MAX_ATTEMPTS,
+                    delay,
+                    error_text[:200],
                 )
-            return (
-                "{"
-                '"ok": false, '
-                '"error_type": "search_error", '
-                f'"message": "Google search failed: {safe_error_text}. '
-                'Do not retry google_search unless the user explicitly asks."'
-                "}"
+                time.sleep(delay)
+
+        if response is None:
+            terminal = bool(workspace_state.context.get("google_search_terminal_error"))
+            return _search_error_envelope(
+                error_text=error_text,
+                attempts=attempts,
+                retryable=not terminal,
             )
 
-        summary, sources = parse_structured_web_answer(response)
         if sources:
             tracker.record(workspace_state, sources)
         return summary + _format_sources_block(sources, max_results=max_results)

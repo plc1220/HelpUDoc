@@ -463,6 +463,36 @@ spec:
                 secretKeyRef:
                   name: helpudoc-secrets
                   key: GEMINI_API_KEY
+            - name: GEMINI_SEARCH_HTTP_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GEMINI_SEARCH_HTTP_TIMEOUT_SECONDS
+                  optional: true
+            - name: GOOGLE_SEARCH_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_SEARCH_TIMEOUT_SECONDS
+                  optional: true
+            - name: GOOGLE_SEARCH_MAX_ATTEMPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_SEARCH_MAX_ATTEMPTS
+                  optional: true
+            - name: GOOGLE_SEARCH_MAX_CONSECUTIVE_FAILURES
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_SEARCH_MAX_CONSECUTIVE_FAILURES
+                  optional: true
+            - name: GOOGLE_SEARCH_RETRY_BASE_DELAY_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_SEARCH_RETRY_BASE_DELAY_SECONDS
+                  optional: true
             - name: DATABASE_URL
               value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
             - name: AGENT_STORE_DATABASE_URL

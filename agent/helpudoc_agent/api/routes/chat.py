@@ -169,6 +169,24 @@ def _is_terminal_tool_failure(name: str, text: str) -> bool:
     return False
 
 
+def _research_source_contract_error(
+    runtime: AgentRuntimeState,
+    source_tracker: SourceTracker,
+) -> str:
+    context = runtime.workspace_state.context or {}
+    if str(context.get("active_skill") or "").strip() != "research":
+        return ""
+    if (
+        int(context.get("google_search_source_count", 0) or 0) > 0
+        and source_tracker.list_sources(runtime.workspace_state)
+    ):
+        return ""
+    return (
+        "Research cannot complete because Google Search did not return any verified web sources "
+        "during this run. No sourced report was produced; retry when live web research is available."
+    )
+
+
 async def _emit_progress(
     handler,
     phase: str,
@@ -1739,7 +1757,14 @@ def register_chat_routes(
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
         context["google_search_count"] = 0
+        context["google_search_upstream_attempt_count"] = 0
+        context["google_search_consecutive_failures"] = 0
+        context["google_search_success_count"] = 0
+        context["google_search_source_count"] = 0
         context.pop("google_search_terminal_error", None)
+        # Sources are scoped to a top-level user turn. Explicit resumes bypass
+        # this reset so plan approval does not discard already gathered evidence.
+        source_tracker.reset(runtime.workspace_state)
 
     async def _prepare_turn_payload(
         runtime: AgentRuntimeState,
@@ -2644,6 +2669,7 @@ def register_chat_routes(
                     if reject_plan_resume
                     else _completion_plan_contract_error(runtime)
                 )
+                source_contract_error = _research_source_contract_error(runtime, source_tracker)
                 missing = _missing_required_artifacts(runtime)
                 if plan_contract_error:
                     yield _json_line({
@@ -2661,6 +2687,25 @@ def register_chat_routes(
                         }
                     )
                     yield _json_line({"type": "done", "status": "failed"})
+                elif source_contract_error:
+                    runtime.workspace_state.context["source_contract_failed"] = True
+                    yield _json_line({
+                        "type": "progress",
+                        "phase": "failed",
+                        "label": "Research source contract not satisfied",
+                        "detail": source_contract_error,
+                        "status": "error",
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    })
+                    yield _json_line(
+                        {
+                            "type": "contract_error",
+                            "message": source_contract_error,
+                            "errorCode": "RESEARCH_SOURCES_UNAVAILABLE",
+                            "retryable": True,
+                        }
+                    )
+                    yield _json_line({"type": "done", "status": "failed", "error": source_contract_error})
                 elif missing:
                     runtime.workspace_state.context["artifact_contract_failed"] = True
                     yield _json_line({

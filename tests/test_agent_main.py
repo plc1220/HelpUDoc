@@ -44,7 +44,11 @@ class SourceTrackerStub:
 
     def __init__(self):
         self.updated_workspaces = []
+        self.reset_workspaces = []
         SourceTrackerStub.instance = self
+
+    def reset(self, workspace_state):
+        self.reset_workspaces.append(workspace_state)
 
     def update_final_report(self, workspace_state):
         self.updated_workspaces.append(workspace_state)
@@ -796,6 +800,7 @@ def test_chat_stream_emits_tokens_and_done(client_with_stubs):
 
     assert messages[-1]["type"] == "done"
     assert "".join(m["content"] for m in messages if m["type"] == "token") == "Hello world!"
+    assert source_tracker.reset_workspaces == [runtime.workspace_state]
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 

@@ -123,7 +123,7 @@ class ToolFactory:
         return build_google_search_tool(
             workspace_state=workspace_state,
             source_tracker=self.source_tracker,
-            llm=self.gemini_manager.get_search_chat_model(),
+            llm=self.gemini_manager.get_web_tool_chat_model(),
             tool_name="google_search",
             tool_description="Use Gemini's built-in search to gather fresh information.",
             search_label="google_search",
@@ -133,7 +133,7 @@ class ToolFactory:
         return build_url_context_tool(
             workspace_state=workspace_state,
             source_tracker=self.source_tracker,
-            llm=self.gemini_manager.get_search_chat_model(),
+            llm=self.gemini_manager.get_web_tool_chat_model(),
             tool_name="url_context",
             tool_description=(
                 "Analyze specific HTTP(S) URLs the user provided using Gemini URL context. "

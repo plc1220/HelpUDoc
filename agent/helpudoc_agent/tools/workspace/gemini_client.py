@@ -23,7 +23,7 @@ class GeminiClientManager:
     def __init__(self, settings: Settings):
         model_cfg = settings.model
         self._model_cfg = model_cfg
-        self._search_chat_model: ChatGoogleGenerativeAI | None = None
+        self._web_tool_chat_model: ChatGoogleGenerativeAI | None = None
         self._attachment_chat_model: ChatGoogleGenerativeAI | None = None
         self._lite_chat_model: ChatGoogleGenerativeAI | None = None
         self._ingestion_chat_model: ChatGoogleGenerativeAI | None = None
@@ -75,18 +75,18 @@ class GeminiClientManager:
         if not self._api_key and not self._model_cfg.use_vertex_ai:
             raise RuntimeError("Gemini API key is not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY before using Gemini-backed tools.")
 
-    def get_search_chat_model(self) -> ChatGoogleGenerativeAI:
-        """Tight-timeout chat model for built-in google_search / url_context tools."""
+    def get_web_tool_chat_model(self) -> ChatGoogleGenerativeAI:
+        """Chat model used internally by the public google_search and url_context tools."""
         self._require_configured_client()
-        if self._search_chat_model is None:
+        if self._web_tool_chat_model is None:
             from ...gemini_chat import create_chat_google_generative_ai
 
-            self._search_chat_model = create_chat_google_generative_ai(
+            self._web_tool_chat_model = create_chat_google_generative_ai(
                 self._model_cfg,
                 self.model_name,
                 timeout=float(DEFAULT_SEARCH_HTTP_TIMEOUT),
             )
-        return self._search_chat_model
+        return self._web_tool_chat_model
 
     def get_attachment_chat_model(self) -> ChatGoogleGenerativeAI:
         """Chat model with standard HTTP deadline for multimodal attachment understanding."""

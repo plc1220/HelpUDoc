@@ -112,6 +112,16 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
 
     def _workspace_write_error(self, operation: str, file_path: str) -> str | None:
         context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        virtual_path = self._virtual_path(file_path)
+        if (
+            str(context.get("active_skill") or "").strip() == "research"
+            and virtual_path == PurePosixPath("/final-research-report.md")
+            and int(context.get("google_search_source_count", 0) or 0) < 1
+        ):
+            return (
+                f"Cannot {operation} '{file_path}' because this research run has no verified Google Search sources. "
+                "Stop and report that live web research is unavailable; do not create a sourced report from model memory."
+            )
         is_published = context.get("workspace_mode") == "published_read_only"
         write_denied = context.get("can_write_workspace") is False
         if not (is_published or write_denied):

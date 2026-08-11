@@ -345,6 +345,19 @@ If the user rejects the plan, stop.
 
 Use `google_search` to collect sources.
 
+`google_search` is the single canonical open-web discovery tool. It is backed
+internally by Gemini's native Google Search grounding; do not look for or call a
+separate `gemini_search` tool.
+
+If `google_search` returns `SEARCH_CIRCUIT_OPEN`, `SEARCH_TIMEOUT`, or another
+non-retryable structured error and no sources have been successfully collected:
+
+- stop evidence gathering;
+- do not draft or finalize a sourced report from model memory;
+- do not invent URLs or populate `/source_register.md` with unverified sources;
+- tell the user that live web research is temporarily unavailable; and
+- leave the run retryable instead of claiming successful completion.
+
 Prioritize primary sources first.
 
 #### Source Priority

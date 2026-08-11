@@ -55,6 +55,28 @@ def test_terminal_tool_failure_keeps_legacy_google_search_detection() -> None:
     assert _is_terminal_tool_failure("write_file", "wrote /a.md") is False
 
 
+def test_terminal_tool_failure_honors_structured_search_retryability() -> None:
+    retryable = json.dumps(
+        {
+            "status": "error",
+            "tool": "google_search",
+            "errorCode": "SEARCH_TIMEOUT",
+            "retryable": True,
+        }
+    )
+    terminal = json.dumps(
+        {
+            "status": "error",
+            "tool": "google_search",
+            "errorCode": "SEARCH_CIRCUIT_OPEN",
+            "retryable": False,
+        }
+    )
+
+    assert _is_terminal_tool_failure("google_search", retryable) is False
+    assert _is_terminal_tool_failure("google_search", terminal) is True
+
+
 def test_recursion_limit_defaults_to_one_thousand() -> None:
     settings = load_settings()
 

@@ -1,6 +1,7 @@
 """Skill policy and plan-approval gates for workspace tools."""
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional
 
@@ -54,6 +55,19 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _search_policy_error(error_code: str, message: str) -> str:
+    return json.dumps(
+        {
+            "status": "error",
+            "tool": "google_search",
+            "errorCode": error_code,
+            "message": message,
+            "retryable": False,
+            "suggestedNextCall": "none: report that live web research is unavailable for this run",
+        }
+    )
+
+
 def apply_search_policy_guard(workspace_state: WorkspaceState, tool_name: str) -> Optional[str]:
     """Tagged-files gates and optional pre-plan search limits (shared by web tools)."""
     blocked = tagged_files_mode_guard(workspace_state.context, tool_name)
@@ -61,9 +75,9 @@ def apply_search_policy_guard(workspace_state: WorkspaceState, tool_name: str) -
         return blocked
     if tool_name == "google_search":
         if bool(workspace_state.context.get("google_search_terminal_error")):
-            return (
-                "Google search is unavailable for this run because the last search timed out. "
-                "Do not retry google_search; continue from available workspace context or ask the user to retry later."
+            return _search_policy_error(
+                "SEARCH_CIRCUIT_OPEN",
+                "Google Search is unavailable for this run after repeated upstream failures.",
             )
         limit = max(1, _env_int("GOOGLE_SEARCH_MAX_CALLS_PER_RUN", 3))
         raw_used = workspace_state.context.get("google_search_count", 0)
@@ -72,9 +86,9 @@ def apply_search_policy_guard(workspace_state: WorkspaceState, tool_name: str) -
         except (TypeError, ValueError):
             used = 0
         if used >= limit:
-            return (
-                f"Google search limit reached for this run ({used}/{limit}). "
-                "Do not retry google_search; continue with the sources already collected."
+            return _search_policy_error(
+                "SEARCH_CALL_LIMIT",
+                f"Google Search limit reached for this run ({used}/{limit}).",
             )
         workspace_state.context["google_search_count"] = used + 1
     policy = get_active_skill_policy(workspace_state)
