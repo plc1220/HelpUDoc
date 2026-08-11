@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { markInteractionResponseReceived } from '../src/utils/agentProgress.ts';
+import {
+  markInteractionResponseReceived,
+  shouldRefreshWorkspaceFilesForRunStatus,
+} from '../src/utils/agentProgress.ts';
+
+test('workspace files refresh whenever a run can have committed artifacts', () => {
+  assert.equal(shouldRefreshWorkspaceFilesForRunStatus('awaiting_approval'), true);
+  assert.equal(shouldRefreshWorkspaceFilesForRunStatus('completed'), true);
+  assert.equal(shouldRefreshWorkspaceFilesForRunStatus('failed'), true);
+  assert.equal(shouldRefreshWorkspaceFilesForRunStatus('cancelled'), true);
+  assert.equal(shouldRefreshWorkspaceFilesForRunStatus('running'), false);
+  assert.equal(shouldRefreshWorkspaceFilesForRunStatus('queued'), false);
+});
 
 test('submitted interaction replaces stale awaiting-input activity immediately', () => {
   const events = markInteractionResponseReceived([

@@ -135,7 +135,10 @@ import {
   type PublishedVersionSelection,
 } from '../../utils/workspacePublicationMode';
 import { resolveWorkspaceCanvasTitle } from '../../utils/workspaceCanvas';
-import { markInteractionResponseReceived } from '../../utils/agentProgress';
+import {
+  markInteractionResponseReceived,
+  shouldRefreshWorkspaceFilesForRunStatus,
+} from '../../utils/agentProgress';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
 import type { UIBlock } from '../../components/UIBlockRenderer';
@@ -990,6 +993,7 @@ export default function WorkspacePage() {
   const pendingAutoSaveRef = useRef<Promise<boolean> | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
   const fileContentRequestIdRef = useRef(0);
+  const workspaceFilesRequestIdRef = useRef(0);
   // autoReviewCopyInFlightRef removed: auto-provisioning is no longer triggered on workspace selection.
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -1070,6 +1074,35 @@ export default function WorkspacePage() {
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
   const theme = useMemo(() => buildAppTheme(colorMode), [colorMode]);
+
+  const resetWorkspaceArtifactState = useCallback(() => {
+    // Invalidate in-flight reads before clearing the canvas so a response from the
+    // previous workspace cannot repopulate it after the workspace has changed.
+    fileContentRequestIdRef.current += 1;
+    workspaceFilesRequestIdRef.current += 1;
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    lastAutoSavedContentRef.current = '';
+    setFiles([]);
+    setWorkspaceKnowledge([]);
+    setFolderPaths([]);
+    setSelectedFile(null);
+    setSelectedFileDetails(null);
+    setSelectedDashboardPath(null);
+    setSelectedFiles(new Set());
+    setDashboardArtifactsByPath({});
+    setFileContent('');
+    setPublishedVersionView(null);
+    setIsEditMode(false);
+    setCanvasZoom(1);
+    setCopiedImageUrl(false);
+    setCopiedWorkspaceContent(false);
+    setCopiedPublicUrlFileId(null);
+    setIsFileActionMenuOpen(false);
+    setWorkspaceFileDialog(null);
+  }, []);
 
   const markPrivateWorkspaceChanged = useCallback((workspaceId: string) => {
     const update = (workspace: Workspace): Workspace => {
@@ -1581,7 +1614,11 @@ export default function WorkspacePage() {
     });
     setIsWorkspaceRenameActive(false);
     setWorkspaceNameDraft(workspace.name);
-    setFolderPaths([]);
+    if (selectedWorkspaceIdRef.current !== workspace.id || publishedVersionView) {
+      resetWorkspaceArtifactState();
+    } else {
+      setPublishedVersionView(null);
+    }
     setSelectedWorkspace(workspace);
     setLandingWorkspaceQuery('');
     setIsLandingWorkspacePickerOpen(false);
@@ -1595,7 +1632,7 @@ export default function WorkspacePage() {
       .catch((error) => {
         console.error('Failed to check selected workspace conversations', error);
       });
-  }, []);
+  }, [publishedVersionView, resetWorkspaceArtifactState]);
 
   const handleOpenLandingPage = useCallback(() => {
     setIsLandingPageVisible(true);
@@ -2122,6 +2159,8 @@ export default function WorkspacePage() {
     options: { includePrivateData?: boolean } = {},
   ) => {
     if (!workspaceId) return;
+    const requestId = workspaceFilesRequestIdRef.current + 1;
+    workspaceFilesRequestIdRef.current = requestId;
     try {
       const [files, folders, knowledge] = await Promise.all([
         getFiles(workspaceId),
@@ -2133,10 +2172,22 @@ export default function WorkspacePage() {
               return [];
             }),
       ]);
+      if (
+        workspaceFilesRequestIdRef.current !== requestId
+        || selectedWorkspaceIdRef.current !== workspaceId
+      ) {
+        return;
+      }
       setFolderPaths(folders);
       setFiles(files);
       setWorkspaceKnowledge(Array.isArray(knowledge) ? knowledge : []);
     } catch (error) {
+      if (
+        workspaceFilesRequestIdRef.current !== requestId
+        || selectedWorkspaceIdRef.current !== workspaceId
+      ) {
+        return;
+      }
       console.error('Failed to load files for workspace', error);
     }
   }, []);
@@ -3221,17 +3272,19 @@ export default function WorkspacePage() {
     setIsWorkspaceRenameActive(false);
     setIsEditMode(false);
     setWorkspaceNameDraft(workspace.name);
-    setFolderPaths([]);
-    // Leaving a workspace always drops any published-version selection so the read-only
-    // snapshot view can never leak into another workspace.
-    setPublishedVersionView(null);
+    if (selectedWorkspaceIdRef.current !== workspace.id || publishedVersionView) {
+      resetWorkspaceArtifactState();
+    } else {
+      // Reopening the current workspace exits any historical snapshot view.
+      setPublishedVersionView(null);
+    }
     setSelectedWorkspace(workspace);
     setIsLandingPageVisible(false);
     if (workspace.visibility === 'team') {
       setIsAgentPaneVisible(true);
       setMobileSurface('canvas');
     }
-  }, []);
+  }, [publishedVersionView, resetWorkspaceArtifactState]);
 
   /**
    * Sync the Shared Working version into `My draft`. When overlapping changes exist the backend
@@ -3373,12 +3426,7 @@ export default function WorkspacePage() {
     if (selectedWorkspace?.id !== workspace.id) {
       handleSelectWorkspace(workspace);
     }
-    setIsEditMode(false);
-    setSelectedFile(null);
-    setSelectedFileDetails(null);
-    setSelectedFiles(new Set());
-    setSelectedDashboardPath(null);
-    setFileContent('');
+    resetWorkspaceArtifactState();
     setPublishedVersionView({
       workspaceId: workspace.id,
       versionId: version.id,
@@ -3387,16 +3435,11 @@ export default function WorkspacePage() {
       createdAt: version.createdAt,
       isCurrent: version.isCurrent,
     });
-  }, [handleSelectWorkspace, selectedWorkspace?.id]);
+  }, [handleSelectWorkspace, resetWorkspaceArtifactState, selectedWorkspace?.id]);
 
   const handleExitPublishedVersion = useCallback(() => {
-    setPublishedVersionView(null);
-    setIsEditMode(false);
-    setSelectedFile(null);
-    setSelectedFileDetails(null);
-    setSelectedFiles(new Set());
-    setFileContent('');
-  }, []);
+    resetWorkspaceArtifactState();
+  }, [resetWorkspaceArtifactState]);
 
   const handleOpenPrivateWorkingCopy = useCallback(async () => {
     if (!selectedWorkspace || selectedWorkspace.visibility !== 'team') {
@@ -3630,8 +3673,8 @@ export default function WorkspacePage() {
         role: 'owner' as const,
       };
       setWorkspaces((prev) => [newWorkspace, ...prev]);
+      resetWorkspaceArtifactState();
       setSelectedWorkspace(newWorkspace);
-      setFolderPaths([]);
       setWorkspaceSearchQuery('');
       setWorkspaceNameDraft(newWorkspace.name);
       setIsWorkspaceRenameActive(options?.rename ?? true);
@@ -5175,15 +5218,17 @@ export default function WorkspacePage() {
           }
           stopRequestedRef.current = false;
           resumeInFlightRef.current.delete(runId);
+          if (
+            shouldRefreshWorkspaceFilesForRunStatus(normalizedFinalStatus)
+            && selectedWorkspaceIdRef.current === runInfo.workspaceId
+          ) {
+            await loadFilesForWorkspace(runInfo.workspaceId);
+          }
           if (finalStatus === 'awaiting_approval') {
             registerActiveRun({ ...runInfo, status: finalStatus, lastStreamId, streamReconnectAttempts: 0 });
           } else {
             removeActiveRun(runId);
             removeActiveRunsForTurn(conversationId, turnId);
-            const workspaceId = selectedWorkspace?.id;
-            if (workspaceId) {
-              loadFilesForWorkspace(workspaceId);
-            }
           }
         }
       }
@@ -5197,7 +5242,6 @@ export default function WorkspacePage() {
       findAgentMessageIndexForRun,
       removeActiveRun,
       removeActiveRunsForTurn,
-      selectedWorkspace?.id,
       loadFilesForWorkspace,
       setConversationAttention,
       setStreamingForConversation,
@@ -6745,9 +6789,8 @@ export default function WorkspacePage() {
       await deleteWorkspace(id);
       setWorkspaces((current) => current.filter((workspace) => workspace.id !== id));
       if (selectedWorkspace?.id === id) {
+        resetWorkspaceArtifactState();
         setSelectedWorkspace(null);
-        setFiles([]);
-        setFolderPaths([]);
         setIsLandingPageVisible(true);
       }
     } catch (error) {
@@ -6785,9 +6828,8 @@ export default function WorkspacePage() {
       if (action === 'trash' || action === 'leave') {
         if (wasSelected) {
           cancelStreamForConversation(activeConversationId);
+          resetWorkspaceArtifactState();
           setSelectedWorkspace(null);
-          setFiles([]);
-          setFolderPaths([]);
           setIsLandingPageVisible(true);
         }
       }
@@ -6835,7 +6877,13 @@ export default function WorkspacePage() {
     } finally {
       setLifecycleBusyWorkspaceId((current) => current === workspace.id ? null : current);
     }
-  }, [activeConversationId, addLocalSystemMessage, cancelStreamForConversation, refreshWorkspaceList]);
+  }, [
+    activeConversationId,
+    addLocalSystemMessage,
+    cancelStreamForConversation,
+    refreshWorkspaceList,
+    resetWorkspaceArtifactState,
+  ]);
 
   const handleManageTeamAccess = useCallback((workspace: Workspace) => {
     if (workspace.visibility === 'team') setShareWorkspace(workspace);

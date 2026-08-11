@@ -2,7 +2,24 @@ import type { ConversationMessageMetadata } from '../types';
 
 type ProgressEvent = NonNullable<ConversationMessageMetadata['progressEvents']>[number];
 
+type AgentRunRefreshStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting_approval'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
 const WAITING_FOR_INPUT_LABEL = /\b(?:awaiting|waiting)\b.*\b(?:your\s+)?input\b/i;
+
+export const shouldRefreshWorkspaceFilesForRunStatus = (
+  status: AgentRunRefreshStatus,
+): boolean => (
+  status === 'awaiting_approval'
+  || status === 'completed'
+  || status === 'failed'
+  || status === 'cancelled'
+);
 
 export const markInteractionResponseReceived = (
   progressEvents: ConversationMessageMetadata['progressEvents'],
