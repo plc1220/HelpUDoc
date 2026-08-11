@@ -337,7 +337,7 @@ function LumoPetContent({
       backgroundSize: `${SPRITE_COLUMNS * 100}% ${SPRITE_ROWS * 100}%`,
       transform: facing === 'left' ? 'scaleX(-1)' : 'scaleX(1)',
     };
-  }, [frame, state, facing, cfg]);
+  }, [frame, facing, cfg]);
 
   const rootStyle = position ? { left: position.x, top: position.y } : undefined;
 

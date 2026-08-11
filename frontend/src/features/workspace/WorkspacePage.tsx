@@ -5730,9 +5730,6 @@ export default function WorkspacePage() {
       setConversationAttention,
       streamRunForConversation,
       submitInterruptWithRetry,
-      submitRunDecision,
-      submitRunAction,
-      submitRunResponse,
     ],
   );
 
@@ -6100,6 +6097,7 @@ export default function WorkspacePage() {
     setConversationAttention,
     syncRunStateToConversation,
     streamRunForConversation,
+    updateMessagesForConversation,
   ]);
 
   useEffect(() => {
