@@ -1248,8 +1248,20 @@ export class FileService {
     let buffer: Buffer;
     try {
       buffer = await fs.readFile(absolutePath);
-    } catch (error) {
-      throw new NotFoundError('File not found');
+    } catch {
+      const durableFile = await this.db('files')
+        .where({ workspaceId, name: normalized })
+        .whereNull('deletedAt')
+        .first();
+      if (!durableFile) {
+        throw new NotFoundError('File not found');
+      }
+      try {
+        const localMirror = await this.ensureLocalMirror(durableFile);
+        buffer = await fs.readFile(localMirror);
+      } catch {
+        throw new NotFoundError('File not found');
+      }
     }
 
     const mimeType = this.resolveMimeType(normalized, null) || 'application/octet-stream';

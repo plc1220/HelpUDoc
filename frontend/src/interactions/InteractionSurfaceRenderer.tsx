@@ -12,6 +12,8 @@ import type {
   InterruptAction,
 } from '@helpudoc/contracts/types';
 import { buildApiUrl } from '../services/apiClient';
+import { resolveStylePreviewSource } from '../utils/stylePreview';
+import WorkspaceHtmlPreviewFrame from '../components/WorkspaceHtmlPreviewFrame';
 
 type Choice = {
   id?: string;
@@ -228,10 +230,13 @@ export function InteractionSurfaceRenderer({
         const sourcePath = String(
           preview?.path || preview?.file || preview?.filePath || preview?.previewPath || '',
         ).trim();
-        const previewUrl = sourcePath ? workspacePreviewUrl(workspaceId, sourcePath) : undefined;
-        const html = previewUrl
-          ? ''
-          : String(preview?.html || preview?.srcDoc || preview?.content || '').trim();
+        const embeddedHtml = String(preview?.html || preview?.srcDoc || preview?.content || '').trim();
+        const previewSource = resolveStylePreviewSource(
+          { html: embeddedHtml, path: sourcePath },
+          (path) => workspacePreviewUrl(workspaceId, path),
+        );
+        const previewUrl = previewSource.url;
+        const html = previewSource.html || '';
         const isSelected = selectedChoiceId === id;
         return (
           <Stack key={id} direction="vertical" gap={2} width="100%">
@@ -244,12 +249,14 @@ export function InteractionSurfaceRenderer({
                   background: 'white',
                 }}
               >
-                <iframe
+                <WorkspaceHtmlPreviewFrame
+                  workspaceId={workspaceId}
+                  path={html ? undefined : sourcePath}
+                  html={html}
                   title={`${choiceLabel(choice, index)} preview`}
-                  src={html ? undefined : previewUrl}
-                  srcDoc={html || undefined}
                   sandbox=""
-                  style={{ display: 'block', width: '100%', height: 240, border: 0 }}
+                  className="block h-[240px] w-full border-0"
+                  placeholderClassName="flex h-[240px] w-full items-center justify-center bg-slate-950"
                 />
               </div>
             ) : null}

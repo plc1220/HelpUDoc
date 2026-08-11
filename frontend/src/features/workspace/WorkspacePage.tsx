@@ -123,6 +123,7 @@ import {
 import {
   isLinkedDraftAutoSyncEligible,
   getWorkspaceLifecycleStatus,
+  isOwnerOnlyUnsharedWorkspace,
   WORKSPACE_LIFECYCLE_ACTION_LABELS,
   type WorkspaceLifecycleAction,
 } from '../../utils/workspaceLifecycle';
@@ -133,6 +134,8 @@ import {
   publishedVersionLabel,
   type PublishedVersionSelection,
 } from '../../utils/workspacePublicationMode';
+import { resolveWorkspaceCanvasTitle } from '../../utils/workspaceCanvas';
+import { markInteractionResponseReceived } from '../../utils/agentProgress';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
 import type { UIBlock } from '../../components/UIBlockRenderer';
@@ -569,36 +572,6 @@ const CLARIFICATION_INTERACTION_PRESENTATIONS = new Set([
 const isClarificationInteractionRequest = (request?: InteractionRequest | null): boolean => {
   const presentation = typeof request?.presentation === 'string' ? request.presentation.trim() : '';
   return CLARIFICATION_INTERACTION_PRESENTATIONS.has(presentation);
-};
-
-const isDeckOutputPath = (path?: string | null): boolean => {
-  const normalized = String(path || '').trim();
-  if (!normalized) {
-    return false;
-  }
-  const baseName = normalized.split(/[\\/]/).pop() || normalized;
-  return /\.html?$/i.test(baseName) && /(?:-deck|deck|slides?|presentation)/i.test(baseName);
-};
-
-const hasDeckOutputEvidence = (events?: ToolEvent[]): boolean => (
-  (events || []).some((event) => (
-    [...(event.outputFiles || []), ...(event.relatedFiles || [])].some((file) => isDeckOutputPath(file.path))
-  ))
-);
-
-const hasCompletedAgentOutputEvidence = (
-  message?: ConversationMessage | null,
-  bufferedText?: string,
-): boolean => {
-  if (hasDeckOutputEvidence(message?.toolEvents)) {
-    return true;
-  }
-  const text = `${message?.text || ''}\n${bufferedText || ''}`.trim();
-  return Boolean(
-    text &&
-    !isSummaryLikeAgentText(text) &&
-    /\b(created|generated|saved|wrote|written|updated)\b[\s\S]{0,120}\b(deck|slides?|presentation|html)\b/i.test(text),
-  );
 };
 
 const trimMilestone = (value?: string): string => {
@@ -1040,13 +1013,16 @@ export default function WorkspacePage() {
   }, [workspaceSearchQuery, workspaces]);
   const mobilePrivateWorkspaces = useMemo(
     () => filteredWorkspaces.filter((workspace) => (
-      workspace.visibility !== 'team' && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+      (workspace.visibility !== 'team' || isOwnerOnlyUnsharedWorkspace(workspace))
+        && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
     )).slice(0, 8),
     [filteredWorkspaces],
   );
   const mobileTeamWorkspaces = useMemo(
     () => filteredWorkspaces.filter((workspace) => (
-      workspace.visibility === 'team' && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+      workspace.visibility === 'team'
+        && !isOwnerOnlyUnsharedWorkspace(workspace)
+        && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
     )).slice(0, 8),
     [filteredWorkspaces],
   );
@@ -1755,7 +1731,7 @@ export default function WorkspacePage() {
 
   const activeFile = selectedDashboardPath ? null : (selectedFileDetails || selectedFile);
   const activeFileName = activeFile?.name ?? '';
-  const activeDashboardPath = normalizeWorkspaceRelativePath(selectedDashboardPath || activeFile?.path || activeFile?.name);
+  const activeDashboardPath = normalizeWorkspaceRelativePath(selectedDashboardPath || '');
   const isDashboardCanvas = Boolean(selectedDashboardPath);
   const activeDashboardArtifact = activeDashboardPath ? dashboardArtifactsByPath[activeDashboardPath] : undefined;
   const activeDashboardDisplayName = activeDashboardPath
@@ -1788,7 +1764,11 @@ export default function WorkspacePage() {
       },
     ];
   }, [activeFile, fileContent]);
-  const canvasTitle = activeDashboardPath ? activeDashboardDisplayName : selectedFile ? selectedFile.name : 'Editor';
+  const canvasTitle = resolveWorkspaceCanvasTitle({
+    selectedDashboardPath,
+    dashboardDisplayName: activeDashboardDisplayName,
+    selectedFileName: selectedFile?.name,
+  });
   const canZoomOutCanvas = canvasZoom > MIN_CANVAS_ZOOM;
   const canZoomInCanvas = canvasZoom < MAX_CANVAS_ZOOM;
   const handleCanvasZoomIn = useCallback(() => {
@@ -4160,6 +4140,9 @@ export default function WorkspacePage() {
           runId,
           status: 'running' as AgentRunStatus,
           pendingInterrupt: undefined,
+          progressEvents: markInteractionResponseReceived(
+            ((merged.metadata as ConversationMessageMetadata | undefined) || {}).progressEvents,
+          ),
         };
 
         next[primaryIndex] = {
@@ -4648,11 +4631,11 @@ export default function WorkspacePage() {
   );
 
   const submitInterruptWithRetry = useCallback(
-    async (
+    async <T,>(
       runId: string,
       expected: 'approval' | 'clarification' | 'action',
-      submit: () => Promise<unknown>,
-    ) => {
+      submit: () => Promise<T>,
+    ): Promise<T> => {
       try {
         return await submit();
       } catch (error) {
@@ -5099,28 +5082,11 @@ export default function WorkspacePage() {
         } catch (statusError) {
           console.error('Failed to fetch final run status', statusError);
         }
-        let effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
+        const effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
         const agentMessageIndexForFinalStatus = (() => {
           const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
           return resolved >= 0 ? resolved : initialAgentMessageIndex;
         })();
-        const finalMessagesSnapshot = getConversationMessagesSnapshot(conversationId);
-        const finalAgentMessage =
-          agentMessageIndexForFinalStatus >= 0 ? finalMessagesSnapshot[agentMessageIndexForFinalStatus] : null;
-        const bufferedFinalText =
-          agentMessageBufferRef.current.get(placeholderId)
-          ?? (finalAgentMessage ? agentMessageBufferRef.current.get(finalAgentMessage.id) : undefined)
-          ?? finalAgentMessage?.text
-          ?? '';
-        const hasCompletionEvidence = hasCompletedAgentOutputEvidence(finalAgentMessage, bufferedFinalText);
-        if (
-          !effectivePendingInterrupt &&
-          hasCompletionEvidence &&
-          (finalStatus === 'awaiting_approval' || finalStatus === 'cancelled' || finalStatus === 'failed')
-        ) {
-          finalStatus = 'completed';
-          effectivePendingInterrupt = undefined;
-        }
         const shouldApplyPendingInterrupt =
           finalStatus === 'awaiting_approval' && Boolean(effectivePendingInterrupt);
         if (!supersededByNewerStream && shouldApplyPendingInterrupt) {
@@ -5229,7 +5195,6 @@ export default function WorkspacePage() {
       handleStreamChunk,
       flushBufferedAgentChunks,
       findAgentMessageIndexForRun,
-      getConversationMessagesSnapshot,
       removeActiveRun,
       removeActiveRunsForTurn,
       selectedWorkspace?.id,
@@ -5414,7 +5379,11 @@ export default function WorkspacePage() {
             };
           }
         }
-        await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
+        const resumeResult = await submitInterruptWithRetry(
+          runId,
+          'approval',
+          () => submitRunDecision(runId, decision, options),
+        );
         clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
         setInterruptInputByMessageId((prev) => {
           const next = { ...prev };
@@ -5447,7 +5416,7 @@ export default function WorkspacePage() {
         registerActiveRun(runInfo);
         setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
-          await streamRunForConversation(runInfo, false);
+          await streamRunForConversation(runInfo, false, resumeResult.streamAfterId);
         } else {
           addLocalSystemMessage('Approval saved. Refreshing stream state...');
         }
@@ -5543,7 +5512,7 @@ export default function WorkspacePage() {
         return next;
       });
       try {
-        await submitInterruptWithRetry(runId, 'clarification', () =>
+        const resumeResult = await submitInterruptWithRetry(runId, 'clarification', () =>
           submitRunResponse(runId, {
             message: structuredSummary || undefined,
             selectedChoiceIds: selectedChoiceIds.length ? selectedChoiceIds : undefined,
@@ -5599,7 +5568,7 @@ export default function WorkspacePage() {
         registerActiveRun(runInfo);
         setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
-          await streamRunForConversation(runInfo, false);
+          await streamRunForConversation(runInfo, false, resumeResult.streamAfterId);
         } else {
           addLocalSystemMessage('Response saved. Refreshing stream state...');
         }
@@ -5675,6 +5644,7 @@ export default function WorkspacePage() {
       }
 
       const endpoint = request.resumeAction?.endpoint || 'respond';
+      let resumeAfterId: string | undefined;
 
       if (endpoint === 'decision') {
         const decision = response.decision || 'approve';
@@ -5706,19 +5676,26 @@ export default function WorkspacePage() {
               };
             }
           }
-          await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
+          const result = await submitInterruptWithRetry(
+            runId,
+            'approval',
+            () => submitRunDecision(runId, decision, options),
+          );
+          resumeAfterId = result.streamAfterId;
         }
       } else if (endpoint === 'act') {
-        await submitInterruptWithRetry(runId, 'action', () => submitRunAction(runId, {
+        const result = await submitInterruptWithRetry(runId, 'action', () => submitRunAction(runId, {
           actionId: response.actionId,
           text: response.message || '',
         }));
+        resumeAfterId = result.streamAfterId;
       } else {
-        await submitInterruptWithRetry(
+        const result = await submitInterruptWithRetry(
           runId,
           'clarification',
           () => submitRunResponse(runId, buildClarificationPayloadFromInteractionResponse(response)),
         );
+        resumeAfterId = result.streamAfterId;
       }
 
       clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
@@ -5739,7 +5716,7 @@ export default function WorkspacePage() {
       markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
       setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
-      await streamRunForConversation(runInfo, false);
+      await streamRunForConversation(runInfo, false, resumeAfterId);
     },
     [
       activeConversationPersona,
@@ -5804,7 +5781,7 @@ export default function WorkspacePage() {
           return next;
         });
         try {
-          await submitInterruptWithRetry(runId, 'clarification', () =>
+          const resumeResult = await submitInterruptWithRetry(runId, 'clarification', () =>
             submitRunResponse(runId, {
               selectedChoiceIds: action.choiceId ? [action.choiceId] : undefined,
               selectedValues: action.value ? [action.value] : undefined,
@@ -5835,7 +5812,7 @@ export default function WorkspacePage() {
           registerActiveRun(runInfo);
           setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
           if (runInfo) {
-            await streamRunForConversation(runInfo, false);
+            await streamRunForConversation(runInfo, false, resumeResult.streamAfterId);
           } else {
             addLocalSystemMessage('Response saved. Refreshing stream state...');
           }
@@ -5867,7 +5844,7 @@ export default function WorkspacePage() {
         return next;
       });
       try {
-        await submitInterruptWithRetry(runId, 'action', () =>
+        const resumeResult = await submitInterruptWithRetry(runId, 'action', () =>
           submitRunAction(runId, {
             actionId: action.id,
             text: actionText || undefined,
@@ -5907,7 +5884,7 @@ export default function WorkspacePage() {
         registerActiveRun(runInfo);
         setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
-          await streamRunForConversation(runInfo, false);
+          await streamRunForConversation(runInfo, false, resumeResult.streamAfterId);
         } else {
           addLocalSystemMessage('Action saved. Refreshing stream state...');
         }
@@ -7868,7 +7845,14 @@ export default function WorkspacePage() {
                         : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
                     }`}
                   >
-                    <span className="min-w-0 truncate">{workspace.name}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate">{workspace.name}</span>
+                      {isOwnerOnlyUnsharedWorkspace(workspace) ? (
+                        <span className={`block truncate text-[10px] ${isDarkMode ? 'text-amber-300' : 'text-amber-600'}`}>
+                          Unshared · Only you can access it
+                        </span>
+                      ) : null}
+                    </span>
                     {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
                   </button>
                 ))}
@@ -8080,6 +8064,7 @@ export default function WorkspacePage() {
           sx={{
             flexGrow: 1,
             p: 2,
+            pl: 1,
             height: '100%',
             maxHeight: '100%',
             minHeight: 0,

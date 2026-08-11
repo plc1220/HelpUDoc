@@ -30,7 +30,9 @@ export {
   terminalEventFromStreamPayload,
   validateInterrupt,
   withFrontendSlidesGateMetadata,
+  findGeneratedFrontendSlidesPreviewPaths,
   mergeAssistantTextChunk,
   reconstructAssistantTextFromStreamPayloads,
+  buildAgentErrorPayload,
   getRunConversationRecoverySnapshot,
 } from './agent-runs/lifecycle';

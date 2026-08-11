@@ -256,6 +256,14 @@ export const mergeAssistantTextChunk = (existing: string, incoming: string): str
   return `${existing}${incoming}`;
 };
 
+const isLineNumberedToolOutput = (value: string): boolean => (
+  value
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => /^\s*\d+\t/.test(line))
+    .length >= 3
+);
+
 const buildInterruptId = (payload: Record<string, unknown>): string => {
   const canonical = stableNormalize(
     Object.entries(payload).reduce<Record<string, unknown>>((acc, [key, value]) => {
@@ -722,7 +730,7 @@ const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
 };
 
 const appendStreamEvent = async (runId: string, line: string) => {
-  if (!line.trim()) return;
+  if (!line.trim()) return undefined;
   const streamKey = buildStreamKey(runId);
   try {
     const entryId = await redisClient.xAdd(streamKey, '*', { data: line });
@@ -736,6 +744,7 @@ const appendStreamEvent = async (runId: string, line: string) => {
         sample: line.slice(0, 160),
       });
     }
+    return entryId;
   } catch (error) {
     console.error('[agent-run-stream] failed to append', {
       runId,
@@ -1061,6 +1070,7 @@ export const inferFrontendSlidesGateIdFromInteraction = (
 export const withFrontendSlidesGateMetadata = (
   payload: Record<string, unknown>,
   gateId: FrontendSlidesGateId,
+  options?: { stylePreviewPaths?: Record<string, string> },
 ): Record<string, unknown> => {
   const normalized = normalizeInterruptPayloadRecord(payload);
   const existingDisplayPayload = extractDisplayPayload(normalized);
@@ -1083,12 +1093,17 @@ export const withFrontendSlidesGateMetadata = (
   const defaultStyleChoices = gateId === 'style_preview_selection'
     ? DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES.slice(0, 3)
     : undefined;
-  const defaultStylePreviews = defaultStyleChoices?.map((choice) => ({
-    id: choice.id,
-    label: choice.label,
-    description: choice.description,
-    html: buildFallbackStylePreviewHtml(choice),
-  }));
+  const defaultStylePreviews = defaultStyleChoices?.map((choice) => {
+    const generatedPath = options?.stylePreviewPaths?.[choice.id];
+    return {
+      id: choice.id,
+      label: choice.label,
+      description: choice.description,
+      ...(generatedPath
+        ? { path: generatedPath }
+        : { html: buildFallbackStylePreviewHtml(choice) }),
+    };
+  });
   const buildStylePreviewsForChoices = (choices: unknown): Array<Record<string, unknown>> | undefined => {
     if (!Array.isArray(choices) || choices.length === 0) {
       return defaultStylePreviews;
@@ -1122,7 +1137,7 @@ export const withFrontendSlidesGateMetadata = (
           'previewPath',
           'filePath',
           'file',
-        ]);
+        ]) || options?.stylePreviewPaths?.[id];
         const existingHtml = nonEmptyRecordString(record, ['html', 'srcDoc', 'srcdoc', 'content']);
         return {
           id,
@@ -1182,7 +1197,7 @@ export const withFrontendSlidesGateMetadata = (
           'previewPath',
           'filePath',
           'file',
-        ]);
+        ]) || options?.stylePreviewPaths?.[id];
         return {
           ...record,
           id,
@@ -1601,6 +1616,22 @@ const buildFrontendSlidesOutlineReviewMarkdown = (input: {
   buildFrontendSlidesFallbackOutlineMarkdown(input)
 );
 
+export const findGeneratedFrontendSlidesPreviewPaths = (
+  toolEvents: ToolEvent[] | undefined,
+): Record<string, string> => {
+  const previewPaths: Record<string, string> = {};
+  for (const event of toolEvents || []) {
+    for (const file of [...(event.outputFiles || []), ...(event.relatedFiles || [])]) {
+      const normalizedPath = String(file.path || '').trim().replace(/\\/g, '/');
+      const match = normalizedPath.match(/(?:^|\/)(style-[a-c])(?:-preview)?\.html?$/i);
+      if (match?.[1]) {
+        previewPaths[match[1].toLowerCase()] = normalizedPath;
+      }
+    }
+  }
+  return previewPaths;
+};
+
 const buildFrontendSlidesGatePendingInterrupt = (input: {
   runId: string;
   gateId: FrontendSlidesGateId;
@@ -1613,15 +1644,19 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
 
   if (gateId === 'style_preview_selection') {
     const choices = extractFrontendSlidesStyleChoices(input.assistantText || '');
+    const generatedPreviewPaths = findGeneratedFrontendSlidesPreviewPaths(input.toolEvents);
     const previews = choices
       .filter((choice) => /^style-[a-c]$/.test(choice.id))
-      .map((choice) => ({
-        id: choice.id,
-        label: choice.label,
-        description: choice.description,
-        path: `.frontend-slides/slide-previews/${choice.id}.html`,
-        html: buildFallbackStylePreviewHtml(choice),
-      }));
+      .map((choice) => {
+        const generatedPath = generatedPreviewPaths[choice.id];
+        return {
+          id: choice.id,
+          label: choice.label,
+          description: choice.description,
+          path: generatedPath || `.frontend-slides/slide-previews/${choice.id}.html`,
+          ...(generatedPath ? {} : { html: buildFallbackStylePreviewHtml(choice) }),
+        };
+      });
     const displayPayload = buildFrontendSlidesDisplayPayload(gateId, {
       chooser: 'style-previews',
       stylePreviews: previews,
@@ -2378,12 +2413,20 @@ const persistRunConversationMessage = async (
   }
 };
 
-const buildAgentErrorPayload = (error: any, persona: string): string => {
+export const buildAgentErrorPayload = (error: any, persona: string): string => {
   if (error?.response?.status === 404) {
     return `Agent '${persona}' not found.`;
   }
   if (typeof error?.response?.data?.error === 'string') {
     return error.response.data.error;
+  }
+  const connectionCode = [
+    error?.code,
+    error?.cause?.code,
+    ...(Array.isArray(error?.errors) ? error.errors.map((item: any) => item?.code) : []),
+  ].find((value) => typeof value === 'string' && value.trim());
+  if (connectionCode && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT'].includes(connectionCode)) {
+    return `Unable to reach the agent service (${connectionCode}).`;
   }
   if (typeof error?.message === 'string' && error.message.trim()) {
     return error.message;
@@ -2738,6 +2781,9 @@ export const terminalEventFromStreamPayload = (parsed: Record<string, unknown> |
     }
     if (status === 'cancelled' || status === 'canceled') {
       return { status: 'cancelled' };
+    }
+    if (status === 'interrupted') {
+      return undefined;
     }
     return { status: 'completed' };
   }
@@ -3249,9 +3295,17 @@ async function runAgentRunWorker(
   const workflowActions: WorkflowActionEvent[] = [];
   let artifactsCommitted = false;
   let artifactBaseline: WorkspaceArtifactBaseline | null = null;
+  let agentStreamEstablished = false;
 
   const commitRunArtifacts = async () => {
     if (artifactsCommitted || !fileService || !params.userId) return;
+    // A failed connection cannot have generated workspace artifacts. Skipping
+    // this commit also keeps a secondary lease failure from masking the real
+    // transport error during stale-run recovery.
+    if (!agentStreamEstablished) {
+      artifactsCommitted = true;
+      return;
+    }
     await workspaceRunLease.assertOwned(runId);
     const touchedPaths = toolEvents.flatMap((event) => (
       event.outputFiles || []
@@ -3356,7 +3410,10 @@ async function runAgentRunWorker(
       return;
     }
     if ((parsed.type === 'token' || parsed.type === 'chunk') && (!parsed.role || parsed.role === 'assistant')) {
-      assistantText = mergeAssistantTextChunk(assistantText, coerceText(parsed.content));
+      const content = coerceText(parsed.content);
+      if (!isLineNumberedToolOutput(content)) {
+        assistantText = mergeAssistantTextChunk(assistantText, content);
+      }
       return;
     }
     if (parsed.type === 'thought') {
@@ -3481,14 +3538,24 @@ async function runAgentRunWorker(
 
     let effectiveStatus = status;
     let effectiveError = error;
+    let completionFailureReplacesAssistantText = false;
     if (status === 'completed' || status === 'failed') {
       try {
         await commitRunArtifacts();
       } catch (artifactError) {
         effectiveStatus = 'failed';
-        effectiveError = `Failed to commit generated workspace files: ${
+        completionFailureReplacesAssistantText = status === 'completed';
+        const artifactCommitError = `Failed to commit generated workspace files: ${
           artifactError instanceof Error ? artifactError.message : 'unknown storage error'
         }`;
+        console.error(artifactCommitError, {
+          runId,
+          originalRunError: effectiveError,
+          error: safeErrorForLog(artifactError),
+        });
+        if (!effectiveError?.trim()) {
+          effectiveError = artifactCommitError;
+        }
       }
     }
 
@@ -3555,6 +3622,7 @@ async function runAgentRunWorker(
     if (frontendSlidesCompletionError) {
       effectiveStatus = 'failed';
       effectiveError = frontendSlidesCompletionError;
+      completionFailureReplacesAssistantText = status === 'completed';
     }
 
     const implicitInput = detectImplicitInputAwaiting({
@@ -3627,6 +3695,9 @@ async function runAgentRunWorker(
     await updateConversationFromRun(
       effectiveStatus === 'queued' ? 'running' : effectiveStatus,
       {
+        ...(completionFailureReplacesAssistantText && effectiveError
+          ? { assistantText: `The run did not complete: ${effectiveError}` }
+          : {}),
         error: effectiveError,
         ...(implicitInput.awaiting ? { implicitInput } : {}),
       },
@@ -3721,7 +3792,6 @@ async function runAgentRunWorker(
   };
 
   const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
-    await commitRunArtifacts();
     const normalizedInterrupt = normalizeInterruptPayloadRecord(parsed);
     const pendingGateId = extractInteractionGateId(normalizedInterrupt);
     const pendingInterrupt = parsePendingInterrupt(JSON.stringify(normalizedInterrupt));
@@ -3758,6 +3828,10 @@ async function runAgentRunWorker(
       return;
     }
     interruptPublished = true;
+    // Finish all lease-protected workspace work before the interrupt becomes
+    // visible. getRunMeta() can recover a visible interrupt by transitioning
+    // the run to awaiting_approval, which intentionally invalidates the lease.
+    await commitRunArtifacts();
     if (interruptPayload.interactionRequest) {
       const interactionChunk = {
         type: 'interaction' as const,
@@ -3813,7 +3887,9 @@ async function runAgentRunWorker(
         ? explicitGateId
         : inferredGateId;
       let interruptPayload = frontendSlidesGateId
-        ? withFrontendSlidesGateMetadata(parsed, frontendSlidesGateId)
+        ? withFrontendSlidesGateMetadata(parsed, frontendSlidesGateId, {
+            stylePreviewPaths: findGeneratedFrontendSlidesPreviewPaths(toolEvents),
+          })
         : parsed;
       eventToAppend = interruptPayload;
       const interruptDisplayPayload = extractDisplayPayload(interruptPayload);
@@ -4109,6 +4185,7 @@ async function runAgentRunWorker(
           knowledgeRefs: params.knowledgeRefs,
           traceContext,
         });
+    agentStreamEstablished = true;
     upstream = response.data;
     upstream.on('data', (chunk: Buffer) => {
       buffer += chunk.toString();
@@ -4188,7 +4265,7 @@ async function runAgentRunWorker(
       : controller.signal.aborted
         ? 'cancelled'
         : 'failed';
-    const failureMessage = streamErrorMessage || error?.message || 'Agent run failed';
+    const failureMessage = streamErrorMessage || buildAgentErrorPayload(error, params.persona);
     if (!controller.signal.aborted && !streamErrorMessage) {
       const message = buildAgentErrorPayload(error, params.persona);
       const errorPayload = JSON.stringify({ type: 'error', message });
@@ -4231,16 +4308,30 @@ export async function resumeAgentRun(
   runId: string,
   decisions: AgentDecision[],
   options?: { authToken?: string; interruptId?: string },
-): Promise<{ runId: string; status: AgentRunStatus }> {
+): Promise<{ runId: string; status: AgentRunStatus; streamAfterId?: string }> {
   const context = await loadRunContext(runId);
   if (!context) {
     throw new Error('Run context not found. Start a new run.');
   }
   const nextParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
   runContexts.set(runId, { params: nextParams });
+  const acceptedAt = new Date().toISOString();
+  const streamAfterId = await appendStreamEvent(runId, JSON.stringify({
+    type: 'interaction_response_accepted',
+    interruptId: options?.interruptId,
+    acceptedAt,
+  }));
+  await appendStreamEvent(runId, JSON.stringify({
+    type: 'progress',
+    phase: 'routing',
+    label: 'Response received',
+    detail: 'Continuing with your decision.',
+    status: 'running',
+    timestamp: acceptedAt,
+  }));
   await persistMeta(runId, {
     status: 'queued',
-    startedAt: new Date().toISOString(),
+    startedAt: acceptedAt,
     error: '',
     pendingInterrupt: '',
     runContext: serializeRunContext(nextParams),
@@ -4249,14 +4340,14 @@ export async function resumeAgentRun(
     decisions,
     interruptId: options?.interruptId,
   });
-  return { runId, status: 'queued' };
+  return { runId, status: 'queued', streamAfterId };
 }
 
 export async function resumeAgentRunWithResponse(
   runId: string,
   response: AgentInterruptResponse,
   options?: { authToken?: string; previousInterrupt?: RunPendingInterrupt },
-): Promise<{ runId: string; status: AgentRunStatus }> {
+): Promise<{ runId: string; status: AgentRunStatus; streamAfterId?: string }> {
   const context = await loadRunContext(runId);
   if (!context) {
     throw new Error('Run context not found. Start a new run.');
@@ -4283,7 +4374,7 @@ export async function resumeAgentRunWithResponse(
   const responseHash = createHash('sha256').update(serializedResponse).digest('hex');
   const acceptedAt = new Date().toISOString();
   runContexts.set(runId, { params: nextParams });
-  await appendStreamEvent(runId, JSON.stringify({
+  const streamAfterId = await appendStreamEvent(runId, JSON.stringify({
     type: 'interaction_response_accepted',
     interruptId: interruptId || undefined,
     responseHash,
@@ -4316,29 +4407,43 @@ export async function resumeAgentRunWithResponse(
     previousInterruptIsSynthetic ? undefined : { response: enrichedResponse, interruptId: interruptId || undefined },
     options?.previousInterrupt,
   );
-  return { runId, status: 'queued' };
+  return { runId, status: 'queued', streamAfterId };
 }
 
 export async function resumeAgentRunWithAction(
   runId: string,
   action: AgentInterruptActionResponse,
   options?: { authToken?: string },
-): Promise<{ runId: string; status: AgentRunStatus }> {
+): Promise<{ runId: string; status: AgentRunStatus; streamAfterId?: string }> {
   const context = await loadRunContext(runId);
   if (!context) {
     throw new Error('Run context not found. Start a new run.');
   }
   const nextParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
   runContexts.set(runId, { params: nextParams });
+  const acceptedAt = new Date().toISOString();
+  const streamAfterId = await appendStreamEvent(runId, JSON.stringify({
+    type: 'interaction_response_accepted',
+    actionId: action.action.id,
+    acceptedAt,
+  }));
+  await appendStreamEvent(runId, JSON.stringify({
+    type: 'progress',
+    phase: 'routing',
+    label: 'Response received',
+    detail: 'Continuing with your action.',
+    status: 'running',
+    timestamp: acceptedAt,
+  }));
   await persistMeta(runId, {
     status: 'queued',
-    startedAt: new Date().toISOString(),
+    startedAt: acceptedAt,
     error: '',
     pendingInterrupt: '',
     runContext: serializeRunContext(nextParams),
   });
   launchAgentRunWorker(runId, nextParams, { action });
-  return { runId, status: 'queued' };
+  return { runId, status: 'queued', streamAfterId };
 }
 
 export async function cancelAgentRun(runId: string) {
@@ -4381,6 +4486,13 @@ const reconcileActiveRunMetaFromStream = async (
   interactionGateState: InteractionGateState,
 ) => {
   if ((meta.status !== 'running' && meta.status !== 'queued') || meta.pendingInterrupt?.trim()) {
+    return;
+  }
+  // The live worker owns status transitions while it is draining the upstream
+  // stream and committing files. Stream recovery is only for orphaned runs;
+  // reconciling a live run can expose a gate and invalidate its workspace lease
+  // before its artifacts have finished committing.
+  if (runAbortControllers.has(runId)) {
     return;
   }
 

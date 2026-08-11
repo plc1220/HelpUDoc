@@ -32,6 +32,10 @@ export type AgentRunStartResponse = {
   status: AgentRunStatus;
 };
 
+export type AgentRunResumeResponse = AgentRunStartResponse & {
+  streamAfterId?: string;
+};
+
 const readErrorMessage = async (response: Response, fallback: string): Promise<string> => {
   try {
     const payload = await response.json();
@@ -147,7 +151,7 @@ export const submitRunDecision = async (
     editedAction?: { name: string; args: Record<string, unknown> };
     message?: string;
   },
-) => {
+): Promise<AgentRunResumeResponse> => {
   const response = await apiFetch(`${API_URL}/agent/runs/${runId}/decision`, {
     method: 'POST',
     headers: {
@@ -173,7 +177,7 @@ export const submitRunResponse = async (
     selectedValues?: string[];
     answersByQuestionId?: InterruptAnswersByQuestionId;
   },
-) => {
+): Promise<AgentRunResumeResponse> => {
   const response = await apiFetch(`${API_URL}/agent/runs/${runId}/respond`, {
     method: 'POST',
     headers: {
@@ -193,7 +197,7 @@ export const submitRunAction = async (
     actionId: string;
     text?: string;
   },
-) => {
+): Promise<AgentRunResumeResponse> => {
   const response = await apiFetch(`${API_URL}/agent/runs/${runId}/act`, {
     method: 'POST',
     headers: {

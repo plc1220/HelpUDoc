@@ -39,6 +39,8 @@ import {
 } from '../../utils/toolActivitySummary';
 import { buildApiUrl } from '../../services/apiClient';
 import LumoMarkdown from '../markdown/LumoMarkdown';
+import { stripDeadFrontendSlidesUiReferences } from '../../utils/chatMarkdown';
+import WorkspaceHtmlPreviewFrame from '../WorkspaceHtmlPreviewFrame';
 import {
   getAttachmentFileIcon,
   getAttachmentTypeLabel,
@@ -352,16 +354,6 @@ const buildStylePreviewChoices = (
   }
   return [];
 };
-
-const stripDeadFrontendSlidesUiReferences = (text: string): string => (
-  text
-    .replace(/\b(?:I have|I've)\s+(?:created|prepared|provided|opened|set up)\b[^.!?]*(?:Presentation Context|context)[^.!?]*\bform\b[^.!?]*[.!?]/gis, '')
-    .replace(/\bPlease\s+(?:fill out|complete|submit)\b[^.!?]*\b(?:form|questions?)\s+(?:above|below)\b[^.!?]*[.!?]/gis, '')
-    .replace(/\bPlease\s+(?:review\s+and\s+)?(?:select|choose|pick)\b[^.!?]*\b(?:interactive\s+)?(?:selector|chooser|form)\s+(?:above|below)\b[^.!?]*[.!?]/gis, '')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-);
 
 const getThinkingPlaceholder = (
   metadata?: ConversationMessageMetadata,
@@ -700,7 +692,9 @@ export default function ChatMessageBubble({
     () => summarizeToolActivity(toolEvents, formatMessageTimestamp),
     [formatMessageTimestamp, toolEvents],
   );
-  const pendingInterrupt = messageMetadata?.pendingInterrupt;
+  const pendingInterrupt = messageMetadata?.status && messageMetadata.status !== 'awaiting_approval'
+    ? undefined
+    : messageMetadata?.pendingInterrupt;
   const interactionRequest = useMemo(() => {
     if (!pendingInterrupt) return undefined;
     const displayPayload = pendingInterrupt.displayPayload || {};
@@ -798,7 +792,7 @@ export default function ChatMessageBubble({
       };
     });
   }, [isAgentMessage, message.text, workspaceId]);
-  const effectiveStatus = pendingInterrupt ? 'awaiting_approval' : messageMetadata?.status;
+  const effectiveStatus = messageMetadata?.status ?? (pendingInterrupt ? 'awaiting_approval' : undefined);
   const isLiveAgentStatus = effectiveStatus === 'running' || effectiveStatus === 'awaiting_approval';
   const shouldHideThinkingDuringToolRun = Boolean(
     isAgentMessage
@@ -840,7 +834,7 @@ export default function ChatMessageBubble({
       stylePreviewChoices.find((choice) => choice.id === activeStylePreviewId)
       || stylePreviewChoices.find((choice) => selectedChoiceIds.includes(choice.id))
       || stylePreviewChoices.find((choice) => choice.html)
-      || stylePreviewChoices.find((choice) => choice.previewUrl)
+      || stylePreviewChoices.find((choice) => choice.path)
       || stylePreviewChoices[0]
     );
   }, [activeStylePreviewId, selectedChoiceIds, stylePreviewChoices]);
@@ -888,7 +882,7 @@ export default function ChatMessageBubble({
       return (
         stylePreviewChoices.find((choice) => selectedChoiceIds.includes(choice.id))?.id
         || stylePreviewChoices.find((choice) => choice.html)?.id
-        || stylePreviewChoices.find((choice) => choice.previewUrl)?.id
+        || stylePreviewChoices.find((choice) => choice.path)?.id
         || stylePreviewChoices[0]?.id
         || null
       );
@@ -1505,25 +1499,15 @@ export default function ChatMessageBubble({
               ) : null}
             </div>
             <div className="relative aspect-[16/10] min-h-[260px] bg-slate-950 sm:min-h-[360px]">
-              {activeStylePreviewChoice.html ? (
-                <iframe
-                  key={`${activeStylePreviewChoice.id}:inline`}
+              {activeStylePreviewChoice.html || activeStylePreviewChoice.path ? (
+                <WorkspaceHtmlPreviewFrame
+                  key={`${activeStylePreviewChoice.id}:${activeStylePreviewChoice.path || 'inline'}`}
+                  workspaceId={workspaceId}
+                  path={activeStylePreviewChoice.path}
+                  html={activeStylePreviewChoice.html}
                   title={`${activeStylePreviewChoice.label} live preview`}
-                  srcDoc={activeStylePreviewChoice.html}
-                  loading="lazy"
-                  sandbox="allow-scripts"
-                  referrerPolicy="no-referrer"
                   className="h-full w-full border-0 bg-white"
-                />
-              ) : activeStylePreviewChoice.previewUrl ? (
-                <iframe
-                  key={activeStylePreviewChoice.previewUrl}
-                  title={`${activeStylePreviewChoice.label} live preview`}
-                  src={activeStylePreviewChoice.previewUrl}
-                  loading="lazy"
-                  sandbox="allow-scripts"
-                  referrerPolicy="no-referrer"
-                  className="h-full w-full border-0 bg-white"
+                  placeholderClassName="flex h-full w-full items-center justify-center bg-slate-950"
                 />
               ) : (
                 <div className="flex h-full items-center justify-center text-slate-400">
@@ -1576,23 +1560,14 @@ export default function ChatMessageBubble({
                 }`}
               >
                 <div className="relative aspect-[16/10] overflow-hidden bg-slate-950">
-                  {choice.html ? (
-                    <iframe
+                  {choice.html || choice.path ? (
+                    <WorkspaceHtmlPreviewFrame
+                      workspaceId={workspaceId}
+                      path={choice.path}
+                      html={choice.html}
                       title={`${choice.label} preview`}
-                      srcDoc={choice.html}
-                      loading="lazy"
-                      sandbox="allow-scripts"
-                      referrerPolicy="no-referrer"
                       className="pointer-events-none h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white"
-                    />
-                  ) : choice.previewUrl ? (
-                    <iframe
-                      title={`${choice.label} preview`}
-                      src={choice.previewUrl}
-                      loading="lazy"
-                      sandbox="allow-scripts"
-                      referrerPolicy="no-referrer"
-                      className="pointer-events-none h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white"
+                      placeholderClassName="flex h-full w-full items-center justify-center bg-slate-900"
                     />
                   ) : (
                     <div className="flex h-full items-center justify-center bg-slate-900 text-slate-400">
@@ -1837,16 +1812,20 @@ export default function ChatMessageBubble({
   const latestToolEvent = [...toolEvents].reverse().find(Boolean);
   const latestAgentStep = agentSteps[agentSteps.length - 1];
   const activityEventCount = agentSteps.length;
-  const activityTriggerLabel = effectiveStatus === 'awaiting_approval'
-    ? interruptKind === 'clarification'
-      ? 'Waiting for your input'
-      : 'Waiting for approval'
-    : activeProgress?.label
-      || latestProgress?.label
-      || latestAgentStep?.label
-      || (latestToolEvent ? getFriendlyToolName(latestToolEvent.name) : '')
-      || toolDigest.currentLabel
-      || 'Agent activity';
+  const activityTriggerLabel = effectiveStatus === 'failed'
+    ? 'Finished with issues'
+    : effectiveStatus === 'cancelled'
+      ? 'Run stopped'
+      : effectiveStatus === 'awaiting_approval'
+        ? interruptKind === 'clarification'
+          ? 'Waiting for your input'
+          : 'Waiting for approval'
+        : activeProgress?.label
+          || latestProgress?.label
+          || latestAgentStep?.label
+          || (latestToolEvent ? getFriendlyToolName(latestToolEvent.name) : '')
+          || toolDigest.currentLabel
+          || 'Agent activity';
   const activityDuration = latestToolEvent?.finishedAt
     ? formatElapsedTime(latestToolEvent.startedAt, now, latestToolEvent.finishedAt)
     : undefined;

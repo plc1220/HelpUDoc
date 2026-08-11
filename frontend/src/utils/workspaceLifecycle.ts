@@ -20,6 +20,11 @@ export const getWorkspaceLifecycleStatus = (
   return 'active';
 };
 
+/** An unshared Shared workspace is owner-only in the navigator, but remains reversible. */
+export const isOwnerOnlyUnsharedWorkspace = (
+  workspace: Pick<Workspace, 'visibility' | 'status'> | null | undefined,
+): boolean => workspace?.visibility === 'team' && getWorkspaceLifecycleStatus(workspace) === 'unshared';
+
 /**
  * Shared workspaces use reversible lifecycle actions. They are never hard-deleted from the UI.
  * Owners control sharing/trash; members may only leave their own membership.

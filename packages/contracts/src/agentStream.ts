@@ -150,7 +150,16 @@ const INTERNAL_STREAM_CONTENT_PATTERNS = [
 export const isInternalStreamContent = (value: string): boolean => {
   const normalized = value.trim();
   if (!normalized) return false;
-  return INTERNAL_STREAM_CONTENT_PATTERNS.some((pattern) => pattern.test(normalized));
+  if (INTERNAL_STREAM_CONTENT_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+  // read_file output uses line-number + tab records. It is tool telemetry, not
+  // assistant prose, even if an upstream adapter accidentally labels it as an
+  // unroled token/chunk.
+  const numberedToolLines = normalized
+    .split(/\r?\n/)
+    .filter((line) => /^\s*\d+\t/.test(line));
+  return numberedToolLines.length >= 3;
 };
 
 const coerceStreamContent = (value: unknown, stringifyObjects = false): string => {

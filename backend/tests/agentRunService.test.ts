@@ -23,8 +23,10 @@ import {
   validateInterrupt,
   resumeAgentRunWithResponse,
   withFrontendSlidesGateMetadata,
+  findGeneratedFrontendSlidesPreviewPaths,
   mergeAssistantTextChunk,
   reconstructAssistantTextFromStreamPayloads,
+  buildAgentErrorPayload,
 } from '../src/services/agentRunService';
 import {
   artifactPathMatchesRequirement,
@@ -146,6 +148,19 @@ test('mergeAssistantTextChunk collapses cumulative final stream snapshots', () =
   assert.equal(mergeAssistantTextChunk(partial, final), final);
   assert.equal(mergeAssistantTextChunk(final, final), final);
   assert.equal(mergeAssistantTextChunk(final, '- trailing delta'), `${final}- trailing delta`);
+});
+
+test('agent connection failures expose a useful transport error', () => {
+  const error = Object.assign(new AggregateError([
+    Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' }),
+  ], 'Error'), {
+    code: 'ECONNREFUSED',
+  });
+
+  assert.equal(
+    buildAgentErrorPayload(error, 'fast'),
+    'Unable to reach the agent service (ECONNREFUSED).',
+  );
 });
 
 test('restart recovery reconstructs assistant text from persisted stream payloads', () => {
@@ -411,21 +426,70 @@ test('buildFrontendSlidesWorkflowState derives next required gate from completed
   assert.equal(state.canComplete, false);
 });
 
-test('frontend-slides workflow contract declares required gates and final artifacts', () => {
+test('frontend-slides workflow contract requires the HTML deck and keeps PowerPoint optional', () => {
   assert.deepEqual(requiredGateIdsForSkill('frontend-slides'), [
     'presentation_context',
     'style_preview_selection',
   ]);
   const artifacts = requiredArtifactsForSkill('frontend-slides');
-  assert.equal(artifacts.length, 2);
+  assert.equal(artifacts.length, 1);
   const finalDeck = artifacts.find((artifact) => artifact.artifactId === 'final_deck');
-  const finalPptx = artifacts.find((artifact) => artifact.artifactId === 'final_pptx');
   assert.ok(finalDeck);
-  assert.ok(finalPptx);
   assert.equal(artifactPathMatchesRequirement('slides/operation-epic-fury-deck.html', finalDeck), true);
+  assert.equal(artifactPathMatchesRequirement('operation-epic-fury-evaluation.html', finalDeck), true);
+  assert.equal(artifactPathMatchesRequirement('style-a.html', finalDeck), false);
+  assert.equal(artifactPathMatchesRequirement('.frontend-slides/slide-previews/style-b.html', finalDeck), false);
   assert.equal(artifactPathMatchesRequirement('operation-epic-fury-report.md', finalDeck), false);
-  assert.equal(artifactPathMatchesRequirement('slides/operation-epic-fury-deck.pptx', finalPptx), true);
-  assert.equal(artifactPathMatchesRequirement('slides/operation-epic-fury-deck.html', finalPptx), false);
+});
+
+test('frontend-slides recovered style gate uses generated preview files wherever they were written', () => {
+  const stylePreviewPaths = findGeneratedFrontendSlidesPreviewPaths([
+    {
+      id: 'write-a',
+      name: 'write_file',
+      status: 'completed',
+      startedAt: new Date().toISOString(),
+      outputFiles: [{ path: '/style-a-preview.html' }],
+    },
+    {
+      id: 'write-bc',
+      name: 'write_file',
+      status: 'completed',
+      startedAt: new Date().toISOString(),
+      outputFiles: [
+        { path: 'drafts/style-b.html' },
+        { path: '.frontend-slides/slide-previews/style-c.html' },
+      ],
+    },
+  ]);
+  const repaired = withFrontendSlidesGateMetadata({
+    type: 'interrupt',
+    kind: 'clarification',
+    interactionRequest: {
+      contract: 'helpudoc.interaction',
+      version: '1',
+      interactionId: 'generated-style-preview-selection',
+      presentation: 'style_preview',
+      props: {
+        choices: [
+          { id: 'style-a', label: 'Cobalt Grid', value: 'style-a' },
+          { id: 'style-b', label: 'Signal', value: 'style-b' },
+          { id: 'style-c', label: 'Retro Windows', value: 'style-c' },
+        ],
+      },
+    },
+  }, 'style_preview_selection', { stylePreviewPaths });
+  const previews = ((repaired.interactionRequest as any)?.props?.previews || []) as Array<Record<string, unknown>>;
+
+  assert.deepEqual(
+    previews.map((preview) => [preview.id, preview.path]),
+    [
+      ['style-a', '/style-a-preview.html'],
+      ['style-b', 'drafts/style-b.html'],
+      ['style-c', '.frontend-slides/slide-previews/style-c.html'],
+    ],
+  );
+  assert.equal(previews.some((preview) => Boolean(preview.html)), false);
 });
 
 test('completed frontend-slides gate replays are internal no-op interrupts', () => {
@@ -901,6 +965,10 @@ test('terminalEventFromStreamPayload ignores recoverable progress tool errors', 
     status: 'failed',
     error: 'boom',
   });
+  assert.equal(
+    terminalEventFromStreamPayload({ type: 'done', status: 'interrupted' }),
+    undefined,
+  );
 });
 
 test('buildSyntheticClarificationFollowupPrompt advances deck mode to style previews', () => {
@@ -1311,6 +1379,221 @@ test('getRunMeta recovers the next declared frontend-slides gate before terminal
   }
 });
 
+test('status polling cannot expose an interrupt before workspace artifacts finish committing', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  let signalCommitStarted: (() => void) | undefined;
+  let releaseCommit: (() => void) | undefined;
+  const commitStarted = new Promise<void>((resolve) => {
+    signalCommitStarted = resolve;
+  });
+  const commitReleased = new Promise<void>((resolve) => {
+    releaseCommit = resolve;
+  });
+  const turnId = `interrupt-artifact-commit-race-${Date.now()}`;
+  const workspaceId = 'workspace-interrupt-artifact-commit-race';
+  let runId = '';
+
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      fileService: {
+        reconcileWorkspaceMirror: async () => undefined,
+        captureWorkspaceArtifactBaseline: async () => ({}),
+        commitWorkspaceArtifacts: async (_workspaceId, _userId, _sourceRunId, options) => {
+          signalCommitStarted?.();
+          await commitReleased;
+          await options?.assertLeaseOwned?.();
+          return [];
+        },
+      } as any,
+      agentStreamClient: {
+        runAgentStream: async () => makeStreamResponse([
+          { type: 'policy', skill: 'frontend-slides' },
+          presentationContextInterrupt,
+        ]),
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      userId: 'user-interrupt-artifact-commit-race',
+      persona: 'fast',
+      prompt: '/skill frontend-slides @final-research-report.md',
+      history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    await Promise.race([
+      commitStarted,
+      new Promise<never>((_, reject) => setTimeout(
+        () => reject(new Error('Timed out waiting for workspace artifact commit')),
+        2_000,
+      )),
+    ]);
+
+    const duringCommit = await getRunMeta(runId);
+    assert.equal(duringCommit?.status, 'running');
+    assert.equal(duringCommit?.pendingInterrupt, undefined);
+
+    releaseCommit?.();
+    const awaiting = await waitForRunStatus(runId, (status) => status === 'awaiting_approval');
+    assert.equal(awaiting?.status, 'awaiting_approval');
+    assert.equal(awaiting?.error || '', '');
+    assert.equal(awaiting?.pendingInterrupt?.displayPayload?.gateId, 'presentation_context');
+  } finally {
+    releaseCommit?.();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ fileService: null, agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
+test('status polling does not reconcile terminal-looking stream history while a worker is active', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  let releaseStream: (() => void) | undefined;
+  const streamReleased = new Promise<void>((resolve) => {
+    releaseStream = resolve;
+  });
+  const turnId = `active-worker-recovery-guard-${Date.now()}`;
+  const workspaceId = 'workspace-active-worker-recovery-guard';
+  let runId = '';
+
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      fileService: null,
+      agentStreamClient: {
+        runAgentStream: async () => ({
+          data: Readable.from((async function* () {
+            yield `${JSON.stringify({ type: 'policy', skill: 'frontend-slides' })}\n`;
+            await streamReleased;
+          })()) as IncomingMessage,
+        } as AxiosResponse<IncomingMessage>),
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill frontend-slides @final-research-report.md',
+      history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const running = await waitForRunStatus(runId, (status) => status === 'running');
+    assert.equal(running?.status, 'running');
+    await redisClient.xAdd(`agent:run:${runId}`, '*', {
+      data: JSON.stringify({ type: 'done', status: 'completed' }),
+    });
+
+    const polled = await getRunMeta(runId);
+    assert.equal(polled?.status, 'running');
+    assert.equal(polled?.pendingInterrupt, undefined);
+  } finally {
+    releaseStream?.();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ fileService: null, agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
+test('connection failures keep the transport cause and skip artifact commit', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  const workspaceId = 'workspace-agent-connection-failure';
+  const turnId = `agent-connection-failure-${Date.now()}`;
+  let runId = '';
+  let commitCalls = 0;
+
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      fileService: {
+        reconcileWorkspaceMirror: async () => undefined,
+        captureWorkspaceArtifactBaseline: async () => ({}),
+        commitWorkspaceArtifacts: async () => {
+          commitCalls += 1;
+          return [];
+        },
+      } as any,
+      agentStreamClient: {
+        runAgentStream: async () => {
+          throw Object.assign(new AggregateError([
+            Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' }),
+          ], 'Error'), {
+            code: 'ECONNREFUSED',
+          });
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      userId: 'user-agent-connection-failure',
+      persona: 'fast',
+      prompt: 'diagnostic prompt',
+      turnId,
+    });
+    runId = started.runId;
+
+    const failed = await waitForRunStatus(runId, (status) => status === 'failed');
+    assert.equal(failed?.status, 'failed');
+    assert.equal(failed?.error, 'Unable to reach the agent service (ECONNREFUSED).');
+    assert.equal(commitCalls, 0);
+  } finally {
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ fileService: null, agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
 test('buildSyntheticClarificationFollowupPrompt gives generic skills non-slide continuation guidance', () => {
   const prompt = buildSyntheticClarificationFollowupPrompt(
     '/skill research write a market brief',
@@ -1410,13 +1693,14 @@ test('frontend-slides Interaction presentation gate resumes through continuation
     assert.equal(awaiting?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
     assert.equal(awaiting?.pendingInterrupt?.interactionRequest?.gateId, 'presentation_context');
 
-    await resumeAgentRunWithResponse(runId, {
+    const resumeResult = await resumeAgentRunWithResponse(runId, {
       answersByQuestionId: {
         purpose: 'Pitch deck',
       },
     }, {
       previousInterrupt: awaiting?.pendingInterrupt,
     });
+    assert.match(resumeResult.streamAfterId || '', /^\d+-\d+$/);
 
     const settled = await waitForRunStatus(runId, (status, meta) => {
       if (status === 'failed') {

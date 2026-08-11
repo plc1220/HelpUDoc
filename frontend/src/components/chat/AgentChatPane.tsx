@@ -320,6 +320,7 @@ export default function AgentChatPane({
             workspace={sharedWorkspace}
             filePath={activeFilePath}
             colorMode={colorMode}
+            markdownComponents={markdownComponents}
             onOpenPrivateWorkingCopy={onOpenPrivateWorkingCopy}
           />
         ) : (

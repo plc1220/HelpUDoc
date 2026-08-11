@@ -5,6 +5,7 @@ import type { Workspace } from '@helpudoc/contracts/types';
 import {
   getSharedWorkspaceLifecycleActions,
   isLinkedDraftAutoSyncEligible,
+  isOwnerOnlyUnsharedWorkspace,
 } from '../src/utils/workspaceLifecycle.ts';
 
 const shared = (overrides: Partial<Workspace> = {}): Workspace => ({
@@ -60,6 +61,12 @@ test('Shared members may leave but cannot control sharing or trash', () => {
 
 test('private workspaces never receive Shared lifecycle actions', () => {
   assert.deepEqual(getSharedWorkspaceLifecycleActions(draft()), []);
+});
+
+test('unshared Shared workspaces are owner-only items in the Private section', () => {
+  assert.equal(isOwnerOnlyUnsharedWorkspace(shared({ status: 'unshared' })), true);
+  assert.equal(isOwnerOnlyUnsharedWorkspace(shared()), false);
+  assert.equal(isOwnerOnlyUnsharedWorkspace(draft()), false);
 });
 
 test('explicit-open autosync requires an active draft and active linked Shared workspace', () => {

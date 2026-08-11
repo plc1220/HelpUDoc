@@ -50,6 +50,7 @@ import {
 import {
   getSharedWorkspaceLifecycleActions,
   getWorkspaceLifecycleStatus,
+  isOwnerOnlyUnsharedWorkspace,
   WORKSPACE_LIFECYCLE_ACTION_LABELS,
   type WorkspaceLifecycleAction,
 } from '../utils/workspaceLifecycle';
@@ -88,12 +89,20 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   lifecycleBusyWorkspaceId = null,
 }) => {
   const privateWorkspaces = workspaces.filter((workspace) => (
-    workspace.visibility !== 'team' && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+    (workspace.visibility !== 'team' || isOwnerOnlyUnsharedWorkspace(workspace))
+      && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
   ));
   const sharedWorkspaces = workspaces.filter((workspace) => (
-    workspace.visibility === 'team' && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
+    workspace.visibility === 'team'
+      && !isOwnerOnlyUnsharedWorkspace(workspace)
+      && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
   ));
-  const trashedWorkspaces = workspaces.filter((workspace) => getWorkspaceLifecycleStatus(workspace) === 'trashed');
+  const restorableWorkspaces = onLifecycleWorkspace
+    ? workspaces.filter((workspace) => (
+      getWorkspaceLifecycleStatus(workspace) === 'trashed'
+        && getSharedWorkspaceLifecycleActions(workspace).includes('restore')
+    ))
+    : [];
   const [expanded, setExpanded] = useState({ private: true, shared: true, trash: false });
   const [actionAnchorEl, setActionAnchorEl] = useState<null | HTMLElement>(null);
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
@@ -121,6 +130,9 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
 
   const renderWorkspace = (workspace: Workspace) => {
     const isPrivate = workspace.visibility !== 'team';
+    const isSharedWorkspace = workspace.visibility === 'team';
+    const isOwnerOnlyUnshared = isOwnerOnlyUnsharedWorkspace(workspace);
+    const isPrivateSectionItem = isPrivate || isOwnerOnlyUnshared;
     const isOwner = workspace.role === 'owner';
     const lifecycleStatus = getWorkspaceLifecycleStatus(workspace);
     const isLifecycleBusy = lifecycleBusyWorkspaceId === workspace.id;
@@ -141,8 +153,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       leave: <ExitToApp fontSize="small" />,
       reconnect: <Link fontSize="small" />,
     };
+    const availableLifecycleActions = onLifecycleWorkspace
+      ? getSharedWorkspaceLifecycleActions(workspace)
+      : [];
+    const canRestore = availableLifecycleActions.includes('restore');
     const lifecycleActions = onLifecycleWorkspace
-      ? getSharedWorkspaceLifecycleActions(workspace).map((action) => ({
+      ? availableLifecycleActions.map((action) => ({
         label: WORKSPACE_LIFECYCLE_ACTION_LABELS[action],
         icon: lifecycleIcons[action],
         disabled: isLifecycleBusy,
@@ -151,6 +167,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       : [];
     const actions = [
       isPrivate
+        && !isOwnerOnlyUnshared
         && lifecycleStatus === 'active'
         && workspace.publicationStatus === 'detached'
         && onLifecycleWorkspace ? {
@@ -185,27 +202,27 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
           if (linked) onSelectWorkspace(linked);
         },
       } : null,
-      !isPrivate && lifecycleStatus === 'active' && workspace.canPublish && (hasChangesToPublish || isWithdrawn) && onPublishWorkspace ? {
+      isSharedWorkspace && lifecycleStatus === 'active' && workspace.canPublish && (hasChangesToPublish || isWithdrawn) && onPublishWorkspace ? {
         label: 'Lock current changes',
         icon: <Publish fontSize="small" />,
         onClick: () => onPublishWorkspace(workspace),
       } : null,
-      !isPrivate && lifecycleStatus !== 'trashed' && hasPublishedVersions && onHistoryWorkspace ? {
+      isSharedWorkspace && lifecycleStatus !== 'trashed' && hasPublishedVersions && onHistoryWorkspace ? {
         label: `View locked versions`,
         icon: <History fontSize="small" />,
         onClick: () => onHistoryWorkspace(workspace),
       } : null,
-      !isPrivate && lifecycleStatus === 'active' && workspace.canPublish && workspace.currentPublishedVersionNumber != null && onWithdrawWorkspace ? {
+      isSharedWorkspace && lifecycleStatus === 'active' && workspace.canPublish && workspace.currentPublishedVersionNumber != null && onWithdrawWorkspace ? {
         label: `Withdraw current lock`,
         icon: <Unpublished fontSize="small" />,
         onClick: () => onWithdrawWorkspace(workspace),
       } : null,
-      !isPrivate && lifecycleStatus === 'active' && isOwner && onManageTeamAccess ? {
+      isSharedWorkspace && lifecycleStatus === 'active' && isOwner && onManageTeamAccess ? {
         label: `Manage access`,
         icon: <ManageAccounts fontSize="small" />,
         onClick: () => onManageTeamAccess(workspace),
       } : null,
-      isPrivate ? {
+      !isSharedWorkspace ? {
         label: `Delete workspace`,
         icon: <Delete fontSize="small" />,
         onClick: () => onDeleteWorkspace(workspace.id),
@@ -217,10 +234,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       onClick: () => void;
       disabled?: boolean;
     }>;
+    const menuActions = lifecycleStatus === 'trashed' ? [] : actions;
 
     const publicationLabel = getSharedWorkspacePublicationLabel(workspace);
     const sharedDetails = getSharedWorkspaceStatusDetails(workspace);
     const draftStatusLabel = getPrivateWorkspaceStatusLabel(workspace);
+    const ownerOnlyStatusLabel = 'Unshared · Only you can access it';
     const draftStatusColor = canSyncDraft
       ? 'warning.main'
       : canReviewDraftChanges ? 'info.main' : 'text.secondary';
@@ -271,11 +290,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
             minWidth: 0,
             minHeight: 68,
             py: 1,
-            pl: isPrivate ? 1.5 : 0.5,
-            pr: actions.length ? 6 : 1.5,
+            pl: isPrivateSectionItem ? 1.5 : 0.5,
+            pr: canRestore ? 11 : menuActions.length ? 6 : 1.5,
             borderRadius: 2,
             backgroundColor: 'transparent',
             '&.Mui-selected, &.Mui-selected:hover, &:hover': { backgroundColor: 'transparent' },
+            '&.Mui-disabled': { opacity: 1 },
           }}
         >
           <ListItemText
@@ -295,7 +315,11 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
               },
             }}
             secondaryTypographyProps={{ component: 'span' }}
-            secondary={isPrivate ? (
+            secondary={isOwnerOnlyUnshared ? (
+              <Typography component="span" sx={{ fontSize: '0.76rem', lineHeight: 1.25, color: 'warning.main' }}>
+                {ownerOnlyStatusLabel}
+              </Typography>
+            ) : isPrivate ? (
               workspace.linkedTeamWorkspaceId ? (
                 <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flexWrap: 'wrap' }}>
                   <Typography
@@ -386,7 +410,37 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
             )}
           />
         </ListItemButton>
-        {actions.length ? (
+        {canRestore && onLifecycleWorkspace ? (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<RestoreFromTrash sx={{ fontSize: 14 }} />}
+            disabled={isLifecycleBusy}
+            aria-label={`Restore ${workspace.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onLifecycleWorkspace(workspace, 'restore');
+            }}
+            sx={{
+              position: 'absolute',
+              top: '50%',
+              right: 6,
+              transform: 'translateY(-50%)',
+              minWidth: 0,
+              px: 0.9,
+              py: 0.25,
+              fontSize: '0.7rem',
+              lineHeight: 1.5,
+              textTransform: 'none',
+              transition: 'transform 140ms cubic-bezier(0.23, 1, 0.32, 1)',
+              '&:active': { transform: 'translateY(-50%) scale(0.97)' },
+              '& .MuiButton-startIcon': { mr: 0.4 },
+            }}
+          >
+            {isLifecycleBusy ? 'Restoring…' : 'Restore'}
+          </Button>
+        ) : null}
+        {menuActions.length ? (
           <Box
             className="workspace-list-more"
             sx={{
@@ -439,7 +493,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
           transformOrigin={{ vertical: 'top', horizontal: 'right' }}
           slotProps={{ paper: { sx: { minWidth: 220 } } }}
         >
-          {actions.map((action) => (
+          {menuActions.map((action) => (
             <MenuItem
               key={action.label}
               disabled={action.disabled}
@@ -504,8 +558,8 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     <List disablePadding>
       {renderSection('private', 'Private workspaces', <Lock sx={{ fontSize: 16 }} />, privateWorkspaces, 'No private workspaces')}
       {renderSection('shared', 'Shared workspaces', <Groups sx={{ fontSize: 16 }} />, sharedWorkspaces, 'No shared workspaces')}
-      {trashedWorkspaces.length
-        ? renderSection('trash', 'Trash', <DeleteOutline sx={{ fontSize: 16 }} />, trashedWorkspaces, 'Trash is empty')
+      {restorableWorkspaces.length
+        ? renderSection('trash', 'Trash', <DeleteOutline sx={{ fontSize: 16 }} />, restorableWorkspaces, 'Trash is empty')
         : null}
     </List>
   );

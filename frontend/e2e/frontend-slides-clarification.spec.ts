@@ -256,6 +256,9 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
       .getByRole("button", { name: /Continue|Start Designing/i })
       .click();
 
+    await expect(page.getByText("Waiting for your input", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Response received", { exact: true })).toBeVisible();
+
     const respondRequest = await respondRequestPromise;
     const respondPayload = respondRequest.postDataJSON() as {
       message?: string;
@@ -310,6 +313,11 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
     await expect(
       page.getByText(/Choose Your Presentation Style|Choose Presentation Style/i),
     ).toBeVisible();
+    const livePreview = page.locator('iframe[title$="live preview"]').first();
+    await expect(livePreview).toBeVisible({ timeout: 30_000 });
+    await expect(livePreview).not.toHaveAttribute('src', /\/files\/preview\/raw/);
+    await expect(livePreview).toHaveAttribute('srcdoc', /<!doctype html|<html/i);
+    await expect(page.getByText(/File not found|Missing user context/i)).toHaveCount(0);
     await expect(page.getByText(/Does this slide outline/i)).toHaveCount(0);
     await expect(
       page.getByText(/The run failed before it could finish/i),

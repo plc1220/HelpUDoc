@@ -264,6 +264,7 @@ services:
       agent:
         condition: service_started
     environment:
+      REDIS_URL: redis://redis:6379
       NODE_ENV: production
       AGENT_URL: http://agent:8001
       AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}

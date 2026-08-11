@@ -14,6 +14,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Components } from 'react-markdown';
 
 import type { Workspace } from '../../types';
 import {
@@ -29,6 +30,7 @@ import {
   listWorkspaceCollaborators,
   type WorkspaceCollaborator,
 } from '../../services/workspaceApi';
+import LumoMarkdown from '../markdown/LumoMarkdown';
 
 type CollaborationConversion = {
   label: string;
@@ -93,22 +95,17 @@ const mergeMessages = (
     new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 };
 
-const renderMessageBody = (body: string) => body.split(/(@lumo\b)/ig).map((part, index) =>
-  /^@lumo$/i.test(part) ? (
-    <span key={`${part}-${index}`} className="font-semibold text-violet-600 dark:text-violet-300">
-      {part}
-    </span>
-  ) : part);
-
 export default function WorkspaceTeamChatPanel({
   workspace,
   filePath,
   colorMode,
+  markdownComponents,
   onOpenPrivateWorkingCopy,
 }: {
   workspace: Workspace;
   filePath?: string;
   colorMode: 'light' | 'dark';
+  markdownComponents: Components;
   onOpenPrivateWorkingCopy?: () => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
@@ -328,11 +325,11 @@ export default function WorkspaceTeamChatPanel({
                 {formatTimestamp(message.createdAt)}
               </span>
             </div>
-            <p className={`mt-1 whitespace-pre-wrap text-sm leading-6 ${
+            <LumoMarkdown components={markdownComponents} className={`mt-1 text-sm leading-6 ${
               isDarkMode ? 'text-slate-200' : 'text-slate-700'
             }`}>
-              {renderMessageBody(message.body)}
-            </p>
+              {message.body}
+            </LumoMarkdown>
             {isLumo ? (
               <div className="mt-2">
                 <ChatToolCalls
