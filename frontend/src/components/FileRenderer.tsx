@@ -254,10 +254,15 @@ const decodeBase64ToArrayBuffer = (value: string) => {
   return bytes.buffer;
 };
 
-GlobalWorkerOptions.workerSrc = new URL(
+const pdfWorkerUrl = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
-).toString();
+);
+// The worker asset is immutable and its content hash does not change when the
+// serving headers change. Version the URL so browsers do not reuse a cached
+// response with the old, incorrect MIME type.
+pdfWorkerUrl.searchParams.set('v', '2');
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl.toString();
 
 type PdfPreviewProps = {
   file: File;
