@@ -81,9 +81,18 @@ class GeminiClientManager:
         if self._web_tool_chat_model is None:
             from ...gemini_chat import create_chat_google_generative_ai
 
+            # Web tools only need to formulate grounded searches and return a
+            # compact evidence summary. Keep the main agent on its configured
+            # model, but use the lower-latency Lite variant for this dedicated
+            # client. Cap output because source metadata, not verbosity, is the
+            # useful payload for downstream orchestration.
+            web_model_name = self._model_cfg.resolve_chat_model_name("lite")
+            configured_output_tokens = self._model_cfg.resolve_max_output_tokens("lite") or 1024
             self._web_tool_chat_model = create_chat_google_generative_ai(
                 self._model_cfg,
-                self.model_name,
+                web_model_name,
+                thinking_level=self._model_cfg.resolve_thinking_level("lite"),
+                max_output_tokens=min(configured_output_tokens, 1024),
                 timeout=float(DEFAULT_SEARCH_HTTP_TIMEOUT),
             )
         return self._web_tool_chat_model

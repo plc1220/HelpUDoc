@@ -8,9 +8,17 @@ description: >
   synthesis before final writing.
 tools:
   - google_search
+  - run_skill_python_script
   - request_plan_approval
   - request_clarification
   - request_human_action
+sandbox_scripts:
+  - name: count_words
+    path: scripts/count_words.py
+    sha256: "d27f2ad503e0507fa1f96cc18f70ba37b9dd39adb53ccf04799e40ea149c08f5"
+    timeout_seconds: 30
+    outputs:
+      - outputs/word_count.json
 requires_hitl_plan: true
 requires_workspace_artifacts: true
 required_artifacts_mode: full_pack
@@ -139,7 +147,7 @@ If the user does not specify a depth, choose the appropriate mode automatically 
   - Inline numeric citations
   - A Sources section
   - A Limits of Evidence section when evidence is incomplete
-  - A computed word count at the bottom, not shown in chat
+  - A computed word count at the bottom, obtained from the declared `count_words` sandbox script and not shown in chat
 
 ## Word Count Definition
 
@@ -159,7 +167,7 @@ Do not count:
 
 Supporting artifacts may be longer than the final report, but they do not count toward the final report word-count requirement.
 
-Never report an estimated final report word count. Always compute the count from the actual final report file.
+Never report an estimated or manually counted final report word count. Always run the declared `count_words` sandbox script against the actual final report file and use its returned integer.
 
 The final report's Word Count section must use this exact form:
 
@@ -724,7 +732,7 @@ The final consolidation must:
 - Include practical recommendations where appropriate
 - Avoid unsupported superlatives
 - Use simple, professional language
-- Compute the actual word count from `/final-research-report.md` after writing; do not estimate it
+- After writing `/final-research-report.md`, run the declared `count_words` script through `run_skill_python_script` with `/final-research-report.md` as `input_paths` and `final-research-report.md` as its filename argument. Use the script's JSON/stdout `word_count` as the only authoritative count; do not estimate, manually count, or infer it from prose.
 
 ### 19. Final Report Required Structure
 
@@ -905,7 +913,7 @@ If `/final-research-report.md` is below the selected mode minimum:
 2. Do not report an estimated word count.
 3. Expand the final report section by section using only existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix.
 4. Preserve citations and evidence confidence.
-5. Recompute the word count after expansion.
+5. Re-run the declared `count_words` script after expansion.
 6. Repeat until the computed word count is within the selected mode range, or explicitly downgrade the mode through plan approval before finalizing.
 
 For Deep Research mode, if `/final-research-report.md` is below 6,000 words, it fails the quality gate even if all supporting artifacts combined exceed 6,000 words.
@@ -914,7 +922,17 @@ For Exhaustive Research mode, if `/final-research-report.md` is below 10,000 wor
 
 ### 24. Mandatory Computed Word Count
 
-Before finalizing, compute the actual word count of `/final-research-report.md` programmatically. Prefer a deterministic file-based count such as `wc -w final-research-report.md` from the workspace root.
+Before finalizing, call the declared `count_words` sandbox script exactly as follows:
+
+```text
+run_skill_python_script(
+  script_name="count_words",
+  input_paths=["/final-research-report.md"],
+  args=["final-research-report.md"]
+)
+```
+
+The script reads the staged report file and returns JSON containing the computed `word_count`. Treat that returned integer as authoritative. Do not use a model-authored count, manual inspection, an estimate, or a count copied from an earlier draft.
 
 Write this to `/final_quality_check.md`:
 
@@ -927,7 +945,7 @@ Write this to `/final_quality_check.md`:
 - Pass / fail:
 ```
 
-The computed word count must be derived from the final report file only. Do not estimate it. Do not use manual estimates. Do not count workspace artifacts, notes, dossiers, matrices, source registers, quality checks, or chat messages.
+The computed word count must be derived from the final report file only. Do not estimate it. Do not use manual counts. Do not count workspace artifacts, notes, dossiers, matrices, source registers, quality checks, or chat messages.
 
 If the computed word count is below the selected mode minimum, do not finalize. Expand the final report using the existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix, then recompute the word count.
 
@@ -945,7 +963,7 @@ Include:
 Final report path:
 Computed final report word count:
 Required range:
-Word count command or method:
+Word count command or method: `run_skill_python_script(script_name="count_words", input_paths=["/final-research-report.md"], args=["final-research-report.md"])`
 Word Count section exact text:
 Forbidden word-count phrase present: yes / no
 Sources listed in final report:
@@ -991,6 +1009,7 @@ Before declaring completion, produce `/final_quality_check.md` with:
 Completion is forbidden if:
 
 - Computed word count is below the selected mode minimum.
+- The `count_words` sandbox script was not run after the final report was written.
 - Any source URL in the final Sources section is unreachable and not clearly marked unavailable.
 - Any factual claim with numbers, CVEs, benchmarks, architecture, pricing, legal status, security impact, funding, or adoption lacks citation.
 - Final report cites sources not present in `/source_register.md`.
@@ -1019,7 +1038,8 @@ Check:
 - [ ] Unreachable URLs are removed or clearly marked unavailable
 - [ ] Knowledge graph completed
 - [ ] Synthesis completed
-- [ ] Mandatory computed word count completed from `/final-research-report.md` only
+- [ ] `count_words` sandbox script executed after the final report was written
+- [ ] Mandatory computed word count came from the script result for `/final-research-report.md` only
 - [ ] Computed final report word count is within the selected mode range
 - [ ] Final report Word Count section does not use approximate/manual/estimated wording
 - [ ] Final report Word Count section is exactly an integer followed by `words`
@@ -1033,7 +1053,7 @@ Check:
 - [ ] No fake citations
 - [ ] No unsupported numbers
 - [ ] No unsupported superlatives
-- [ ] Report length claim, if any, matches the computed word count
+- [ ] Report length claim, if any, matches the script-computed word count
 ```
 
 Do not finalize the report until this check is complete.

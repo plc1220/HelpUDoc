@@ -94,3 +94,26 @@ def test_provisioned_api_key_takes_precedence_over_vertex_config() -> None:
     assert "project" not in chat_kwargs
     assert "location" not in chat_kwargs
     chat_vertex_init.assert_not_called()
+
+
+def test_web_tool_chat_model_uses_lite_model_and_bounded_output() -> None:
+    config = ModelConfig(
+        name="gemini-main",
+        lite_name="gemini-web-lite",
+        lite_thinking_level="low",
+        lite_max_output_tokens=4096,
+        api_key="configured-api-key",
+        use_vertex_ai=False,
+    )
+
+    with (
+        patch("helpudoc_agent.tools.workspace.gemini_client.genai.Client"),
+        patch("helpudoc_agent.gemini_chat.create_chat_google_generative_ai") as create_chat,
+    ):
+        manager = GeminiClientManager(SimpleNamespace(model=config))
+        manager.get_web_tool_chat_model()
+
+    args, kwargs = create_chat.call_args
+    assert args[1] == "gemini-web-lite"
+    assert kwargs["thinking_level"] == "low"
+    assert kwargs["max_output_tokens"] == 1024

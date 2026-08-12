@@ -38,6 +38,10 @@ def test_research_skill_declares_its_own_artifact_contract() -> None:
     assert research.policy.requires_workspace_artifacts is True
     assert research.policy.required_artifacts_mode == "full_pack"
     assert research.policy.pre_plan_search_limit == 3
+    assert "run_skill_python_script" in research.tools
+    assert [script.name for script in research.sandbox_scripts] == ["count_words"]
+    assert research.sandbox_scripts[0].path == "scripts/count_words.py"
+    assert research.sandbox_scripts[0].outputs == ["outputs/word_count.json"]
     assert research.policy.required_artifacts == [
         "/question.txt",
         "/research_mode.md",
