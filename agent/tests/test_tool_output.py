@@ -1,4 +1,30 @@
-from helpudoc_agent.api.tool_output import _extract_output_files_from_tool_result
+from helpudoc_agent.api.tool_output import (
+    _extract_output_files_from_tool_result,
+    _workspace_files_changed_event,
+)
+
+
+def test_workspace_file_change_event_normalizes_and_deduplicates_committed_paths():
+    event = _workspace_files_changed_event(
+        "workspace-123",
+        [
+            {"path": "/slides/final.pptx"},
+            {"path": "slides\\final.pptx"},
+            {"path": "previews/final.png"},
+            {"path": "  "},
+        ],
+    )
+
+    assert event == {
+        "type": "workspace_files_changed",
+        "workspaceId": "workspace-123",
+        "paths": ["slides/final.pptx", "previews/final.png"],
+    }
+
+
+def test_workspace_file_change_event_requires_a_workspace_and_committed_path():
+    assert _workspace_files_changed_event("", [{"path": "report.docx"}]) is None
+    assert _workspace_files_changed_event("workspace-123", []) is None
 
 
 def test_skill_sandbox_workspace_outputs_are_exposed_to_stream_contracts():

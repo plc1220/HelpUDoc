@@ -14,6 +14,29 @@ def _infer_mime_type(file_path: str) -> str:
     return guessed or "application/octet-stream"
 
 
+def _workspace_files_changed_event(
+    workspace_id: str,
+    files: List[Dict[str, Any]],
+) -> Dict[str, Any] | None:
+    """Build the semantic stream event emitted after committed workspace writes."""
+    paths: List[str] = []
+    seen = set()
+    for item in files:
+        path = str(item.get("path") or "").strip().replace("\\", "/").lstrip("/")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    normalized_workspace_id = str(workspace_id or "").strip()
+    if not normalized_workspace_id or not paths:
+        return None
+    return {
+        "type": "workspace_files_changed",
+        "workspaceId": normalized_workspace_id,
+        "paths": paths,
+    }
+
+
 def _extract_output_files_from_tool_result(name: str, text: str) -> List[Dict[str, Any]]:
     if not text:
         return []

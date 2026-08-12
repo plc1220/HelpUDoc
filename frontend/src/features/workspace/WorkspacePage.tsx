@@ -138,7 +138,6 @@ import { resolveWorkspaceCanvasTitle } from '../../utils/workspaceCanvas';
 import {
   markInteractionResponseReceived,
   shouldRefreshWorkspaceFilesForRunStatus,
-  shouldRefreshWorkspaceFilesForToolCompletion,
 } from '../../utils/agentProgress';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
@@ -2310,16 +2309,6 @@ export default function WorkspacePage() {
       setIsHistoryOpen(false);
     }
   }, [isAgentPaneVisible]);
-
-  useEffect(() => {
-    if (!selectedWorkspace || !isStreaming) {
-      return;
-    }
-    const interval = setInterval(() => {
-      loadFilesForWorkspace(selectedWorkspace.id);
-    }, 12000);
-    return () => clearInterval(interval);
-  }, [isStreaming, selectedWorkspace, loadFilesForWorkspace]);
 
   useEffect(() => {
     if (!mentionSuggestions.length) {
@@ -4728,7 +4717,6 @@ export default function WorkspacePage() {
     agentMessageIndex: number,
     chunk: AgentStreamChunk,
     runId?: string,
-    workspaceId?: string,
   ) => {
     const rawChunkType = (chunk as { type?: string }).type;
     if (rawChunkType === 'interaction_gate_skipped') {
@@ -4844,13 +4832,15 @@ export default function WorkspacePage() {
       return;
     }
 
+    if (chunk.type === 'workspace_files_changed') {
+      scheduleWorkspaceFilesRefresh(chunk.workspaceId);
+      return;
+    }
+
     if (chunk.type === 'tool_end') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       if (chunk.dashboardArtifact) {
         mergeDashboardArtifact(chunk.dashboardArtifact);
-      }
-      if (workspaceId && shouldRefreshWorkspaceFilesForToolCompletion(chunk)) {
-        scheduleWorkspaceFilesRefresh(workspaceId);
       }
       appendToolEnd(conversationId, agentMessageIndex, chunk);
       const streamLabel = chunk.name || 'tool';
@@ -5077,7 +5067,7 @@ export default function WorkspacePage() {
                 interactionRequest: chunk.interactionRequest,
               };
             }
-            handleStreamChunk(conversationId, agentMessageIndex, chunk, runId, runInfo.workspaceId);
+            handleStreamChunk(conversationId, agentMessageIndex, chunk, runId);
           },
           controller.signal,
           replayFromStart ? undefined : (resumeAfterId || runInfo.lastStreamId)

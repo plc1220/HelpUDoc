@@ -105,8 +105,12 @@ from ..text_utils import (
     _skill_id_from_loaded_skill_output,
     _clean_langfuse_value,
 )
-from ..tool_output import _extract_output_files_from_tool_result
- 
+from ..tool_output import (
+    _extract_output_files_from_tool_result,
+    _workspace_files_changed_event,
+)
+
+
 def _friendly_tool_label(name: str) -> str:
     mapping = {
         "list_skills": "Checking available skills",
@@ -790,6 +794,7 @@ def register_chat_routes(
             self,
             text_fn,
             *,
+            workspace_id: str,
             suppress_interrupt_tool_start: bool = False,
             should_suppress_assistant_text: Callable[[], bool] | None = None,
         ):
@@ -800,6 +805,7 @@ def register_chat_routes(
             self._active_llm_runs: Set[str] = set()
             self._reported_llm_runs: Set[str] = set()
             self._to_text = text_fn
+            self._workspace_id = workspace_id
             self._has_events = False
             self._has_assistant_text = False
             self._interrupt_emitted = False
@@ -1035,6 +1041,9 @@ def register_chat_routes(
             if meta and meta.get("dashboardArtifact"):
                 payload["dashboardArtifact"] = meta["dashboardArtifact"]
             await self._emit(payload)
+            files_changed = _workspace_files_changed_event(self._workspace_id, output_files)
+            if not tool_failed and files_changed:
+                await self._emit(files_changed)
 
         async def on_tool_error(self, error, *, run_id, **_: Any) -> None:
             run_key = str(run_id)
@@ -1598,6 +1607,9 @@ def register_chat_routes(
             if meta and meta.get("dashboardArtifact"):
                 payload["dashboardArtifact"] = meta["dashboardArtifact"]
             await handler._emit(payload)
+            files_changed = _workspace_files_changed_event(handler._workspace_id, output_files)
+            if not tool_failed and files_changed:
+                await handler._emit(files_changed)
             return False
 
         if method in {"on_tool_error", "tools/error", "tool_error", "tool-error"}:
@@ -2014,6 +2026,7 @@ def register_chat_routes(
 
         handler = _CallbackStreamingHandler(
             _message_to_text,
+            workspace_id=runtime.workspace_state.workspace_id,
             suppress_interrupt_tool_start=resume_decisions is not None or resume_value is not None,
             should_suppress_assistant_text=_should_suppress_assistant_text_for_interaction_gate,
         )

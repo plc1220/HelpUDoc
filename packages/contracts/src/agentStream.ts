@@ -52,6 +52,7 @@ export type AgentStreamChunk =
       dashboardArtifact?: DashboardArtifactInfo;
     }
   | { type: 'tool_error'; content?: string; name?: string }
+  | { type: 'workspace_files_changed'; workspaceId: string; paths: string[] }
   | { type: 'dashboard_artifact'; dashboardArtifact: DashboardArtifactInfo }
   | {
       type: 'interrupt';
@@ -269,7 +270,13 @@ export const toLangChainStreamProjection = (
     };
   }
 
-  if (chunk.type === 'progress' || chunk.type === 'policy' || chunk.type === 'dashboard_artifact' || chunk.type === 'interaction') {
+  if (
+    chunk.type === 'progress'
+    || chunk.type === 'policy'
+    || chunk.type === 'workspace_files_changed'
+    || chunk.type === 'dashboard_artifact'
+    || chunk.type === 'interaction'
+  ) {
     return { custom: [{ name: chunk.type, data: chunk }] };
   }
 
