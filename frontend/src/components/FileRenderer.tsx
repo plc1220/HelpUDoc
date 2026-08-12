@@ -31,7 +31,10 @@ import yaml from 'react-syntax-highlighter/dist/esm/languages/hljs/yaml';
 import atomOneDark from 'react-syntax-highlighter/dist/esm/styles/hljs/atom-one-dark';
 import github from 'react-syntax-highlighter/dist/esm/styles/hljs/github';
 import type JSZipType from 'jszip';
+import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from 'pdfjs-dist';
 import type { File } from '../types';
+import { apiFetch } from '../services/apiClient';
+import { getFilePreviewUrl } from '../services/fileApi';
 import { parsePlotlySpec } from '../utils/plotlySpec';
 import {
   configureMermaid,
@@ -249,6 +252,167 @@ const decodeBase64ToArrayBuffer = (value: string) => {
   }
 
   return bytes.buffer;
+};
+
+GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
+
+type PdfPreviewProps = {
+  file: File;
+  fileContent: string;
+  workspaceId?: string;
+};
+
+const PdfPreview: React.FC<PdfPreviewProps> = ({ file, fileContent, workspaceId }) => {
+  const pagesRef = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [error, setError] = useState<string | null>(null);
+  const [openUrl, setOpenUrl] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTask: ReturnType<typeof getDocument> | null = null;
+    let pdfDocument: PDFDocumentProxy | null = null;
+    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
+    let objectUrl: string | null = null;
+
+    const clearPages = () => {
+      if (pagesRef.current) {
+        pagesRef.current.replaceChildren();
+      }
+    };
+
+    const loadAndRender = async () => {
+      setStatus('loading');
+      setError(null);
+      setOpenUrl(null);
+      clearPages();
+
+      try {
+        let bytes: ArrayBuffer;
+        if (workspaceId) {
+          const response = await apiFetch(getFilePreviewUrl(workspaceId, file.id));
+          if (!response.ok) {
+            throw new Error(`Preview request failed (${response.status})`);
+          }
+          bytes = await response.arrayBuffer();
+        } else if (file.publicUrl) {
+          const response = await apiFetch(file.publicUrl);
+          if (!response.ok) {
+            throw new Error(`Preview request failed (${response.status})`);
+          }
+          bytes = await response.arrayBuffer();
+        } else if (fileContent.trim()) {
+          bytes = decodeBase64ToArrayBuffer(fileContent);
+        } else {
+          throw new Error('No PDF data is available for preview.');
+        }
+
+        if (cancelled) return;
+
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+        setOpenUrl(objectUrl);
+        loadingTask = getDocument({ data: new Uint8Array(bytes) });
+        pdfDocument = await loadingTask.promise;
+        if (cancelled || !pagesRef.current) return;
+
+        const availableWidth = Math.max(pagesRef.current.clientWidth - 32, 320);
+        for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+          if (cancelled || !pagesRef.current) return;
+
+          const page = await pdfDocument.getPage(pageNumber);
+          const baseViewport = page.getViewport({ scale: 1 });
+          const scale = Math.min(1.5, availableWidth / baseViewport.width);
+          const viewport = page.getViewport({ scale });
+          const pageContainer = document.createElement('div');
+          pageContainer.className = 'flex justify-center px-4 pb-4 first:pt-4';
+          const canvas = document.createElement('canvas');
+          canvas.className = 'block h-auto max-w-full bg-white shadow-md';
+          const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+          canvas.width = Math.floor(viewport.width * pixelRatio);
+          canvas.height = Math.floor(viewport.height * pixelRatio);
+          canvas.style.width = `${viewport.width}px`;
+          canvas.style.height = `${viewport.height}px`;
+          pageContainer.appendChild(canvas);
+          pagesRef.current.appendChild(pageContainer);
+
+          const context = canvas.getContext('2d');
+          if (!context) {
+            throw new Error(`Unable to create a canvas for page ${pageNumber}.`);
+          }
+          renderTask = page.render({
+            canvasContext: context,
+            viewport,
+            transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+          });
+          await renderTask.promise;
+          renderTask = null;
+        }
+
+        if (!cancelled) setStatus('ready');
+      } catch (cause) {
+        if (cancelled) return;
+        console.error('PDF preview error', cause);
+        setStatus('error');
+        setError(cause instanceof Error ? cause.message : 'Unable to render this PDF.');
+      }
+    };
+
+    void loadAndRender();
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+      void loadingTask?.destroy();
+      void pdfDocument?.destroy();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      clearPages();
+    };
+  }, [file.id, file.publicUrl, fileContent, retryCount, workspaceId]);
+
+  const handleOpenNewTab = () => {
+    if (openUrl) window.open(openUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  return (
+    <div className="relative h-full w-full overflow-hidden bg-slate-100">
+      <div
+        ref={pagesRef}
+        className="h-full w-full overflow-auto"
+        aria-label={`${file.name} PDF preview`}
+      />
+      {status === 'loading' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-100/95 text-sm text-slate-500" role="status">
+          Loading PDF preview…
+        </div>
+      )}
+      {status === 'error' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-100 px-6 text-center" role="alert">
+          <p className="text-sm text-red-600">Unable to render this PDF.</p>
+          <p className="max-w-md text-xs text-slate-500">{error}</p>
+          <button
+            type="button"
+            onClick={() => setRetryCount((count) => count + 1)}
+            className="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+          >
+            Retry preview
+          </button>
+        </div>
+      )}
+      {status === 'ready' && openUrl && (
+        <button
+          type="button"
+          onClick={handleOpenNewTab}
+          className="absolute right-3 top-3 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white shadow-md transition hover:bg-black/75"
+        >
+          Open in new tab
+        </button>
+      )}
+    </div>
+  );
 };
 
 /** Mammoth may emit empty or whitespace-only markup for minimal docs. */
@@ -1040,36 +1204,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       );
     }
     if (isPdfFile) {
-      const pdfSrc = file.publicUrl || (fileContent ? `data:application/pdf;base64,${fileContent}` : undefined);
-      const pdfSourceKey = file.publicUrl || `${fileContent.length}:${fileContent.slice(0, 24)}`;
-      if (!pdfSrc) {
-        return (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500">
-            Unable to display PDF preview.
-          </div>
-        );
-      }
-      const handleOpenNewTab = () => {
-        window.open(pdfSrc, '_blank', 'noreferrer');
-      };
-      return (
-        <div className="relative h-full w-full">
-          <iframe
-            key={`${file.id || file.name}:${pdfSourceKey}`}
-            src={pdfSrc}
-            title={file.name}
-            className="h-full w-full border-none"
-            style={{ height: '100%' }}
-          />
-          <button
-            type="button"
-            onClick={handleOpenNewTab}
-            className="absolute right-3 top-3 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white shadow-md transition hover:bg-black/75"
-          >
-            Open in new tab
-          </button>
-        </div>
-      );
+      return <PdfPreview file={file} fileContent={fileContent} workspaceId={workspaceId} />;
     }
     if (isCsvFile) {
       if (!fileContent.trim()) {
