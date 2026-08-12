@@ -1,4 +1,5 @@
 import type { ConversationMessageMetadata } from '../types';
+import type { AgentStreamChunk } from '@helpudoc/contracts/agentStream';
 
 type ProgressEvent = NonNullable<ConversationMessageMetadata['progressEvents']>[number];
 
@@ -20,6 +21,10 @@ export const shouldRefreshWorkspaceFilesForRunStatus = (
   || status === 'failed'
   || status === 'cancelled'
 );
+
+export const shouldRefreshWorkspaceFilesForToolCompletion = (
+  chunk: Extract<AgentStreamChunk, { type: 'tool_end' }>,
+): boolean => chunk.outputFiles?.some((file) => Boolean(file.path?.trim())) === true;
 
 export const markInteractionResponseReceived = (
   progressEvents: ConversationMessageMetadata['progressEvents'],

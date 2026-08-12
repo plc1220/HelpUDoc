@@ -138,6 +138,7 @@ import { resolveWorkspaceCanvasTitle } from '../../utils/workspaceCanvas';
 import {
   markInteractionResponseReceived,
   shouldRefreshWorkspaceFilesForRunStatus,
+  shouldRefreshWorkspaceFilesForToolCompletion,
 } from '../../utils/agentProgress';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
@@ -994,6 +995,7 @@ export default function WorkspacePage() {
   const lastAutoSavedContentRef = useRef<string>('');
   const fileContentRequestIdRef = useRef(0);
   const workspaceFilesRequestIdRef = useRef(0);
+  const workspaceFileRefreshTimerRef = useRef<number | null>(null);
   // autoReviewCopyInFlightRef removed: auto-provisioning is no longer triggered on workspace selection.
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -1080,6 +1082,10 @@ export default function WorkspacePage() {
     // previous workspace cannot repopulate it after the workspace has changed.
     fileContentRequestIdRef.current += 1;
     workspaceFilesRequestIdRef.current += 1;
+    if (workspaceFileRefreshTimerRef.current !== null) {
+      window.clearTimeout(workspaceFileRefreshTimerRef.current);
+      workspaceFileRefreshTimerRef.current = null;
+    }
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
@@ -2192,6 +2198,21 @@ export default function WorkspacePage() {
     }
   }, []);
 
+  const scheduleWorkspaceFilesRefresh = useCallback((workspaceId: string) => {
+    if (selectedWorkspaceIdRef.current !== workspaceId) {
+      return;
+    }
+    if (workspaceFileRefreshTimerRef.current !== null) {
+      window.clearTimeout(workspaceFileRefreshTimerRef.current);
+    }
+    workspaceFileRefreshTimerRef.current = window.setTimeout(() => {
+      workspaceFileRefreshTimerRef.current = null;
+      if (selectedWorkspaceIdRef.current === workspaceId) {
+        void loadFilesForWorkspace(workspaceId);
+      }
+    }, 400);
+  }, [loadFilesForWorkspace]);
+
   const upsertDashboardPlaceholder = useCallback((artifact: DashboardArtifactInfo) => {
     const normalizedPath = normalizeWorkspaceRelativePath(artifact.dashboardPath);
     if (!normalizedPath || !selectedWorkspace) {
@@ -2261,7 +2282,13 @@ export default function WorkspacePage() {
   }, [files]);
 
   useEffect(() => {
-    return () => cancelAllStreams();
+    return () => {
+      cancelAllStreams();
+      if (workspaceFileRefreshTimerRef.current !== null) {
+        window.clearTimeout(workspaceFileRefreshTimerRef.current);
+        workspaceFileRefreshTimerRef.current = null;
+      }
+    };
   }, [cancelAllStreams]);
 
   useEffect(() => {
@@ -4701,6 +4728,7 @@ export default function WorkspacePage() {
     agentMessageIndex: number,
     chunk: AgentStreamChunk,
     runId?: string,
+    workspaceId?: string,
   ) => {
     const rawChunkType = (chunk as { type?: string }).type;
     if (rawChunkType === 'interaction_gate_skipped') {
@@ -4820,6 +4848,9 @@ export default function WorkspacePage() {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       if (chunk.dashboardArtifact) {
         mergeDashboardArtifact(chunk.dashboardArtifact);
+      }
+      if (workspaceId && shouldRefreshWorkspaceFilesForToolCompletion(chunk)) {
+        scheduleWorkspaceFilesRefresh(workspaceId);
       }
       appendToolEnd(conversationId, agentMessageIndex, chunk);
       const streamLabel = chunk.name || 'tool';
@@ -4973,6 +5004,7 @@ export default function WorkspacePage() {
     appendToolStart,
     bufferAgentChunk,
     mergeDashboardArtifact,
+    scheduleWorkspaceFilesRefresh,
     setConversationAttention,
     setStreamingForConversation,
     updateMessageMetadataAtIndex,
@@ -5045,7 +5077,7 @@ export default function WorkspacePage() {
                 interactionRequest: chunk.interactionRequest,
               };
             }
-            handleStreamChunk(conversationId, agentMessageIndex, chunk, runId);
+            handleStreamChunk(conversationId, agentMessageIndex, chunk, runId, runInfo.workspaceId);
           },
           controller.signal,
           replayFromStart ? undefined : (resumeAfterId || runInfo.lastStreamId)
@@ -5222,6 +5254,10 @@ export default function WorkspacePage() {
             shouldRefreshWorkspaceFilesForRunStatus(normalizedFinalStatus)
             && selectedWorkspaceIdRef.current === runInfo.workspaceId
           ) {
+            if (workspaceFileRefreshTimerRef.current !== null) {
+              window.clearTimeout(workspaceFileRefreshTimerRef.current);
+              workspaceFileRefreshTimerRef.current = null;
+            }
             await loadFilesForWorkspace(runInfo.workspaceId);
           }
           if (finalStatus === 'awaiting_approval') {
