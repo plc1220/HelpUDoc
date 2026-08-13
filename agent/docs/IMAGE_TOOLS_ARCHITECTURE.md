@@ -223,13 +223,13 @@ Position Parameter
    Frontend renders the chart when viewing report.md
 ```
 
-### Example 2: Gemini Image
+### Example 2: Image Generation
 
 ```
 1. User asks: "Create a flowchart and add it to the README"
 
 2. Agent generates image:
-   gemini_image(prompt="flowchart", ...) → /flowchart-1.png
+   image_generation(prompt="flowchart", ...) → /flowchart-1.png
 
 3. Agent inserts:
    insert_image_to_file("flowchart-1.png", "/README.md", position="start")
@@ -293,7 +293,7 @@ config/runtime.yaml
             └─► general-assistant:
                     └─► tools:
                             ├─► google_search
-                            ├─► gemini_image
+                            ├─► image_generation
                             ├─► get_image_url
                             └─► insert_image_to_file
 

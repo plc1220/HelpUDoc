@@ -1,8 +1,8 @@
 ---
 name: image
-description: Work with image files safely; do not decode them as text, use image URLs for referencing, and use Gemini only for generation or editing requests.
+description: Work with image files safely; do not decode them as text, use image URLs for referencing, and use image generation only for generation or editing requests.
 tools:
-  - gemini_image
+  - image_generation
   - get_image_url
   - request_clarification
 ---
@@ -17,7 +17,7 @@ Use this skill for image files such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, 
 
 - Never call `read_file` on a binary image.
 - Use `get_image_url` when the user needs to reference an uploaded workspace image in Markdown, HTML, or chat.
-- Use `gemini_image` only when the user wants image generation or image editing.
+- Use `image_generation` only when the user wants image generation or image editing.
 - Do not claim to have visually inspected an image if the runtime only has file metadata and no vision input path for that file.
 
 ## Workflow
@@ -33,7 +33,7 @@ Use this skill for image files such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, 
    - Use the returned public URL in the output artifact or response.
 
 3. Generation or editing flow.
-   - If the user is asking for creation or editing in substance, use `gemini_image`.
+   - If the user is asking for creation or editing in substance, use `image_generation`.
    - Keep the prompt grounded in the user's stated goal.
 
 4. Visual-inspection limitation handling.
@@ -47,7 +47,7 @@ Use this skill for image files such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, 
 
 - Insert or share uploaded charts and diagrams with public URLs
 - Generate a new illustration, concept image, or mockup
-- Edit or restyle an image with Gemini
+- Edit or restyle an image with the image-generation tool
 
 ## Avoid
 

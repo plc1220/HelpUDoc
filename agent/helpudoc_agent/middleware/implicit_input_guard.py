@@ -21,6 +21,13 @@ from helpudoc_agent.interaction_workflows import (
     frontend_slides_gate_id,
 )
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
+from helpudoc_agent.interaction_contract import (
+    next_pending_gate,
+    record_gate_source,
+    record_gate_violation,
+    response_has_valid_interaction_call,
+    workflow_interaction_ai_message_for_gate,
+)
 from helpudoc_agent.interrupt_payloads import build_clarification_interrupt_value, encode_interrupt_payload_marker
 
 logger = logging.getLogger(__name__)
@@ -685,14 +692,29 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
         if last_ai_msg is None:
             return None
 
-        if last_ai_msg.tool_calls:
-            return None
-
-        skill_id = _resolve_active_skill_id(getattr(runtime, "context", None))
+        runtime_context = getattr(runtime, "context", None)
+        skill_id = _resolve_active_skill_id(runtime_context)
         if not skill_id:
             return None
 
-        runtime_context = getattr(runtime, "context", None)
+        if last_ai_msg.tool_calls:
+            pending_gate = next_pending_gate(runtime_context)
+            if pending_gate is None:
+                return None
+            valid, _ = response_has_valid_interaction_call(last_ai_msg, pending_gate)
+            if valid:
+                return None
+            if isinstance(runtime_context, dict):
+                record_gate_violation(runtime_context, pending_gate, source="failed")
+                record_gate_source(runtime_context, pending_gate, source="synthetic")
+            logger.warning(
+                "Interaction input guard: replacing unrelated tool calls while required gate=%s is pending",
+                pending_gate.get("gate_id"),
+            )
+            return {
+                "messages": [workflow_interaction_ai_message_for_gate(pending_gate)],
+            }
+
         assistant_text = _extract_message_text(last_ai_msg)
         # A synthetic form may only infer choices from the assistant's explicit
         # request. Mining the original user prompt turns examples, field names,

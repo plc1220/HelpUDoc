@@ -3307,12 +3307,13 @@ async function runAgentRunWorker(
       return;
     }
     await workspaceRunLease.assertOwned(runId);
-    const touchedPaths = toolEvents.flatMap((event) => (
-      event.outputFiles || []
-    )).map((file) => file.path);
+    // The reconciled workspace is protected by an exclusive run lease, so the
+    // filesystem delta is the source of truth for generated artifacts. Tool
+    // outputFiles remain useful UI metadata, but must never decide durability:
+    // tools such as image generators can write valid files without returning a
+    // structured artifact response.
     await fileService.commitWorkspaceArtifacts(params.workspaceId, params.userId, runId, {
       baseline: artifactBaseline,
-      touchedPaths,
       assertLeaseOwned: () => workspaceRunLease.assertOwned(runId),
     });
     artifactsCommitted = true;

@@ -39,6 +39,30 @@ def test_build_tools_skips_missing_entrypoint(monkeypatch):
     assert built == []
 
 
+def test_image_generation_uses_provider_neutral_public_tool_name(tmp_path):
+    factory = ToolFactory(
+        SettingsStub(
+            {
+                "image_generation": ToolConfig(
+                    name="image_generation",
+                    kind="builtin",
+                )
+            }
+        ),
+        source_tracker=SimpleNamespace(),
+        gemini_manager=SimpleNamespace(
+            client=SimpleNamespace(),
+            image_model_name="image-model",
+        ),
+    )
+    workspace = SimpleNamespace(root_path=tmp_path, workspace_id="ws-1", context={})
+
+    tool = factory.build_tools(["image_generation"], workspace_state=workspace)[0]
+
+    assert tool.name == "image_generation"
+    assert "Gemini" not in tool.description
+
+
 def test_create_pdf_from_images_builds_one_page_per_image(tmp_path):
     for index, color in enumerate(("red", "green", "blue"), start=1):
         Image.new("RGB", (80 + index, 120 + index), color=color).save(tmp_path / f"page-{index}.png")

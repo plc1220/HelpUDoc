@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import json
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage
 
@@ -627,6 +628,20 @@ def workflow_interaction_tool_args_for_gate(gate: dict[str, Any]) -> dict[str, A
         "required": bool(gate.get("required", True)),
         "resume_mode": str(gate.get("resume_mode") or "submit"),
     }
+
+
+def workflow_interaction_ai_message_for_gate(gate: dict[str, Any]) -> AIMessage:
+    """Build the sole safe model output while a required Interaction gate is pending."""
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "workflow_action",
+                "args": workflow_interaction_tool_args_for_gate(gate),
+                "id": f"interaction-contract-{uuid4().hex}",
+            }
+        ],
+    )
 
 
 def interaction_interrupt_value_for_gate(gate: dict[str, Any]) -> dict[str, Any]:

@@ -31,7 +31,7 @@ required_artifacts:
 - If append_to_report is unavailable, or if there is any risk of duplicate content, read the section file(s) and rebuild /Final_Proposal.md with write_file.
 - Reply in chat only with short progress updates and final confirmation.
 - Default proposal visuals to Mermaid inside markdown. Do not switch to image generation unless the user explicitly asks for a static visual artifact such as PNG/JPG/diagram image.
-- If the user explicitly asks for a static image export from proposal content or names `gemini_image`, treat that as authorization to call `gemini_image` after reading the relevant section file and extracting the specific table/diagram to visualize.
+- If the user explicitly asks for a static image export from proposal content or names `image_generation`, treat that as authorization to call `image_generation` after reading the relevant section file and extracting the specific table/diagram to visualize.
 - For those explicit image-export requests, do not hand off to unrelated sales asset workflows unless the user asks for a broader customer-facing asset.
 - `Final_Proposal.md` must preserve the wording of each section file. Stitch from the section files exactly; do not paraphrase, compress, or rewrite section prose while assembling the final document.
 - When the user provides an existing proposal or polished example, treat it as source material to be revised in place. Do not append "new improved sections" after the existing proposal unless the user explicitly asks for an addendum.

@@ -54,7 +54,7 @@ def test_tagged_file_policy_allows_control_flow_interrupt_tools() -> None:
 
 def test_tagged_file_policy_allows_context_expanding_tools() -> None:
     assert is_tool_blocked_in_tagged_files_mode("append_to_report") is False
-    assert is_tool_blocked_in_tagged_files_mode("gemini_image") is False
+    assert is_tool_blocked_in_tagged_files_mode("image_generation") is False
 
 
 def test_interrupt_with_retry_stops_after_stale_resume_payload(monkeypatch) -> None:

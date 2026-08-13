@@ -783,7 +783,6 @@ export class FileService {
     sourceRunId: string,
     options?: {
       baseline?: WorkspaceArtifactBaseline | null;
-      touchedPaths?: string[];
       assertLeaseOwned?: () => Promise<void>;
     },
   ) {
@@ -801,21 +800,10 @@ export class FileService {
     for (const file of liveFiles) {
       byLocalPath.set(path.normalize(this.getLocalPath(workspaceId, String(file.name))), file);
     }
-    const touched = new Set((options?.touchedPaths || []).flatMap((rawPath) => {
-      try {
-        const normalized = this.normalizeRelativePath(String(rawPath || '').replace(/^\/+/, ''));
-        return this.isInternalWorkspacePath(normalized) ? [] : [normalized];
-      } catch {
-        return [];
-      }
-    }));
-    const restrictToTouchedPaths = options?.touchedPaths !== undefined;
-
     const committed: any[] = [];
     for (const absolutePath of diskFiles) {
       const relativeName = path.relative(workspacePath, absolutePath).replace(/\\/g, '/');
       if (this.isInternalWorkspacePath(relativeName)) continue;
-      if (restrictToTouchedPaths && !touched.has(relativeName)) continue;
       await options?.assertLeaseOwned?.();
       const payload = await fs.readFile(absolutePath);
       const digest = this.hashBuffer(payload);

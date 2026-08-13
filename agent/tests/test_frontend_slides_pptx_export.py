@@ -1,14 +1,40 @@
 import base64
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from helpudoc_agent.sandbox_runner import run_skill_python_script_locally
 from helpudoc_agent.state import WorkspaceState
+from helpudoc_agent.tools.workspace.builtins.skills import build_run_skill_python_script_tool
 
 
 ONE_PIXEL_PNG = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
+
+
+def test_frontend_slides_blocks_inline_sandbox_execution(tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    workspace = WorkspaceState(workspace_id="slides-inline-block", root_path=tmp_path)
+    workspace.context["active_skill"] = "frontend-slides"
+    settings = SimpleNamespace(
+        backend=SimpleNamespace(
+            skills_root=repo_root / "skills",
+            plugins_root=repo_root / "plugins",
+        )
+    )
+    tool = build_run_skill_python_script_tool(settings, workspace)
+
+    result = tool.invoke(
+        {
+            "inline_code": "print('render preview')",
+            "output_paths": ["preview.html"],
+        }
+    )
+
+    payload = json.loads(result)
+    assert payload["errorCode"] == "FRONTEND_SLIDES_INLINE_SANDBOX_BLOCKED"
+    assert not (tmp_path / "sandbox-runs").exists()
 
 
 def test_frontend_slides_pptx_export_copies_workspace_output_and_declares_artifact(tmp_path):

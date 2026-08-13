@@ -17,6 +17,7 @@ from helpudoc_agent.interaction_contract import (
     record_gate_source,
     record_gate_violation,
     response_has_valid_interaction_call,
+    workflow_interaction_ai_message_for_gate,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,10 @@ def _failed_contract_message(reason: str) -> AIMessage:
             f"{reason} The fallback input guard may synthesize an emergency interrupt."
         )
     )
+
+
+def _synthetic_gate_response(gate: dict[str, Any]) -> ModelResponse:
+    return ModelResponse(result=[workflow_interaction_ai_message_for_gate(gate)])
 
 
 class InteractionContractMiddleware(AgentMiddleware):
@@ -83,13 +88,17 @@ class InteractionContractMiddleware(AgentMiddleware):
 
         if context is not None:
             record_gate_violation(context, gate, source="failed")
+            record_gate_source(context, gate, source="synthetic")
         logger.warning(
             "Interaction contract violation after retry: skill=%s gate=%s reason=%s",
             gate.get("skill_id"),
             gate.get("gate_id"),
             retry_reason or reason,
         )
-        return retry_response
+        # Never execute text or unrelated tool calls from a response that failed
+        # the required Interaction contract. The gate payload is already fully
+        # declared, so emit the one safe workflow action deterministically.
+        return _synthetic_gate_response(gate)
 
     async def awrap_model_call(
         self,
@@ -122,13 +131,14 @@ class InteractionContractMiddleware(AgentMiddleware):
 
         if context is not None:
             record_gate_violation(context, gate, source="failed")
+            record_gate_source(context, gate, source="synthetic")
         logger.warning(
             "Interaction contract violation after retry: skill=%s gate=%s reason=%s",
             gate.get("skill_id"),
             gate.get("gate_id"),
             retry_reason or reason,
         )
-        return retry_response
+        return _synthetic_gate_response(gate)
 
     @hook_config(can_jump_to=["model"])
     def after_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:

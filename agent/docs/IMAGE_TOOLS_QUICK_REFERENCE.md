@@ -111,10 +111,10 @@ generate_chart_config(chart_title="Sales", ...)
 insert_image_to_file("Sales.png", "/report.md")
 ```
 
-### Workflow 2: Gemini Image
+### Workflow 2: Image Generation
 ```python
 # 1. Generate image
-gemini_image(prompt="Create flowchart", output_name_prefix="flow")
+image_generation(prompt="Create flowchart", output_name_prefix="flow")
 
 # 2. Insert into README
 insert_image_to_file("flow-1.png", "/README.md", position="start")

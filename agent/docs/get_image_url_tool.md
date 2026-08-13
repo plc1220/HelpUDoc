@@ -27,7 +27,7 @@ agents:
     display_name: General Assistant
     tools:
       - google_search
-      - gemini_image
+      - image_generation
       - get_image_url
 ```
 

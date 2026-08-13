@@ -34,7 +34,7 @@ from .builtins.workspace_files import (
     build_get_image_url_tool,
 )
 from .gemini_client import GeminiClientManager
-from .gemini_image import build_gemini_image_tool
+from .image_generation import build_image_generation_tool
 from .web_sources import build_google_search_tool, build_url_context_tool
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class ToolFactory:
         self._builtin_map: Dict[str, Callable[[WorkspaceState], Tool]] = {
             "google_search": self._build_google_search_tool,
             "url_context": self._build_url_context_tool,
-            "gemini_image": self._build_gemini_image_tool,
+            "image_generation": self._build_image_generation_tool,
             "export_bigquery_query": self._build_export_bigquery_query_tool,
             "append_to_report": lambda ws: build_append_to_report_tool(ws),
             "create_pdf_from_images": lambda ws: build_create_pdf_from_images_tool(ws),
@@ -143,8 +143,8 @@ class ToolFactory:
             label="url_context",
         )
 
-    def _build_gemini_image_tool(self, workspace_state: WorkspaceState) -> Tool:
-        return build_gemini_image_tool(
+    def _build_image_generation_tool(self, workspace_state: WorkspaceState) -> Tool:
+        return build_image_generation_tool(
             workspace_state=workspace_state,
             client=self.gemini_manager.client,
             model_name=self.gemini_manager.image_model_name,

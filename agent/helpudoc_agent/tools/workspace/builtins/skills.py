@@ -34,6 +34,17 @@ MAX_SKILL_ASSET_MANIFEST_ITEMS = 40
 MAX_DATA_WORKSPACE_QUERIES_PER_TURN = 10
 
 
+def _frontend_slides_active(context: object) -> bool:
+    if not isinstance(context, dict):
+        return False
+    raw_skill = context.get("active_skill")
+    if not raw_skill and isinstance(context.get("active_skill_scope"), dict):
+        scope = context["active_skill_scope"]
+        raw_skill = scope.get("skill_id") or scope.get("id")
+    normalized = str(raw_skill or "").strip().lower()
+    return normalized == "frontend-slides" or normalized.endswith("/frontend-slides")
+
+
 def _skill_sandbox_error(
     error_code: str,
     message: str,
@@ -411,6 +422,12 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 "SKILL_SANDBOX_REQUEST_INVALID",
                 "Provide exactly one of script_name or inline_code.",
                 "Provide one valid execution mode once; do not repeat this invalid call.",
+            )
+        if _frontend_slides_active(workspace_state.context) and has_inline:
+            return _skill_sandbox_error(
+                "FRONTEND_SLIDES_INLINE_SANDBOX_BLOCKED",
+                "frontend-slides HTML previews and decks must be created directly as workspace files; inline sandbox execution is not supported.",
+                "Use write_file or edit_file for HTML/CSS/JavaScript. Use script_name='export-pptx' only when the user explicitly requests PowerPoint export after the HTML deck exists.",
             )
         if has_inline:
             if args:

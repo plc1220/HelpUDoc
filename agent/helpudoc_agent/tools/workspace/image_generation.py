@@ -1,4 +1,4 @@
-"""Gemini image generation and layout-extraction tool."""
+"""Provider-neutral image generation and layout extraction backed by Gemini."""
 from __future__ import annotations
 
 import json
@@ -20,7 +20,7 @@ from ...state import WorkspaceState
 from ...tagged_file_policy import tagged_files_mode_guard
 
 
-def build_gemini_image_tool(
+def build_image_generation_tool(
     workspace_state: WorkspaceState,
     client=None,
     model_name: str | None = None,
@@ -48,9 +48,9 @@ def build_gemini_image_tool(
         if raw_prefix and raw_prefix.strip():
             candidate = raw_prefix.strip()
         else:
-            candidate = f"gemini-image-{uuid4().hex[:8]}"
+            candidate = f"generated-image-{uuid4().hex[:8]}"
         safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in candidate)
-        return safe or f"gemini-image-{uuid4().hex[:8]}"
+        return safe or f"generated-image-{uuid4().hex[:8]}"
 
     def _is_explicit_image_request(prompt: str) -> bool:
         text = (prompt or "").lower()
@@ -92,7 +92,7 @@ def build_gemini_image_tool(
         return str(destination.relative_to(workspace_state.root_path))
 
     @tool
-    def gemini_image(
+    def image_generation(
         prompt: str,
         source_image_path: str | None = None,
         output_name_prefix: str | None = None,
@@ -101,20 +101,20 @@ def build_gemini_image_tool(
     ) -> str:
         """Generate or edit an image with Gemini."""
         if not prompt.strip():
-            return "Skipped gemini_image: prompt is required for image generation/editing."
+            return "Skipped image_generation: prompt is required for image generation/editing."
 
-        blocked = tagged_files_mode_guard(workspace_state.context, "gemini_image")
+        blocked = tagged_files_mode_guard(workspace_state.context, "image_generation")
         if blocked:
             return blocked
 
         if not _is_explicit_image_request(prompt):
-            return "Skipped gemini_image: user did not explicitly request image generation/editing."
+            return "Skipped image_generation: user did not explicitly request image generation/editing."
 
         if source_image_path:
             try:
                 source_image = _resolve_source_image(source_image_path)
             except Exception as exc:
-                return f"Skipped gemini_image: {exc}"
+                return f"Skipped image_generation: {exc}"
             contents: List[object] = [source_image, prompt]
         else:
             contents = [prompt]
@@ -193,8 +193,8 @@ def build_gemini_image_tool(
             summary_lines.append("No images were returned by Gemini.")
         return "\n".join(summary_lines)
 
-    gemini_image.name = "gemini_image"
-    gemini_image.description = (
-        "Generate or edit workspace images using Gemini models; can also extract JSON layout assets."
+    image_generation.name = "image_generation"
+    image_generation.description = (
+        "Generate or edit workspace images; can also extract JSON layout assets."
     )
-    return gemini_image
+    return image_generation

@@ -36,7 +36,7 @@ agents:
   - name: general-assistant
     tools:
       - google_search
-      - gemini_image
+      - image_generation
       - get_image_url
       - insert_image_to_file
 ```
@@ -237,7 +237,7 @@ The tool handles various error scenarios:
 
 ```python
 # 1. Generate image with Gemini
-gemini_image(prompt="Create a sales chart", output_name_prefix="sales_chart")
+image_generation(prompt="Create a sales chart", output_name_prefix="sales_chart")
 
 # 2. Insert into markdown file
 insert_image_to_file("sales_chart-1.png", "/report.md")

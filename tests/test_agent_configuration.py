@@ -49,6 +49,13 @@ def test_direct_office_is_not_a_programmatic_tool_call() -> None:
     assert "document_execute" not in settings.backend.code_interpreter.ptc_tools
 
 
+def test_image_generation_tool_uses_provider_neutral_runtime_name() -> None:
+    settings = load_settings()
+
+    assert settings.get_tool("image_generation").name == "image_generation"
+    assert "gemini_image" not in settings.tools
+
+
 def test_execution_tools_require_explicit_skill_declarations() -> None:
     restrictive_scope = {"skill_id": "demo", "tools": ["inspect_document"]}
 

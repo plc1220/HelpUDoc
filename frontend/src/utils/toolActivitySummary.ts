@@ -45,6 +45,7 @@ const TOOL_LABELS: Record<string, string> = {
   dir: 'Listing workspace files',
   google_search: 'Checking web sources',
   url_context: 'Reading linked pages',
+  image_generation: 'Generating an image',
   web_search: 'Checking web sources',
   load_skill: 'Loading workflow',
   run_terminal: 'Checking the environment',

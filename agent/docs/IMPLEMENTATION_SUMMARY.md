@@ -44,7 +44,7 @@ The agent can now:
 ```yaml
 tools:
   - google_search
-  - gemini_image
+  - image_generation
   - get_image_url
   - insert_image_to_file
 ```
@@ -148,7 +148,7 @@ insert_image_to_file(
 ```python
 # 1. User asks: "Create a flowchart and add it to the README"
 # 2. Agent generates image:
-gemini_image(prompt="Create a flowchart showing the process", output_name_prefix="flowchart")
+image_generation(prompt="Create a flowchart showing the process", output_name_prefix="flowchart")
 
 # 3. Agent inserts it:
 insert_image_to_file("flowchart-1.png", "/README.md", position="start")

@@ -117,6 +117,7 @@ def _friendly_tool_label(name: str) -> str:
         "load_skill": "Loading the selected skill",
         "google_search": "Searching the web",
         "url_context": "Reading the provided link",
+        "image_generation": "Generating an image",
         "run_sql_query": "Querying the database",
         "write_file": "Writing a workspace file",
         "edit_file": "Updating a workspace file",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -150,7 +151,7 @@ def test_middleware_records_direct_source_for_valid_first_response():
     assert context[INTERACTION_LEDGER_KEY][0]["source"] == "direct"
 
 
-def test_middleware_failed_retry_records_violation_for_fallback_path():
+def test_middleware_failed_retry_replaces_invalid_output_with_synthetic_gate_call():
     context = {
         "active_skill": "generic-skill",
         "active_skill_scope": {"interaction_contract": {"gates": [_gate()]}},
@@ -162,8 +163,56 @@ def test_middleware_failed_retry_records_violation_for_fallback_path():
         lambda _request: ModelResponse(result=[AIMessage(content="The form is open.")]),
     )
 
-    assert response.result[0].content == "The form is open."
-    assert context[INTERACTION_LEDGER_KEY][0]["source"] == "failed"
+    assert response.result[0].content == ""
+    assert [call["name"] for call in response.result[0].tool_calls] == ["workflow_action"]
+    synthetic_args = response.result[0].tool_calls[0]["args"]
+    assert {key: synthetic_args[key] for key in _args()} == _args()
+    assert synthetic_args["required"] is True
+    assert synthetic_args["resume_mode"] == "submit"
+    assert context[INTERACTION_LEDGER_KEY][0]["source"] == "synthetic"
+    assert context[INTERACTION_LEDGER_KEY][0]["violation_count"] == 1
+
+
+def test_middleware_failed_retry_discards_unrelated_tool_calls():
+    context = {
+        "active_skill": "generic-skill",
+        "active_skill_scope": {"interaction_contract": {"gates": [_gate()]}},
+    }
+    middleware = InteractionContractMiddleware()
+
+    response = middleware.wrap_model_call(
+        _request(context),
+        lambda _request: ModelResponse(
+            result=[
+                AIMessage(
+                    content="Continuing without confirmation.",
+                    tool_calls=[
+                        {"name": "write_file", "args": {"path": "unsafe.txt", "content": "unsafe"}, "id": "unsafe-1"}
+                    ],
+                )
+            ]
+        ),
+    )
+
+    assert response.result[0].content == ""
+    assert [call["name"] for call in response.result[0].tool_calls] == ["workflow_action"]
+
+
+def test_async_middleware_failed_retry_uses_same_synthetic_fallback():
+    context = {
+        "active_skill": "generic-skill",
+        "active_skill_scope": {"interaction_contract": {"gates": [_gate()]}},
+    }
+    middleware = InteractionContractMiddleware()
+
+    async def handler(_request):
+        return ModelResponse(result=[AIMessage(content="The form is open.")])
+
+    response = asyncio.run(middleware.awrap_model_call(_request(context), handler))
+
+    assert response.result[0].content == ""
+    assert [call["name"] for call in response.result[0].tool_calls] == ["workflow_action"]
+    assert context[INTERACTION_LEDGER_KEY][0]["source"] == "synthetic"
     assert context[INTERACTION_LEDGER_KEY][0]["violation_count"] == 1
 
 

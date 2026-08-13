@@ -11,7 +11,10 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from helpudoc_agent.api.constants import _INTERRUPT_TOOL_NAMES
-from helpudoc_agent.interaction_contract import next_pending_gate
+from helpudoc_agent.interaction_contract import (
+    next_pending_gate,
+    workflow_interaction_ai_message_for_gate,
+)
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
 from helpudoc_agent.interrupt_payloads import extract_interrupt_payload_from_tool_text
 from helpudoc_agent.middleware.implicit_input_guard import (
@@ -443,7 +446,7 @@ def test_build_synthetic_interrupt_prefers_inline_generic_choices_over_policy_bu
     ]
 
 
-def test_guard_skips_when_tool_calls_present() -> None:
+def test_guard_replaces_tool_calls_when_required_gate_is_pending() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -454,7 +457,23 @@ def test_guard_skips_when_tool_calls_present() -> None:
         ]
     }
     runtime = Runtime(context={"active_skill": "frontend-slides"})
-    assert middleware.after_model(state, runtime) is None
+    result = middleware.after_model(state, runtime)
+
+    assert result is not None
+    messages = result.get("messages") or []
+    assert len(messages) == 1
+    assert [call["name"] for call in messages[0].tool_calls] == ["workflow_action"]
+    assert messages[0].tool_calls[0]["args"]["gate_id"] == "presentation_context"
+
+
+def test_guard_allows_valid_workflow_action_for_pending_gate() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    context = {"active_skill": "frontend-slides"}
+    gate = next_pending_gate(context)
+    assert gate is not None
+    state = {"messages": [workflow_interaction_ai_message_for_gate(gate)]}
+
+    assert middleware.after_model(state, Runtime(context=context)) is None
 
 
 def test_detect_implicit_input_initialized_form_no_above_below() -> None:

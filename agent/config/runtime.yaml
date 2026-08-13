@@ -56,9 +56,9 @@ tools:
   - name: url_context
     kind: builtin
     description: Gemini URL context for explicit user-supplied links
-  - name: gemini_image
+  - name: image_generation
     kind: builtin
-    description: Generate or edit images using Gemini
+    description: Generate or edit workspace images
   - name: export_bigquery_query
     kind: builtin
     description: Export read-only BigQuery query results to workspace CSV or Parquet

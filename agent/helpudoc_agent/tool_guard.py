@@ -27,7 +27,7 @@ _WORKSPACE_MUTATING_TOOLS = {
     "create_pdf_from_images",
     "document_execute",
     "export_bigquery_query",
-    "gemini_image",
+    "image_generation",
     "run_skill_python_script",
 }
 
