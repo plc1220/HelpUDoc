@@ -96,7 +96,10 @@ def load_sandbox_k8s_env() -> SandboxK8sEnv:
         namespace=namespace,
         image=env_trim("HELPUDOC_SANDBOX_IMAGE") or "python:3.12-slim",
         workspace_pvc=env_trim("HELPUDOC_SANDBOX_WORKSPACE_PVC") or "workspace-pvc",
-        runtime_class_name=env_trim("HELPUDOC_SANDBOX_RUNTIME_CLASS") or "gvisor",
+        # RuntimeClass is an optional hardening layer. An unconditional gVisor
+        # default makes every sandbox job unschedulable on clusters whose node
+        # pools do not provide the matching handler.
+        runtime_class_name=env_trim("HELPUDOC_SANDBOX_RUNTIME_CLASS") or "",
         cpu_limit=env_trim("HELPUDOC_SANDBOX_CPU_LIMIT") or "500m",
         memory_limit=env_trim("HELPUDOC_SANDBOX_MEMORY_LIMIT") or "512Mi",
         ephemeral_storage_limit=env_trim("HELPUDOC_SANDBOX_EPHEMERAL_STORAGE_LIMIT") or "1Gi",

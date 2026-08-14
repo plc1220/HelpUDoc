@@ -288,6 +288,11 @@ def test_runner_creates_hardened_job_and_deletes_it(tmp_path: Path) -> None:
     container = pod_spec["containers"][0]
     assert pod_spec["runtimeClassName"] == "gvisor"
     assert pod_spec["automountServiceAccountToken"] is False
+    affinity_term = pod_spec["affinity"]["podAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"
+    ][0]
+    assert affinity_term["labelSelector"]["matchLabels"] == {"app": "helpudoc-app"}
+    assert affinity_term["topologyKey"] == "kubernetes.io/hostname"
     assert container["command"] == ["python", "/sandbox/scripts/run.py"]
     assert container["args"] == ["--input", "source.txt"]
     env = {item["name"]: item["value"] for item in container.get("env", [])}
@@ -298,6 +303,28 @@ def test_runner_creates_hardened_job_and_deletes_it(tmp_path: Path) -> None:
     assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
     assert container["volumeMounts"][0]["subPath"].startswith("ws/sandbox-runs/")
     assert "GEMINI_API_KEY" not in {item["name"] for item in container.get("env", [])}
+
+
+def test_declared_manifest_omits_unconfigured_runtime_class() -> None:
+    config = SandboxConfig.from_env()
+    manifest = build_sandbox_job_manifest(
+        job_name="job",
+        workspace_id="ws",
+        run_id="run",
+        staged_script_name="scripts/run.py",
+        args=[],
+        script=SkillSandboxScript(
+            name="run",
+            path="scripts/run.py",
+            sha256="0" * 64,
+            timeout_seconds=120,
+            outputs=[],
+        ),
+        sandbox_config=config,
+    )
+
+    assert config.runtime_class_name == ""
+    assert "runtimeClassName" not in manifest["spec"]["template"]["spec"]
 
 
 def test_runner_stages_skill_scripts_tree_for_imports(tmp_path: Path) -> None:
@@ -718,6 +745,11 @@ def test_inline_manifest_omits_workspace_mount_and_root_env() -> None:
     assert manifest["metadata"]["labels"]["app"] == "helpudoc-skill-sandbox"
     assert manifest["spec"]["template"]["metadata"]["labels"]["app"] == "helpudoc-skill-sandbox"
     assert pod_spec["automountServiceAccountToken"] is False
+    affinity_term = pod_spec["affinity"]["podAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"
+    ][0]
+    assert affinity_term["labelSelector"]["matchLabels"] == {"app": "helpudoc-app"}
+    assert affinity_term["topologyKey"] == "kubernetes.io/hostname"
     assert pod_spec["runtimeClassName"] == "gvisor"
     assert pod_spec["securityContext"]["runAsNonRoot"] is True
     assert pod_spec["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}

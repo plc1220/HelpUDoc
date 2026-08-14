@@ -6,6 +6,13 @@ tools:
   - document_inspection
   - document_execute
   - run_skill_python_script
+sandbox_scripts:
+  - name: extract_pptx_media
+    path: scripts/extract_pptx_media.py
+    sha256: "dd9106e3a98f16eb1c4565f75357cec8fe1321d05debf50a11ad7a125a86fd17"
+    timeout_seconds: 120
+    outputs:
+      - workspace-output/extracted_images/manifest.json
 ---
 
 # Slides Skill
@@ -35,6 +42,15 @@ one fits or report that the exceptional transformation is unavailable.
 Treat the `document_execute.operations` tool schema as the canonical OfficeCLI
 recipe: discover targets with `get`, `query`, or `view`; mutate with `add`,
 `set`, `remove`, `move`, or `swap`; and keep related writes in one atomic call.
+
+When the user asks to fetch or extract embedded images from a PPTX, OfficeCLI's
+typed mutation surface cannot emit loose media files. Load this `pptx` skill and
+call `run_skill_python_script` once with
+`script_name="extract_pptx_media"`, the tagged PPTX in `input_paths`, and
+`args=["--input", "<staged-pptx-basename>", "--output-dir", "extracted_images"]`.
+The reviewed script publishes categorized raster/vector assets plus a manifest
+under `/extracted_images/`. Do not load an unrelated skill, attempt inline
+code, or substitute an instruction guide for the requested artifacts.
 
 ## Important Instructions
 

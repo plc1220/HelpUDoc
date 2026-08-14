@@ -337,7 +337,7 @@ def build_sandbox_job_manifest(
         staged_script_path = f"scripts/{staged_script_path}"
     if not _is_relative_safe(staged_script_path):
         raise SandboxExecutionError("staged_script_name must be a safe relative path.")
-    return {
+    manifest = {
         "apiVersion": "batch/v1",
         "kind": "Job",
         "metadata": {
@@ -353,8 +353,21 @@ def build_sandbox_job_manifest(
                 "metadata": {"labels": labels},
                 "spec": {
                     "restartPolicy": "Never",
-                    "runtimeClassName": sandbox_config.runtime_class_name,
                     "automountServiceAccountToken": False,
+                    # The workspace PVC is ReadWriteOnce. Keep sandbox jobs on the
+                    # same node as the app pod that already mounts that volume.
+                    "affinity": {
+                        "podAffinity": {
+                            "requiredDuringSchedulingIgnoredDuringExecution": [
+                                {
+                                    "labelSelector": {
+                                        "matchLabels": {"app": "helpudoc-app"}
+                                    },
+                                    "topologyKey": "kubernetes.io/hostname",
+                                }
+                            ]
+                        }
+                    },
                     "securityContext": {
                         "runAsNonRoot": True,
                         "runAsUser": 1000,
@@ -422,6 +435,9 @@ def build_sandbox_job_manifest(
             },
         },
     }
+    if sandbox_config.runtime_class_name:
+        manifest["spec"]["template"]["spec"]["runtimeClassName"] = sandbox_config.runtime_class_name
+    return manifest
 
 
 def _clip_utf8(text: str, max_bytes: int | None) -> str:
@@ -1087,7 +1103,7 @@ def build_inline_sandbox_job_manifest(
     safe_workspace_id = _safe_subpath_segment(workspace_id, "workspace_id")
     safe_run_id = _safe_subpath_segment(run_id, "run_id")
     effective_timeout = max(1, int(timeout_seconds))
-    return {
+    manifest = {
         "apiVersion": "batch/v1",
         "kind": "Job",
         "metadata": {
@@ -1103,8 +1119,20 @@ def build_inline_sandbox_job_manifest(
                 "metadata": {"labels": labels},
                 "spec": {
                     "restartPolicy": "Never",
-                    "runtimeClassName": sandbox_config.runtime_class_name,
                     "automountServiceAccountToken": False,
+                    # The run directory lives on the same ReadWriteOnce PVC.
+                    "affinity": {
+                        "podAffinity": {
+                            "requiredDuringSchedulingIgnoredDuringExecution": [
+                                {
+                                    "labelSelector": {
+                                        "matchLabels": {"app": "helpudoc-app"}
+                                    },
+                                    "topologyKey": "kubernetes.io/hostname",
+                                }
+                            ]
+                        }
+                    },
                     "securityContext": {
                         "runAsNonRoot": True,
                         "runAsUser": 1000,
@@ -1164,6 +1192,9 @@ def build_inline_sandbox_job_manifest(
             },
         },
     }
+    if sandbox_config.runtime_class_name:
+        manifest["spec"]["template"]["spec"]["runtimeClassName"] = sandbox_config.runtime_class_name
+    return manifest
 
 
 def run_inline_python_in_kubernetes(

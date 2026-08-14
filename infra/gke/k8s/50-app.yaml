@@ -635,8 +635,6 @@ spec:
               value: helpudoc
             - name: HELPUDOC_SANDBOX_WORKSPACE_PVC
               value: workspace-pvc
-            - name: HELPUDOC_SANDBOX_RUNTIME_CLASS
-              value: gvisor
             - name: HELPUDOC_SANDBOX_IMAGE
               valueFrom:
                 configMapKeyRef:
