@@ -1785,16 +1785,21 @@ const isFrontendSlidesEditExistingRun = (params: StartRunParams): boolean => {
   const messageText = (params.messageContent || [])
     .map((block) => JSON.stringify(block))
     .join(' ');
-  const text = `${params.prompt || ''} ${messageText}`.toLowerCase();
+  const historyText = (params.history || [])
+    .map((entry) => `${entry.role}: ${entry.content}`)
+    .join(' ');
+  const currentText = `${params.prompt || ''} ${messageText}`.toLowerCase();
+  const contextualText = `${currentText} ${historyText}`.toLowerCase();
   const mentionsExistingArtifact = (
-    text.includes('.html') ||
-    text.includes('.ppt') ||
-    text.includes('.pptx') ||
-    text.includes('existing deck') ||
-    text.includes('existing slides') ||
-    text.includes('current deck')
+    contextualText.includes('.html') ||
+    contextualText.includes('.ppt') ||
+    contextualText.includes('.pptx') ||
+    contextualText.includes('existing deck') ||
+    contextualText.includes('existing slides') ||
+    contextualText.includes('current deck') ||
+    contextualText.includes('presentation deck')
   );
-  const asksForEdit = /\b(?:edit|revise|update|modify|fix|polish)\b/.test(text);
+  const asksForEdit = /\b(?:edit|revise|update|modify|fix|polish|adjust|change|improve|enhance|iterate)\b/.test(currentText);
   return mentionsExistingArtifact && asksForEdit;
 };
 
@@ -1805,10 +1810,11 @@ const isFrontendSlidesRun = (skillId: string | null | undefined, params: StartRu
 export const getFrontendSlidesMissingRequiredGate = (input: {
   skillId?: string | null;
   prompt?: string;
+  params?: StartRunParams;
   status: AgentRunStatus;
   gateState?: InteractionGateState;
 }): FrontendSlidesGateId | null => {
-  const params = { prompt: input.prompt || '' } as StartRunParams;
+  const params = input.params || ({ prompt: input.prompt || '' } as StartRunParams);
   if (
     input.status !== 'completed' ||
     !isFrontendSlidesRun(input.skillId, params) ||
@@ -1822,6 +1828,7 @@ export const getFrontendSlidesMissingRequiredGate = (input: {
 export const getFrontendSlidesInteractionGateCompletionError = (input: {
   skillId?: string | null;
   prompt?: string;
+  params?: StartRunParams;
   status: AgentRunStatus;
   gateState?: InteractionGateState;
 }): string | null => {
@@ -1829,7 +1836,7 @@ export const getFrontendSlidesInteractionGateCompletionError = (input: {
   if (missingGate) {
     return `Contract violation: frontend-slides completed before required Interaction gate "${missingGate}" was completed with request_clarification.`;
   }
-  const params = { prompt: input.prompt || '' } as StartRunParams;
+  const params = input.params || ({ prompt: input.prompt || '' } as StartRunParams);
   if (
     input.status === 'completed' &&
     isFrontendSlidesRun(input.skillId, params) &&
@@ -2876,6 +2883,7 @@ const frontendSlidesArtifactCompletionError = (
   input: {
     skillId?: string | null;
     prompt?: string;
+    params?: StartRunParams;
     status: AgentRunStatus;
     gateState?: InteractionGateState;
   },
@@ -2885,7 +2893,7 @@ const frontendSlidesArtifactCompletionError = (
   if (missingGate) {
     return `Contract violation: frontend-slides completed before required Interaction gate "${missingGate}" was completed with request_clarification.`;
   }
-  const params = { prompt: input.prompt || '' } as StartRunParams;
+  const params = input.params || ({ prompt: input.prompt || '' } as StartRunParams);
   if (
     input.status === 'completed' &&
     isFrontendSlidesRun(input.skillId, params) &&
@@ -3245,6 +3253,7 @@ async function runAgentRunWorker(
     persona: params.persona,
     conversationId: params.conversationId,
     skillId: skillId || undefined,
+    frontendSlidesEditExisting: isFrontendSlidesEditExistingRun(params),
   };
 
   let langfuseStreamMeta: Record<string, unknown> = {};
@@ -3563,6 +3572,7 @@ async function runAgentRunWorker(
     const missingGate = getFrontendSlidesMissingRequiredGate({
       skillId,
       prompt: params.prompt,
+      params,
       status: effectiveStatus,
       gateState: interactionGateState,
     });
@@ -3617,6 +3627,7 @@ async function runAgentRunWorker(
     const frontendSlidesCompletionError = frontendSlidesArtifactCompletionError({
       skillId,
       prompt: params.prompt,
+      params,
       status: effectiveStatus,
       gateState: interactionGateState,
     }, latestFrontendSlidesArtifactPaths);
@@ -4041,6 +4052,7 @@ async function runAgentRunWorker(
       ? getFrontendSlidesMissingRequiredGate({
           skillId,
           prompt: params.prompt,
+          params,
           status: 'completed',
           gateState: interactionGateState,
         })
@@ -4052,6 +4064,7 @@ async function runAgentRunWorker(
       ? frontendSlidesArtifactCompletionError({
           skillId,
           prompt: params.prompt,
+          params,
           status: 'completed',
           gateState: interactionGateState,
         }, latestFrontendSlidesArtifactPaths)
@@ -4525,6 +4538,7 @@ const reconcileActiveRunMetaFromStream = async (
     ? getFrontendSlidesMissingRequiredGate({
         skillId: null,
         prompt: context.params.prompt,
+        params: context.params,
         status: 'completed',
         gateState: interactionGateState,
       })

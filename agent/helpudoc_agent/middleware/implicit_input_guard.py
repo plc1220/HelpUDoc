@@ -88,6 +88,8 @@ def _completed_interaction_gate_ids(context: Any) -> set[str]:
 def _is_edit_existing_frontend_slides_context(context: Any) -> bool:
     if not isinstance(context, dict):
         return False
+    if context.get("frontend_slides_edit_existing") is True:
+        return True
     raw = " ".join(
         str(context.get(key) or "")
         for key in ("prompt", "user_prompt", "original_prompt", "message")

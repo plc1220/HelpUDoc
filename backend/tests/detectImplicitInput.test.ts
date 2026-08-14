@@ -617,6 +617,23 @@ test('gate completion allows edit-existing-deck frontend-slides completion', () 
   assert.equal(err, null);
 });
 
+test('gate completion reuses prior deck context for a pronoun-only edit request', () => {
+  const err = getFrontendSlidesInteractionGateCompletionError({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    params: {
+      workspaceId: 'workspace-1',
+      persona: 'fast',
+      prompt: 'Please adjust it and improve the title slide',
+      history: [
+        { role: 'assistant', content: 'Created the deck at output/quarterly-review-deck.html.' },
+      ],
+    },
+    gateState: { completedGateIds: [] },
+  });
+  assert.equal(err, null);
+});
+
 test('implicit input detection ignores SQL SELECT followed by summary bullets', () => {
   const result = detectImplicitInputAwaiting({
     status: 'completed',

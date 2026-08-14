@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { resolveStylePreviewSource } from '../src/utils/stylePreview.ts';
 
-test('embedded preview HTML wins over a workspace URL', () => {
+test('generated workspace preview wins over embedded fallback HTML', () => {
   let resolvedPath = '';
   const source = resolveStylePreviewSource(
     {
@@ -16,8 +16,8 @@ test('embedded preview HTML wins over a workspace URL', () => {
     },
   );
 
-  assert.deepEqual(source, { html: '<!doctype html><title>Fallback preview</title>' });
-  assert.equal(resolvedPath, '');
+  assert.deepEqual(source, { url: 'https://example.test/.frontend-slides/slide-previews/style-a.html' });
+  assert.equal(resolvedPath, '.frontend-slides/slide-previews/style-a.html');
 });
 
 test('workspace URL is used when embedded HTML is unavailable', () => {

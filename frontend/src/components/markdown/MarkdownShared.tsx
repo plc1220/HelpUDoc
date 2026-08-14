@@ -3,6 +3,10 @@ import { Children, Suspense, isValidElement, lazy, useEffect, useRef, useState, 
 import type { Components } from 'react-markdown';
 import { getWorkspaceFilePreview } from '../../services/fileApi';
 import { parsePlotlySpec } from '../../utils/plotlySpec';
+import {
+  isExternalAssetSource,
+  resolveWorkspaceAssetPath,
+} from '../../utils/workspaceAssets';
 
 const PlotlyChart = lazy(() => import('../PlotlyChart'));
 
@@ -25,6 +29,7 @@ type WorkspaceImagePreview = {
 
 type MarkdownComponentOptions = {
   workspaceId?: string;
+  sourcePath?: string;
   colorMode: MermaidColorMode;
   codeBlockClassName?: string;
   inlineCodeClassName?: string;
@@ -104,13 +109,7 @@ const buildMermaidTheme = (mode: MermaidColorMode) => (
       }
 );
 
-export const normalizeWorkspaceRelativePath = (rawPath: string) => (
-  String(rawPath || '')
-    .trim()
-    .replace(/\\/g, '/')
-    .replace(/^\.\/+/, '')
-    .replace(/^\/+/, '')
-);
+export { normalizeWorkspaceRelativePath, resolveWorkspaceAssetPath } from '../../utils/workspaceAssets';
 
 export const getMermaidColorMode = (): MermaidColorMode => {
   if (typeof document === 'undefined') {
@@ -228,9 +227,7 @@ export const classifyCodeBlockLabel = (languageMatch: RegExpExecArray | null, co
   return 'CODE';
 };
 
-const isExternalSource = (src: string) => /^(https?:|data:|blob:)/i.test(src);
-const isRootRelativeSource = (src: string) => src.startsWith('/');
-const isDirectRenderableSource = (src: string) => isExternalSource(src) || isRootRelativeSource(src);
+const isDirectRenderableSource = (src: string) => isExternalAssetSource(src);
 
 const MermaidFallback = ({
   chart,
@@ -319,12 +316,14 @@ export const WorkspaceMarkdownImage = ({
   src,
   alt,
   workspaceId,
+  sourcePath,
   className,
   colorMode,
 }: {
   src?: string;
   alt?: string;
   workspaceId?: string;
+  sourcePath?: string;
   className?: string;
   colorMode: MermaidColorMode;
 }) => {
@@ -346,7 +345,10 @@ export const WorkspaceMarkdownImage = ({
     const loadPreview = async () => {
       try {
         setLoadError(null);
-        const data = await getWorkspaceFilePreview(workspaceId, normalizeWorkspaceRelativePath(resolvedSrc));
+        const data = await getWorkspaceFilePreview(
+          workspaceId,
+          resolveWorkspaceAssetPath(resolvedSrc, sourcePath),
+        );
         if (!cancelled) {
           setPreview(data as WorkspaceImagePreview);
         }
@@ -363,7 +365,7 @@ export const WorkspaceMarkdownImage = ({
     return () => {
       cancelled = true;
     };
-  }, [resolvedSrc, workspaceId]);
+  }, [resolvedSrc, sourcePath, workspaceId]);
 
   if (!resolvedSrc) {
     return null;
@@ -415,6 +417,7 @@ export const WorkspaceMarkdownImage = ({
 
 export const createMarkdownComponents = ({
   workspaceId,
+  sourcePath,
   colorMode,
   codeBlockClassName,
   inlineCodeClassName,
@@ -482,6 +485,7 @@ export const createMarkdownComponents = ({
         src={src}
         alt={alt}
         workspaceId={workspaceId}
+        sourcePath={sourcePath}
         className={resolvedImageClassName}
         colorMode={colorMode}
       />

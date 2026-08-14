@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { getWorkspaceFilePreview } from '../services/fileApi';
-import { previewPayloadToHtml } from '../utils/workspaceHtmlPreview';
+import { hydrateWorkspaceHtmlAssets, previewPayloadToHtml } from '../utils/workspaceHtmlPreview';
 
 export default function WorkspaceHtmlPreviewFrame({
   workspaceId,
@@ -23,30 +23,39 @@ export default function WorkspaceHtmlPreviewFrame({
 }) {
   const embeddedHtml = String(html || '').trim();
   const sourcePath = String(path || '').trim();
-  const [resolvedHtml, setResolvedHtml] = useState(embeddedHtml);
+  const [resolvedHtml, setResolvedHtml] = useState(sourcePath ? '' : embeddedHtml);
   const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     setError('');
-    if (embeddedHtml) {
-      setResolvedHtml(embeddedHtml);
+    setResolvedHtml('');
+    if (!workspaceId) {
+      if (embeddedHtml) setResolvedHtml(embeddedHtml);
+      else setError('Preview is unavailable.');
       return () => {
         cancelled = true;
       };
     }
-    setResolvedHtml('');
-    if (!workspaceId || !sourcePath) {
+    if (!sourcePath && !embeddedHtml) {
       setError('Preview is unavailable.');
       return () => {
         cancelled = true;
       };
     }
 
-    void getWorkspaceFilePreview(workspaceId, sourcePath)
+    const loadHtml = sourcePath
+      ? getWorkspaceFilePreview(workspaceId, sourcePath).then(previewPayloadToHtml)
+      : Promise.resolve(embeddedHtml);
+    void loadHtml
+      .then((rawHtml) => hydrateWorkspaceHtmlAssets(
+        rawHtml,
+        sourcePath,
+        (assetPath) => getWorkspaceFilePreview(workspaceId, assetPath),
+      ))
       .then((payload) => {
         if (cancelled) return;
-        const nextHtml = previewPayloadToHtml(payload);
+        const nextHtml = payload;
         if (!nextHtml.trim()) {
           setError('Preview content is empty.');
           return;
@@ -55,6 +64,16 @@ export default function WorkspaceHtmlPreviewFrame({
       })
       .catch((caught) => {
         if (cancelled) return;
+        if (embeddedHtml) {
+          void hydrateWorkspaceHtmlAssets(
+            embeddedHtml,
+            sourcePath,
+            (assetPath) => getWorkspaceFilePreview(workspaceId, assetPath),
+          ).then((fallbackHtml) => {
+            if (!cancelled) setResolvedHtml(fallbackHtml);
+          });
+          return;
+        }
         setError(caught instanceof Error ? caught.message : 'Preview could not be loaded.');
       });
 

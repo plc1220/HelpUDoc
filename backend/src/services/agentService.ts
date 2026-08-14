@@ -37,6 +37,7 @@ export type AgentTraceContext = {
   persona?: string;
   conversationId?: string;
   skillId?: string | null;
+  frontendSlidesEditExisting?: boolean;
   interactionGateState?: {
     completedGateIds?: string[];
   };

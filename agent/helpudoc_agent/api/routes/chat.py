@@ -474,6 +474,8 @@ def register_chat_routes(
     def _merge_trace_gate_context(context: Dict[str, Any], trace_context: Dict[str, Any] | None) -> Dict[str, Any]:
         merged = dict(context or {})
         trace = trace_context if isinstance(trace_context, dict) else {}
+        if trace.get("frontendSlidesEditExisting") is True:
+            merged["frontend_slides_edit_existing"] = True
         gate_state = trace.get("interactionGateState")
         completed_gates = gate_state.get("completedGateIds") if isinstance(gate_state, dict) else None
         if isinstance(completed_gates, list):

@@ -513,6 +513,23 @@ def test_guard_emits_deterministic_gate_interrupt_without_regex_signal() -> None
     assert "frontend_slides_completed_interaction_gates" not in runtime.context
 
 
+def test_guard_reuses_context_when_editing_an_existing_html_deck() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(content="I updated the requested title slide in output/review-deck.html.")
+        ]
+    }
+    runtime = Runtime(
+        context={
+            "active_skill": "frontend-slides",
+            "frontend_slides_edit_existing": True,
+        }
+    )
+
+    assert middleware.after_model(state, runtime) is None
+
+
 def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {

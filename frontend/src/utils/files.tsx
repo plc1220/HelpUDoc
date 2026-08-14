@@ -141,6 +141,12 @@ export const isSystemFile = (file: WorkspaceFile): boolean => {
   if (isExtractedAssetFilePath(name)) {
     return false;
   }
+  // These are user-facing presentation artifacts. The skill uses a dot-prefixed
+  // package directory for grouping, but the previews must remain visible in the
+  // workspace so users can inspect the generated Style A/B/C files.
+  if (name === '.frontend-slides' || name.startsWith('.frontend-slides/')) {
+    return false;
+  }
   const lowerName = name.toLowerCase();
   const parts = lowerName.split('/');
   const baseName = parts[parts.length - 1] || '';

@@ -49,6 +49,7 @@ import {
   isSpreadsheetDocument,
   officeOnlineEmbedUrl,
 } from '../utils/officeFiles';
+import WorkspaceHtmlPreviewFrame from './WorkspaceHtmlPreviewFrame';
 
 const PlotlyChart = lazy(() => import('./PlotlyChart'));
 
@@ -998,10 +999,11 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const markdownComponents = useMemo(
     () => createMarkdownComponents({
       workspaceId,
+      sourcePath: file?.name,
       colorMode,
       paragraphClassName: 'mb-4 last:mb-0',
     }),
-    [workspaceId, colorMode]
+    [workspaceId, file?.name, colorMode]
   );
 
   const downloadBinaryFile = (
@@ -1158,14 +1160,14 @@ const FileRenderer: React.FC<FileRendererProps> = ({
     }
     if (isHtmlFile) {
       return (
-        <iframe
-          srcDoc={fileContent}
+        <WorkspaceHtmlPreviewFrame
+          workspaceId={workspaceId}
+          path={file.name}
+          html={fileContent}
           title={file.name}
           className="w-full h-full border-none"
-          style={{ height: '100%' }}
           sandbox="allow-same-origin allow-scripts"
-          referrerPolicy="no-referrer"
-          loading="lazy"
+          placeholderClassName="flex h-full w-full items-center justify-center bg-slate-950"
         />
       );
     }
