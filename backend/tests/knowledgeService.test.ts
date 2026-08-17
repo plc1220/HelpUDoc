@@ -130,7 +130,7 @@ test('direct knowledge uploads reserve object storage without buffering file byt
 
   assert.equal(session.status, 'pending');
   assert.equal(session.sizeBytes, 135_098_025);
-  assert.equal(session.headers['Content-Type'], 'application/pdf');
+  assert.equal(session.headers['content-type'], 'application/pdf');
   assert.match(session.uploadUrl, /^https:\/\/uploads\.example\.test\//);
   assert.equal(inserted.length, 1);
   assert.equal(inserted[0].sizeBytes, 135_098_025);
