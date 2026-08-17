@@ -139,6 +139,9 @@ export class KnowledgeIngestionService {
   async transition(runId: string, patch: Record<string, unknown>): Promise<void> {
     const status = patch.status as KnowledgeJobStatus | undefined;
     const updates: Record<string, unknown> = { ...patch, updatedAt: this.db.fn.now() };
+    // `warnings` is the jsonb column on knowledge_ingestion_jobs; pg would coerce a
+    // raw JS array into a Postgres array literal (invalid json), so serialize it.
+    if (Array.isArray(updates.warnings)) updates.warnings = JSON.stringify(updates.warnings);
     if (status === 'extracting') updates.startedAt = this.db.fn.now();
     if (status && TERMINAL_STATUSES.has(status)) updates.finishedAt = this.db.fn.now();
     await this.db('knowledge_ingestion_jobs').where({ id: runId }).update(updates);

@@ -1,5 +1,6 @@
 import { Knex } from 'knex';
 import { DatabaseService } from './databaseService';
+import { jsonbParam } from '../lib/jsonb';
 import { runInternalAnalysis } from './agentService';
 import { signAgentContextToken } from './agentToken';
 import type {
@@ -49,8 +50,6 @@ const REFLECTION_ANALYSIS_SYSTEM_PROMPT = [
   'recommendations must be an array of up to 4 items with id, title, detail, priority.',
   'Focus on operational diagnosis and concrete improvement suggestions.',
 ].join('\n');
-
-const jsonbParam = (db: Knex, value: unknown) => db.raw('?::jsonb', [JSON.stringify(value)]);
 
 function resolveAnalyticsTimezone(): string {
   const timezone = String(process.env.ANALYTICS_TIMEZONE || 'UTC').trim();
