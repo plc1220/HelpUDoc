@@ -27,6 +27,7 @@ class GeminiClientManager:
         self._attachment_chat_model: ChatGoogleGenerativeAI | None = None
         self._lite_chat_model: ChatGoogleGenerativeAI | None = None
         self._ingestion_chat_model: ChatGoogleGenerativeAI | None = None
+        self._reduce_chat_model: ChatGoogleGenerativeAI | None = None
         self._api_key = (
             model_cfg.api_key
             or os.getenv("GOOGLE_CLOUD_API_KEY")
@@ -143,6 +144,30 @@ class GeminiClientManager:
                 timeout=float(DEFAULT_HTTP_TIMEOUT),
             )
         return self._ingestion_chat_model
+
+    def get_reduce_chat_model(self) -> ChatGoogleGenerativeAI:
+        """Model for hierarchical reduce merges, with a large structured-output budget.
+
+        Reduce merges many child graphs into one structured object, so its output can be
+        far larger than a single map window. Lite's ~8k output cap truncates the tool call
+        for large documents (yields no parseable result -> 422). Use the main model and a
+        high output cap so the deduplicated union fits in one response.
+        """
+        self._require_configured_client()
+        if self._reduce_chat_model is None:
+            from ...gemini_chat import create_chat_google_generative_ai
+
+            model_name = self._model_cfg.resolve_chat_model_name("pro")
+            configured = self._model_cfg.resolve_max_output_tokens("pro") or 32768
+            output_tokens = max(configured, int(os.environ.get("KNOWLEDGE_REDUCE_MAX_OUTPUT_TOKENS", "32768")))
+            self._reduce_chat_model = create_chat_google_generative_ai(
+                self._model_cfg,
+                model_name,
+                thinking_level=self._model_cfg.resolve_thinking_level(None),
+                max_output_tokens=output_tokens,
+                timeout=float(DEFAULT_HTTP_TIMEOUT),
+            )
+        return self._reduce_chat_model
 
     @property
     def lite_model_name(self) -> str:
