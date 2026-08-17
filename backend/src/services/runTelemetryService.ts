@@ -1,5 +1,6 @@
 import { Knex } from 'knex';
 import { DatabaseService } from './databaseService';
+import { jsonbParam } from '../lib/jsonb';
 
 export type AgentRunTelemetryStatus =
   | 'queued'
@@ -113,11 +114,6 @@ const normalizeOutputFiles = (value: unknown): Array<Record<string, unknown>> | 
   return files.length ? files : null;
 };
 
-const jsonbParam = (db: Knex, value: unknown) => (
-  value === null || typeof value === 'undefined'
-    ? null
-    : db.raw('?::jsonb', [JSON.stringify(value)])
-);
 
 export const normalizeToolEventJson = (input: Pick<AgentRunToolEventInput, 'outputFiles' | 'payload'>) => ({
   outputFiles: normalizeOutputFiles(input.outputFiles),

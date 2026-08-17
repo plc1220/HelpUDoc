@@ -158,7 +158,7 @@ def register_document_routes(
             ]
             usage: list[dict[str, object]] = []
             reduced = await hierarchical_reduce_enrichments(
-                gemini_manager.get_ingestion_chat_model(),
+                gemini_manager.get_reduce_chat_model(),
                 results=results,
                 blocks=blocks,
                 fan_in=req.fanIn,

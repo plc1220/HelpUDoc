@@ -1401,15 +1401,20 @@ export class KnowledgeService {
     void this.cleanupExpiredUploadSessions().catch((error) => {
       console.error('Failed to clean up expired knowledge uploads', error);
     });
+    // The object store's signed upload already carries a lowercase `content-type`
+    // header. Guarantee exactly one, in the canonical lowercase form, so the session
+    // is self-sufficient even if a store omits it — without reintroducing the
+    // duplicate-casing header that broke finalize.
+    const uploadHeaders: Record<string, string> = { ...directUpload.uploadHeaders };
+    if (!Object.keys(uploadHeaders).some((key) => key.toLowerCase() === 'content-type')) {
+      uploadHeaders['content-type'] = mimeType;
+    }
     return {
       id,
       status: 'pending',
       uploadUrl: directUpload.uploadUrl,
       expiresAt: expiresAt.toISOString(),
-      headers: {
-        'Content-Type': mimeType,
-        ...directUpload.uploadHeaders,
-      },
+      headers: uploadHeaders,
       fileName: directUpload.requestedFileName,
       sizeBytes: input.sizeBytes,
     };
@@ -1737,7 +1742,7 @@ export class KnowledgeService {
         content: payload.content,
         fileId: payload.fileId ?? null,
         sourceUrl: payload.sourceUrl,
-        tags: payload.tags ?? null,
+        tags: payload.tags != null ? JSON.stringify(payload.tags) : null,
         metadata: initialMetadata,
         createdBy: userId,
         updatedBy: userId,
@@ -2703,7 +2708,13 @@ export class KnowledgeService {
         okfVersion: OKF_VERSION,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      // Agent (FastAPI) failures surface as axios errors whose useful reason lives in
+      // response.data.detail; error.message alone is just "Request failed with status code NNN".
+      const baseMessage = error instanceof Error ? error.message : String(error);
+      const agentDetail = (error as any)?.response?.data?.detail;
+      const message = agentDetail
+        ? `${baseMessage}: ${typeof agentDetail === 'string' ? agentDetail : JSON.stringify(agentDetail)}`
+        : baseMessage;
       const failedSource = await this.db('knowledge_sources').select('metadata').where({ id, workspaceId }).first();
       const failedRunId = this.getIngestionMetadata(failedSource?.metadata)?.runId;
       if (failedRunId) {
@@ -3107,8 +3118,8 @@ export class KnowledgeService {
           externalId: String(node.id || `structure:${index}`),
           title: String(node.title || `Section ${index + 1}`),
           level: Number(node.level ?? 0),
-          blockIds: node.blockIds || [],
-          signals: node.signals || [],
+          blockIds: JSON.stringify(node.blockIds || []),
+          signals: JSON.stringify(node.signals || []),
           confidence: Number(node.confidence ?? 0),
           sourceRange: { start: node.sourceStart ?? null, end: node.sourceEnd ?? null },
         })), 250);
@@ -3120,9 +3131,9 @@ export class KnowledgeService {
           runId: input.runId,
           externalId: String(window.id || `window-${index + 1}`),
           structureNodeId: String(window.structureNodeId || 'structure:root'),
-          coreBlockIds: window.coreBlockIds || [],
-          contextBeforeBlockIds: window.contextBeforeBlockIds || [],
-          contextAfterBlockIds: window.contextAfterBlockIds || [],
+          coreBlockIds: JSON.stringify(window.coreBlockIds || []),
+          contextBeforeBlockIds: JSON.stringify(window.contextBeforeBlockIds || []),
+          contextAfterBlockIds: JSON.stringify(window.contextAfterBlockIds || []),
           tokenCount: Number(window.tokenCount ?? 0),
           contentHash: String(window.contentHash || ''),
           strategy: String(window.strategy || 'structural'),
@@ -3153,8 +3164,8 @@ export class KnowledgeService {
               kind: concept.kind,
               name: concept.name,
               description: concept.description,
-              aliases: concept.aliases,
-              tags: concept.tags,
+              aliases: JSON.stringify(concept.aliases),
+              tags: JSON.stringify(concept.tags),
               path: concept.path,
               confidence: concept.assertions.length
                 ? Math.min(...concept.assertions.map((assertion) => assertion.confidence))
@@ -3166,8 +3177,8 @@ export class KnowledgeService {
               kind: 'Knowledge Section',
               name: concept.title,
               description: concept.description,
-              aliases: [],
-              tags: [],
+              aliases: JSON.stringify([]),
+              tags: JSON.stringify([]),
               path: concept.path,
               confidence: 1,
             }));
@@ -3188,7 +3199,7 @@ export class KnowledgeService {
               id: evidenceId,
               snapshotId,
               sourceFileId: job.sourceFileId || null,
-              blockIds: normalized,
+              blockIds: JSON.stringify(normalized),
               locator: { kind: 'source_blocks', blockIds: normalized },
               contentHash: `sha256:${sha256(key)}`,
             });
@@ -3201,7 +3212,7 @@ export class KnowledgeService {
               conceptId: concept.id,
               text: assertion.text,
               confidence: assertion.confidence,
-              evidenceSpanIds: evidenceIds.get(key) ? [evidenceIds.get(key)] : [],
+              evidenceSpanIds: JSON.stringify(evidenceIds.get(key) ? [evidenceIds.get(key)] : []),
               contentHash: `sha256:${sha256(`${concept.id}\n${assertion.text}`)}`,
             };
           }));
@@ -3216,7 +3227,7 @@ export class KnowledgeService {
               type: relationship.type,
               confidenceClass: relationship.confidenceClass,
               confidence: relationship.confidence,
-              evidenceSpanIds: evidenceIds.get(key) ? [evidenceIds.get(key)] : [],
+              evidenceSpanIds: JSON.stringify(evidenceIds.get(key) ? [evidenceIds.get(key)] : []),
             };
           }));
           if (relationships.length) await trx.batchInsert('knowledge_relationships', relationships, 250);
@@ -3256,7 +3267,7 @@ export class KnowledgeService {
                   algorithm: String(input.graphAnalysis?.algorithm || 'networkx-louvain'),
                   algorithmVersion: String(input.graphAnalysis?.algorithmVersion || 'networkx/unknown'),
                   label: String(community.label || `Community ${index + 1}`),
-                  conceptIds: community.conceptIds || [],
+                  conceptIds: JSON.stringify(community.conceptIds || []),
                   metadata: { size: Number(community.size || community.conceptIds?.length || 0) },
                 }))
               : communities.map((conceptIds, index) => ({
@@ -3265,7 +3276,7 @@ export class KnowledgeService {
               algorithm: 'weakly_connected_components',
               algorithmVersion: 'helpudoc-graph/1',
               label: `Community ${index + 1}`,
-              conceptIds,
+              conceptIds: JSON.stringify(conceptIds),
               metadata: { size: conceptIds.length },
               }));
             await trx.batchInsert('knowledge_communities', rows, 250);
@@ -3323,7 +3334,7 @@ export class KnowledgeService {
           modality: 'text',
           indexVersion: 'knowledge-vector/1',
           contentHash: `sha256:${sha256(stableJson(embedding.values))}`,
-          embedding: usesPgvector ? trx.raw('?::vector', [vectorValue]) : embedding.values,
+          embedding: usesPgvector ? trx.raw('?::vector', [vectorValue]) : JSON.stringify(embedding.values),
         });
       }
       const totalTokens = response.embeddings.reduce((sum, embedding) => sum + Number(embedding.tokenCount || 0), 0);
@@ -3378,7 +3389,7 @@ export class KnowledgeService {
             contentHash: embedding.contentHash || `sha256:${sha256(stableJson(embedding.values))}`,
             embedding: usesPgvector
               ? trx.raw('?::vector', [`[${embedding.values.join(',')}]`])
-              : embedding.values,
+              : JSON.stringify(embedding.values),
           });
         }
         const totalTokens = mediaResponse.embeddings.reduce((sum, embedding) => sum + Number(embedding.tokenCount || 0), 0);
