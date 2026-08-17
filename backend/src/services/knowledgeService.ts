@@ -1401,14 +1401,20 @@ export class KnowledgeService {
     void this.cleanupExpiredUploadSessions().catch((error) => {
       console.error('Failed to clean up expired knowledge uploads', error);
     });
+    // The object store's signed upload already carries a lowercase `content-type`
+    // header. Guarantee exactly one, in the canonical lowercase form, so the session
+    // is self-sufficient even if a store omits it — without reintroducing the
+    // duplicate-casing header that broke finalize.
+    const uploadHeaders: Record<string, string> = { ...directUpload.uploadHeaders };
+    if (!Object.keys(uploadHeaders).some((key) => key.toLowerCase() === 'content-type')) {
+      uploadHeaders['content-type'] = mimeType;
+    }
     return {
       id,
       status: 'pending',
       uploadUrl: directUpload.uploadUrl,
       expiresAt: expiresAt.toISOString(),
-      headers: {
-        ...directUpload.uploadHeaders,
-      },
+      headers: uploadHeaders,
       fileName: directUpload.requestedFileName,
       sizeBytes: input.sizeBytes,
     };
