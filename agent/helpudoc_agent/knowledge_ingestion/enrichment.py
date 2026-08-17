@@ -378,6 +378,41 @@ async def reduce_enrichment_batch(
         if attempt < max_attempts:
             feedback = "\nValidation failed. Repair only these issues:\n- " + "\n- ".join(errors[:30])
             continue
+        # Final attempt failed. When the structured output never came back (parsed is None),
+        # the merged object most likely exceeded the model output budget and was truncated.
+        # Splitting the batch lets each reduce emit a smaller object; merging duplicates
+        # bottom-up shrinks the union so the parent call can fit within budget.
+        if parsed is None and len(children) > 2:
+            mid = len(children) // 2
+            left, right = await asyncio.gather(
+                reduce_enrichment_batch(
+                    model,
+                    children=children[:mid],
+                    blocks=blocks,
+                    level=level,
+                    batch_index=batch_index * 10 + 1,
+                    max_attempts=max_attempts,
+                    usage_records=usage_records,
+                ),
+                reduce_enrichment_batch(
+                    model,
+                    children=children[mid:],
+                    blocks=blocks,
+                    level=level,
+                    batch_index=batch_index * 10 + 2,
+                    max_attempts=max_attempts,
+                    usage_records=usage_records,
+                ),
+            )
+            return await reduce_enrichment_batch(
+                model,
+                children=[left, right],
+                blocks=blocks,
+                level=level,
+                batch_index=batch_index,
+                max_attempts=max_attempts,
+                usage_records=usage_records,
+            )
         raise ValueError("Invalid Knowledge reduction result: " + "; ".join(errors[:30]))
     raise RuntimeError("Knowledge reduction exhausted attempts")
 
