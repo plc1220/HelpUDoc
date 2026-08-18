@@ -9,6 +9,7 @@ import scheduleRoutes from './schedules';
 import settingsRoutes from './settings';
 import knowledgeRoutes from './knowledge';
 import knowledgeCatalogRoutes from './knowledgeCatalog';
+import knowledgeBaseRoutes from './knowledgeBases';
 import usersRoutes from './users';
 import settingsReflectionRoutes from './settingsReflections';
 import governanceRoutes from './governance';
@@ -23,6 +24,7 @@ import { FileService } from '../services/fileService';
 import { ConversationService } from '../services/conversationService';
 import { UserService } from '../services/userService';
 import { KnowledgeService } from '../services/knowledgeService';
+import { KnowledgeBaseService } from '../services/knowledgeBaseService';
 import { DailyReflectionService } from '../services/dailyReflectionService';
 import { UserMemoryService } from '../services/userMemoryService';
 import { UserOAuthTokenService } from '../services/userOAuthTokenService';
@@ -49,6 +51,7 @@ export default function(
   const conversationService = new ConversationService(dbService, workspaceService);
   configureAgentRunServices({ conversationService, fileService });
   const knowledgeService = new KnowledgeService(dbService, workspaceService, fileService);
+  const knowledgeBaseService = new KnowledgeBaseService(dbService, knowledgeService);
   const userOAuthTokenService = new UserOAuthTokenService(dbService);
   const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);
   const workspaceTeamChatAgentService = new WorkspaceTeamChatAgentService(
@@ -80,6 +83,8 @@ export default function(
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
   router.use('/knowledge-catalog', knowledgeCatalogRoutes(knowledgeService));
+  // Not admin-gated: team leads manage their own bases; access is enforced in the service.
+  router.use('/knowledge-bases', knowledgeBaseRoutes(knowledgeBaseService));
   router.use('/workspaces', workspaceRoutes(workspaceService, workspacePublicationService, userService));
   router.use(
     '/workspaces/:workspaceId/collaboration',
