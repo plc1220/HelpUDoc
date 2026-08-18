@@ -47,7 +47,7 @@ type CommandTag = {
 
 export type ChatMentionSuggestion = {
   id: string;
-  kind: 'file' | 'knowledge';
+  kind: 'file' | 'knowledge' | 'knowledgeBase';
   name: string;
   mention: string;
   detail?: string;
@@ -297,7 +297,7 @@ export default function ChatInputArea({
                 density="compact"
                 label={suggestion.name}
                 description={suggestion.detail}
-                startContent={<Icon icon={suggestion.kind === 'knowledge' ? BookOpen : FileIcon} size="sm" />}
+                startContent={<Icon icon={suggestion.kind === 'file' ? FileIcon : BookOpen} size="sm" />}
                 isHighlighted={index === mentionSelectedIndex}
                 onClick={() => onSelectMention(suggestion)}
               />

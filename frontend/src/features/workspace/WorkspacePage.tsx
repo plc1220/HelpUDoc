@@ -86,6 +86,7 @@ import {
   truncateConversationMessages,
 } from '../../services/conversationApi';
 import { listAccessibleKnowledge } from '../../services/knowledgeApi';
+import { fetchKnowledgeBaseCatalog, type KnowledgeBaseSummary } from '../../services/knowledgeBaseApi';
 import type {
   Workspace,
   File as WorkspaceFile,
@@ -907,6 +908,7 @@ export default function WorkspacePage() {
   const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [workspaceKnowledge, setWorkspaceKnowledge] = useState<WorkspaceKnowledgeSource[]>([]);
+  const [knowledgeBaseCatalog, setKnowledgeBaseCatalog] = useState<KnowledgeBaseSummary[]>([]);
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
@@ -1439,8 +1441,22 @@ export default function WorkspacePage() {
         mention: `@knowledge:${item.id}`,
         detail: 'knowledge',
       }));
-    return [...knowledgeSuggestions, ...fileSuggestions].slice(0, 8);
-  }, [visibleFiles, workspaceKnowledge, isMentionOpen, mentionQuery]);
+    // Knowledge bases are tagged by their human-readable name (not id) so the
+    // mention reads naturally, e.g. "@Sales Enablement".
+    const knowledgeBaseSuggestions = knowledgeOnly
+      ? []
+      : knowledgeBaseCatalog
+          .filter((kb) => kb.status === 'published')
+          .filter((kb) => !searchTerm || kb.name.toLowerCase().includes(searchTerm))
+          .map((kb) => ({
+            id: `kb:${kb.id}`,
+            kind: 'knowledgeBase' as const,
+            name: kb.name,
+            mention: `@${kb.name}`,
+            detail: 'knowledge base',
+          }));
+    return [...knowledgeBaseSuggestions, ...knowledgeSuggestions, ...fileSuggestions].slice(0, 8);
+  }, [visibleFiles, workspaceKnowledge, knowledgeBaseCatalog, isMentionOpen, mentionQuery]);
 
   const availableSkillMap = useMemo(() => {
     const map = new Map<string, SkillDefinition>();
@@ -2167,7 +2183,7 @@ export default function WorkspacePage() {
     const requestId = workspaceFilesRequestIdRef.current + 1;
     workspaceFilesRequestIdRef.current = requestId;
     try {
-      const [files, folders, knowledge] = await Promise.all([
+      const [files, folders, knowledge, knowledgeBases] = await Promise.all([
         getFiles(workspaceId),
         getFolders(workspaceId),
         options.includePrivateData === false
@@ -2175,6 +2191,12 @@ export default function WorkspacePage() {
           : listAccessibleKnowledge().catch((error) => {
               console.error('Failed to load knowledge for workspace', error);
               return [];
+            }),
+        options.includePrivateData === false
+          ? Promise.resolve([] as KnowledgeBaseSummary[])
+          : fetchKnowledgeBaseCatalog().catch((error) => {
+              console.error('Failed to load knowledge bases for workspace', error);
+              return [] as KnowledgeBaseSummary[];
             }),
       ]);
       if (
@@ -2186,6 +2208,7 @@ export default function WorkspacePage() {
       setFolderPaths(folders);
       setFiles(files);
       setWorkspaceKnowledge(Array.isArray(knowledge) ? knowledge : []);
+      setKnowledgeBaseCatalog(Array.isArray(knowledgeBases) ? knowledgeBases : []);
     } catch (error) {
       if (
         workspaceFilesRequestIdRef.current !== requestId
@@ -2690,12 +2713,40 @@ export default function WorkspacePage() {
     [workspaceKnowledge],
   );
 
+  const findMentionedKnowledgeBases = useCallback(
+    (value: string): Array<{ id: string; name: string }> => {
+      if (!value) {
+        return [];
+      }
+      // Longest names first so a base whose name is a prefix of another does not
+      // shadow the more specific mention.
+      return [...knowledgeBaseCatalog]
+        .sort((left, right) => right.name.length - left.name.length)
+        .flatMap((kb) => {
+          if (kb.status !== 'published') {
+            return [];
+          }
+          const mentionPattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'i');
+          return mentionPattern.test(value) ? [{ id: kb.id, name: kb.name }] : [];
+        });
+    },
+    [knowledgeBaseCatalog],
+  );
+
   const stripMentionedFilesFromPrompt = useCallback(
     (value: string): string => {
       if (!value) {
         return '';
       }
       let nextValue = normalizeFilePath(value);
+      // Strip knowledge-base name mentions first (they can contain spaces that
+      // would otherwise be misread as separate file mentions), longest-first.
+      [...knowledgeBaseCatalog]
+        .sort((left, right) => right.name.length - left.name.length)
+        .forEach((kb) => {
+          const mentionPattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'gi');
+          nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
+        });
       const filesByLongestNameFirst = [...visibleFiles].sort((left, right) => right.name.length - left.name.length);
       filesByLongestNameFirst.forEach((file) => {
         const escapedName = escapeRegExp(normalizeFilePath(file.name));
@@ -2708,7 +2759,7 @@ export default function WorkspacePage() {
       });
       return nextValue.replace(/\s{2,}/g, ' ').trim();
     },
-    [visibleFiles, workspaceKnowledge],
+    [visibleFiles, workspaceKnowledge, knowledgeBaseCatalog],
   );
 
   const deriveWorkspaceNameFromPrompt = useCallback((rawMessage = chatMessage): string | undefined => {
@@ -5287,6 +5338,7 @@ export default function WorkspacePage() {
     taggedFiles?: string[];
     taggedFileRefs?: TaggedFileRef[];
     knowledgeRefs?: Array<{ id: number }>;
+    knowledgeBaseIds?: string[];
     internetSearchEnabled?: boolean;
   }) => {
     const {
@@ -5300,6 +5352,7 @@ export default function WorkspacePage() {
       taggedFiles,
       taggedFileRefs,
       knowledgeRefs,
+      knowledgeBaseIds,
       internetSearchEnabled,
     } = params;
     if (!isUsableWorkspaceId(workspaceId)) {
@@ -5317,6 +5370,7 @@ export default function WorkspacePage() {
         taggedFiles,
         taggedFileRefs,
         knowledgeRefs,
+        knowledgeBaseIds,
         currentTurnFileIds,
         internetSearchEnabled,
       },
@@ -6424,6 +6478,7 @@ export default function WorkspacePage() {
       const directive = parseSlashDirective(trimmed);
       const mentionedFiles = findMentionedFiles(trimmed);
       const mentionedKnowledge = findMentionedKnowledge(trimmed);
+      const mentionedKnowledgeBases = findMentionedKnowledgeBases(trimmed);
 
       if (directive.kind === 'pet') {
         if (hasAttachments) {
@@ -6641,7 +6696,14 @@ export default function WorkspacePage() {
             'Navigate them with knowledge_read and knowledge_search. Read index.md first, then only the relevant concept files.',
           ].join('\n')
         : '';
-      const contextPrompt = [attachmentPrompt, knowledgePrompt].filter(Boolean).join('\n\n');
+      const knowledgeBasePrompt = mentionedKnowledgeBases.length
+        ? [
+            'Use these published knowledge bases as context (each expands to its member documents):',
+            ...mentionedKnowledgeBases.map((kb) => `- ${kb.name}`),
+            'Navigate them with knowledge_read and knowledge_search.',
+          ].join('\n')
+        : '';
+      const contextPrompt = [attachmentPrompt, knowledgePrompt, knowledgeBasePrompt].filter(Boolean).join('\n\n');
       const agentPrompt = contextPrompt
         ? `${agentPromptBase2}${agentPromptBase2 ? '\n\n' : ''}${contextPrompt}`
         : agentPromptBase2;
@@ -6659,6 +6721,7 @@ export default function WorkspacePage() {
           taggedFiles,
           taggedFileRefs,
           knowledgeRefs: mentionedKnowledge.map((item) => ({ id: item.id })),
+          knowledgeBaseIds: mentionedKnowledgeBases.map((kb) => kb.id),
           internetSearchEnabled: useInternetSearch,
         });
       } catch (error) {
@@ -8255,10 +8318,10 @@ export default function WorkspacePage() {
                                     <Item
                                       density="compact"
                                       label={suggestion.name}
-                                      description={suggestion.detail || (suggestion.kind === 'knowledge' ? 'Knowledge' : 'File')}
+                                      description={suggestion.detail || (suggestion.kind === 'file' ? 'File' : 'Knowledge')}
                                       startContent={(
                                         <AstryxIcon
-                                          icon={suggestion.kind === 'knowledge' ? BookOpen : FileIcon}
+                                          icon={suggestion.kind === 'file' ? FileIcon : BookOpen}
                                           size="sm"
                                         />
                                       )}
