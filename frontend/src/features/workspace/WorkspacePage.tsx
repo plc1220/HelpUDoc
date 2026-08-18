@@ -1419,8 +1419,13 @@ export default function WorkspacePage() {
     }
     const normalized = mentionQuery.trim().toLowerCase();
     const knowledgeOnly = normalized.startsWith('knowledge:');
-    const searchTerm = knowledgeOnly ? normalized.slice('knowledge:'.length) : normalized;
-    const fileSuggestions = knowledgeOnly
+    const kbOnly = normalized.startsWith('kb:');
+    const searchTerm = knowledgeOnly
+      ? normalized.slice('knowledge:'.length)
+      : kbOnly
+        ? normalized.slice('kb:'.length).trimStart()
+        : normalized;
+    const fileSuggestions = knowledgeOnly || kbOnly
       ? []
       : visibleFiles
           .filter((file) => !searchTerm || file.name.toLowerCase().includes(searchTerm))
@@ -1431,18 +1436,20 @@ export default function WorkspacePage() {
             mention: `@${file.name}`,
             detail: file.mimeType?.split('/').pop() || file.name.split('.').pop() || 'file',
           }));
-    const knowledgeSuggestions = workspaceKnowledge
-      .filter((item) => item.metadata?.ingestion?.status === 'published' && item.metadata.ingestion.bundlePath)
-      .filter((item) => !searchTerm || item.title.toLowerCase().includes(searchTerm))
-      .map((item) => ({
-        id: `knowledge:${item.id}`,
-        kind: 'knowledge' as const,
-        name: item.title,
-        mention: `@knowledge:${item.id}`,
-        detail: 'knowledge',
-      }));
-    // Knowledge bases are tagged by their human-readable name (not id) so the
-    // mention reads naturally, e.g. "@Sales Enablement".
+    const knowledgeSuggestions = kbOnly
+      ? []
+      : workspaceKnowledge
+          .filter((item) => item.metadata?.ingestion?.status === 'published' && item.metadata.ingestion.bundlePath)
+          .filter((item) => !searchTerm || item.title.toLowerCase().includes(searchTerm))
+          .map((item) => ({
+            id: `knowledge:${item.id}`,
+            kind: 'knowledge' as const,
+            name: item.title,
+            mention: `@knowledge:${item.id}`,
+            detail: 'knowledge',
+          }));
+    // Knowledge bases are tagged with a "kb:" prefix followed by their
+    // human-readable name, e.g. "@kb:Sales Enablement".
     const knowledgeBaseSuggestions = knowledgeOnly
       ? []
       : knowledgeBaseCatalog
@@ -1452,7 +1459,7 @@ export default function WorkspacePage() {
             id: `kb:${kb.id}`,
             kind: 'knowledgeBase' as const,
             name: kb.name,
-            mention: `@${kb.name}`,
+            mention: `@kb:${kb.name}`,
             detail: 'knowledge base',
           }));
     return [...knowledgeBaseSuggestions, ...knowledgeSuggestions, ...fileSuggestions].slice(0, 8);
@@ -2726,7 +2733,7 @@ export default function WorkspacePage() {
           if (kb.status !== 'published') {
             return [];
           }
-          const mentionPattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'i');
+          const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'i');
           return mentionPattern.test(value) ? [{ id: kb.id, name: kb.name }] : [];
         });
     },
@@ -2744,7 +2751,7 @@ export default function WorkspacePage() {
       [...knowledgeBaseCatalog]
         .sort((left, right) => right.name.length - left.name.length)
         .forEach((kb) => {
-          const mentionPattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'gi');
+          const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'gi');
           nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
         });
       const filesByLongestNameFirst = [...visibleFiles].sort((left, right) => right.name.length - left.name.length);
@@ -2761,6 +2768,53 @@ export default function WorkspacePage() {
     },
     [visibleFiles, workspaceKnowledge, knowledgeBaseCatalog],
   );
+
+  // Surface tagged knowledge bases, knowledge, and files as removable chips
+  // above the composer — mirroring the /skill and /mcp directive chips.
+  const mentionTags = useMemo(() => {
+    const tags: Array<{ id: string; label: string }> = [];
+    findMentionedKnowledgeBases(chatMessage).forEach((kb) => {
+      tags.push({ id: `kb:${kb.id}`, label: `KB: ${kb.name}` });
+    });
+    findMentionedKnowledge(chatMessage).forEach((item) => {
+      tags.push({ id: `knowledge:${item.id}`, label: `Knowledge: ${item.title}` });
+    });
+    findMentionedFiles(chatMessage).forEach((file) => {
+      tags.push({ id: `file:${file.id}`, label: `File: ${file.name}` });
+    });
+    return tags;
+  }, [chatMessage, findMentionedKnowledgeBases, findMentionedKnowledge, findMentionedFiles]);
+
+  const handleRemoveMentionTag = useCallback((tagId: string) => {
+    setChatMessage((current) => {
+      let pattern: RegExp | null = null;
+      if (tagId.startsWith('kb:')) {
+        const kb = knowledgeBaseCatalog.find((item) => `kb:${item.id}` === tagId);
+        if (kb) pattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'gi');
+      } else if (tagId.startsWith('knowledge:')) {
+        const id = tagId.slice('knowledge:'.length);
+        pattern = new RegExp(`(^|[\\s([{])@knowledge:${id}(?=$|[\\s)\\]}])`, 'gi');
+      } else if (tagId.startsWith('file:')) {
+        const file = visibleFiles.find((item) => `file:${item.id}` === tagId);
+        if (file) pattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(file.name)}(?=$|[\\s)\\]}])`, 'gi');
+      }
+      if (!pattern) return current;
+      return current.replace(pattern, (_match, prefix: string) => prefix).replace(/[ \t]{2,}/g, ' ');
+    });
+  }, [knowledgeBaseCatalog, visibleFiles]);
+
+  const composerTags = useMemo(
+    () => [...commandTags, ...mentionTags],
+    [commandTags, mentionTags],
+  );
+
+  const handleRemoveComposerTag = useCallback((tagId: string) => {
+    if (tagId === 'skill' || tagId === 'mcp') {
+      handleRemoveCommandTag(tagId);
+      return;
+    }
+    handleRemoveMentionTag(tagId);
+  }, [handleRemoveCommandTag, handleRemoveMentionTag]);
 
   const deriveWorkspaceNameFromPrompt = useCallback((rawMessage = chatMessage): string | undefined => {
     const directive = parseSlashDirective(rawMessage);
@@ -7888,7 +7942,7 @@ export default function WorkspacePage() {
             personas={personas}
             selectedPersona={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
             internetSearchEnabled={internetSearchEnabled}
-            commandTags={commandTags}
+            commandTags={composerTags}
             isMentionOpen={isMentionOpen}
             mentionSuggestions={mentionSuggestions}
             mentionSelectedIndex={mentionSelectedIndex}
@@ -7911,7 +7965,7 @@ export default function WorkspacePage() {
             onSendMessage={handleMobileSendMessage}
             onChatAttachmentChange={handleChatAttachmentChange}
             onRemoveChatAttachment={handleRemoveChatAttachment}
-            onRemoveCommandTag={handleRemoveCommandTag}
+            onRemoveCommandTag={handleRemoveComposerTag}
             onSelectMention={handleSelectMention}
             onSelectCommand={handleSelectCommand}
           />
@@ -9136,7 +9190,7 @@ export default function WorkspacePage() {
               interruptErrorByMessageId={interruptErrorByMessageId}
               chatMessage={chatMessage}
               chatAttachments={chatAttachments}
-              commandTags={commandTags}
+              commandTags={composerTags}
               isMentionOpen={isMentionOpen}
               mentionSuggestions={mentionSuggestions}
               mentionSelectedIndex={mentionSelectedIndex}
@@ -9189,7 +9243,7 @@ export default function WorkspacePage() {
               onSendMessage={handleSendMessage}
               onChatAttachmentChange={handleChatAttachmentChange}
               onRemoveChatAttachment={handleRemoveChatAttachment}
-              onRemoveCommandTag={handleRemoveCommandTag}
+              onRemoveCommandTag={handleRemoveComposerTag}
               onSelectMention={handleSelectMention}
               onSelectCommand={handleSelectCommand}
               onInteractionSubmit={handleInteractionSubmit}
