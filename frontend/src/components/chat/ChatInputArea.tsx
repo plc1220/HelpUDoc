@@ -302,7 +302,7 @@ export default function ChatInputArea({
                 onClick={() => onSelectMention(suggestion)}
               />
             )) : (
-              <div className="lumo-composer-empty-suggestion">No matching files or knowledge</div>
+              <div className="lumo-composer-empty-suggestion">No matching files or knowledge bases</div>
             )}
           </Card>
         ) : null}

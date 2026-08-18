@@ -1418,14 +1418,9 @@ export default function WorkspacePage() {
       return [];
     }
     const normalized = mentionQuery.trim().toLowerCase();
-    const knowledgeOnly = normalized.startsWith('knowledge:');
     const kbOnly = normalized.startsWith('kb:');
-    const searchTerm = knowledgeOnly
-      ? normalized.slice('knowledge:'.length)
-      : kbOnly
-        ? normalized.slice('kb:'.length).trimStart()
-        : normalized;
-    const fileSuggestions = knowledgeOnly || kbOnly
+    const searchTerm = kbOnly ? normalized.slice('kb:'.length).trimStart() : normalized;
+    const fileSuggestions = kbOnly
       ? []
       : visibleFiles
           .filter((file) => !searchTerm || file.name.toLowerCase().includes(searchTerm))
@@ -1436,34 +1431,20 @@ export default function WorkspacePage() {
             mention: `@${file.name}`,
             detail: file.mimeType?.split('/').pop() || file.name.split('.').pop() || 'file',
           }));
-    const knowledgeSuggestions = kbOnly
-      ? []
-      : workspaceKnowledge
-          .filter((item) => item.metadata?.ingestion?.status === 'published' && item.metadata.ingestion.bundlePath)
-          .filter((item) => !searchTerm || item.title.toLowerCase().includes(searchTerm))
-          .map((item) => ({
-            id: `knowledge:${item.id}`,
-            kind: 'knowledge' as const,
-            name: item.title,
-            mention: `@knowledge:${item.id}`,
-            detail: 'knowledge',
-          }));
-    // Knowledge bases are tagged with a "kb:" prefix followed by their
-    // human-readable name, e.g. "@kb:Sales Enablement".
-    const knowledgeBaseSuggestions = knowledgeOnly
-      ? []
-      : knowledgeBaseCatalog
-          .filter((kb) => kb.status === 'published')
-          .filter((kb) => !searchTerm || kb.name.toLowerCase().includes(searchTerm))
-          .map((kb) => ({
-            id: `kb:${kb.id}`,
-            kind: 'knowledgeBase' as const,
-            name: kb.name,
-            mention: `@kb:${kb.name}`,
-            detail: 'knowledge base',
-          }));
-    return [...knowledgeBaseSuggestions, ...knowledgeSuggestions, ...fileSuggestions].slice(0, 8);
-  }, [visibleFiles, workspaceKnowledge, knowledgeBaseCatalog, isMentionOpen, mentionQuery]);
+    // Documents are surfaced only through knowledge bases; individual sources
+    // are no longer taggable. Bases use a "kb:" prefix + human-readable name.
+    const knowledgeBaseSuggestions = knowledgeBaseCatalog
+      .filter((kb) => kb.status === 'published')
+      .filter((kb) => !searchTerm || kb.name.toLowerCase().includes(searchTerm))
+      .map((kb) => ({
+        id: `kb:${kb.id}`,
+        kind: 'knowledgeBase' as const,
+        name: kb.name,
+        mention: `@kb:${kb.name}`,
+        detail: 'knowledge base',
+      }));
+    return [...knowledgeBaseSuggestions, ...fileSuggestions].slice(0, 8);
+  }, [visibleFiles, knowledgeBaseCatalog, isMentionOpen, mentionQuery]);
 
   const availableSkillMap = useMemo(() => {
     const map = new Map<string, SkillDefinition>();
@@ -2776,14 +2757,11 @@ export default function WorkspacePage() {
     findMentionedKnowledgeBases(chatMessage).forEach((kb) => {
       tags.push({ id: `kb:${kb.id}`, label: `KB: ${kb.name}` });
     });
-    findMentionedKnowledge(chatMessage).forEach((item) => {
-      tags.push({ id: `knowledge:${item.id}`, label: `Knowledge: ${item.title}` });
-    });
     findMentionedFiles(chatMessage).forEach((file) => {
       tags.push({ id: `file:${file.id}`, label: `File: ${file.name}` });
     });
     return tags;
-  }, [chatMessage, findMentionedKnowledgeBases, findMentionedKnowledge, findMentionedFiles]);
+  }, [chatMessage, findMentionedKnowledgeBases, findMentionedFiles]);
 
   const handleRemoveMentionTag = useCallback((tagId: string) => {
     setChatMessage((current) => {
@@ -8386,7 +8364,7 @@ export default function WorkspacePage() {
                                 ))
                               ) : (
                                 <div className="landing-composer-suggestion-empty">
-                                  No matching files or knowledge
+                                  No matching files or knowledge bases
                                 </div>
                               )}
                             </Card>
