@@ -86,6 +86,7 @@ import {
   truncateConversationMessages,
 } from '../../services/conversationApi';
 import { listAccessibleKnowledge } from '../../services/knowledgeApi';
+import { fetchKnowledgeBaseCatalog, type KnowledgeBaseSummary } from '../../services/knowledgeBaseApi';
 import type {
   Workspace,
   File as WorkspaceFile,
@@ -907,6 +908,7 @@ export default function WorkspacePage() {
   const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [workspaceKnowledge, setWorkspaceKnowledge] = useState<WorkspaceKnowledgeSource[]>([]);
+  const [knowledgeBaseCatalog, setKnowledgeBaseCatalog] = useState<KnowledgeBaseSummary[]>([]);
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
@@ -1416,9 +1418,9 @@ export default function WorkspacePage() {
       return [];
     }
     const normalized = mentionQuery.trim().toLowerCase();
-    const knowledgeOnly = normalized.startsWith('knowledge:');
-    const searchTerm = knowledgeOnly ? normalized.slice('knowledge:'.length) : normalized;
-    const fileSuggestions = knowledgeOnly
+    const kbOnly = normalized.startsWith('kb:');
+    const searchTerm = kbOnly ? normalized.slice('kb:'.length).trimStart() : normalized;
+    const fileSuggestions = kbOnly
       ? []
       : visibleFiles
           .filter((file) => !searchTerm || file.name.toLowerCase().includes(searchTerm))
@@ -1429,18 +1431,20 @@ export default function WorkspacePage() {
             mention: `@${file.name}`,
             detail: file.mimeType?.split('/').pop() || file.name.split('.').pop() || 'file',
           }));
-    const knowledgeSuggestions = workspaceKnowledge
-      .filter((item) => item.metadata?.ingestion?.status === 'published' && item.metadata.ingestion.bundlePath)
-      .filter((item) => !searchTerm || item.title.toLowerCase().includes(searchTerm))
-      .map((item) => ({
-        id: `knowledge:${item.id}`,
-        kind: 'knowledge' as const,
-        name: item.title,
-        mention: `@knowledge:${item.id}`,
-        detail: 'knowledge',
+    // Documents are surfaced only through knowledge bases; individual sources
+    // are no longer taggable. Bases use a "kb:" prefix + human-readable name.
+    const knowledgeBaseSuggestions = knowledgeBaseCatalog
+      .filter((kb) => kb.status === 'published')
+      .filter((kb) => !searchTerm || kb.name.toLowerCase().includes(searchTerm))
+      .map((kb) => ({
+        id: `kb:${kb.id}`,
+        kind: 'knowledgeBase' as const,
+        name: kb.name,
+        mention: `@kb:${kb.name}`,
+        detail: 'knowledge base',
       }));
-    return [...knowledgeSuggestions, ...fileSuggestions].slice(0, 8);
-  }, [visibleFiles, workspaceKnowledge, isMentionOpen, mentionQuery]);
+    return [...knowledgeBaseSuggestions, ...fileSuggestions].slice(0, 8);
+  }, [visibleFiles, knowledgeBaseCatalog, isMentionOpen, mentionQuery]);
 
   const availableSkillMap = useMemo(() => {
     const map = new Map<string, SkillDefinition>();
@@ -2167,7 +2171,7 @@ export default function WorkspacePage() {
     const requestId = workspaceFilesRequestIdRef.current + 1;
     workspaceFilesRequestIdRef.current = requestId;
     try {
-      const [files, folders, knowledge] = await Promise.all([
+      const [files, folders, knowledge, knowledgeBases] = await Promise.all([
         getFiles(workspaceId),
         getFolders(workspaceId),
         options.includePrivateData === false
@@ -2175,6 +2179,12 @@ export default function WorkspacePage() {
           : listAccessibleKnowledge().catch((error) => {
               console.error('Failed to load knowledge for workspace', error);
               return [];
+            }),
+        options.includePrivateData === false
+          ? Promise.resolve([] as KnowledgeBaseSummary[])
+          : fetchKnowledgeBaseCatalog().catch((error) => {
+              console.error('Failed to load knowledge bases for workspace', error);
+              return [] as KnowledgeBaseSummary[];
             }),
       ]);
       if (
@@ -2186,6 +2196,7 @@ export default function WorkspacePage() {
       setFolderPaths(folders);
       setFiles(files);
       setWorkspaceKnowledge(Array.isArray(knowledge) ? knowledge : []);
+      setKnowledgeBaseCatalog(Array.isArray(knowledgeBases) ? knowledgeBases : []);
     } catch (error) {
       if (
         workspaceFilesRequestIdRef.current !== requestId
@@ -2690,12 +2701,40 @@ export default function WorkspacePage() {
     [workspaceKnowledge],
   );
 
+  const findMentionedKnowledgeBases = useCallback(
+    (value: string): Array<{ id: string; name: string }> => {
+      if (!value) {
+        return [];
+      }
+      // Longest names first so a base whose name is a prefix of another does not
+      // shadow the more specific mention.
+      return [...knowledgeBaseCatalog]
+        .sort((left, right) => right.name.length - left.name.length)
+        .flatMap((kb) => {
+          if (kb.status !== 'published') {
+            return [];
+          }
+          const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'i');
+          return mentionPattern.test(value) ? [{ id: kb.id, name: kb.name }] : [];
+        });
+    },
+    [knowledgeBaseCatalog],
+  );
+
   const stripMentionedFilesFromPrompt = useCallback(
     (value: string): string => {
       if (!value) {
         return '';
       }
       let nextValue = normalizeFilePath(value);
+      // Strip knowledge-base name mentions first (they can contain spaces that
+      // would otherwise be misread as separate file mentions), longest-first.
+      [...knowledgeBaseCatalog]
+        .sort((left, right) => right.name.length - left.name.length)
+        .forEach((kb) => {
+          const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'gi');
+          nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
+        });
       const filesByLongestNameFirst = [...visibleFiles].sort((left, right) => right.name.length - left.name.length);
       filesByLongestNameFirst.forEach((file) => {
         const escapedName = escapeRegExp(normalizeFilePath(file.name));
@@ -2708,8 +2747,52 @@ export default function WorkspacePage() {
       });
       return nextValue.replace(/\s{2,}/g, ' ').trim();
     },
-    [visibleFiles, workspaceKnowledge],
+    [visibleFiles, workspaceKnowledge, knowledgeBaseCatalog],
   );
+
+  // Surface tagged knowledge bases, knowledge, and files as removable chips
+  // above the composer — mirroring the /skill and /mcp directive chips.
+  const mentionTags = useMemo(() => {
+    const tags: Array<{ id: string; label: string }> = [];
+    findMentionedKnowledgeBases(chatMessage).forEach((kb) => {
+      tags.push({ id: `kb:${kb.id}`, label: `KB: ${kb.name}` });
+    });
+    findMentionedFiles(chatMessage).forEach((file) => {
+      tags.push({ id: `file:${file.id}`, label: `File: ${file.name}` });
+    });
+    return tags;
+  }, [chatMessage, findMentionedKnowledgeBases, findMentionedFiles]);
+
+  const handleRemoveMentionTag = useCallback((tagId: string) => {
+    setChatMessage((current) => {
+      let pattern: RegExp | null = null;
+      if (tagId.startsWith('kb:')) {
+        const kb = knowledgeBaseCatalog.find((item) => `kb:${item.id}` === tagId);
+        if (kb) pattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'gi');
+      } else if (tagId.startsWith('knowledge:')) {
+        const id = tagId.slice('knowledge:'.length);
+        pattern = new RegExp(`(^|[\\s([{])@knowledge:${id}(?=$|[\\s)\\]}])`, 'gi');
+      } else if (tagId.startsWith('file:')) {
+        const file = visibleFiles.find((item) => `file:${item.id}` === tagId);
+        if (file) pattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(file.name)}(?=$|[\\s)\\]}])`, 'gi');
+      }
+      if (!pattern) return current;
+      return current.replace(pattern, (_match, prefix: string) => prefix).replace(/[ \t]{2,}/g, ' ');
+    });
+  }, [knowledgeBaseCatalog, visibleFiles]);
+
+  const composerTags = useMemo(
+    () => [...commandTags, ...mentionTags],
+    [commandTags, mentionTags],
+  );
+
+  const handleRemoveComposerTag = useCallback((tagId: string) => {
+    if (tagId === 'skill' || tagId === 'mcp') {
+      handleRemoveCommandTag(tagId);
+      return;
+    }
+    handleRemoveMentionTag(tagId);
+  }, [handleRemoveCommandTag, handleRemoveMentionTag]);
 
   const deriveWorkspaceNameFromPrompt = useCallback((rawMessage = chatMessage): string | undefined => {
     const directive = parseSlashDirective(rawMessage);
@@ -5287,6 +5370,7 @@ export default function WorkspacePage() {
     taggedFiles?: string[];
     taggedFileRefs?: TaggedFileRef[];
     knowledgeRefs?: Array<{ id: number }>;
+    knowledgeBaseIds?: string[];
     internetSearchEnabled?: boolean;
   }) => {
     const {
@@ -5300,6 +5384,7 @@ export default function WorkspacePage() {
       taggedFiles,
       taggedFileRefs,
       knowledgeRefs,
+      knowledgeBaseIds,
       internetSearchEnabled,
     } = params;
     if (!isUsableWorkspaceId(workspaceId)) {
@@ -5317,6 +5402,7 @@ export default function WorkspacePage() {
         taggedFiles,
         taggedFileRefs,
         knowledgeRefs,
+        knowledgeBaseIds,
         currentTurnFileIds,
         internetSearchEnabled,
       },
@@ -6424,6 +6510,7 @@ export default function WorkspacePage() {
       const directive = parseSlashDirective(trimmed);
       const mentionedFiles = findMentionedFiles(trimmed);
       const mentionedKnowledge = findMentionedKnowledge(trimmed);
+      const mentionedKnowledgeBases = findMentionedKnowledgeBases(trimmed);
 
       if (directive.kind === 'pet') {
         if (hasAttachments) {
@@ -6641,7 +6728,14 @@ export default function WorkspacePage() {
             'Navigate them with knowledge_read and knowledge_search. Read index.md first, then only the relevant concept files.',
           ].join('\n')
         : '';
-      const contextPrompt = [attachmentPrompt, knowledgePrompt].filter(Boolean).join('\n\n');
+      const knowledgeBasePrompt = mentionedKnowledgeBases.length
+        ? [
+            'Use these published knowledge bases as context (each expands to its member documents):',
+            ...mentionedKnowledgeBases.map((kb) => `- ${kb.name}`),
+            'Navigate them with knowledge_read and knowledge_search.',
+          ].join('\n')
+        : '';
+      const contextPrompt = [attachmentPrompt, knowledgePrompt, knowledgeBasePrompt].filter(Boolean).join('\n\n');
       const agentPrompt = contextPrompt
         ? `${agentPromptBase2}${agentPromptBase2 ? '\n\n' : ''}${contextPrompt}`
         : agentPromptBase2;
@@ -6659,6 +6753,7 @@ export default function WorkspacePage() {
           taggedFiles,
           taggedFileRefs,
           knowledgeRefs: mentionedKnowledge.map((item) => ({ id: item.id })),
+          knowledgeBaseIds: mentionedKnowledgeBases.map((kb) => kb.id),
           internetSearchEnabled: useInternetSearch,
         });
       } catch (error) {
@@ -7825,7 +7920,7 @@ export default function WorkspacePage() {
             personas={personas}
             selectedPersona={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
             internetSearchEnabled={internetSearchEnabled}
-            commandTags={commandTags}
+            commandTags={composerTags}
             isMentionOpen={isMentionOpen}
             mentionSuggestions={mentionSuggestions}
             mentionSelectedIndex={mentionSelectedIndex}
@@ -7848,7 +7943,7 @@ export default function WorkspacePage() {
             onSendMessage={handleMobileSendMessage}
             onChatAttachmentChange={handleChatAttachmentChange}
             onRemoveChatAttachment={handleRemoveChatAttachment}
-            onRemoveCommandTag={handleRemoveCommandTag}
+            onRemoveCommandTag={handleRemoveComposerTag}
             onSelectMention={handleSelectMention}
             onSelectCommand={handleSelectCommand}
           />
@@ -8255,10 +8350,10 @@ export default function WorkspacePage() {
                                     <Item
                                       density="compact"
                                       label={suggestion.name}
-                                      description={suggestion.detail || (suggestion.kind === 'knowledge' ? 'Knowledge' : 'File')}
+                                      description={suggestion.detail || (suggestion.kind === 'file' ? 'File' : 'Knowledge')}
                                       startContent={(
                                         <AstryxIcon
-                                          icon={suggestion.kind === 'knowledge' ? BookOpen : FileIcon}
+                                          icon={suggestion.kind === 'file' ? FileIcon : BookOpen}
                                           size="sm"
                                         />
                                       )}
@@ -8269,7 +8364,7 @@ export default function WorkspacePage() {
                                 ))
                               ) : (
                                 <div className="landing-composer-suggestion-empty">
-                                  No matching files or knowledge
+                                  No matching files or knowledge bases
                                 </div>
                               )}
                             </Card>
@@ -9073,7 +9168,7 @@ export default function WorkspacePage() {
               interruptErrorByMessageId={interruptErrorByMessageId}
               chatMessage={chatMessage}
               chatAttachments={chatAttachments}
-              commandTags={commandTags}
+              commandTags={composerTags}
               isMentionOpen={isMentionOpen}
               mentionSuggestions={mentionSuggestions}
               mentionSelectedIndex={mentionSelectedIndex}
@@ -9126,7 +9221,7 @@ export default function WorkspacePage() {
               onSendMessage={handleSendMessage}
               onChatAttachmentChange={handleChatAttachmentChange}
               onRemoveChatAttachment={handleRemoveChatAttachment}
-              onRemoveCommandTag={handleRemoveCommandTag}
+              onRemoveCommandTag={handleRemoveComposerTag}
               onSelectMention={handleSelectMention}
               onSelectCommand={handleSelectCommand}
               onInteractionSubmit={handleInteractionSubmit}

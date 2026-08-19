@@ -6,7 +6,7 @@ import { DatabaseService } from './databaseService';
 import { WorkspaceService } from './workspaceService';
 import { FileService } from './fileService';
 import { ConflictError, NotFoundError } from '../errors';
-import { KnowledgeType } from '../types/knowledge';
+import { KnowledgeType, DEFAULT_KNOWLEDGE_BASE_ID } from '../types/knowledge';
 import {
   enrichKnowledgeWindow,
   embedKnowledgeInputs,
@@ -834,6 +834,32 @@ export class KnowledgeService {
     });
   }
 
+  /**
+   * Expand knowledge bases into the agent knowledge refs for their published
+   * member sources. Bases the user cannot access are ignored; members without a
+   * published build are skipped (not an error), so selecting a base at chat time
+   * yields exactly the retrievable documents in it.
+   */
+  async resolveKnowledgeBaseRefs(userId: string, knowledgeBaseIds: string[]) {
+    const ids = Array.from(new Set(
+      (knowledgeBaseIds || []).filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ));
+    if (!ids.length) return [];
+    const accessible = await this.resolveAccessibleKnowledgeBaseIds(userId);
+    const allowed = accessible === null ? ids : ids.filter((id) => accessible.includes(id));
+    if (!allowed.length) return [];
+    const memberRows = await this.db('knowledge_sources')
+      .whereIn('knowledgeBaseId', allowed)
+      .andWhere('isGlobal', true)
+      .select('id', 'metadata');
+    const publishedIds = memberRows
+      .filter((row) => Boolean(this.getIngestionMetadata(row.metadata)?.snapshotHash))
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    if (!publishedIds.length) return [];
+    return this.resolveTaggedKnowledgeRefs(userId, publishedIds);
+  }
+
   async listGlobalIngestionJobs(limit = 100) {
     const rows = await this.db('knowledge_ingestion_jobs as job')
       .join('knowledge_sources as source', 'source.id', 'job.knowledgeId')
@@ -1348,7 +1374,7 @@ export class KnowledgeService {
     type: KnowledgeType;
     description?: string;
     metadata?: Record<string, unknown>;
-  }) {
+  }, options?: { knowledgeBaseId?: string; storageActorUserId?: string }) {
     if (!this.fileService) {
       throw new ConflictError('Knowledge file storage is not configured');
     }
@@ -1371,12 +1397,13 @@ export class KnowledgeService {
     const id = randomUUID();
     const workspaceId = await this.ensureKnowledgeStorageWorkspace();
     const mimeType = String(input.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
+    const storageActorUserId = options?.storageActorUserId || userId;
     const directUpload = await this.fileService.createDirectUploadUrl(
       workspaceId,
       id,
       input.fileName,
       mimeType,
-      userId,
+      storageActorUserId,
       expiresInSeconds,
       { allowSystemAdmin: true },
     );
@@ -1395,6 +1422,7 @@ export class KnowledgeService {
         type: input.type,
         description: input.description,
         metadata: input.metadata || {},
+        ...(options?.knowledgeBaseId ? { knowledgeBaseId: options.knowledgeBaseId } : {}),
       },
       expiresAt,
     });
@@ -1420,10 +1448,14 @@ export class KnowledgeService {
     };
   }
 
-  async completeGlobalUploadSession(userId: string, uploadId: string) {
+  async completeGlobalUploadSession(userId: string, uploadId: string, options?: { storageActorUserId?: string }) {
     if (!this.fileService) {
       throw new ConflictError('Knowledge file storage is not configured');
     }
+    // The identity used for system-knowledge-workspace ops (finalize/ingestion). For KB
+    // uploads by a team lead this is the system storage user (owner of the sandbox), while
+    // the real user stays as the source author. Defaults to the requester (admin flows).
+    const storageActorUserId = options?.storageActorUserId || userId;
     const session = await this.db('knowledge_upload_sessions').where({ id: uploadId }).first();
     if (!session || String(session.userId || '') !== userId) {
       throw new NotFoundError('Knowledge upload session not found');
@@ -1471,7 +1503,7 @@ export class KnowledgeService {
         objectKey: String(session.objectKey),
         requestedFileName: String(session.requestedFileName),
         mimeType: String(session.mimeType),
-      }, userId, { allowSystemAdmin: true });
+      }, storageActorUserId, { allowSystemAdmin: true });
       await this.db('knowledge_upload_sessions').where({ id: uploadId }).update({
         fileId: Number(storedFile.id),
         etag: object.etag,
@@ -1490,6 +1522,7 @@ export class KnowledgeService {
         const [record] = await trx('knowledge_sources').insert({
           workspaceId: String(session.workspaceId),
           isGlobal: true,
+          knowledgeBaseId: (payload as any).knowledgeBaseId || DEFAULT_KNOWLEDGE_BASE_ID,
           title: String(payload.title || session.requestedFileName),
           type: payload.type as KnowledgeType,
           description: payload.description ? String(payload.description) : null,
@@ -1508,7 +1541,7 @@ export class KnowledgeService {
           configuration: {
             enrichmentMode,
             okfVersion: OKF_VERSION,
-            requestedBy: userId,
+            requestedBy: storageActorUserId,
             allowSystemAdmin: true,
           },
         }, trx);
@@ -1530,8 +1563,8 @@ export class KnowledgeService {
         workspaceId: String(session.workspaceId),
         knowledgeId: created.knowledgeId,
       }, created.job);
-      await this.workspaceService.touchWorkspace(String(session.workspaceId), userId);
-      this.scheduleIngestion(String(session.workspaceId), created.knowledgeId, userId, true);
+      await this.workspaceService.touchWorkspace(String(session.workspaceId), storageActorUserId);
+      this.scheduleIngestion(String(session.workspaceId), created.knowledgeId, storageActorUserId, true);
       const knowledge = await this.getGlobalById(created.knowledgeId);
       await this.db('knowledge_upload_sessions').where({ id: uploadId }).update({
         status: 'completed',
@@ -1736,6 +1769,7 @@ export class KnowledgeService {
       .insert({
         workspaceId,
         isGlobal: Boolean(options.isGlobal),
+        knowledgeBaseId: (payload as any).knowledgeBaseId || DEFAULT_KNOWLEDGE_BASE_ID,
         title: payload.title,
         type: payload.type,
         description: payload.description,
@@ -3573,18 +3607,59 @@ export class KnowledgeService {
     return KNOWLEDGE_STORAGE_WORKSPACE_ID;
   }
 
-  private async resolveGlobalKnowledgeAccess(userId: string): Promise<number[] | null> {
+  /**
+   * Published knowledge bases the user may read/use: platform admins get `null`
+   * (unrestricted); otherwise bases owned by a team they belong to, or granted to
+   * one of their teams. Mirrors `SkillGovernanceService.effectiveSkillAccess`.
+   */
+  private async resolveAccessibleKnowledgeBaseIds(userId: string): Promise<string[] | null> {
     const user = await this.db('users').select('isAdmin').where({ id: userId }).first();
     if (user?.isAdmin) {
       return null;
     }
-    const rows = await this.db('knowledge_source_group_grants as kg')
+    const ownedRows = await this.db('knowledge_bases as kb')
+      .join('group_members as gm', 'kb.ownerTeamId', 'gm.groupId')
+      .where('gm.userId', userId)
+      .andWhere('kb.status', 'published')
+      .distinct('kb.id as id');
+    const grantedRows = await this.db('knowledge_base_group_grants as kg')
+      .join('group_members as gm', 'kg.teamId', 'gm.groupId')
+      .join('knowledge_bases as kb', 'kb.id', 'kg.knowledgeBaseId')
+      .where('gm.userId', userId)
+      .andWhere('kg.effect', 'allow')
+      .andWhere('kb.status', 'published')
+      .distinct('kg.knowledgeBaseId as id');
+    return Array.from(new Set(
+      [...ownedRows, ...grantedRows]
+        .map((row: { id?: string }) => String(row.id || ''))
+        .filter((id: string) => id.length > 0),
+    ));
+  }
+
+  /**
+   * Global knowledge source ids the user may read/use: `null` = unrestricted
+   * (admin). Derived from the knowledge bases they can access, plus (for
+   * transition compatibility) any legacy per-source group grants.
+   */
+  private async resolveGlobalKnowledgeAccess(userId: string): Promise<number[] | null> {
+    const knowledgeBaseIds = await this.resolveAccessibleKnowledgeBaseIds(userId);
+    if (knowledgeBaseIds === null) {
+      return null;
+    }
+    const kbSourceRows = knowledgeBaseIds.length
+      ? await this.db('knowledge_sources')
+          .whereIn('knowledgeBaseId', knowledgeBaseIds)
+          .andWhere('isGlobal', true)
+          .select('id')
+      : [];
+    // Legacy per-source grants remain honored while callers migrate to base-level grants.
+    const legacyRows = await this.db('knowledge_source_group_grants as kg')
       .join('group_members as gm', 'kg.groupId', 'gm.groupId')
       .where('gm.userId', userId)
-      .distinct('kg.knowledgeSourceId');
+      .distinct('kg.knowledgeSourceId as id');
     return Array.from(new Set(
-      rows
-        .map((row: { knowledgeSourceId?: number }) => Number(row.knowledgeSourceId))
+      [...kbSourceRows, ...legacyRows]
+        .map((row: { id?: number }) => Number(row.id))
         .filter((id: number) => Number.isInteger(id) && id > 0),
     ));
   }

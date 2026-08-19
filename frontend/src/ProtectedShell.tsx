@@ -5,7 +5,7 @@ import { useAuth } from './auth/useAuth';
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
 const AgentSettingsPage = lazy(() => import('./pages/AgentSettingsPage'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
-const KnowledgePage = lazy(() => import('./pages/KnowledgePage'));
+const KnowledgeGovernancePage = lazy(() => import('./pages/KnowledgeGovernancePage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
 const SkillGovernancePage = lazy(() => import('./pages/SkillGovernancePage'));
@@ -75,7 +75,7 @@ const ProtectedShell: FC = () => {
           path="/settings/knowledge"
           element={
             <RequireAuth>
-              <KnowledgePage />
+              <KnowledgeGovernancePage />
             </RequireAuth>
           }
         />

@@ -1,5 +1,6 @@
 import knex, { Knex } from 'knex';
 import { getBackendEnv } from '../config/env';
+import { DEFAULT_KNOWLEDGE_BASE_ID } from '../types/knowledge';
 
 type PgConnection = Knex.PgConnectionConfig | string | Knex.StaticConnectionConfig;
 
@@ -48,6 +49,7 @@ export class DatabaseService {
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createKnowledgeSourceGroupGrantsTable();
+    await this.createKnowledgeBaseTables();
     await this.createKnowledgeIngestionTables();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
@@ -649,6 +651,81 @@ export class DatabaseService {
       });
       console.log('Created "knowledge_source_group_grants" table.');
     }
+  }
+
+  private async createKnowledgeBaseTables(): Promise<void> {
+    if (!await this.db.schema.hasTable('knowledge_bases')) {
+      await this.db.schema.createTable('knowledge_bases', (table) => {
+        table.uuid('id').primary();
+        table.string('slug', 128).notNullable().unique();
+        table.string('name').notNullable();
+        table.text('description');
+        // Null owner = platform-admin managed (the default/system base).
+        table.uuid('ownerTeamId').references('id').inTable('groups').onDelete('SET NULL');
+        table.string('status', 24).notNullable().defaultTo('draft');
+        table.string('currentVersion', 64);
+        table.boolean('isDefault').notNullable().defaultTo(false);
+        table.uuid('createdByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['ownerTeamId', 'status'], 'knowledge_bases_owner_team_status_idx');
+      });
+      console.log('Created "knowledge_bases" table.');
+    }
+
+    // Seed the default knowledge base (idempotent).
+    await this.db('knowledge_bases')
+      .insert({
+        id: DEFAULT_KNOWLEDGE_BASE_ID,
+        slug: 'knowledge/general',
+        name: 'General Knowledge',
+        description: 'Default knowledge base for documents not yet organized into a curated base.',
+        ownerTeamId: null,
+        status: 'published',
+        isDefault: true,
+      })
+      .onConflict('id')
+      .ignore();
+
+    if (!await this.db.schema.hasTable('knowledge_base_versions')) {
+      await this.db.schema.createTable('knowledge_base_versions', (table) => {
+        table.uuid('id').primary();
+        table.uuid('knowledgeBaseId').notNullable().references('id').inTable('knowledge_bases').onDelete('CASCADE');
+        table.string('version', 64).notNullable();
+        // Array of {knowledgeSourceId, title, type, snapshotHash} captured at publish.
+        table.jsonb('memberSnapshot').notNullable().defaultTo('[]');
+        table.text('note');
+        table.uuid('publishedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('publishedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['knowledgeBaseId', 'version']);
+        table.index(['knowledgeBaseId', 'publishedAt'], 'knowledge_base_versions_kb_published_idx');
+      });
+      console.log('Created "knowledge_base_versions" table.');
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_base_group_grants')) {
+      await this.db.schema.createTable('knowledge_base_group_grants', (table) => {
+        table.uuid('knowledgeBaseId').notNullable().references('id').inTable('knowledge_bases').onDelete('CASCADE');
+        table.uuid('teamId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.string('effect', 16).notNullable().defaultTo('allow');
+        table.uuid('grantedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['knowledgeBaseId', 'teamId']);
+      });
+      console.log('Created "knowledge_base_group_grants" table.');
+    }
+
+    // Every source belongs to exactly one knowledge base. Add the column, then
+    // backfill existing sources into the default base.
+    await this.ensureColumn('knowledge_sources', 'knowledgeBaseId', (table) =>
+      table.uuid('knowledgeBaseId').references('id').inTable('knowledge_bases').onDelete('RESTRICT'));
+    await this.db('knowledge_sources')
+      .whereNull('knowledgeBaseId')
+      .update({ knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID });
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS knowledge_sources_kb_idx ON knowledge_sources ("knowledgeBaseId")',
+    );
   }
 
   private async createKnowledgeIngestionTables(): Promise<void> {

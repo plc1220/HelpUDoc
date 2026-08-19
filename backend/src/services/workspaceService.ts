@@ -533,6 +533,22 @@ export class WorkspaceService {
       };
     }
 
+    // A workspace owner always has full access to their own workspace, regardless of
+    // visibility or team membership (owners should never be locked out of what they own).
+    if (normalizedWorkspace.ownerId === userId) {
+      return {
+        workspace: normalizedWorkspace,
+        membership: {
+          workspaceId,
+          userId,
+          role: 'owner',
+          canEdit: true,
+          createdAt: normalizedWorkspace.createdAt,
+          updatedAt: normalizedWorkspace.updatedAt,
+        },
+      };
+    }
+
     const isSystemAdmin = Boolean(
       options.allowSystemAdmin
       && await this.db('users').where({ id: userId, isAdmin: true }).first(),
