@@ -20,7 +20,7 @@ const groupMemberSchema = z.object({
 const groupPromptAccessSchema = z.object({
   skillIds: z.array(z.string().min(1)).default([]),
   mcpServerIds: z.array(z.string().min(1)).default([]),
-  knowledgeSourceIds: z.array(z.number().int().positive()).default([]),
+  knowledgeBaseIds: z.array(z.string().uuid()).default([]),
 });
 
 const listUsersSchema = z.object({

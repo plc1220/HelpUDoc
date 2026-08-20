@@ -32,7 +32,7 @@ import {
   SettingsSurface,
 } from '../components/settings/SettingsScaffold';
 import { getAuthUser } from '../auth/authStore';
-import { listGlobalKnowledge } from '../services/knowledgeApi';
+import { fetchKnowledgeBaseCatalog, type KnowledgeBaseSummary } from '../services/knowledgeBaseApi';
 import {
   addGroupMember,
   createGroup,
@@ -62,18 +62,11 @@ import { fetchSkillCatalog, setTeamLead } from '../services/governanceApi';
 type ManagementView = 'users' | 'groups';
 type UserTableRow = ManagedUser & Record<string, unknown>;
 
-type KnowledgeSourceOption = {
-  id: number;
-  title: string;
-  type: string;
-  isGlobal?: boolean;
-  metadata?: Record<string, unknown> | null;
-};
+type KnowledgeBaseOption = KnowledgeBaseSummary;
 
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 const sortStrings = (values: string[]) => [...values].sort((a, b) => a.localeCompare(b));
-const sortNumbers = (values: number[]) => [...values].sort((a, b) => a - b);
-const emptyAccess = (): GroupPromptAccess => ({ skillIds: [], mcpServerIds: [], knowledgeSourceIds: [] });
+const emptyAccess = (): GroupPromptAccess => ({ skillIds: [], mcpServerIds: [], knowledgeBaseIds: [] });
 
 const formatDate = (value: string) => {
   const date = new Date(value);
@@ -107,7 +100,7 @@ const UsersPage = () => {
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
   const [availablePlugins, setAvailablePlugins] = useState<PluginDefinition[]>([]);
-  const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSourceOption[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
 
   const [pendingDeleteUser, setPendingDeleteUser] = useState<ManagedUser | null>(null);
   const [deletionImpact, setDeletionImpact] = useState<UserDeletionImpact | null>(null);
@@ -150,10 +143,10 @@ const UsersPage = () => {
   }, [availableMcpServers, availableSkills, visiblePlugins]);
 
   const knowledgeOptions = useMemo(
-    () => knowledgeSources
-      .filter((source) => source.isGlobal)
-      .map((source) => ({ value: String(source.id), label: source.title })),
-    [knowledgeSources],
+    () => knowledgeBases
+      .filter((base) => base.status === 'published')
+      .map((base) => ({ value: base.id, label: base.name })),
+    [knowledgeBases],
   );
 
   const skillOptions = useMemo(
@@ -182,7 +175,7 @@ const UsersPage = () => {
   const isAccessDirty = useMemo(() => (
     JSON.stringify(sortStrings(groupAccess.skillIds)) !== JSON.stringify(sortStrings(savedGroupAccess.skillIds))
       || JSON.stringify(sortStrings(groupAccess.mcpServerIds)) !== JSON.stringify(sortStrings(savedGroupAccess.mcpServerIds))
-      || JSON.stringify(sortNumbers(groupAccess.knowledgeSourceIds)) !== JSON.stringify(sortNumbers(savedGroupAccess.knowledgeSourceIds))
+      || JSON.stringify(sortStrings(groupAccess.knowledgeBaseIds)) !== JSON.stringify(sortStrings(savedGroupAccess.knowledgeBaseIds))
   ), [groupAccess, savedGroupAccess]);
 
   useEffect(() => {
@@ -235,10 +228,10 @@ const UsersPage = () => {
   const loadAccessCatalog = useCallback(async () => {
     setCatalogLoading(true);
     try {
-      const [runtimeSkills, governedCatalog, knowledge, runtimeCatalog] = await Promise.all([
+      const [runtimeSkills, governedCatalog, knowledgeBasesCatalog, runtimeCatalog] = await Promise.all([
         fetchSkills(),
         fetchSkillCatalog(),
-        listGlobalKnowledge(),
+        fetchKnowledgeBaseCatalog(),
         fetchRuntimeCapabilityCatalog(),
       ]);
       const skillsById = new Map<string, SkillDefinition>();
@@ -255,7 +248,7 @@ const UsersPage = () => {
       setAvailableSkills([...skillsById.values()].sort((left, right) => left.name.localeCompare(right.name)));
       setAvailableMcpServers(runtimeCatalog.mcpServers);
       setAvailablePlugins(runtimeCatalog.plugins || []);
-      setKnowledgeSources(Array.isArray(knowledge) ? knowledge : []);
+      setKnowledgeBases(Array.isArray(knowledgeBasesCatalog) ? knowledgeBasesCatalog : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load access catalog');
     } finally {
@@ -279,7 +272,7 @@ const UsersPage = () => {
       const normalized: GroupPromptAccess = {
         skillIds: sortStrings(access.skillIds),
         mcpServerIds: sortStrings(access.mcpServerIds),
-        knowledgeSourceIds: sortNumbers(access.knowledgeSourceIds || []),
+        knowledgeBaseIds: sortStrings(access.knowledgeBaseIds || []),
       };
       setGroupMembers(members);
       setGroupAccess(normalized);
@@ -383,12 +376,12 @@ const UsersPage = () => {
       const saved = await saveGroupPromptAccess(selectedGroupId, {
         skillIds: sortStrings(groupAccess.skillIds),
         mcpServerIds: sortStrings(groupAccess.mcpServerIds),
-        knowledgeSourceIds: sortNumbers(groupAccess.knowledgeSourceIds),
+        knowledgeBaseIds: sortStrings(groupAccess.knowledgeBaseIds),
       });
       const normalized: GroupPromptAccess = {
         skillIds: sortStrings(saved.skillIds),
         mcpServerIds: sortStrings(saved.mcpServerIds),
-        knowledgeSourceIds: sortNumbers(saved.knowledgeSourceIds || []),
+        knowledgeBaseIds: sortStrings(saved.knowledgeBaseIds || []),
       };
       setGroupAccess(normalized);
       setSavedGroupAccess(normalized);
@@ -806,8 +799,8 @@ const UsersPage = () => {
                         <div className="grid gap-4 md:grid-cols-3">
                           <div className="settings-soft-panel rounded-2xl p-4">
                             <BookOpen size={18} className="text-blue-600" />
-                            <p className="mt-3 text-2xl font-semibold text-slate-950">{groupAccess.knowledgeSourceIds.length}</p>
-                            <p className="text-xs text-slate-500">Knowledge sources</p>
+                            <p className="mt-3 text-2xl font-semibold text-slate-950">{groupAccess.knowledgeBaseIds.length}</p>
+                            <p className="text-xs text-slate-500">Knowledge bases</p>
                           </div>
                           <div className="settings-soft-panel rounded-2xl p-4">
                             <Wrench size={18} className="settings-icon-purple" />
@@ -823,21 +816,21 @@ const UsersPage = () => {
 
                         <div className="grid gap-5 lg:grid-cols-3">
                           <MultiSelector
-                            label="Knowledge sources"
-                            description="Shared sources this team can reference from any workspace."
+                            label="Knowledge bases"
+                            description="Published knowledge bases this team can reference from any workspace."
                             options={knowledgeOptions}
-                            value={groupAccess.knowledgeSourceIds.map(String)}
+                            value={groupAccess.knowledgeBaseIds}
                             onChange={(values) => setGroupAccess((previous) => ({
                               ...previous,
-                              knowledgeSourceIds: sortNumbers(values.map(Number)),
+                              knowledgeBaseIds: sortStrings(values),
                             }))}
                             placeholder="No knowledge access"
                             triggerDisplay="count"
                             hasSearch
                             hasSelectAll
-                            searchPlaceholder="Search knowledge"
+                            searchPlaceholder="Search knowledge bases"
                             isDisabled={!knowledgeOptions.length}
-                            disabledMessage="Add shared knowledge sources from the Knowledge page first."
+                            disabledMessage="Publish a knowledge base from the Knowledge page first."
                           />
                           <MultiSelector
                             label="Skills"
