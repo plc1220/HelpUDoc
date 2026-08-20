@@ -3,6 +3,7 @@ import {
   BookOpen,
   CheckCircle2,
   FileText,
+  FolderOpen,
   History,
   Loader2,
   Lock,
@@ -25,6 +26,7 @@ import {
   SettingsTabs,
 } from '../components/settings/SettingsScaffold';
 import GovernanceViewToggle, { type GovernanceViewMode } from '../features/governance/GovernanceViewToggle';
+import KnowledgeBundleExplorer from '../components/KnowledgeBundleExplorer';
 import { putGlobalKnowledgeUpload } from '../services/knowledgeApi';
 import {
   addKnowledgeBaseSource,
@@ -36,12 +38,14 @@ import {
   fetchEligibleTeams,
   fetchKnowledgeBase,
   fetchKnowledgeBaseCatalog,
+  fetchKnowledgeBaseSourceBundle,
+  fetchKnowledgeBaseSourceBundleFile,
+  fetchKnowledgeBaseSourceGraph,
+  fetchKnowledgeBaseSourceSnapshots,
   fetchKnowledgeBaseTeams,
   fetchKnowledgeBaseVersions,
-  grantKnowledgeBaseTeam,
   publishKnowledgeBase,
   removeKnowledgeBaseSource,
-  revokeKnowledgeBaseTeam,
   type AssignableSource,
   type GovernanceTeam,
   type KnowledgeBaseDetail,
@@ -156,7 +160,7 @@ const KnowledgeGovernancePage = () => {
       <SettingsTabs
         tabs={[
           { id: 'catalog', label: 'Catalog', icon: BookOpen },
-          { id: 'manage', label: 'My bases', icon: Users2 },
+          { id: 'manage', label: 'My knowledge bases', icon: Users2 },
         ]}
         value={tab}
         onChange={setTab}
@@ -257,7 +261,6 @@ const KnowledgeGovernancePage = () => {
       {detailId ? (
         <DetailDialog
           knowledgeBaseId={detailId}
-          teams={teams}
           onClose={() => setDetailId(null)}
           onChanged={() => void load()}
           onOpenVersions={(id) => { setDetailId(null); setVersionsId(id); }}
@@ -348,9 +351,8 @@ const CreateDialog = ({ teams, onClose, onCreated }: {
   );
 };
 
-const DetailDialog = ({ knowledgeBaseId, teams, onClose, onChanged, onOpenVersions }: {
+const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
   knowledgeBaseId: string;
-  teams: GovernanceTeam[];
   onClose: () => void;
   onChanged: () => void;
   onOpenVersions: (id: string) => void;
@@ -362,8 +364,9 @@ const DetailDialog = ({ knowledgeBaseId, teams, onClose, onChanged, onOpenVersio
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [addSourceId, setAddSourceId] = useState('');
-  const [grantTeamId, setGrantTeamId] = useState('');
   const [uploads, setUploads] = useState<Array<{ name: string; status: string }>>([]);
+  const [explorerSource, setExplorerSource] = useState<{ id: number; title: string } | null>(null);
+  const [uploadGuidance, setUploadGuidance] = useState('');
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -401,7 +404,11 @@ const DetailDialog = ({ knowledgeBaseId, teams, onClose, onChanged, onOpenVersio
           title: file.name,
           type: guessKnowledgeType(file.name),
           description: `Uploaded file ${file.name}`,
-          metadata: { source: 'upload', uploadMode: 'direct' },
+          metadata: {
+            source: 'upload',
+            uploadMode: 'direct',
+            ...(uploadGuidance.trim() ? { extractionGuidance: uploadGuidance.trim().slice(0, 2000) } : {}),
+          },
         });
         const controller = new AbortController();
         await putGlobalKnowledgeUpload(session, file, () => undefined, controller.signal);
@@ -433,10 +440,9 @@ const DetailDialog = ({ knowledgeBaseId, teams, onClose, onChanged, onOpenVersio
   };
 
   const canManage = detail?.permissions.canManage ?? false;
-  const grantedTeamIds = new Set(grants.map((grant) => grant.teamId));
-  const grantableTeams = teams.filter((team) => !grantedTeamIds.has(team.id));
 
   return (
+    <>
     <Dialog
       title={detail?.name || 'Knowledge base'}
       subtitle={detail ? `${detail.slug}@${detail.currentVersion || '—'} · Owned by ${detail.ownerTeamName || 'Platform'}` : undefined}
@@ -499,6 +505,11 @@ const DetailDialog = ({ knowledgeBaseId, teams, onClose, onChanged, onOpenVersio
                     ) : (
                       <span className="shrink-0 text-xs text-slate-400">not built</span>
                     )}
+                    {member.published ? (
+                      <button type="button" onClick={() => setExplorerSource({ id: member.knowledgeSourceId, title: member.title })} className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50" aria-label="Explore OKF concepts">
+                        <FolderOpen size={13} /> Explore
+                      </button>
+                    ) : null}
                     {canManage ? (
                       <button type="button" disabled={busy} onClick={() => void run(() => removeKnowledgeBaseSource(knowledgeBaseId, member.knowledgeSourceId))} className="shrink-0 text-slate-400 hover:text-red-600" aria-label="Remove source">
                         <Trash2 size={15} />
@@ -509,12 +520,25 @@ const DetailDialog = ({ knowledgeBaseId, teams, onClose, onChanged, onOpenVersio
               </ul>
             )}
             {canManage ? (
-              <label className="mt-3 flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center hover:border-slate-400">
-                <UploadCloud size={20} className="text-slate-400" />
-                <span className="text-sm font-medium text-slate-600">Upload documents into this base</span>
-                <span className="text-xs text-slate-400">Each file is processed into OKF knowledge automatically.</span>
-                <input type="file" multiple className="hidden" onChange={(event) => { const { files } = event.target; void handleUpload(files); event.target.value = ''; }} />
-              </label>
+              <>
+                <div className="mt-3">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">Extraction guidance (optional)</label>
+                  <textarea
+                    value={uploadGuidance}
+                    onChange={(event) => setUploadGuidance(event.target.value.slice(0, 2000))}
+                    rows={2}
+                    placeholder="Steer OKF concept extraction, e.g. &quot;Focus on fees, penalties, and dispute-resolution clauses.&quot;"
+                    className="settings-control w-full rounded-xl px-3 py-2 text-sm"
+                  />
+                  <p className="mt-1 text-xs text-slate-400">Applied to files uploaded below; biases which concepts are extracted (evidence rules still apply).</p>
+                </div>
+                <label className="mt-3 flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center hover:border-slate-400">
+                  <UploadCloud size={20} className="text-slate-400" />
+                  <span className="text-sm font-medium text-slate-600">Upload documents into this base</span>
+                  <span className="text-xs text-slate-400">Each file is processed into OKF knowledge automatically.</span>
+                  <input type="file" multiple className="hidden" onChange={(event) => { const { files } = event.target; void handleUpload(files); event.target.value = ''; }} />
+                </label>
+              </>
             ) : null}
             {uploads.length ? (
               <ul className="mt-2 space-y-1">
@@ -553,36 +577,34 @@ const DetailDialog = ({ knowledgeBaseId, teams, onClose, onChanged, onOpenVersio
                 {grants.map((grant) => (
                   <span key={grant.teamId} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
                     {grant.teamName}
-                    {canManage ? (
-                      <button type="button" disabled={busy} onClick={() => void run(() => revokeKnowledgeBaseTeam(knowledgeBaseId, grant.teamId))} className="text-slate-400 hover:text-red-600" aria-label="Revoke">
-                        <X size={12} />
-                      </button>
-                    ) : null}
                   </span>
                 ))}
               </div>
             )}
-            {canManage && grantableTeams.length ? (
-              <div className="mt-3 flex items-center gap-2">
-                <select value={grantTeamId} onChange={(event) => setGrantTeamId(event.target.value)} className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2 text-sm">
-                  <option value="">Grant a team…</option>
-                  {grantableTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
-                </select>
-                <button type="button" disabled={busy || !grantTeamId} onClick={() => void run(async () => { await grantKnowledgeBaseTeam(knowledgeBaseId, grantTeamId); setGrantTeamId(''); })} className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-50">
-                  <Users2 size={15} /> Grant
-                </button>
-              </div>
-            ) : null}
+            <p className="mt-3 text-xs text-slate-500">Grant this knowledge base to teams from User &amp; Team Management → Teams.</p>
           </section>
 
           {canManage && !detail.isDefault ? (
             <button type="button" disabled={busy} onClick={() => void run(() => archiveKnowledgeBase(knowledgeBaseId))} className="text-sm font-medium text-red-600 hover:underline disabled:opacity-50">
-              Archive this knowledge base
+              Delete knowledge base
             </button>
           ) : null}
         </div>
       )}
     </Dialog>
+    {explorerSource ? (
+      <KnowledgeBundleExplorer
+        knowledgeId={explorerSource.id}
+        title={explorerSource.title}
+        canPublish={false}
+        fetchBundle={(sid) => fetchKnowledgeBaseSourceBundle(knowledgeBaseId, sid)}
+        fetchBundleFile={(sid, path) => fetchKnowledgeBaseSourceBundleFile(knowledgeBaseId, sid, path)}
+        fetchGraph={(sid) => fetchKnowledgeBaseSourceGraph(knowledgeBaseId, sid)}
+        fetchSnapshots={(sid) => fetchKnowledgeBaseSourceSnapshots(knowledgeBaseId, sid)}
+        onClose={() => setExplorerSource(null)}
+      />
+    ) : null}
+    </>
   );
 };
 

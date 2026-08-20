@@ -84,7 +84,7 @@ export default function(
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
   router.use('/knowledge-catalog', knowledgeCatalogRoutes(knowledgeService));
   // Not admin-gated: team leads manage their own bases; access is enforced in the service.
-  router.use('/knowledge-bases', knowledgeBaseRoutes(knowledgeBaseService));
+  router.use('/knowledge-bases', knowledgeBaseRoutes(knowledgeBaseService, knowledgeService));
   router.use('/workspaces', workspaceRoutes(workspaceService, workspacePublicationService, userService));
   router.use(
     '/workspaces/:workspaceId/collaboration',
