@@ -43,6 +43,13 @@ type KnowledgeBundleExplorerProps = {
   knowledgeId: number;
   title: string;
   onClose: () => void;
+  // Optional injected fetchers so the explorer can be reused against a
+  // KB-scoped, non-admin endpoint set. Default to the global (admin) endpoints.
+  canPublish?: boolean;
+  fetchBundle?: (knowledgeId: number) => Promise<KnowledgeBundleManifest>;
+  fetchBundleFile?: (knowledgeId: number, path: string) => Promise<KnowledgeBundleFileContent>;
+  fetchGraph?: (knowledgeId: number) => Promise<KnowledgeGraphSummary>;
+  fetchSnapshots?: (knowledgeId: number) => Promise<KnowledgeSnapshot[]>;
 };
 
 const kindValues = [
@@ -137,6 +144,11 @@ export default function KnowledgeBundleExplorer({
   knowledgeId,
   title,
   onClose,
+  canPublish = true,
+  fetchBundle = getGlobalKnowledgeBundle,
+  fetchBundleFile = getGlobalKnowledgeBundleFile,
+  fetchGraph = getGlobalKnowledgeGraph,
+  fetchSnapshots = listGlobalKnowledgeSnapshots,
 }: KnowledgeBundleExplorerProps) {
   const [manifest, setManifest] = useState<KnowledgeBundleManifest | null>(null);
   const [selectedPath, setSelectedPath] = useState('');
@@ -164,7 +176,7 @@ export default function KnowledgeBundleExplorer({
     let active = true;
     setLoading(true);
     setError(null);
-    void getGlobalKnowledgeBundle(knowledgeId)
+    void fetchBundle(knowledgeId)
       .then((bundle) => {
         if (!active) return;
         setManifest(bundle);
@@ -185,8 +197,8 @@ export default function KnowledgeBundleExplorer({
   useEffect(() => {
     let active = true;
     void Promise.all([
-      getGlobalKnowledgeGraph(knowledgeId),
-      listGlobalKnowledgeSnapshots(knowledgeId),
+      fetchGraph(knowledgeId),
+      fetchSnapshots(knowledgeId),
     ]).then(([graphResult, snapshotResult]) => {
       if (!active) return;
       setGraph(graphResult);
@@ -203,8 +215,8 @@ export default function KnowledgeBundleExplorer({
     try {
       await publishGlobalKnowledgeSnapshot(knowledgeId, selectedSnapshotId);
       const [bundle, snapshotResult] = await Promise.all([
-        getGlobalKnowledgeBundle(knowledgeId),
-        listGlobalKnowledgeSnapshots(knowledgeId),
+        fetchBundle(knowledgeId),
+        fetchSnapshots(knowledgeId),
       ]);
       setManifest(bundle);
       setSnapshots(snapshotResult || []);
@@ -224,7 +236,7 @@ export default function KnowledgeBundleExplorer({
     let active = true;
     setFileLoading(true);
     setError(null);
-    void getGlobalKnowledgeBundleFile(knowledgeId, selectedPath)
+    void fetchBundleFile(knowledgeId, selectedPath)
       .then((file) => {
         if (active) setSelectedFile(file);
       })
@@ -302,7 +314,7 @@ export default function KnowledgeBundleExplorer({
               <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Published OKF</span>
               {manifest ? <span className="text-xs text-slate-500">v{manifest.okfVersion} · {manifest.files.length} files · {manifest.statistics?.conceptCount || 0} concepts · {graph?.communityCount || 0} communities · {graph?.orphanCount || 0} orphans</span> : null}
             </div>
-            {snapshots.length > 1 ? (
+            {canPublish && snapshots.length > 1 ? (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <select
                   value={selectedSnapshotId}
@@ -343,15 +355,17 @@ export default function KnowledgeBundleExplorer({
         </header>
 
         <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-          <PowerSearch
-            style={{ width: 'min(100%, 560px)' }}
-            config={searchConfig}
-            filters={filters}
-            onChange={(nextFilters) => setFilters([...nextFilters])}
-            placeholder="Search bundle files…"
-            resultCount={`${visibleFiles.length} files`}
-            size="sm"
-          />
+          <div className="flex min-w-0 items-center gap-3">
+            <PowerSearch
+              style={{ width: 'min(100%, 560px)' }}
+              config={searchConfig}
+              filters={filters}
+              onChange={(nextFilters) => setFilters([...nextFilters])}
+              placeholder="Search bundle files…"
+              size="sm"
+            />
+            <span className="whitespace-nowrap text-xs text-slate-500">{visibleFiles.length} of {manifest?.files.length ?? 0} files</span>
+          </div>
           <SegmentedControl value={view} onChange={(value) => setView(value as BundleView)} label="Bundle view" size="sm">
             <SegmentedControlItem value="grid" label="Grid" isLabelHidden icon={<Grid2X2 size={15} />} />
             <SegmentedControlItem value="columns" label="Columns" isLabelHidden icon={<Columns3 size={15} />} />

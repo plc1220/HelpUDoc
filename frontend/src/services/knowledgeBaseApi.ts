@@ -1,5 +1,11 @@
 import { API_URL, apiFetch } from './apiClient';
-import type { KnowledgeUploadSession } from './knowledgeApi';
+import type {
+  KnowledgeUploadSession,
+  KnowledgeBundleManifest,
+  KnowledgeBundleFileContent,
+  KnowledgeGraphSummary,
+  KnowledgeSnapshot,
+} from './knowledgeApi';
 
 export type KnowledgeBaseStatus = 'draft' | 'published' | 'archived';
 
@@ -85,6 +91,22 @@ export const fetchKnowledgeBaseCatalog = () =>
 
 export const fetchMyKnowledgeBases = () =>
   jsonRequest<KnowledgeBaseSummary[]>(`${API_URL}/knowledge-bases/mine`, undefined, 'Failed to load your knowledge bases');
+
+// Read-only OKF explorer data for a member source, scoped to (and authorized by) a knowledge base.
+const sourcePath = (kbId: string, sourceId: number) =>
+  `${API_URL}/knowledge-bases/${encodeURIComponent(kbId)}/sources/${sourceId}`;
+
+export const fetchKnowledgeBaseSourceBundle = (kbId: string, sourceId: number) =>
+  jsonRequest<KnowledgeBundleManifest>(`${sourcePath(kbId, sourceId)}/bundle`, undefined, 'Failed to load OKF bundle');
+
+export const fetchKnowledgeBaseSourceBundleFile = (kbId: string, sourceId: number, path: string) =>
+  jsonRequest<KnowledgeBundleFileContent>(`${sourcePath(kbId, sourceId)}/bundle/file?path=${encodeURIComponent(path)}`, undefined, 'Failed to load bundle file');
+
+export const fetchKnowledgeBaseSourceGraph = (kbId: string, sourceId: number) =>
+  jsonRequest<KnowledgeGraphSummary>(`${sourcePath(kbId, sourceId)}/graph`, undefined, 'Failed to load knowledge graph');
+
+export const fetchKnowledgeBaseSourceSnapshots = (kbId: string, sourceId: number) =>
+  jsonRequest<KnowledgeSnapshot[]>(`${sourcePath(kbId, sourceId)}/snapshots`, undefined, 'Failed to load snapshots');
 
 export type AssignableSource = {
   knowledgeSourceId: number;
