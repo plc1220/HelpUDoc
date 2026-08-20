@@ -442,6 +442,7 @@ export async function enrichKnowledgeWindow(payload: {
   sourceType: string;
   languageDistribution?: Record<string, number>;
   structuralPath?: string[];
+  guidance?: string;
 }, options?: InternalAgentOptions): Promise<KnowledgeMapResponse> {
   const headers: Record<string, string> = {};
   if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
@@ -457,6 +458,7 @@ export async function reduceKnowledgeMapResults(payload: {
   mapResults: KnowledgeMapResponse[];
   blocks: Array<Record<string, unknown>>;
   fanIn?: number;
+  guidance?: string;
 }, options?: InternalAgentOptions): Promise<KnowledgeMapResponse> {
   const headers: Record<string, string> = {};
   if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;

@@ -2165,6 +2165,10 @@ export class KnowledgeService {
       const enrichmentMode: 'deterministic' | 'gemini-lite' = requestedProfile === 'deterministic'
         ? 'deterministic'
         : 'gemini-lite';
+      // Optional operator guidance that biases which OKF concepts are extracted.
+      const extractionGuidance = typeof sourceMetadata.extractionGuidance === 'string'
+        ? sourceMetadata.extractionGuidance.trim().slice(0, 2000) || undefined
+        : undefined;
       await this.updateIngestionMetadata(workspaceId, id, {
         status: 'structuring',
         stage: 'structuring',
@@ -2226,8 +2230,9 @@ export class KnowledgeService {
             const cacheHash = `sha256:${sha256(stableJson({
               windowHash: window.contentHash,
               modelProfile: 'lite',
-              promptVersion: 'helpudoc-knowledge-map/2',
+              promptVersion: 'helpudoc-knowledge-map/3',
               schemaVersion: 'helpudoc-knowledge-map-schema/1',
+              extractionGuidance: extractionGuidance || '',
             }))}`;
             const startedAt = Date.now();
             return this.db('knowledge_ingestion_tasks as task')
@@ -2262,6 +2267,7 @@ export class KnowledgeService {
                     sourceType: String(extracted.manifest?.sourceType || path.extname(String(sourceFile.name || '')).slice(1) || 'document'),
                     languageDistribution: extracted.languageDistribution,
                     structuralPath: structureNode?.title ? [String(structureNode.title)] : [],
+                    guidance: extractionGuidance,
                   }, { authToken: agentAuthToken });
                   await Promise.all([
                     this.db('knowledge_ingestion_tasks').where({ id: taskId }).update({
@@ -2306,6 +2312,7 @@ export class KnowledgeService {
           mapResults,
           blocks: extracted.blocks,
           fanIn: Math.max(2, Math.min(8, Number(process.env.KNOWLEDGE_REDUCE_FAN_IN || 6))),
+          guidance: extractionGuidance,
         }, { authToken: agentAuthToken });
         await this.db('knowledge_usage_events').insert({
           id: randomUUID(),

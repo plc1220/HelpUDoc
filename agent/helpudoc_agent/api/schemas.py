@@ -99,6 +99,7 @@ class KnowledgeMapRequest(BaseModel):
     sourceType: str
     languageDistribution: Dict[str, float] = Field(default_factory=dict)
     structuralPath: List[str] = Field(default_factory=list)
+    guidance: Optional[str] = Field(default=None, max_length=2000)
 
 
 class KnowledgeMapResponse(BaseModel):
@@ -117,6 +118,7 @@ class KnowledgeReduceRequest(BaseModel):
     mapResults: List[Dict[str, Any]]
     blocks: List[Dict[str, Any]]
     fanIn: int = Field(default=6, ge=2, le=8)
+    guidance: Optional[str] = Field(default=None, max_length=2000)
 
 
 class KnowledgeEmbeddingRequest(BaseModel):
