@@ -1,4 +1,5 @@
 import type {
+  FileAgentProvenance,
   FileAuditEvent,
   FileProvenanceDocument,
   FileProvenanceEvent,
@@ -36,6 +37,8 @@ export interface BuildProvenanceInput {
   priorEvents?: Array<Partial<FileAuditEvent> & { seq: number; eventType: string; eventHash: string }>;
   /** Display names by user id, so the document is readable standalone. */
   actorNames?: Record<string, string | null>;
+  /** Agent run detail keyed by runId, attached to the events that came from a run. */
+  runProvenance?: Record<string, any>;
 }
 
 const toIso = (value: Date | string | null | undefined): string | null => {
@@ -72,10 +75,40 @@ const bySeq = (
   right: { seq: number },
 ) => Number(left.seq) - Number(right.seq);
 
+/** Shapes a stored run row into the provenance block attached to an event. */
+function toAgentProvenance(row: any): FileAgentProvenance | null {
+  if (!row) return null;
+  const asArray = (value: unknown) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch { return []; }
+    }
+    return [];
+  };
+  return {
+    runId: String(row.runId),
+    userPrompt: row.userPrompt ?? null,
+    enrichedPrompt: row.enrichedPrompt ?? null,
+    responseText: row.responseText ?? null,
+    skillsInvoked: asArray(row.skillsInvoked),
+    knowledgeRefsDeclared: asArray(row.knowledgeRefsDeclared),
+    knowledgeChunksRetrieved: asArray(row.knowledgeChunksRetrieved),
+    taggedFileRefs: asArray(row.taggedFileRefs),
+    langfuseTraceId: row.langfuseTraceId ?? null,
+    langfuseTraceUrl: row.langfuseTraceUrl ?? null,
+    conversationMessageId: row.conversationMessageId ? Number(row.conversationMessageId) : null,
+    truncated: typeof row.truncated === 'object' && row.truncated ? row.truncated : {},
+  };
+}
+
 function toDocumentEvent(
   row: Partial<FileAuditEvent> & { seq: number; eventType: string; eventHash: string },
   chain: 'current' | 'prior',
   actorNames: Record<string, string | null>,
+  runProvenance: Record<string, any> = {},
 ): FileProvenanceEvent {
   const actorUserId = row.actorUserId ?? null;
   const displayName = row.actorDisplayName
@@ -88,7 +121,7 @@ function toDocumentEvent(
     occurredAt: toIso(row.occurredAt as unknown as string) ?? '',
     chain,
     actor: actorUserId || displayName ? { userId: actorUserId, displayName } : null,
-    provenance: null,
+    provenance: row.runId ? toAgentProvenance(runProvenance[String(row.runId)]) : null,
   };
 }
 
@@ -151,12 +184,13 @@ function buildOrigin(
 
 export function buildProvenanceDocument(input: BuildProvenanceInput): FileProvenanceDocument {
   const actorNames = input.actorNames ?? {};
+  const runProvenance = input.runProvenance ?? {};
   const priorEvents = [...(input.priorEvents ?? [])]
     .sort(bySeq)
-    .map((row) => toDocumentEvent(row, 'prior', actorNames));
+    .map((row) => toDocumentEvent(row, 'prior', actorNames, runProvenance));
   const currentEvents = [...input.events]
     .sort(bySeq)
-    .map((row) => toDocumentEvent(row, 'current', actorNames));
+    .map((row) => toDocumentEvent(row, 'current', actorNames, runProvenance));
 
   const chain = verifyEventChain(input.events);
   const chainHead = currentEvents.length

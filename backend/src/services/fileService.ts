@@ -67,6 +67,19 @@ const normalizeS3Key = (workspaceId: string, fileName: string) => {
   return path.posix.normalize(`${workspaceId}/${sanitized}`);
 };
 
+/**
+ * Run context for in-flight artifact commits, keyed by runId. Module scoped
+ * rather than an instance field because tests build services with
+ * `Object.create(FileService.prototype)`, which skips field initializers.
+ */
+const runContextByRunId = new Map<string, FileAuditRunContext | undefined>();
+
+export interface FileAuditRunContext {
+  conversationId?: string | null;
+  turnId?: string | null;
+  langfuseTraceId?: string | null;
+}
+
 export type FileVersionChangeKind = 'create' | 'content' | 'rename' | 'move' | 'restore' | 'delete' | 'artifact';
 
 export type WorkspaceArtifactBaseline = Record<string, {
@@ -511,6 +524,15 @@ export class FileService {
    * an extra query, and must fold the returned `seq`/`eventHash` into the
    * `files` update they are already performing.
    */
+  private runContextFor(runId: string): FileAuditRunContext {
+    const context = runContextByRunId.get(runId);
+    return {
+      conversationId: context?.conversationId ?? null,
+      turnId: context?.turnId ?? null,
+      langfuseTraceId: context?.langfuseTraceId ?? null,
+    };
+  }
+
   private async emitVersionEvent(
     tx: Knex.Transaction,
     args: {
@@ -540,6 +562,7 @@ export class FileService {
       fileVersionId: args.versionId,
       fileVersion: args.version,
       runId: args.sourceRunId ?? null,
+      ...(args.sourceRunId ? this.runContextFor(args.sourceRunId) : {}),
       payload: args.payload ?? {},
     });
     // Internal paths are not audited. Hand back the file's current counters so
@@ -876,6 +899,28 @@ export class FileService {
     options?: {
       baseline?: WorkspaceArtifactBaseline | null;
       assertLeaseOwned?: () => Promise<void>;
+      /** Recorded on the audit event so a file links straight to its turn. */
+      runContext?: FileAuditRunContext;
+    },
+  ) {
+    // Held only for the duration of the commit; always cleared so the map
+    // cannot grow with every run, including on the throwing paths.
+    runContextByRunId.set(sourceRunId, options?.runContext);
+    try {
+      return await this.commitWorkspaceArtifactsInner(workspaceId, userId, sourceRunId, options);
+    } finally {
+      runContextByRunId.delete(sourceRunId);
+    }
+  }
+
+  private async commitWorkspaceArtifactsInner(
+    workspaceId: string,
+    userId: string,
+    sourceRunId: string,
+    options?: {
+      baseline?: WorkspaceArtifactBaseline | null;
+      assertLeaseOwned?: () => Promise<void>;
+      runContext?: FileAuditRunContext;
     },
   ) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
@@ -1167,7 +1212,20 @@ export class FileService {
       for (const user of users) actorNames[String(user.id)] = user.displayName ?? null;
     }
 
+    // Agent runs carry the prompt, response, skills and retrieved knowledge.
+    const runIds = [...new Set(
+      [...events, ...priorEvents]
+        .map((event: any) => event.runId)
+        .filter((value: string | null): value is string => Boolean(value)),
+    )];
+    const runProvenance: Record<string, any> = {};
+    if (runIds.length) {
+      const rows = await this.db('agent_run_provenance').whereIn('runId', runIds);
+      for (const row of rows) runProvenance[String(row.runId)] = row;
+    }
+
     return buildProvenanceDocument({
+      runProvenance,
       file: {
         id: Number(file.id),
         workspaceId: String(file.workspaceId),

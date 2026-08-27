@@ -168,3 +168,66 @@ test('a long trail assembles without blowing up', () => {
   assert.equal(doc.events[9_999].seq, 10_000);
   assert.ok(elapsed < 5_000, `assembling 10k events took ${elapsed}ms`);
 });
+
+test('an agent-written file shows the prompt that produced it', () => {
+  const events = chain([
+    { eventType: 'file.created' },
+    { eventType: 'file.agent_generated' },
+  ]).map((event, index) => (index === 1 ? { ...event, runId: 'run-88f2' } : event));
+
+  const doc = buildProvenanceDocument({
+    file: FILE,
+    events,
+    runProvenance: {
+      'run-88f2': {
+        runId: 'run-88f2',
+        userPrompt: 'Draft the Q3 board summary using @fy24-filings',
+        enrichedPrompt: 'Draft the Q3 board summary…\n\nTagged Knowledge bundles: …',
+        responseText: "I've drafted the summary in four sections.",
+        skillsInvoked: [{ skillId: 'research' }, { skillId: 'data' }],
+        knowledgeRefsDeclared: [{ id: 88, title: 'FY24 Filings' }],
+        knowledgeChunksRetrieved: [{ path: 'knowledge://88/10k.md', snapshotId: 'snap-3a' }],
+        taggedFileRefs: [{ fileId: 311, version: 2, name: 'notes.md' }],
+        langfuseTraceId: 'tr-e7fa20c8',
+        conversationMessageId: 90412,
+      },
+    },
+  });
+
+  const agentEvent = doc.events.find((event) => event.eventType === 'file.agent_generated');
+  assert.ok(agentEvent?.provenance, 'agent events must carry the run detail');
+  assert.equal(agentEvent.provenance.userPrompt, 'Draft the Q3 board summary using @fy24-filings');
+  assert.equal(agentEvent.provenance.responseText, "I've drafted the summary in four sections.");
+  assert.deepEqual(agentEvent.provenance.skillsInvoked.map((s: any) => s.skillId), ['research', 'data']);
+  assert.equal(agentEvent.provenance.knowledgeChunksRetrieved[0].snapshotId, 'snap-3a');
+  assert.equal(agentEvent.provenance.langfuseTraceId, 'tr-e7fa20c8');
+
+  // A human edit in the same trail must not borrow the agent's prompt.
+  const humanEvent = doc.events.find((event) => event.eventType === 'file.created');
+  assert.equal(humanEvent?.provenance, null);
+});
+
+test('an agent event without a stored run degrades quietly', () => {
+  // Runs from before this feature existed have no provenance row.
+  const events = chain([{ eventType: 'file.agent_generated' }])
+    .map((event) => ({ ...event, runId: 'run-legacy' }));
+  const doc = buildProvenanceDocument({ file: FILE, events, runProvenance: {} });
+
+  assert.equal(doc.events.length, 1);
+  assert.equal(doc.events[0].provenance, null);
+});
+
+test('jsonb arrays arriving as strings are still readable', () => {
+  const events = chain([{ eventType: 'file.agent_generated' }])
+    .map((event) => ({ ...event, runId: 'run-1' }));
+  const doc = buildProvenanceDocument({
+    file: FILE,
+    events,
+    runProvenance: {
+      'run-1': { runId: 'run-1', skillsInvoked: '[{"skillId":"research"}]', knowledgeChunksRetrieved: 'not-json' },
+    },
+  });
+
+  assert.deepEqual(doc.events[0].provenance?.skillsInvoked, [{ skillId: 'research' }]);
+  assert.deepEqual(doc.events[0].provenance?.knowledgeChunksRetrieved, []);
+});
