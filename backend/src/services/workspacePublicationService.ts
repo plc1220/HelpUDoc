@@ -6,6 +6,7 @@ import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
+import { recordFileEvent } from './fileAuditService';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { DatabaseService } from './databaseService';
 import type { ObjectStore } from './objectStore';
@@ -1966,12 +1967,31 @@ export class WorkspacePublicationService {
                 createdBy: userId,
               });
             }
+            const tombstoneAudit = await recordFileEvent(tx, {
+              fileId: Number(removed.id),
+              workspaceId,
+              filePath: String(removed.name),
+              eventType: 'file.tombstoned_by_sync',
+              seq: Number(removed.auditSeq ?? 0) + 1,
+              prevEventHash: removed.lastAuditHash ?? null,
+              actorUserId: userId,
+              actorType: 'system',
+              sha256: currentVersion?.sha256 || null,
+              objectKey: currentVersion?.objectKey || null,
+              fileVersionId: currentVersion?.objectKey ? tombstoneVersionId : null,
+              fileVersion: nextVersion,
+              payload: { removedBySync: true },
+            });
             await tx('files').where({ id: removed.id }).update({
               ...(currentVersion?.objectKey ? { currentVersionId: tombstoneVersionId } : {}),
               version: nextVersion,
               deletedAt: tx.fn.now(),
               updatedBy: userId,
               updatedAt: tx.fn.now(),
+              // null when the path is internal and therefore not audited.
+              ...(tombstoneAudit
+                ? { auditSeq: tombstoneAudit.seq, lastAuditHash: tombstoneAudit.eventHash }
+                : {}),
             });
           }
           const existingByName = new Map(visibleFiles.map((file) => [String(file.name), file]));
@@ -2031,6 +2051,36 @@ export class WorkspacePublicationService {
               baseVersion: existing ? Number(existing.version || 1) : null,
               createdBy: userId,
             });
+            // `files.id` is workspace-scoped, so content crossing a workspace
+            // boundary lands on a different row. The manifest's fileVersionId
+            // is the only durable link back to where this content came from —
+            // record it, or the provenance trail dead-ends here.
+            const syncAudit = await recordFileEvent(tx, {
+              fileId,
+              workspaceId,
+              filePath: file.name,
+              eventType: 'file.synced_from_publication',
+              seq: Number(existing?.auditSeq ?? 0) + 1,
+              prevEventHash: existing?.lastAuditHash ?? null,
+              actorUserId: userId,
+              actorType: 'system',
+              sha256: file.hash,
+              objectKey: file.objectKey || null,
+              fileVersionId: versionId,
+              sourceFileVersionId: file.fileVersionId || null,
+              fileVersion: nextVersion,
+              payload: {
+                createdBySync: !existing,
+                sizeBytes: file.size,
+                mimeType: file.mimeType,
+              },
+            });
+            if (syncAudit) {
+              await tx('files').where({ id: fileId }).update({
+                auditSeq: syncAudit.seq,
+                lastAuditHash: syncAudit.eventHash,
+              });
+            }
           }
           const [updated] = await tx('workspaces')
             .where({ id: workspaceId })
