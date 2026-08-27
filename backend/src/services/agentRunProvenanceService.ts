@@ -111,6 +111,12 @@ export function collectKnowledgeChunks(
   return into;
 }
 
+/** uuid columns reject ''. The run pipeline supplies '' for absent ids. */
+const nullIfEmpty = (value: string | null | undefined): string | null => {
+  const trimmed = String(value ?? '').trim();
+  return trimmed || null;
+};
+
 export class AgentRunProvenanceService {
   constructor(private readonly db: Knex) {}
 
@@ -122,8 +128,8 @@ export class AgentRunProvenanceService {
       .insert({
         runId: input.runId,
         workspaceId: input.workspaceId,
-        userId: input.userId || null,
-        conversationId: input.conversationId || null,
+        userId: nullIfEmpty(input.userId),
+        conversationId: nullIfEmpty(input.conversationId),
         turnId: input.turnId || null,
         persona: input.persona || null,
         userPrompt: userPrompt.text,

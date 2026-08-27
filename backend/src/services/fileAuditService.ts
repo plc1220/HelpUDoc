@@ -72,6 +72,16 @@ const canonicalize = (value: unknown): string => {
 };
 
 /**
+ * uuid columns reject an empty string. The run pipeline hands optional ids
+ * through as '' rather than undefined, which `?? null` does not catch, so
+ * normalize before every insert.
+ */
+const nullIfEmpty = (value: string | null | undefined): string | null => {
+  const trimmed = String(value ?? '').trim();
+  return trimmed || null;
+};
+
+/**
  * Links each event to its predecessor, forming a per-file hash chain. The
  * publication snapshot pins the chain head so tampering is detectable.
  */
@@ -92,7 +102,7 @@ export function computeEventHash(input: {
     fileId: input.fileId,
     seq: input.seq,
     eventType: input.eventType,
-    actorUserId: input.actorUserId ?? null,
+    actorUserId: nullIfEmpty(input.actorUserId),
     occurredAt,
     payload: input.payload ?? {},
   })).digest('hex');
@@ -156,7 +166,7 @@ export async function recordFileEvent(
     fileId: input.fileId,
     seq: input.seq,
     eventType: input.eventType,
-    actorUserId: input.actorUserId,
+    actorUserId: nullIfEmpty(input.actorUserId),
     occurredAt,
     payload,
   });
@@ -168,19 +178,19 @@ export async function recordFileEvent(
     filePath: input.filePath,
     seq: input.seq,
     eventType: input.eventType,
-    actorUserId: input.actorUserId ?? null,
+    actorUserId: nullIfEmpty(input.actorUserId),
     actorType: input.actorType ?? 'human',
     actorDisplayName: input.actorDisplayName ?? null,
     sha256: input.sha256 ?? null,
     objectKey: input.objectKey ?? null,
-    fileVersionId: input.fileVersionId ?? null,
-    sourceFileVersionId: input.sourceFileVersionId ?? null,
+    fileVersionId: nullIfEmpty(input.fileVersionId),
+    sourceFileVersionId: nullIfEmpty(input.sourceFileVersionId),
     fileVersion: input.fileVersion ?? null,
-    runId: input.runId ?? null,
-    conversationId: input.conversationId ?? null,
-    turnId: input.turnId ?? null,
+    runId: nullIfEmpty(input.runId),
+    conversationId: nullIfEmpty(input.conversationId),
+    turnId: nullIfEmpty(input.turnId),
     conversationMessageId: input.conversationMessageId ?? null,
-    langfuseTraceId: input.langfuseTraceId ?? null,
+    langfuseTraceId: nullIfEmpty(input.langfuseTraceId),
     // `payload` can legitimately hold arrays; jsonbParam adds the ::jsonb cast
     // the pg driver otherwise mangles into a Postgres array literal.
     payload: jsonbParam(tx as Knex, payload),

@@ -185,3 +185,46 @@ test('ordinary documents are still audited, including lookalike names', async ()
   }
   assert.equal(events.length, 4);
 });
+
+test('empty-string ids are stored as null, not rejected by Postgres', async () => {
+  // The run pipeline hands optional ids through as '' rather than undefined.
+  // uuid columns reject '', and `?? null` does not catch it — this previously
+  // failed the artifact commit and took the whole agent run down with it.
+  const { tx, events } = createAuditCapture();
+  await recordFileEvent(tx, {
+    ...baseInput,
+    actorUserId: '',
+    conversationId: '',
+    turnId: '',
+    runId: '',
+    fileVersionId: '',
+    sourceFileVersionId: '',
+    langfuseTraceId: '',
+  });
+
+  const [row] = events;
+  for (const field of [
+    'actorUserId', 'conversationId', 'turnId', 'runId',
+    'fileVersionId', 'sourceFileVersionId', 'langfuseTraceId',
+  ] as const) {
+    assert.equal((row as any)[field], null, `${field} must be null, not ''`);
+  }
+});
+
+test('whitespace-only ids are treated as absent too', async () => {
+  const { tx, events } = createAuditCapture();
+  await recordFileEvent(tx, { ...baseInput, conversationId: '   ', runId: '\t' });
+  assert.equal(events[0].conversationId, null);
+  assert.equal(events[0].runId, null);
+});
+
+test('real ids still survive normalization', async () => {
+  const { tx, events } = createAuditCapture();
+  await recordFileEvent(tx, {
+    ...baseInput,
+    actorUserId: 'eaae7fb2-7915-4e6b-a66e-0b35b189dbaf',
+    runId: 'run-88f2',
+  });
+  assert.equal(events[0].actorUserId, 'eaae7fb2-7915-4e6b-a66e-0b35b189dbaf');
+  assert.equal(events[0].runId, 'run-88f2');
+});
