@@ -507,3 +507,139 @@ export interface SkillEvolutionSuggestion {
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * Per-file provenance audit trail.
+ *
+ * `file_audit_events` is append-only and deliberately denormalized: workspace
+ * deletion hard-deletes `files`/`file_versions`, so the trail carries its own
+ * copy of the identity it describes.
+ */
+export type FileAuditActorType = 'human' | 'agent' | 'system';
+
+export type FileAuditEventType =
+  | 'file.created'
+  | 'file.content_updated'
+  | 'file.agent_generated'
+  | 'file.renamed'
+  | 'file.moved'
+  | 'file.restored'
+  | 'file.deleted'
+  | 'file.canonicalized'
+  | 'file.synced_from_publication'
+  | 'file.tombstoned_by_sync'
+  | 'file.workspace_published'
+  | 'file.workspace_withdrawn'
+  | 'status.submitted'
+  | 'status.approved'
+  | 'status.changes_requested'
+  | 'status.published'
+  | 'status.reverted'
+  | 'status.unpublished';
+
+export interface FileAuditEvent {
+  id: string;
+  fileId: number;
+  workspaceId: string;
+  filePath: string;
+  seq: number;
+  eventType: FileAuditEventType;
+  actorUserId?: string | null;
+  actorType: FileAuditActorType;
+  actorDisplayName?: string | null;
+  sha256?: string | null;
+  objectKey?: string | null;
+  fileVersionId?: string | null;
+  sourceFileVersionId?: string | null;
+  fileVersion?: number | null;
+  runId?: string | null;
+  conversationId?: string | null;
+  turnId?: string | null;
+  conversationMessageId?: number | null;
+  langfuseTraceId?: string | null;
+  payload: Record<string, unknown>;
+  prevEventHash?: string | null;
+  eventHash: string;
+  occurredAt: string;
+}
+
+/** One event as rendered into a provenance document. */
+export interface FileProvenanceEvent extends FileAuditEvent {
+  /**
+   * `prior` marks events inherited from another workspace across a publication
+   * boundary — `files.id` is workspace-scoped, so a published document's
+   * history spans two chains.
+   */
+  chain: 'current' | 'prior';
+  actor?: { userId: string | null; displayName: string | null } | null;
+  /** Agent run detail, joined in when the event came from a run. */
+  provenance?: FileAgentProvenance | null;
+}
+
+export interface FileAgentProvenance {
+  runId: string;
+  userPrompt?: string | null;
+  enrichedPrompt?: string | null;
+  responseText?: string | null;
+  skillsInvoked?: Array<{ skillId: string; loadedAt?: string | null }>;
+  knowledgeRefsDeclared?: Array<{
+    id: number;
+    title: string;
+    snapshotHash?: string | null;
+    okfVersion?: string | null;
+  }>;
+  knowledgeChunksRetrieved?: Array<{
+    path: string;
+    title?: string | null;
+    snapshotId?: string | null;
+    score?: number | null;
+    sourceLocations?: unknown[];
+  }>;
+  taggedFileRefs?: TaggedFileRef[];
+  langfuseTraceId?: string | null;
+  langfuseTraceUrl?: string | null;
+  conversationMessageId?: number | null;
+  truncated?: Record<string, boolean>;
+}
+
+export type FileProvenanceOriginKind =
+  | 'uploaded'
+  | 'agent_generated'
+  | 'synced'
+  | 'unknown';
+
+export interface FileProvenanceOrigin {
+  kind: FileProvenanceOriginKind;
+  occurredAt: string | null;
+  actor?: { userId: string | null; displayName: string | null } | null;
+  runId?: string | null;
+  /** Set when the trail continues in a workspace this file was published from. */
+  priorWorkspace?: {
+    workspaceId: string;
+    fileId: number | null;
+    linkedVia: 'sourceFileVersionId';
+    bridgeVersionId: string;
+    eventCount: number;
+    accessible: boolean;
+  } | null;
+}
+
+export interface FileProvenanceDocument {
+  schemaVersion: string;
+  file: {
+    id: number;
+    workspaceId: string;
+    name: string;
+    currentVersion: number;
+    createdAt?: string | null;
+    deletedAt?: string | null;
+  };
+  origin: FileProvenanceOrigin;
+  events: FileProvenanceEvent[];
+  integrity: {
+    chainHead: string | null;
+    verified: boolean;
+    brokenAtSeq?: number | null;
+    eventCount: number;
+  };
+}
