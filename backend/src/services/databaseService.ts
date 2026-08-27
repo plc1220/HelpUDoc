@@ -59,6 +59,7 @@ export class DatabaseService {
     await this.createWorkspaceScheduleRunsTable();
     await this.createAgentRunSummariesTable();
     await this.createAgentRunToolEventsTable();
+    await this.createAgentRunProvenanceTable();
     await this.createAgentDailyReflectionsTable();
     await this.createAgentDailyReflectionBreakdownsTable();
     await this.createUserMemorySuggestionsTable();
@@ -1588,6 +1589,39 @@ export class DatabaseService {
       await this.db.raw(
         'CREATE INDEX IF NOT EXISTS agent_run_tool_events_tool_event_idx ON agent_run_tool_events ("toolName", "eventAt")',
       );
+    }
+  }
+
+  private async createAgentRunProvenanceTable(): Promise<void> {
+    if (!await this.db.schema.hasTable('agent_run_provenance')) {
+      await this.db.schema.createTable('agent_run_provenance', (table) => {
+        // One row per run, not per file: a run often writes several files and
+        // duplicating a large prompt across each of them is waste. File audit
+        // events reference this by runId.
+        table.string('runId', 160).primary();
+        table.uuid('workspaceId').notNullable();
+        table.uuid('userId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('conversationId');
+        table.string('turnId', 160);
+        table.bigInteger('conversationMessageId');
+        table.string('persona', 96);
+        table.text('userPrompt');
+        table.text('enrichedPrompt');
+        table.text('responseText');
+        table.jsonb('skillsInvoked').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('knowledgeRefsDeclared').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('knowledgeChunksRetrieved').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('taggedFileRefs').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.string('langfuseTraceId', 160);
+        table.text('langfuseTraceUrl');
+        table.jsonb('truncated').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.string('status', 32);
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['workspaceId', 'createdAt'], 'agent_run_provenance_workspace_idx');
+        table.index(['conversationId'], 'agent_run_provenance_conversation_idx');
+      });
+      console.log('Created "agent_run_provenance" table.');
     }
   }
 
