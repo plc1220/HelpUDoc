@@ -82,6 +82,11 @@ export default function(
     pageToken: z.string().optional(),
   });
 
+  const auditEventsQuerySchema = z.object({
+    cursor: z.coerce.number().int().nonnegative().optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+  });
+
   const googleDriveImportSchema = z.object({
     fileIds: z.array(z.string().min(1)).min(1).max(20),
   });
@@ -271,6 +276,53 @@ export default function(
         return;
       }
       handleError(res, error, 'Failed to preview file');
+    }
+  });
+
+  router.get('/:fileId/provenance', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const document = await fileService.getFileProvenance(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      );
+      res.json(document);
+    } catch (error) {
+      handleError(res, error, 'Failed to load file provenance');
+    }
+  });
+
+  router.get('/:fileId/provenance/download', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const document = await fileService.getFileProvenance(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      );
+      const baseName = path.posix.basename(document.file.name) || `file-${document.file.id}`;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${baseName}.provenance.json"`,
+      );
+      res.send(JSON.stringify(document, null, 2));
+    } catch (error) {
+      handleError(res, error, 'Failed to download file provenance');
+    }
+  });
+
+  router.get('/:fileId/audit-events', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const query = auditEventsQuerySchema.parse(req.query || {});
+      const result = await fileService.getFileAuditEvents(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+        { cursor: query.cursor, limit: query.limit },
+      );
+      res.json(result);
+    } catch (error) {
+      handleError(res, error, 'Failed to list file audit events');
     }
   });
 
