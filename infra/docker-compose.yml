@@ -331,6 +331,9 @@ services:
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_helpudoc_local}}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_helpudoc_local}}
+      # The agent gates tracing on LANGFUSE_ENABLED first, falling back to the
+      # legacy flag. Without this line dev.env's setting never reached it.
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
       LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       AGENT_STORE_DATABASE_URL: postgresql://helpudoc:helpudoc@postgres:5432/helpudoc
