@@ -7,6 +7,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import { FileService } from '../services/fileService';
+import { FileStatusService } from '../services/fileStatusService';
 import { HttpError } from '../errors';
 import { WorkspaceService } from '../services/workspaceService';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
@@ -16,6 +17,7 @@ export default function(
   fileService: FileService,
   workspaceService: WorkspaceService,
   googleOAuthService: GoogleOAuthService,
+  fileStatusService: FileStatusService,
 ) {
   const router = Router({ mergeParams: true });
   const upload = multer({
@@ -80,6 +82,12 @@ export default function(
     query: z.string().optional(),
     scope: z.enum(['recent', 'my-drive', 'shared']).optional(),
     pageToken: z.string().optional(),
+  });
+
+  const fileStatusSchema = z.object({
+    toStatus: z.enum(['draft', 'in_review', 'approved', 'published']),
+    reason: z.string().trim().max(1000).optional(),
+    expectedVersion: z.number().int().positive().optional(),
   });
 
   const auditEventsQuerySchema = z.object({
@@ -276,6 +284,42 @@ export default function(
         return;
       }
       handleError(res, error, 'Failed to preview file');
+    }
+  });
+
+  router.get('/status-summary', async (req: Request, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const workspaceId = String((req.params as Record<string, string>).workspaceId);
+      res.json(await fileStatusService.getWorkspaceSummary(workspaceId, user.userId));
+    } catch (error) {
+      handleError(res, error, 'Failed to summarize file statuses');
+    }
+  });
+
+  router.get('/:fileId/status', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      res.json(await fileStatusService.getStatus(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      ));
+    } catch (error) {
+      handleError(res, error, 'Failed to read file status');
+    }
+  });
+
+  router.post('/:fileId/status', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = fileStatusSchema.parse(req.body || {});
+      res.json(await fileStatusService.transition(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+        payload,
+      ));
+    } catch (error) {
+      handleError(res, error, 'Failed to change file status');
     }
   });
 
