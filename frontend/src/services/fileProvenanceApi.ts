@@ -150,14 +150,13 @@ export const FILE_STATUS_LABELS: Record<FileStatus, string> = {
   published: 'Published',
 };
 
-/**
- * Badge variant per status.
- *
- * `draft` is deliberately absent: it is the resting state of most files, and a
- * badge on every row would drown the states that actually need attention.
- */
-export const FILE_STATUS_VARIANTS: Partial<Record<FileStatus, 'info' | 'success' | 'purple'>> = {
-  in_review: 'info',
+/** Lifecycle order, used to render the full set of statuses in a menu. */
+export const FILE_STATUS_ORDER: FileStatus[] = ['draft', 'in_review', 'approved', 'published'];
+
+/** StatusDot has no purple, so published borrows accent. */
+export const FILE_STATUS_DOT: Record<FileStatus, 'neutral' | 'warning' | 'success' | 'accent'> = {
+  draft: 'neutral',
+  in_review: 'warning',
   approved: 'success',
-  published: 'purple',
+  published: 'accent',
 };

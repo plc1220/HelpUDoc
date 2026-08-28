@@ -149,7 +149,8 @@ import PaneResizeHandle from '../../components/PaneResizeHandle';
 import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import FileProvenanceDialog from '../../components/FileProvenanceDialog';
-import FileStatusControl from '../../components/FileStatusControl';
+import FileStatusChip from '../../components/FileStatusChip';
+import FileStatusFilterBar, { type FileStatusFilter } from '../../components/FileStatusFilterBar';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import AgentChatPane from '../../components/chat/AgentChatPane';
 import ChatInputArea, { type ChatMentionSuggestion } from '../../components/chat/ChatInputArea';
@@ -913,6 +914,7 @@ export default function WorkspacePage() {
   // Editorial status is read off the file rows themselves, so it refreshes
   // whenever the listing does.
   const [provenanceFileId, setProvenanceFileId] = useState<string | number | null>(null);
+  const [fileStatusFilter, setFileStatusFilter] = useState<FileStatusFilter>('all');
   const [workspaceKnowledge, setWorkspaceKnowledge] = useState<WorkspaceKnowledgeSource[]>([]);
   const [knowledgeBaseCatalog, setKnowledgeBaseCatalog] = useState<KnowledgeBaseSummary[]>([]);
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
@@ -1236,6 +1238,14 @@ export default function WorkspacePage() {
     return byId;
   }, [files]);
 
+  const fileStatusCounts = useMemo(() => {
+    const counts: Record<FileStatus, number> = {
+      draft: 0, in_review: 0, approved: 0, published: 0,
+    };
+    for (const entry of Object.values(fileStatusById)) counts[entry.status] += 1;
+    return counts;
+  }, [fileStatusById]);
+
   const visibleFiles = useMemo(
     () => (showSystemFiles ? files : files.filter((file) => !isSystemFile(file))),
     [files, showSystemFiles],
@@ -1256,6 +1266,13 @@ export default function WorkspacePage() {
       }
     }
   }, []);
+
+  const statusFilteredFiles = useMemo(() => (
+    fileStatusFilter === 'all'
+      ? visibleFiles
+      : visibleFiles.filter((file) => (file.status || 'draft') === fileStatusFilter)
+  ), [visibleFiles, fileStatusFilter]);
+
 
   const setConversationAttention = useCallback((
     conversationId: string,
@@ -8956,9 +8973,19 @@ export default function WorkspacePage() {
                     aria-hidden={!isFilePaneVisible}
                   >
                     <div className="h-full min-h-0 px-3 py-2">
+                      <FileStatusFilterBar
+                        counts={fileStatusCounts}
+                        total={visibleFiles.length}
+                        value={fileStatusFilter}
+                        onChange={setFileStatusFilter}
+                      />
                       <WorkspaceFileTree
                         fileStatusById={fileStatusById}
-                        files={visibleFiles}
+                        workspaceId={selectedWorkspace?.id}
+                        onStatusChanged={() => {
+                          if (selectedWorkspace) void loadFilesForWorkspace(selectedWorkspace.id);
+                        }}
+                        files={statusFilteredFiles}
                         folderPaths={visibleFolderPaths}
                         colorMode={colorMode}
                         selectedFileId={selectedFile?.id || null}
@@ -9004,6 +9031,16 @@ export default function WorkspacePage() {
                   }`}>
                     <div className="flex items-center gap-3">
                       <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
+                      {selectedFile && selectedWorkspace && fileStatusById[String(selectedFile.id)] && (
+                        <FileStatusChip
+                          workspaceId={selectedWorkspace.id}
+                          fileId={selectedFile.id}
+                          size="md"
+                          status={fileStatusById[String(selectedFile.id)].status}
+                          drift={fileStatusById[String(selectedFile.id)].drift}
+                          onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
+                        />
+                      )}
                     </div>
                     <div className="flex items-center space-x-2">
                       {selectedWorkspace?.linkedTeamWorkspaceId
@@ -9055,13 +9092,6 @@ export default function WorkspacePage() {
                             onClick={() => selectedFile && setProvenanceFileId(selectedFile.id)}
                           />
                         </ButtonGroup>
-                      )}
-                      {selectedFile && selectedWorkspace && (
-                        <FileStatusControl
-                          workspaceId={selectedWorkspace.id}
-                          fileId={selectedFile.id}
-                          onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
-                        />
                       )}
                       {!shouldForceEditMode(selectedFile?.name || '') && (
                         <ToggleButton
