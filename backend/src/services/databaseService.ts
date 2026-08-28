@@ -40,6 +40,7 @@ export class DatabaseService {
     await this.createFilesTable();
     await this.createFileVersionsTable();
     await this.createFileAuditEventsTable();
+    await this.createFilePublicationsTable();
     await this.createWorkspaceFileRevisionsTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
@@ -419,6 +420,8 @@ export class DatabaseService {
         table.uuid('statusUpdatedBy');
         table.integer('approvedAtVersion');
         table.integer('publishedAtVersion');
+        table.uuid('currentPublicationId');
+        table.integer('publicationVersion').notNullable().defaultTo(0);
         table.timestamp('deletedAt', { useTz: true });
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
@@ -508,6 +511,42 @@ export class DatabaseService {
         table.index(['sha256'], 'file_audit_events_sha256_idx');
       });
       console.log('Created "file_audit_events" table.');
+    }
+  }
+
+  private async createFilePublicationsTable(): Promise<void> {
+    if (!await this.db.schema.hasTable('file_publications')) {
+      await this.db.schema.createTable('file_publications', (table) => {
+        table.uuid('id').primary();
+        // Denormalized and without cascading FKs, for the same reason as
+        // file_audit_events: a published artifact outlives its workspace.
+        table.integer('fileId').notNullable();
+        table.uuid('workspaceId').notNullable();
+        table.integer('publicationVersion').notNullable();
+        table.text('sourcePath').notNullable();
+        table.text('publishedName').notNullable();
+        table.string('targetProvider', 16).notNullable();
+        table.string('targetBucket', 255).notNullable();
+        table.text('targetKey').notNullable();
+        table.text('targetUri').notNullable();
+        table.uuid('sourceFileVersionId');
+        table.integer('sourceFileVersion');
+        table.string('sha256', 64);
+        table.bigInteger('sizeBytes');
+        table.string('mimeType', 255);
+        table.text('provenanceKey');
+        table.string('provenanceSha256', 64);
+        table.uuid('publishedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('publishedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        // Withdrawal is a record, not a deletion: the artifact stays.
+        table.timestamp('withdrawnAt', { useTz: true });
+        table.uuid('withdrawnByUserId');
+        table.unique(['fileId', 'publicationVersion']);
+        table.unique(['targetBucket', 'targetKey']);
+        table.index(['workspaceId', 'publishedAt'], 'file_publications_workspace_idx');
+        table.index(['sha256'], 'file_publications_sha256_idx');
+      });
+      console.log('Created "file_publications" table.');
     }
   }
 
@@ -1317,6 +1356,8 @@ export class DatabaseService {
     await this.ensureColumn('files', 'statusUpdatedBy', (table) => table.uuid('statusUpdatedBy'));
     await this.ensureColumn('files', 'approvedAtVersion', (table) => table.integer('approvedAtVersion'));
     await this.ensureColumn('files', 'publishedAtVersion', (table) => table.integer('publishedAtVersion'));
+    await this.ensureColumn('files', 'currentPublicationId', (table) => table.uuid('currentPublicationId'));
+    await this.ensureColumn('files', 'publicationVersion', (table) => table.integer('publicationVersion').notNullable().defaultTo(0));
     // Drives the review queue: "what is waiting on me in this workspace".
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS files_workspace_status_idx ON files ("workspaceId", status) WHERE "deletedAt" IS NULL',
