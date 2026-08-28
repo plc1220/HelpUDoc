@@ -52,6 +52,11 @@ export interface File {
   currentVersionId?: string | null;
   deletedAt?: string | null;
   staleOverwrite?: boolean;
+  status?: FileStatus;
+  statusUpdatedAt?: string | null;
+  statusUpdatedBy?: string | null;
+  approvedAtVersion?: number | null;
+  publishedAtVersion?: number | null;
 }
 
 /** Stable reference to a workspace file used by chat and agent-run payloads. */
@@ -642,4 +647,60 @@ export interface FileProvenanceDocument {
     brokenAtSeq?: number | null;
     eventCount: number;
   };
+}
+
+/**
+ * Editorial lifecycle of a file.
+ *
+ * `published` is reached only by the per-file publication step, which exports
+ * an immutable artifact — it is never set directly through the status API.
+ */
+export type FileStatus = 'draft' | 'in_review' | 'approved' | 'published';
+
+/** A transition the calling user is currently permitted to make. */
+export interface FileStatusTransition {
+  toStatus: FileStatus;
+  /** True when the server will reject the call without a reason. */
+  requiresReason: boolean;
+  /** Moves the file backwards; restricted to privileged roles. */
+  isRevert: boolean;
+  label: string;
+}
+
+export interface FileStatusState {
+  fileId: number;
+  workspaceId: string;
+  status: FileStatus;
+  version: number;
+  statusUpdatedAt?: string | null;
+  statusUpdatedBy?: string | null;
+  approvedAtVersion?: number | null;
+  publishedAtVersion?: number | null;
+  /**
+   * The content has changed since it was approved or published. Approval
+   * attaches to a specific version, so this is how a reviewer sees that what
+   * they signed off is no longer what is there.
+   */
+  drift: boolean;
+  /** Rendered by the UI; the server remains the authority. */
+  allowedTransitions: FileStatusTransition[];
+}
+
+export interface FileStatusTransitionRequest {
+  toStatus: FileStatus;
+  reason?: string;
+  /** Rejects the change if the file moved on since it was read. */
+  expectedVersion?: number;
+}
+
+export interface WorkspaceFileStatusSummary {
+  counts: Record<FileStatus, number>;
+  reviewQueue: Array<{
+    fileId: number;
+    name: string;
+    version: number;
+    status: FileStatus;
+    statusUpdatedAt?: string | null;
+    drift: boolean;
+  }>;
 }

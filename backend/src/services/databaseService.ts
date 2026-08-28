@@ -414,6 +414,11 @@ export class DatabaseService {
         table.uuid('currentVersionId');
         table.integer('auditSeq').notNullable().defaultTo(0);
         table.string('lastAuditHash', 64);
+        table.string('status', 16).notNullable().defaultTo('draft');
+        table.timestamp('statusUpdatedAt', { useTz: true });
+        table.uuid('statusUpdatedBy');
+        table.integer('approvedAtVersion');
+        table.integer('publishedAtVersion');
         table.timestamp('deletedAt', { useTz: true });
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
@@ -1307,6 +1312,15 @@ export class DatabaseService {
     await this.ensureColumn('files', 'deletedAt', (table) => table.timestamp('deletedAt', { useTz: true }));
     await this.ensureColumn('files', 'auditSeq', (table) => table.integer('auditSeq').notNullable().defaultTo(0));
     await this.ensureColumn('files', 'lastAuditHash', (table) => table.string('lastAuditHash', 64));
+    await this.ensureColumn('files', 'status', (table) => table.string('status', 16).notNullable().defaultTo('draft'));
+    await this.ensureColumn('files', 'statusUpdatedAt', (table) => table.timestamp('statusUpdatedAt', { useTz: true }));
+    await this.ensureColumn('files', 'statusUpdatedBy', (table) => table.uuid('statusUpdatedBy'));
+    await this.ensureColumn('files', 'approvedAtVersion', (table) => table.integer('approvedAtVersion'));
+    await this.ensureColumn('files', 'publishedAtVersion', (table) => table.integer('publishedAtVersion'));
+    // Drives the review queue: "what is waiting on me in this workspace".
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS files_workspace_status_idx ON files ("workspaceId", status) WHERE "deletedAt" IS NULL',
+    );
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS files_workspace_source_version_idx ON files ("workspaceId", "sourceProvider", "sourceExternalId", "sourceVersionFingerprint")',
     );
