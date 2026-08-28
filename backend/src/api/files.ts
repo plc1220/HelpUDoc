@@ -336,6 +336,18 @@ export default function(
     }
   });
 
+  router.get('/:fileId/provenance/verify', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      res.json(await fileService.verifyFileProvenance(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      ));
+    } catch (error) {
+      handleError(res, error, 'Failed to verify file provenance');
+    }
+  });
+
   router.get('/:fileId/provenance/download', async (req: Request<{ fileId: string }>, res: Response) => {
     try {
       const user = requireUserContext(req);

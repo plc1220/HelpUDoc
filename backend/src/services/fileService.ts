@@ -12,7 +12,7 @@ import { ConflictError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { isInternalWorkspacePath as isInternalPath } from '../lib/workspacePaths';
 import type { FileProvenanceDocument } from '@helpudoc/contracts/types';
-import { buildProvenanceDocument } from './fileProvenance';
+import { buildProvenanceDocument, verifyEventChain } from './fileProvenance';
 import {
   eventTypeForChangeKind,
   nextAuditSeq,
@@ -1155,6 +1155,60 @@ export class FileService {
     return {
       events,
       nextCursor: rows.length > limit ? Number(events[events.length - 1]?.seq) : null,
+    };
+  }
+
+  /**
+   * Re-walks the file's hash chain and reports the first event that does not
+   * reconcile. Each event hashes its own contents plus its predecessor's hash,
+   * so an edited, removed or reordered row breaks the chain from that point on.
+   */
+  async verifyFileProvenance(fileId: number, userId: string): Promise<{
+    fileId: number;
+    valid: boolean;
+    brokenAtSeq: number | null;
+    eventCount: number;
+    chainHead: string | null;
+    priorChain?: { workspaceId: string; fileId: number; valid: boolean; brokenAtSeq: number | null };
+  }> {
+    const file = await this.db('files').where({ id: fileId }).first();
+    if (!file) throw new NotFoundError('File not found');
+    await this.workspaceService.ensureMembership(file.workspaceId, userId);
+
+    const events = await this.db('file_audit_events').where({ fileId }).orderBy('seq', 'asc');
+    const chain = verifyEventChain(events);
+
+    // A published file's history spans two chains; report both so a break in
+    // the inherited half is not silently reported as intact.
+    let priorChain;
+    const bridgeVersionId = events
+      .map((event: any) => event.sourceFileVersionId)
+      .find((value: string | null) => Boolean(value));
+    if (bridgeVersionId) {
+      const sourceVersion = await this.db('file_versions').where({ id: bridgeVersionId }).first();
+      if (sourceVersion) {
+        const priorEvents = await this.db('file_audit_events')
+          .where({ fileId: Number(sourceVersion.fileId) })
+          .orderBy('seq', 'asc');
+        if (priorEvents.length) {
+          const prior = verifyEventChain(priorEvents);
+          priorChain = {
+            workspaceId: String(priorEvents[0].workspaceId),
+            fileId: Number(sourceVersion.fileId),
+            valid: prior.verified,
+            brokenAtSeq: prior.brokenAtSeq,
+          };
+        }
+      }
+    }
+
+    return {
+      fileId,
+      valid: chain.verified,
+      brokenAtSeq: chain.brokenAtSeq,
+      eventCount: events.length,
+      chainHead: events.length ? String(events[events.length - 1].eventHash) : null,
+      ...(priorChain ? { priorChain } : {}),
     };
   }
 
