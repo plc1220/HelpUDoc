@@ -15,6 +15,8 @@ import type { WorkspaceService, WorkspaceRole } from './workspaceService';
 import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
 import { withGovernanceLock } from './governance/governanceLocks';
 import { nextAuditSeq, recordFileEvent } from './fileAuditService';
+import type { FilePublicationService, PublishedArtifact } from './filePublicationService';
+import type { FileService } from './fileService';
 
 /**
  * Editorial lifecycle for a file: draft -> in_review -> approved -> published.
@@ -67,6 +69,7 @@ const TRANSITIONS: TransitionRule[] = [
     requiresReason: true, isRevert: true,
     label: 'Return to draft', action: 'file.status.reverted',
   },
+  { from: 'approved', to: 'published', capability: 'canPublish', label: 'Publish', action: 'file.status.published' },
   {
     from: 'published', to: 'approved', capability: 'canPublish',
     requiresReason: true, isRevert: true,
@@ -89,6 +92,7 @@ const EVENT_TYPES: Record<string, string> = {
   'file.status.approved': 'status.approved',
   'file.status.changes_requested': 'status.changes_requested',
   'file.status.reverted': 'status.reverted',
+  'file.status.published': 'status.published',
   'file.status.unpublished': 'status.unpublished',
 };
 
@@ -142,6 +146,10 @@ export class FileStatusService {
   constructor(
     databaseService: DatabaseService,
     private readonly workspaceService: WorkspaceService,
+    /** Absent on servers with no publication target configured. */
+    private readonly publicationService?: FilePublicationService,
+    /** Used to assemble the provenance frozen beside a published artifact. */
+    private readonly fileService?: FileService,
   ) {
     this.db = databaseService.getDb();
   }
@@ -168,6 +176,43 @@ export class FileStatusService {
     };
   }
 
+  /**
+   * The provenance document published alongside an artifact.
+   *
+   * Carries the full record — prompts, responses, retrieved knowledge — rather
+   * than references, because the artifact has to answer "why does this document
+   * say this?" without depending on any other system surviving. That makes it
+   * permanently unredactable, which is a deliberate compliance trade.
+   */
+  private async buildPublishedProvenance(
+    fileId: number,
+    userId: string,
+    snapshot: { publishedBy: string; publishedAtVersion: number },
+  ): Promise<Record<string, unknown> | undefined> {
+    if (!this.fileService) return undefined;
+    try {
+      const document = await this.fileService.getFileProvenance(fileId, userId);
+      return {
+        ...document,
+        snapshot: {
+          takenAt: new Date().toISOString(),
+          takenBy: snapshot.publishedBy,
+          fileVersion: snapshot.publishedAtVersion,
+          chainHead: document.integrity.chainHead,
+          eventCount: document.integrity.eventCount,
+        },
+      };
+    } catch (error) {
+      // A publish must not fail because the history could not be assembled;
+      // the artifact is still the thing being released.
+      console.error('Failed to build published provenance', {
+        fileId,
+        error: error instanceof Error ? error.message : 'unknown error',
+      });
+      return undefined;
+    }
+  }
+
   async getStatus(fileId: number, userId: string): Promise<FileStatusState> {
     const file = await this.loadFile(fileId);
     const { membership } = await this.workspaceService.ensureMembership(file.workspaceId, userId);
@@ -185,10 +230,8 @@ export class FileStatusService {
     });
     const role = membership.role as WorkspaceRole;
 
-    if (input.toStatus === 'published') {
-      throw new ConflictError(
-        'A file becomes published by being published, not by setting its status',
-      );
+    if (input.toStatus === 'published' && !this.publicationService) {
+      throw new ConflictError('Publishing is not configured on this server');
     }
 
     // Serialize per file so two reviewers cannot both decide from the same
@@ -228,6 +271,19 @@ export class FileStatusService {
         );
       }
 
+      // Objects before the row. An unreferenced artifact is recoverable — a
+      // published status pointing at nothing is not.
+      let publication: PublishedArtifact | undefined;
+      if (rule.to === 'published') {
+        // Frozen beside the artifact so the pair is readable on its own, even
+        // if this database is later gone.
+        const provenance = await this.buildPublishedProvenance(fileId, userId, {
+          publishedBy: userId,
+          publishedAtVersion: version,
+        });
+        publication = await this.publicationService!.publishArtifact(fileId, userId, { provenance });
+      }
+
       const now = new Date();
       const patch: Record<string, unknown> = {
         status: rule.to,
@@ -240,6 +296,11 @@ export class FileStatusService {
       if (rule.to === 'approved') patch.approvedAtVersion = version;
       if (from === 'approved' && rule.to !== 'published') patch.approvedAtVersion = null;
       if (from === 'published') patch.publishedAtVersion = null;
+      if (publication) {
+        patch.publishedAtVersion = version;
+        patch.currentPublicationId = publication.id;
+        patch.publicationVersion = publication.publicationVersion;
+      }
 
       const auditEventId = randomUUID();
       let updated: any;
@@ -264,11 +325,26 @@ export class FileStatusService {
             isRevert: Boolean(rule.isRevert),
             selfApproved: selfApproval,
             auditEventId,
+            ...(publication ? {
+              publicationVersion: publication.publicationVersion,
+              publishedName: publication.publishedName,
+              targetUri: publication.targetUri,
+              artifactSha256: publication.sha256,
+            } : {}),
           },
         });
         if (audit) {
           patch.auditSeq = audit.seq;
           patch.lastAuditHash = audit.eventHash;
+        }
+
+        if (from === 'published' && locked.currentPublicationId) {
+          // The artifact stays; only the record of it being current changes.
+          await tx('file_publications')
+            .where({ id: locked.currentPublicationId })
+            .whereNull('withdrawnAt')
+            .update({ withdrawnAt: now, withdrawnByUserId: userId });
+          patch.currentPublicationId = null;
         }
 
         [updated] = await tx('files').where({ id: fileId }).update(patch).returning('*');

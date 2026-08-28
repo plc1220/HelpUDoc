@@ -56,7 +56,13 @@ test('reverts are flagged and require a reason; forward moves do not', () => {
   assert.equal(submit.isRevert, false);
   assert.equal(submit.requiresReason, false);
 
+  // From approved there is one forward move (publish) and the rest go back.
   for (const t of allowedTransitionsFor('approved', 'editor', false)) {
+    if (t.toStatus === 'published') {
+      assert.equal(t.isRevert, false, 'publishing moves the file forward');
+      assert.equal(t.requiresReason, false);
+      continue;
+    }
     assert.equal(t.isRevert, true, `${t.toStatus} must be marked a revert`);
     assert.equal(t.requiresReason, true, `${t.toStatus} must require a reason`);
   }
@@ -255,14 +261,60 @@ test('a revert requires a reason and records the version it applied to', async (
   assert.equal(governanceEvents[0].reason, 'Figure 3 changed after sign-off');
 });
 
-test('published cannot be set through the status API', async () => {
-  // Publishing writes an immutable artifact; a bare flag would claim an export
-  // that never happened.
+test('publishing is refused when no publication target is configured', async () => {
+  // The status must never claim an export that could not have happened.
   const { service } = makeService(baseFile({ status: 'approved' }), 'owner');
   await assert.rejects(
     () => service.transition(412, 'u-owner', { toStatus: 'published' }),
-    (e: unknown) => e instanceof ConflictError && /not by setting its status/.test((e as Error).message),
+    (e: unknown) => e instanceof ConflictError && /not configured/.test((e as Error).message),
   );
+});
+
+test('publishing exports an artifact and records where it went', async () => {
+  const harness = makeService(baseFile({ status: 'approved', version: 4 }), 'owner');
+  const published: Array<{ fileId: number; userId: string }> = [];
+  (harness.service as any).publicationService = {
+    publishArtifact: async (fileId: number, userId: string) => {
+      published.push({ fileId, userId });
+      return {
+        id: 'pub-1', fileId, workspaceId: 'ws-1', publicationVersion: 1,
+        sourcePath: 'reports/q3.md', publishedName: 'reports/q3-v1.md',
+        targetBucket: 'published', targetKey: 'ws-1/reports/q3-v1.md',
+        targetUri: 'gs://published/ws-1/reports/q3-v1.md',
+        sha256: 'abc123', sizeBytes: 12, reused: false,
+      };
+    },
+  };
+
+  const state = await harness.service.transition(412, 'u-owner', { toStatus: 'published' });
+
+  assert.equal(state.status, 'published');
+  assert.deepEqual(published, [{ fileId: 412, userId: 'u-owner' }], 'the artifact is exported');
+  assert.equal(harness.files[0].publishedAtVersion, 4, 'pins the version that went out');
+  assert.equal(harness.files[0].currentPublicationId, 'pub-1');
+  assert.equal(harness.files[0].publicationVersion, 1);
+
+  const payload = harness.auditEvents[0].payload.bindings
+    ? JSON.parse(harness.auditEvents[0].payload.bindings[0])
+    : harness.auditEvents[0].payload;
+  assert.equal(payload.publishedName, 'reports/q3-v1.md');
+  assert.equal(payload.targetUri, 'gs://published/ws-1/reports/q3-v1.md');
+  assert.equal(payload.artifactSha256, 'abc123');
+});
+
+test('withdrawing marks the publication but never deletes the artifact', async () => {
+  const harness = makeService(
+    baseFile({ status: 'published', version: 4, publishedAtVersion: 4, currentPublicationId: 'pub-1' }),
+    'owner',
+  );
+  const state = await harness.service.transition(412, 'u-owner', {
+    toStatus: 'approved', reason: 'withdrawn pending review',
+  });
+
+  assert.equal(state.status, 'approved');
+  assert.equal(harness.files[0].currentPublicationId, null, 'no longer the current publication');
+  assert.equal(harness.files[0].publishedAtVersion, null);
+  // The artifact itself is immutable; nothing in this path removes it.
 });
 
 test('a stale expectedVersion is rejected', async () => {

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import multer from 'multer';
 import { FileService } from '../services/fileService';
 import { FileStatusService } from '../services/fileStatusService';
+import { FilePublicationService } from '../services/filePublicationService';
 import { HttpError } from '../errors';
 import { WorkspaceService } from '../services/workspaceService';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
@@ -18,6 +19,7 @@ export default function(
   workspaceService: WorkspaceService,
   googleOAuthService: GoogleOAuthService,
   fileStatusService: FileStatusService,
+  filePublicationService: FilePublicationService,
 ) {
   const router = Router({ mergeParams: true });
   const upload = multer({
@@ -322,6 +324,41 @@ export default function(
       handleError(res, error, 'Failed to change file status');
     }
   });
+
+  router.get('/:fileId/publications', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const publications = await filePublicationService.listPublications(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      );
+      res.json({ publications });
+    } catch (error) {
+      handleError(res, error, 'Failed to list publications');
+    }
+  });
+
+  router.get(
+    '/:fileId/publications/:publicationVersion/download',
+    async (req: Request<{ fileId: string; publicationVersion: string }>, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        // Streamed through the API: the publication bucket is access-controlled,
+        // not public, so membership stays the access boundary.
+        const download = await filePublicationService.getPublicationDownload(
+          Number.parseInt(req.params.fileId, 10),
+          Number.parseInt(req.params.publicationVersion, 10),
+          user.userId,
+        );
+        res.setHeader('Content-Type', download.mimeType);
+        if (download.sizeBytes > 0) res.setHeader('Content-Length', String(download.sizeBytes));
+        res.setHeader('Content-Disposition', `attachment; filename="${download.downloadName}"`);
+        await pipeline(download.stream, res);
+      } catch (error) {
+        handleError(res, error, 'Failed to download published artifact');
+      }
+    },
+  );
 
   router.get('/:fileId/provenance', async (req: Request<{ fileId: string }>, res: Response) => {
     try {
