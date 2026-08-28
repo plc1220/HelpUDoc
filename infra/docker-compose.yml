@@ -240,10 +240,23 @@ services:
       KNOWLEDGE_VECTOR_ENABLED: ${KNOWLEDGE_VECTOR_ENABLED:-false}
       KNOWLEDGE_MULTIMODAL_EMBEDDINGS: ${KNOWLEDGE_MULTIMODAL_EMBEDDINGS:-false}
       KNOWLEDGE_EMBEDDING_DIMENSIONS: ${KNOWLEDGE_EMBEDDING_DIMENSIONS:-768}
+      # Where published file artifacts are exported to. Without a bucket the
+      # backend falls back to the workspace store under a published/ prefix and
+      # logs which target it resolved at startup.
+      PUBLICATION_PROVIDER: ${PUBLICATION_PROVIDER:-}
+      PUBLICATION_BUCKET_NAME: ${PUBLICATION_BUCKET_NAME:-}
+      PUBLICATION_PREFIX: ${PUBLICATION_PREFIX:-}
+      PUBLICATION_GCS_PROJECT_ID: ${PUBLICATION_GCS_PROJECT_ID:-}
+      PUBLICATION_GCS_KEY_FILENAME: ${PUBLICATION_GCS_KEY_FILENAME:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     ports:
       - "3000:3000"
     volumes:
       - workspace_data:/app/workspaces
+      # Service account key for the publication bucket, when one is used.
+      # Points at a file that need not exist; compose tolerates a missing
+      # source only for named volumes, so this is opt-in via the env var.
+      - ${PUBLICATION_GCS_KEY_SOURCE:-/dev/null}:${PUBLICATION_GCS_KEY_FILENAME:-/dev/null}:ro
       # Governance materializes immutable versions and promotes the selected
       # default package in this tree. The agent mounts the same tree read-only.
       - ../skills:/app/skills
