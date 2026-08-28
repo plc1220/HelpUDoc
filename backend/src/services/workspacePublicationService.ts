@@ -6,7 +6,7 @@ import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
-import { recordFileEvent } from './fileAuditService';
+import { nextAuditSeq, recordFileEvent } from './fileAuditService';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { DatabaseService } from './databaseService';
 import type { ObjectStore } from './objectStore';
@@ -175,6 +175,17 @@ export class WorkspacePublicationService {
           withdrawnVersionNumber: Number(withdrawnVersion.versionNumber),
         },
       });
+      await this.recordManifestFileEvents(
+        tx,
+        workspaceId,
+        userId,
+        this.normalizeManifest(withdrawnVersion.manifest),
+        'file.workspace_withdrawn',
+        {
+          withdrawnVersionId: withdrawnVersion.id,
+          withdrawnVersionNumber: Number(withdrawnVersion.versionNumber),
+        },
+      );
 
       return {
         workspaceId,
@@ -1189,6 +1200,61 @@ export class WorkspacePublicationService {
     }
   }
 
+  /**
+   * Cross-references a workspace release onto each file's own trail, so a
+   * document's history shows "included in workspace version N" rather than
+   * leaving the reader to correlate two separate logs by timestamp.
+   *
+   * Files are matched by path because the manifest carries no file id.
+   */
+  private async recordManifestFileEvents(
+    tx: Knex.Transaction,
+    workspaceId: string,
+    userId: string,
+    manifest: PublicationManifest,
+    eventType: 'file.workspace_published' | 'file.workspace_withdrawn',
+    context: Record<string, unknown>,
+  ): Promise<number> {
+    const names = manifest.files.map((file) => file.name);
+    if (!names.length) return 0;
+
+    const rows = await tx('files')
+      .whereIn('name', names)
+      .andWhere({ workspaceId })
+      .whereNull('deletedAt');
+    const byName = new Map(rows.map((row: any) => [String(row.name), row]));
+    const hashByName = new Map(manifest.files.map((file) => [file.name, file.hash]));
+
+    let recorded = 0;
+    for (const name of names) {
+      const file = byName.get(name);
+      // A manifest entry with no live row means the file was removed after the
+      // snapshot was taken; there is nothing to attach the event to.
+      if (!file) continue;
+      const audit = await recordFileEvent(tx, {
+        fileId: Number(file.id),
+        workspaceId,
+        filePath: name,
+        eventType,
+        seq: nextAuditSeq(file),
+        prevEventHash: file.lastAuditHash ?? null,
+        actorUserId: userId,
+        actorType: 'system',
+        sha256: hashByName.get(name) ?? null,
+        fileVersionId: file.currentVersionId ?? null,
+        fileVersion: Number(file.version ?? 0),
+        payload: context,
+      });
+      if (!audit) continue;
+      await tx('files').where({ id: file.id }).update({
+        auditSeq: audit.seq,
+        lastAuditHash: audit.eventHash,
+      });
+      recorded += 1;
+    }
+    return recorded;
+  }
+
   private async createLivePublishedVersion(
     workspace: WorkspaceRecord,
     userId: string,
@@ -1261,6 +1327,11 @@ export class WorkspacePublicationService {
             versionNumber: Number(version.versionNumber),
             sourceContentRevision: sourceRevision,
           },
+        });
+        await this.recordManifestFileEvents(tx, locked.id, userId, manifest, 'file.workspace_published', {
+          publishedVersionId: version.id,
+          versionNumber: Number(version.versionNumber),
+          note: String(note || '').trim() || null,
         });
 
         return {
