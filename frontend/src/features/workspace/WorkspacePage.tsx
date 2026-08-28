@@ -18,7 +18,7 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows } from 'lucide-react';
+import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -106,6 +106,7 @@ import type {
   WorkspaceSchedule,
   WorkspaceScheduleDraft,
   TaggedFileRef,
+  FileStatus,
 } from '../../types';
 import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
@@ -147,6 +148,8 @@ import ExpandableSidebar from '../../components/ExpandableSidebar';
 import PaneResizeHandle from '../../components/PaneResizeHandle';
 import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
+import FileProvenanceDialog from '../../components/FileProvenanceDialog';
+import FileStatusControl from '../../components/FileStatusControl';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import AgentChatPane from '../../components/chat/AgentChatPane';
 import ChatInputArea, { type ChatMentionSuggestion } from '../../components/chat/ChatInputArea';
@@ -907,6 +910,9 @@ export default function WorkspacePage() {
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
   const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  // Editorial status is read off the file rows themselves, so it refreshes
+  // whenever the listing does.
+  const [provenanceFileId, setProvenanceFileId] = useState<string | number | null>(null);
   const [workspaceKnowledge, setWorkspaceKnowledge] = useState<WorkspaceKnowledgeSource[]>([]);
   const [knowledgeBaseCatalog, setKnowledgeBaseCatalog] = useState<KnowledgeBaseSummary[]>([]);
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
@@ -1216,6 +1222,20 @@ export default function WorkspacePage() {
     [activeConversationId, conversationStreaming, hasPendingInterruptMessage, hasRunningAgentMessage],
   );
   const systemFiles = useMemo(() => files.filter(isSystemFile), [files]);
+  const fileStatusById = useMemo(() => {
+    const byId: Record<string, { status: FileStatus; drift: boolean }> = {};
+    for (const file of files) {
+      const status = (file.status || 'draft') as FileStatus;
+      const decidedAt = status === 'published' ? file.publishedAtVersion : file.approvedAtVersion;
+      byId[String(file.id)] = {
+        status,
+        // Approval attaches to a version; if the content moved on, say so.
+        drift: Boolean(decidedAt) && Number(decidedAt) !== Number(file.version ?? 0),
+      };
+    }
+    return byId;
+  }, [files]);
+
   const visibleFiles = useMemo(
     () => (showSystemFiles ? files : files.filter((file) => !isSystemFile(file))),
     [files, showSystemFiles],
@@ -8937,6 +8957,7 @@ export default function WorkspacePage() {
                   >
                     <div className="h-full min-h-0 px-3 py-2">
                       <WorkspaceFileTree
+                        fileStatusById={fileStatusById}
                         files={visibleFiles}
                         folderPaths={visibleFolderPaths}
                         colorMode={colorMode}
@@ -9026,7 +9047,21 @@ export default function WorkspacePage() {
                             variant="secondary"
                             onClick={handleDownloadActiveFile}
                           />
+                          <IconButton
+                            label="File history"
+                            icon={<History size={16} />}
+                            variant="secondary"
+                            isDisabled={!selectedFile}
+                            onClick={() => selectedFile && setProvenanceFileId(selectedFile.id)}
+                          />
                         </ButtonGroup>
+                      )}
+                      {selectedFile && selectedWorkspace && (
+                        <FileStatusControl
+                          workspaceId={selectedWorkspace.id}
+                          fileId={selectedFile.id}
+                          onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
+                        />
                       )}
                       {!shouldForceEditMode(selectedFile?.name || '') && (
                         <ToggleButton
@@ -9459,6 +9494,14 @@ export default function WorkspacePage() {
           await refreshWorkspaceList();
         }}
       />
+      {selectedWorkspace && provenanceFileId !== null && (
+        <FileProvenanceDialog
+          isOpen
+          workspaceId={selectedWorkspace.id}
+          fileId={provenanceFileId}
+          onOpenChange={(open) => { if (!open) setProvenanceFileId(null); }}
+        />
+      )}
       <WorkspaceHistoryDialog
         open={historyWorkspaceTarget !== null}
         workspace={historyWorkspaceTarget}

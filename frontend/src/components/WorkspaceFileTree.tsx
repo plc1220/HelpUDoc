@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+
+import { FileStatusBadge } from './FileStatusBadge';
 import {
   Check,
   ChevronDown,
@@ -11,7 +13,7 @@ import {
 } from 'lucide-react';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 
-import type { DashboardArtifactInfo, File as WorkspaceFile } from '../types';
+import type { DashboardArtifactInfo, File as WorkspaceFile, FileStatus } from '../types';
 import { getFileDisplayName, getFileTypeIcon } from '../utils/files';
 import {
   buildWorkspaceFileTree,
@@ -89,6 +91,7 @@ interface WorkspaceFileTreeProps {
   selectedFiles: Set<string>;
   copiedPublicUrlFileId: string | null;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
+  fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
   readOnly?: boolean;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
@@ -201,6 +204,7 @@ const TreeFileRow: React.FC<{
   selected: boolean;
   selectedFiles: Set<string>;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
+  fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
   onToggleFileSelection: (fileId: string) => void;
@@ -220,6 +224,7 @@ const TreeFileRow: React.FC<{
   selected,
   selectedFiles,
   dashboardArtifactsByPath,
+  fileStatusById,
   isDraftWorkspaceFile,
   onSelectFile,
   onToggleFileSelection,
@@ -329,6 +334,10 @@ const TreeFileRow: React.FC<{
               {fileIcon}
             </span>
             <SlidingFileName name={displayName} colorMode={colorMode} />
+            <FileStatusBadge
+              status={fileStatusById?.[String(file.id)]?.status}
+              drift={fileStatusById?.[String(file.id)]?.drift}
+            />
             {dashboardBadge && (
               <span
                 className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
@@ -614,6 +623,7 @@ const renderTreeNodes = (
     selectedDashboardPath?: string | null;
     selectedFiles: Set<string>;
     dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
+    fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
     isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
     onSelectFile: (file: WorkspaceFile) => void;
     onSelectFolder?: (folderPath: string) => void;
@@ -675,6 +685,7 @@ const renderTreeNodes = (
         selected={String(options.selectedFileId) === String(node.file.id)}
         selectedFiles={options.selectedFiles}
         dashboardArtifactsByPath={options.dashboardArtifactsByPath}
+        fileStatusById={options.fileStatusById}
         isDraftWorkspaceFile={options.isDraftWorkspaceFile}
         onSelectFile={options.onSelectFile}
         onToggleFileSelection={options.onToggleFileSelection}
@@ -702,6 +713,7 @@ export default function WorkspaceFileTree({
   selectedDashboardPath,
   selectedFiles,
   dashboardArtifactsByPath,
+  fileStatusById,
   readOnly = false,
   isDraftWorkspaceFile,
   onSelectFile,
@@ -870,6 +882,7 @@ export default function WorkspaceFileTree({
               selectedDashboardPath,
               selectedFiles,
               dashboardArtifactsByPath,
+              fileStatusById,
               isDraftWorkspaceFile,
               onSelectFile,
               onSelectFolder,
