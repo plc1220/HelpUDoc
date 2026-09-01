@@ -88,15 +88,18 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
     entrypoint: ["/bin/sh", "-c"]
-    command: >
-      set -euo pipefail;
-      until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
-        sleep 1;
-      done;
-      mc mb -p local/"$${S3_BUCKET_NAME}" || true;
-      mc mb -p local/langfuse || true;
-      mc anonymous set none local/"$${S3_BUCKET_NAME}";
-      exit 0;
+    # A string `command:` is word-split by compose, so everything after the
+    # first `;` is dropped and the container silently runs `sh -c set`. The
+    # list + block literal keeps the whole script as one argv element.
+    command:
+      - |
+        set -euo pipefail
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+          sleep 1
+        done
+        mc mb -p local/"$${S3_BUCKET_NAME}"
+        mc mb -p local/langfuse
+        mc anonymous set none local/"$${S3_BUCKET_NAME}"
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
