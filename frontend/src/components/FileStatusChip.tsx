@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
@@ -47,15 +48,21 @@ export const FileStatusChip: React.FC<{
 
   // Fetched lazily: loading permitted moves for every row up front would be one
   // request per file for something most rows never open.
-  const openMenu = useCallback(async (open: boolean) => {
-    setIsOpen(open);
-    if (!open) return;
+  const loadStatus = useCallback(async () => {
     try {
       setState(await fetchFileStatus(workspaceId, fileId));
     } catch {
       setState(null);
     }
   }, [workspaceId, fileId]);
+
+  // The menu reports open/close here, but not reliably on the trigger click
+  // itself, so the fetch is driven from onClick below as well. Without it every
+  // option renders disabled, because nothing has said what is permitted yet.
+  const openMenu = useCallback((open: boolean) => {
+    setIsOpen(open);
+    if (open) void loadStatus();
+  }, [loadStatus]);
 
   const apply = useCallback(async (transition: FileStatusTransition, reason: string) => {
     setError('');
@@ -75,6 +82,9 @@ export const FileStatusChip: React.FC<{
   }, [workspaceId, fileId, state, onChanged]);
 
   const choose = useCallback((transition: FileStatusTransition) => {
+    // Close the menu before the dialog opens, so it is not left hanging behind
+    // the modal once focus moves.
+    setIsOpen(false);
     if (transition.requiresReason || transition.toStatus === 'published') {
       setPending(transition);
       setNote('');
@@ -104,6 +114,7 @@ export const FileStatusChip: React.FC<{
       <DropdownMenu
         isMenuOpen={isOpen}
         onOpenChange={openMenu}
+        onClick={() => { setIsOpen(true); void loadStatus(); }}
         menuWidth={220}
         items={items}
         button={{
@@ -114,7 +125,11 @@ export const FileStatusChip: React.FC<{
         }}
       />
 
-      <Dialog
+      {/* Portalled to the body so the dialog is not nested inside the file
+          row's role=button, which is invalid structurally and leaves the
+          dialog's focus and keyboard behaviour entangled with the row. */}
+      {createPortal(
+        <Dialog
         isOpen={pending !== null}
         onOpenChange={(open) => { if (!open) setPending(null); }}
         width={480}
@@ -138,6 +153,13 @@ export const FileStatusChip: React.FC<{
               onChange={setNote}
               rows={3}
               placeholder="Why is this going back?"
+              // Something above this dialog cancels space at the body level —
+              // the usual "stop the page scrolling behind a modal" guard, which
+              // does not exempt text fields. Keep the keystroke local so the
+              // reason box can actually contain spaces.
+              onKeyDown={(event: React.KeyboardEvent) => {
+                if (event.key === ' ') event.stopPropagation();
+              }}
             />
           )}
           {error && <Text type="body" color="accent">{error}</Text>}
@@ -151,7 +173,9 @@ export const FileStatusChip: React.FC<{
             />
           </HStack>
         </VStack>
-      </Dialog>
+        </Dialog>,
+        document.body,
+      )}
     </>
   );
 };
