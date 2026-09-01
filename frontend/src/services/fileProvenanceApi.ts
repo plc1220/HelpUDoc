@@ -81,8 +81,49 @@ export const verifyFileProvenance = (workspaceId: string, fileId: number | strin
     'Failed to verify file history',
   );
 
-export const fileProvenanceDownloadUrl = (workspaceId: string, fileId: number | string) =>
-  `${filesUrl(workspaceId, fileId)}/provenance/download`;
+/**
+ * Saves a file the API guards behind an identity header.
+ *
+ * A plain navigation or `window.open` cannot carry `X-User-Id`, so under header
+ * auth the request arrives anonymous and the browser saves the 401 body as the
+ * file. Fetching it here keeps the header and hands the browser a blob instead.
+ */
+const downloadThroughApi = async (url: string, fallbackName: string): Promise<void> => {
+  const response = await apiFetch(url);
+  if (!response.ok) return apiError(response, 'Failed to download');
+
+  const disposition = response.headers.get('content-disposition') || '';
+  const named = /filename="?([^"]+)"?/.exec(disposition);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = named?.[1] || fallbackName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    // Revoking immediately can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+  }
+};
+
+export const downloadFileProvenance = (workspaceId: string, fileId: number | string) =>
+  downloadThroughApi(
+    `${filesUrl(workspaceId, fileId)}/provenance/download`,
+    `file-${fileId}.provenance.json`,
+  );
+
+export const downloadPublication = (
+  workspaceId: string,
+  fileId: number | string,
+  publicationVersion: number,
+) =>
+  downloadThroughApi(
+    `${filesUrl(workspaceId, fileId)}/publications/${publicationVersion}/download`,
+    `file-${fileId}-v${publicationVersion}`,
+  );
 
 // --- status ----------------------------------------------------------------
 
@@ -135,11 +176,7 @@ export const fetchFilePublications = (workspaceId: string, fileId: number | stri
     'Failed to load publications',
   ).then((body) => body.publications ?? []);
 
-export const publicationDownloadUrl = (
-  workspaceId: string,
-  fileId: number | string,
-  publicationVersion: number,
-) => `${filesUrl(workspaceId, fileId)}/publications/${publicationVersion}/download`;
+
 
 // --- presentation ----------------------------------------------------------
 

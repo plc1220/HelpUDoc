@@ -9,7 +9,7 @@ import { Text } from '@astryxdesign/core/Text';
 import type { FileProvenanceDocument, FileProvenanceEvent } from '../types';
 import {
   fetchFileProvenance,
-  fileProvenanceDownloadUrl,
+  downloadFileProvenance,
   verifyFileProvenance,
   type FileProvenanceVerification,
 } from '../services/fileProvenanceApi';
@@ -221,7 +221,7 @@ export const FileProvenanceDialog: React.FC<{
             <Button
               variant="secondary"
               label="Download as JSON"
-              onClick={() => { window.open(fileProvenanceDownloadUrl(workspaceId, fileId), '_blank'); }}
+              clickAction={() => downloadFileProvenance(workspaceId, fileId)}
             />
           </HStack>
         )}
