@@ -9084,14 +9084,20 @@ export default function WorkspacePage() {
                             variant="secondary"
                             onClick={handleDownloadActiveFile}
                           />
-                          <IconButton
-                            label="File history"
-                            icon={<History size={16} />}
-                            variant="secondary"
-                            isDisabled={!selectedFile}
-                            onClick={() => selectedFile && setProvenanceFileId(selectedFile.id)}
-                          />
                         </ButtonGroup>
+                      )}
+                      {/* History is not an export action. Every file carries a
+                          provenance trail, including uploads such as PDFs and
+                          images that cannot be printed or rendered here, so this
+                          must not sit behind canPrintOrDownloadFile. */}
+                      {selectedFile && (
+                        <IconButton
+                          label="File history"
+                          icon={<History size={16} />}
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setProvenanceFileId(selectedFile.id)}
+                        />
                       )}
                       {!shouldForceEditMode(selectedFile?.name || '') && (
                         <ToggleButton
