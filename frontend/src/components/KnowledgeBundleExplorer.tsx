@@ -192,7 +192,7 @@ export default function KnowledgeBundleExplorer({
     return () => {
       active = false;
     };
-  }, [knowledgeId]);
+  }, [knowledgeId, fetchBundle]);
 
   useEffect(() => {
     let active = true;
@@ -206,7 +206,7 @@ export default function KnowledgeBundleExplorer({
       setSelectedSnapshotId(snapshotResult?.find((snapshot) => snapshot.isPublished)?.id || '');
     }).catch(() => undefined);
     return () => { active = false; };
-  }, [knowledgeId, manifest?.snapshotHash]);
+  }, [knowledgeId, manifest?.snapshotHash, fetchGraph, fetchSnapshots]);
 
   const handlePublishSnapshot = async () => {
     if (!selectedSnapshotId || snapshots.find((snapshot) => snapshot.id === selectedSnapshotId)?.isPublished) return;
@@ -249,7 +249,7 @@ export default function KnowledgeBundleExplorer({
     return () => {
       active = false;
     };
-  }, [knowledgeId, selectedPath]);
+  }, [knowledgeId, selectedPath, fetchBundleFile]);
 
   const visibleFiles = useMemo(
     () => (manifest?.files || []).filter((file) => matchesFilters(file, filters)),
