@@ -5,6 +5,7 @@ import type {
   FileProvenanceEvent,
   FileProvenanceOrigin,
   FileProvenanceOriginKind,
+  FileStatus,
 } from '@helpudoc/contracts/types';
 
 import { computeEventHash } from './fileAuditService';
@@ -20,6 +21,31 @@ import { computeEventHash } from './fileAuditService';
 
 export const PROVENANCE_SCHEMA_VERSION = '1.0';
 
+/**
+ * Editorial state for the document header.
+ *
+ * A status decision attaches to the version it was made on, so comparing it
+ * against the current version is what tells a reader whether the content moved
+ * on after sign-off.
+ */
+function buildStatusBlock(file: ProvenanceFileInput): {
+  status: FileStatus | null;
+  approvedAtVersion: number | null;
+  publishedAtVersion: number | null;
+  drift: boolean;
+} {
+  const status = (file.status ?? null) as FileStatus | null;
+  const approvedAtVersion = file.approvedAtVersion ?? null;
+  const publishedAtVersion = file.publishedAtVersion ?? null;
+  const decidedAt = status === 'published' ? publishedAtVersion : approvedAtVersion;
+  return {
+    status,
+    approvedAtVersion,
+    publishedAtVersion,
+    drift: decidedAt != null && Number(decidedAt) !== Number(file.version ?? 0),
+  };
+}
+
 export interface ProvenanceFileInput {
   id: number | string;
   workspaceId: string;
@@ -27,6 +53,9 @@ export interface ProvenanceFileInput {
   version?: number | null;
   createdAt?: Date | string | null;
   deletedAt?: Date | string | null;
+  status?: string | null;
+  approvedAtVersion?: number | null;
+  publishedAtVersion?: number | null;
 }
 
 export interface BuildProvenanceInput {
@@ -206,6 +235,7 @@ export function buildProvenanceDocument(input: BuildProvenanceInput): FileProven
       currentVersion: Number(input.file.version ?? 0),
       createdAt: toIso(input.file.createdAt),
       deletedAt: toIso(input.file.deletedAt),
+      ...buildStatusBlock(input.file),
     },
     // Prior-workspace history reads first so the document tells the story in
     // the order it happened.

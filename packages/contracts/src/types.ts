@@ -638,6 +638,16 @@ export interface FileProvenanceDocument {
     currentVersion: number;
     createdAt?: string | null;
     deletedAt?: string | null;
+    /**
+     * Editorial state at the moment the document was assembled. A published
+     * artifact freezes this, so the snapshot records what was signed off
+     * rather than only what changed.
+     */
+    status?: FileStatus | null;
+    approvedAtVersion?: number | null;
+    publishedAtVersion?: number | null;
+    /** The decision attached to an earlier version than the current one. */
+    drift?: boolean;
   };
   origin: FileProvenanceOrigin;
   events: FileProvenanceEvent[];
