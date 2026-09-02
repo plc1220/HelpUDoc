@@ -131,6 +131,20 @@ export class KnowledgeBaseService {
     return Boolean(grant);
   }
 
+  /**
+   * Authorize read access to a member source's OKF data (bundle/graph/snapshots)
+   * for whoever can view the base. Throws if the base is not viewable or the
+   * source is not a member of it.
+   */
+  async assertSourceAccess(userId: string, knowledgeBaseId: string, knowledgeSourceId: number): Promise<void> {
+    const kb = await this.requireKb(knowledgeBaseId);
+    if (!await this.canView(userId, kb)) throw new NotFoundError('Knowledge base not found');
+    const member = await this.db('knowledge_sources')
+      .where({ id: knowledgeSourceId, knowledgeBaseId })
+      .first();
+    if (!member) throw new NotFoundError('Knowledge source not found in this knowledge base');
+  }
+
   private async usage(knowledgeBaseId: string): Promise<{ sourceCount: number; teamGrantCount: number }> {
     const [sources, teams] = await Promise.all([
       this.db('knowledge_sources').where({ knowledgeBaseId }).count<{ count: string }[]>('* as count').first(),

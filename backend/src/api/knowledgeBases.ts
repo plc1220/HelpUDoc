@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../errors';
 import type { KnowledgeBaseService } from '../services/knowledgeBaseService';
+import type { KnowledgeService } from '../services/knowledgeService';
 
 const createSchema = z.object({
   name: z.string().trim().min(1),
@@ -32,7 +33,7 @@ const publishSchema = z.object({
   note: z.string().trim().max(2000).optional(),
 });
 
-export default function knowledgeBaseRoutes(service: KnowledgeBaseService) {
+export default function knowledgeBaseRoutes(service: KnowledgeBaseService, knowledgeService: KnowledgeService) {
   const router = Router();
 
   const userId = (req: Request): string => {
@@ -89,6 +90,45 @@ export default function knowledgeBaseRoutes(service: KnowledgeBaseService) {
     try {
       res.json(await service.removeSource(userId(req), req.params.id, Number(req.params.sourceId)));
     } catch (error) { handle(res, error, 'Failed to remove source from knowledge base'); }
+  });
+
+  // Read-only OKF explorer data for a member source, authorized via KB access.
+  router.get('/:id/sources/:sourceId/graph', async (req, res) => {
+    try {
+      const uid = userId(req);
+      const sourceId = Number(req.params.sourceId);
+      await service.assertSourceAccess(uid, req.params.id, sourceId);
+      res.json(await knowledgeService.getGlobalGraph(sourceId));
+    } catch (error) { handle(res, error, 'Failed to load knowledge graph'); }
+  });
+
+  router.get('/:id/sources/:sourceId/bundle', async (req, res) => {
+    try {
+      const uid = userId(req);
+      const sourceId = Number(req.params.sourceId);
+      await service.assertSourceAccess(uid, req.params.id, sourceId);
+      res.json(await knowledgeService.getGlobalBundle(sourceId, uid));
+    } catch (error) { handle(res, error, 'Failed to load knowledge bundle'); }
+  });
+
+  router.get('/:id/sources/:sourceId/bundle/file', async (req, res) => {
+    try {
+      const uid = userId(req);
+      const sourceId = Number(req.params.sourceId);
+      const path = String(req.query.path || '');
+      if (!path) throw new HttpError(400, 'path query parameter is required');
+      await service.assertSourceAccess(uid, req.params.id, sourceId);
+      res.json(await knowledgeService.readGlobalBundleFile(sourceId, uid, path));
+    } catch (error) { handle(res, error, 'Failed to load knowledge bundle file'); }
+  });
+
+  router.get('/:id/sources/:sourceId/snapshots', async (req, res) => {
+    try {
+      const uid = userId(req);
+      const sourceId = Number(req.params.sourceId);
+      await service.assertSourceAccess(uid, req.params.id, sourceId);
+      res.json(await knowledgeService.listGlobalSnapshots(sourceId));
+    } catch (error) { handle(res, error, 'Failed to load knowledge snapshots'); }
   });
 
   router.post('/:id/uploads', async (req, res) => {

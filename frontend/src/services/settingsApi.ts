@@ -33,7 +33,7 @@ export type UserDeletionImpact = {
 export type GroupPromptAccess = {
   skillIds: string[];
   mcpServerIds: string[];
-  knowledgeSourceIds: number[];
+  knowledgeBaseIds: string[];
 };
 
 export type UserSortField = 'displayName' | 'email' | 'role' | 'createdAt';

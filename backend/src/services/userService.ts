@@ -23,7 +23,7 @@ export interface GroupRecord {
 export interface GroupPromptAccess {
   skillIds: string[];
   mcpServerIds: string[];
-  knowledgeSourceIds: number[];
+  knowledgeBaseIds: string[];
 }
 
 export interface EffectivePromptAccess extends GroupPromptAccess {
@@ -65,9 +65,6 @@ interface UserProfileInput {
 
 const normalizeEmail = (email?: string | null) => email?.trim().toLowerCase() || null;
 const normalizeUniqueStrings = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-const normalizeUniqueNumbers = (values: number[]) => Array.from(new Set(
-  values.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0),
-)).sort((a, b) => a - b);
 
 export type UserSortField = 'displayName' | 'email' | 'role' | 'createdAt';
 export type UserSortOrder = 'asc' | 'desc';
@@ -406,9 +403,9 @@ export class UserService {
       this.db('mcp_server_group_grants')
         .select('serverId')
         .where({ groupId }),
-      this.db('knowledge_source_group_grants')
-        .select('knowledgeSourceId')
-        .where({ groupId }),
+      this.db('knowledge_base_group_grants')
+        .select('knowledgeBaseId')
+        .where({ teamId: groupId, effect: 'allow' }),
     ]);
 
     return {
@@ -417,8 +414,8 @@ export class UserService {
           .map((row: any) => String(row.skillId || '')),
       ),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
-      knowledgeSourceIds: normalizeUniqueNumbers(
-        (knowledgeRows as Array<{ knowledgeSourceId?: number }>).map((row) => Number(row.knowledgeSourceId)),
+      knowledgeBaseIds: normalizeUniqueStrings(
+        (knowledgeRows as Array<{ knowledgeBaseId?: string }>).map((row) => String(row.knowledgeBaseId || '')),
       ),
     };
   }
@@ -430,7 +427,7 @@ export class UserService {
   ): Promise<(GroupPromptAccess & { auditEventId?: string }) | null> {
     const skillIds = normalizeUniqueStrings(access.skillIds || []);
     const mcpServerIds = normalizeUniqueStrings(access.mcpServerIds || []);
-    const knowledgeSourceIds = normalizeUniqueNumbers(access.knowledgeSourceIds || []);
+    const knowledgeBaseIds = normalizeUniqueStrings(access.knowledgeBaseIds || []);
 
     return this.db.transaction(async (tx) => {
       const group = await tx<GroupRecord>('groups').where({ id: groupId }).first();
@@ -500,12 +497,14 @@ export class UserService {
         );
       }
 
-      await tx('knowledge_source_group_grants').where({ groupId }).del();
-      if (knowledgeSourceIds.length) {
-        await tx('knowledge_source_group_grants').insert(
-          knowledgeSourceIds.map((knowledgeSourceId) => ({
-            groupId,
-            knowledgeSourceId,
+      await tx('knowledge_base_group_grants').where({ teamId: groupId }).del();
+      if (knowledgeBaseIds.length) {
+        await tx('knowledge_base_group_grants').insert(
+          knowledgeBaseIds.map((knowledgeBaseId) => ({
+            knowledgeBaseId,
+            teamId: groupId,
+            effect: 'allow',
+            grantedByUserId: actorUserId || null,
           })),
         );
       }
@@ -527,14 +526,14 @@ export class UserService {
             skillKeys: skillIds,
             previousMcpServerIds: previousMcpServers.map((row: any) => row.serverId).sort(),
             mcpServerIds,
-            knowledgeSourceIds,
+            knowledgeBaseIds,
           }),
         });
       }
       return {
         skillIds,
         mcpServerIds,
-        knowledgeSourceIds,
+        knowledgeBaseIds,
         auditEventId,
       };
     });
@@ -601,9 +600,10 @@ export class UserService {
           .whereIn('groupId', groupIds)
         : Promise.resolve([]),
       groupIds.length
-        ? this.db('knowledge_source_group_grants')
-          .select('knowledgeSourceId')
-          .whereIn('groupId', groupIds)
+        ? this.db('knowledge_base_group_grants')
+          .select('knowledgeBaseId')
+          .whereIn('teamId', groupIds)
+          .andWhere('effect', 'allow')
         : Promise.resolve([]),
     ]);
 
@@ -618,8 +618,8 @@ export class UserService {
         ].map((row: any) => String(row.skillId || '')),
       ),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
-      knowledgeSourceIds: normalizeUniqueNumbers(
-        (knowledgeRows as Array<{ knowledgeSourceId?: number }>).map((row) => Number(row.knowledgeSourceId)),
+      knowledgeBaseIds: normalizeUniqueStrings(
+        (knowledgeRows as Array<{ knowledgeBaseId?: string }>).map((row) => String(row.knowledgeBaseId || '')),
       ),
     };
   }

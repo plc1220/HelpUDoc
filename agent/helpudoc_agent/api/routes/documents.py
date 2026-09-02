@@ -125,6 +125,7 @@ def register_document_routes(
                 source_type=req.sourceType,
                 language_distribution=req.languageDistribution,
                 structural_path=req.structuralPath,
+                guidance=req.guidance,
                 usage_records=usage,
                 validation_warnings=validation_warnings,
             )
@@ -162,6 +163,7 @@ def register_document_routes(
                 results=results,
                 blocks=blocks,
                 fan_in=req.fanIn,
+                guidance=req.guidance,
                 usage_records=usage,
             )
             return KnowledgeMapResponse(
