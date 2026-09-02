@@ -1,7 +1,16 @@
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
-import { ConflictError } from '../errors';
+import { ConflictError, NotFoundError } from '../errors';
+import { isPlatformAdmin } from './governance/teamRoles';
+import {
+  applyWorkspaceOwnershipTransfer,
+  isSharedWorkspaceRecord,
+  workspacePurgeDeadline,
+  type WorkspaceRecord,
+} from './workspaceService';
+
+export type UserStatus = 'active' | 'deactivated';
 
 export interface UserRecord {
   id: string;
@@ -9,9 +18,24 @@ export interface UserRecord {
   email?: string | null;
   displayName: string;
   isAdmin: boolean;
+  /**
+   * Optional on the type although the column is NOT NULL: rows written before
+   * the column existed, and the hand-built database fakes in the test suite,
+   * both omit it. Read it through `isUserDeactivated` so "absent" is never
+   * mistaken for "suspended".
+   */
+  status?: UserStatus;
+  deactivatedAt?: string | null;
+  deactivatedByUserId?: string | null;
+  deactivationReason?: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+/** Absent status means active — see the note on `UserRecord.status`. */
+export const isUserDeactivated = (
+  user: Pick<UserRecord, 'status'> | null | undefined,
+): boolean => user?.status === 'deactivated';
 
 export interface GroupRecord {
   id: string;
@@ -45,9 +69,43 @@ export interface DirectoryUser {
   email: string | null;
 }
 
+export interface OwnedWorkspaceSummary {
+  id: string;
+  name: string;
+  visibility: 'private' | 'team';
+  isShared: boolean;
+  status: string;
+  isSystem: boolean;
+}
+
+/** A user who could take over a Shared workspace whose owner is being suspended. */
+export interface OwnershipCandidate {
+  userId: string;
+  displayName: string;
+  email: string | null;
+  role: string;
+}
+
+export interface SharedWorkspaceHandover {
+  id: string;
+  name: string;
+  status: string;
+  candidates: OwnershipCandidate[];
+}
+
+export interface UserDeactivationImpact {
+  user: Pick<UserRecord, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin' | 'status'>;
+  /** Private workspaces that will be archived, and when they would be retired. */
+  archivedWorkspaces: OwnedWorkspaceSummary[];
+  purgeAfter: string;
+  /** Shared workspaces that need a new owner before deactivation can proceed. */
+  sharedWorkspaces: SharedWorkspaceHandover[];
+  activeScheduleCount: number;
+}
+
 export interface UserDeletionImpact {
-  user: Pick<UserRecord, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin'>;
-  ownedWorkspaces: Array<{ id: string; name: string }>;
+  user: Pick<UserRecord, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin' | 'status'>;
+  ownedWorkspaces: OwnedWorkspaceSummary[];
   sharedWorkspaceCount: number;
   groupMembershipCount: number;
   oauthTokenCount: number;
@@ -76,6 +134,16 @@ export interface UserPage {
   pageSize: number;
   totalPages: number;
 }
+
+/**
+ * Short-lived cache for the per-request deactivation check.
+ *
+ * Module-scoped rather than an instance field on purpose: the test suite builds
+ * services with `Object.create(UserService.prototype)`, which skips field
+ * initializers and would leave a class-field Map undefined on first use.
+ */
+const USER_STATUS_CACHE_TTL_MS = 30_000;
+const userStatusCache = new Map<string, { deactivated: boolean; expiresAt: number }>();
 
 const parseAdminEmails = () => new Set(
   (process.env.ADMIN_EMAILS || '')
@@ -133,7 +201,10 @@ export class UserService {
       updates.email = email;
     }
 
-    if (!existing.isAdmin && email && adminEmails.has(email)) {
+    // A deactivated identity is not re-promoted by ADMIN_EMAILS. Deactivation is
+    // the stronger statement, and letting an env var quietly re-admin a suspended
+    // account would undo it on their next request.
+    if (!existing.isAdmin && email && adminEmails.has(email) && !isUserDeactivated(existing)) {
       updates.isAdmin = true;
     }
 
@@ -656,12 +727,394 @@ export class UserService {
     }));
   }
 
-  async listOwnedWorkspaces(userId: string): Promise<Array<{ id: string; name: string }>> {
-    const rows = await this.db('workspaces')
-      .select('id', 'name')
-      .where({ ownerId: userId })
-      .orderBy('name', 'asc');
-    return (rows as Array<{ id: string; name: string }>).map((row) => ({ id: row.id, name: row.name }));
+  /**
+   * Workspaces this user owns. `purged` rows are excluded by default: they are
+   * retained only so an operator can restore them, and counting them as live
+   * would both inflate the impact preview and block a legitimate user deletion.
+   */
+  async listOwnedWorkspaces(
+    userId: string,
+    options: { includePurged?: boolean } = {},
+  ): Promise<OwnedWorkspaceSummary[]> {
+    const query = this.db('workspaces')
+      .select('id', 'name', 'visibility', 'workspaceType', 'status', 'isSystem')
+      .where({ ownerId: userId });
+    if (!options.includePurged) {
+      query.whereNot({ status: 'purged' });
+    }
+    const rows = await query.orderBy('name', 'asc');
+    return (rows as Array<Record<string, unknown>>).map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      visibility: row.visibility === 'team' ? 'team' : 'private',
+      isShared: row.workspaceType === 'team' || row.visibility === 'team',
+      status: String(row.status || 'active'),
+      isSystem: Boolean(row.isSystem),
+    }));
+  }
+
+  /**
+   * Is this user a platform admin? `users.isAdmin` OR a `platform_role_bindings`
+   * row, matching what the governance services already enforce. Two definitions
+   * of "admin" that can disagree is not a distinction worth keeping.
+   */
+  /**
+   * Is this user currently suspended? Answered from a short-lived cache because
+   * it runs on every authenticated request, and invalidated the moment a status
+   * changes so a deactivation takes effect immediately rather than whenever the
+   * cache happens to expire.
+   *
+   * This exists because `userContextMiddleware` serves an authenticated request
+   * from `req.session.userContext` without ever re-reading the database — so
+   * without a check here, a user who is deactivated mid-session keeps full
+   * access until their session expires.
+   */
+  async isDeactivated(userId: string): Promise<boolean> {
+    const cached = userStatusCache.get(userId);
+    const now = Date.now();
+    if (cached && now < cached.expiresAt) {
+      return cached.deactivated;
+    }
+    const row = await this.db('users').select('status').where({ id: userId }).first();
+    // An unknown user is not "deactivated" — that is a 401 for the caller to
+    // raise, and reporting it as a suspension would produce the wrong message.
+    const deactivated = row ? row.status === 'deactivated' : false;
+    userStatusCache.set(userId, { deactivated, expiresAt: now + USER_STATUS_CACHE_TTL_MS });
+    return deactivated;
+  }
+
+  private invalidateUserStatus(userId: string): void {
+    userStatusCache.delete(userId);
+  }
+
+  async isPlatformAdmin(userId: string): Promise<boolean> {
+    return isPlatformAdmin(this.db, userId);
+  }
+
+  /**
+   * What deactivating this user would do, so an admin decides with the
+   * consequences in front of them rather than after the fact.
+   *
+   * Shared workspaces come back with candidate owners attached: deactivation
+   * refuses to proceed until each one has been handed to somebody, because
+   * leaving a team workspace owned by a suspended account blocks every
+   * owner-gated action on it for everyone else.
+   */
+  async getUserDeactivationImpact(userId: string): Promise<UserDeactivationImpact | null> {
+    const user = await this.getUserById(userId);
+    if (!user) return null;
+
+    const owned = await this.listOwnedWorkspaces(userId);
+    const live = owned.filter((workspace) => !workspace.isSystem && workspace.status !== 'trashed');
+    const sharedWorkspaces = live.filter((workspace) => workspace.isShared);
+
+    const candidatesByWorkspace = await this.listOwnershipCandidates(
+      sharedWorkspaces.map((workspace) => workspace.id),
+      userId,
+    );
+
+    const activeScheduleRow = await this.db('workspace_schedules')
+      .where({ createdBy: userId, status: 'active' })
+      .count<{ count: string }>('id as count')
+      .first();
+
+    return {
+      user: {
+        id: user.id,
+        displayName: user.displayName,
+        email: user.email,
+        externalId: user.externalId,
+        isAdmin: user.isAdmin,
+        status: user.status || 'active',
+      },
+      archivedWorkspaces: live.filter((workspace) => !workspace.isShared),
+      purgeAfter: workspacePurgeDeadline().toISOString(),
+      sharedWorkspaces: sharedWorkspaces.map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        status: workspace.status,
+        candidates: candidatesByWorkspace.get(workspace.id) || [],
+      })),
+      activeScheduleCount: Number(activeScheduleRow?.count || 0),
+    };
+  }
+
+  private async listOwnershipCandidates(
+    workspaceIds: string[],
+    excludeUserId: string,
+  ): Promise<Map<string, OwnershipCandidate[]>> {
+    const byWorkspace = new Map<string, OwnershipCandidate[]>();
+    if (!workspaceIds.length) return byWorkspace;
+
+    const rows = await this.db('workspace_members as member')
+      .join('users as u', 'u.id', 'member.userId')
+      .whereIn('member.workspaceId', workspaceIds)
+      .andWhere('member.userId', '<>', excludeUserId)
+      .andWhere('u.isSystem', false)
+      .andWhereNot('u.status', 'deactivated')
+      .select('member.workspaceId', 'member.role', 'u.id', 'u.displayName', 'u.email');
+
+    for (const row of rows as Array<Record<string, unknown>>) {
+      const workspaceId = String(row.workspaceId);
+      const list = byWorkspace.get(workspaceId) || [];
+      list.push({
+        userId: String(row.id),
+        displayName: String(row.displayName),
+        email: (row.email as string | null) ?? null,
+        role: String(row.role),
+      });
+      byWorkspace.set(workspaceId, list);
+    }
+    return byWorkspace;
+  }
+
+  /**
+   * Suspends a user's access without destroying anything.
+   *
+   * Private workspaces they own are archived into the existing 30-day trash so
+   * one retention mechanism covers both owner-initiated deletes and this, and
+   * are stamped `owner_deactivated` so reactivation restores exactly these and
+   * leaves anything the owner threw away themselves alone. Shared workspaces are
+   * handed to a nominated owner immediately — collaborators should never be
+   * blocked waiting out somebody else's suspension. Their schedules are paused,
+   * because automation that keeps running as a suspended user is the whole thing
+   * this feature exists to stop.
+   *
+   * All of it in one transaction: a half-applied deactivation would leave a user
+   * locked out of workspaces nobody else can administer.
+   */
+  async deactivateUser(
+    userId: string,
+    actorUserId: string,
+    options: { reason?: string | null; sharedWorkspaceOwners?: Array<{ workspaceId: string; newOwnerUserId: string }> } = {},
+  ): Promise<{ archivedWorkspaceIds: string[]; transferredWorkspaceIds: string[]; pausedScheduleCount: number }> {
+    if (userId === actorUserId) {
+      throw new ConflictError('You cannot deactivate your own account');
+    }
+    const user = await this.getUserById(userId);
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+    if (isUserDeactivated(user)) {
+      return { archivedWorkspaceIds: [], transferredWorkspaceIds: [], pausedScheduleCount: 0 };
+    }
+
+    // Empty strings arrive from HTTP where the type says "optional". `??` would
+    // let '' through and store a blank reason as if one had been given.
+    const reason = typeof options.reason === 'string' && options.reason.trim()
+      ? options.reason.trim()
+      : null;
+    const assignments = new Map(
+      (options.sharedWorkspaceOwners || [])
+        .filter((entry) => entry && typeof entry.workspaceId === 'string' && typeof entry.newOwnerUserId === 'string')
+        .map((entry) => [entry.workspaceId.trim(), entry.newOwnerUserId.trim()] as const)
+        .filter(([workspaceId, newOwnerUserId]) => workspaceId && newOwnerUserId),
+    );
+
+    return this.db.transaction(async (tx) => {
+      const target = await tx<UserRecord>('users').where({ id: userId }).forUpdate().first();
+      if (!target) throw new NotFoundError('User not found');
+      if ((target as UserRecord & { isSystem?: boolean }).isSystem) {
+        throw new ConflictError('System identities cannot be deactivated');
+      }
+      if (isUserDeactivated(target)) {
+        return { archivedWorkspaceIds: [], transferredWorkspaceIds: [], pausedScheduleCount: 0 };
+      }
+      if (target.isAdmin) {
+        const remainingAdmins = await tx<UserRecord>('users')
+          .where({ isAdmin: true })
+          .andWhere('isSystem', false)
+          .andWhere((builder) => builder.whereNull('status').orWhereNot({ status: 'deactivated' }))
+          .forUpdate();
+        if (remainingAdmins.length <= 1) {
+          throw new ConflictError('The final active Platform Admin cannot be deactivated');
+        }
+      }
+
+      const owned = await tx('workspaces')
+        .where({ ownerId: userId })
+        .andWhere({ isSystem: false })
+        .whereNotIn('status', ['trashed', 'purged'])
+        .forUpdate() as WorkspaceRecord[];
+
+      const shared = owned.filter((workspace) => isSharedWorkspaceRecord(workspace));
+      const privateOwned = owned.filter((workspace) => !isSharedWorkspaceRecord(workspace));
+
+      const unassigned = shared.filter((workspace) => !assignments.get(workspace.id));
+      if (unassigned.length) {
+        throw new ConflictError(
+          'Every Shared workspace this user owns needs a new owner before they can be deactivated',
+          { workspaceIds: unassigned.map((workspace) => workspace.id) },
+        );
+      }
+
+      const transferredWorkspaceIds: string[] = [];
+      for (const workspace of shared) {
+        const newOwnerUserId = assignments.get(workspace.id)!;
+        const newOwner = await tx<UserRecord>('users').where({ id: newOwnerUserId }).first();
+        if (!newOwner || (newOwner as UserRecord & { isSystem?: boolean }).isSystem) {
+          throw new ConflictError(`The nominated owner for "${workspace.name}" does not exist`);
+        }
+        if (isUserDeactivated(newOwner)) {
+          throw new ConflictError(`The nominated owner for "${workspace.name}" is deactivated`);
+        }
+        await applyWorkspaceOwnershipTransfer(tx, {
+          workspace,
+          toUserId: newOwnerUserId,
+          actorUserId,
+          reason,
+        });
+        transferredWorkspaceIds.push(workspace.id);
+      }
+
+      const archivedWorkspaceIds = privateOwned.map((workspace) => workspace.id);
+      if (archivedWorkspaceIds.length) {
+        await tx('workspaces').whereIn('id', archivedWorkspaceIds).update({
+          status: 'trashed',
+          trashedAt: tx.fn.now(),
+          trashedByUserId: actorUserId,
+          trashReason: 'owner_deactivated',
+          purgeAfter: workspacePurgeDeadline(),
+          updatedAt: tx.fn.now(),
+        });
+        await tx('audit_events').insert(privateOwned.map((workspace) => ({
+          id: uuidv4(),
+          actorUserId,
+          actorRole: 'platform_admin',
+          action: 'workspace.archived_for_deactivation',
+          resourceType: 'workspace',
+          resourceId: workspace.id,
+          platformOverride: true,
+          reason,
+          metadata: { ownerId: userId, workspaceName: workspace.name },
+        })));
+      }
+
+      const pausedScheduleCount = await tx('workspace_schedules')
+        .where({ createdBy: userId, status: 'active' })
+        .update({
+          status: 'paused',
+          lastError: 'Paused because the schedule owner was deactivated',
+          lockedAt: null,
+          lockedBy: null,
+          updatedAt: tx.fn.now(),
+        });
+
+      await tx('users').where({ id: userId }).update({
+        status: 'deactivated',
+        deactivatedAt: tx.fn.now(),
+        deactivatedByUserId: actorUserId,
+        deactivationReason: reason,
+        updatedAt: tx.fn.now(),
+      });
+
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId,
+        actorRole: 'platform_admin',
+        action: 'user.deactivated',
+        resourceType: 'user',
+        resourceId: userId,
+        platformOverride: true,
+        reason,
+        metadata: {
+          archivedWorkspaceIds,
+          transferredWorkspaceIds,
+          pausedScheduleCount: Number(pausedScheduleCount || 0),
+        },
+      });
+
+      return {
+        archivedWorkspaceIds,
+        transferredWorkspaceIds,
+        pausedScheduleCount: Number(pausedScheduleCount || 0),
+      };
+    }).then((result) => {
+      // After commit, never before: invalidating early would let a concurrent
+      // request re-cache the pre-deactivation status from an uncommitted read.
+      this.invalidateUserStatus(userId);
+      return result;
+    });
+  }
+
+  /**
+   * Restores a suspended user's access, and with it the private workspaces this
+   * deactivation archived — matched on `trashReason`, so a workspace the user
+   * had themselves thrown away stays in the trash where they put it.
+   *
+   * Shared workspaces are not handed back: somebody has been owning and working
+   * in them since, and silently demoting them would be its own surprise.
+   * Schedules stay paused for the same reason — automation should restart
+   * because a person decided to, not as a side effect.
+   */
+  async reactivateUser(
+    userId: string,
+    actorUserId: string,
+    options: { reason?: string | null } = {},
+  ): Promise<{ restoredWorkspaceIds: string[] }> {
+    const reason = typeof options.reason === 'string' && options.reason.trim()
+      ? options.reason.trim()
+      : null;
+
+    return this.db.transaction(async (tx) => {
+      const target = await tx<UserRecord>('users').where({ id: userId }).forUpdate().first();
+      if (!target) throw new NotFoundError('User not found');
+      if (!isUserDeactivated(target)) {
+        return { restoredWorkspaceIds: [] };
+      }
+
+      const archived = await tx('workspaces')
+        .where({ ownerId: userId, status: 'trashed', trashReason: 'owner_deactivated' })
+        .forUpdate() as WorkspaceRecord[];
+      const restoredWorkspaceIds = archived.map((workspace) => workspace.id);
+
+      if (restoredWorkspaceIds.length) {
+        await tx('workspaces').whereIn('id', restoredWorkspaceIds).update({
+          status: 'active',
+          trashedAt: null,
+          trashedByUserId: null,
+          trashReason: null,
+          purgeAfter: null,
+          updatedAt: tx.fn.now(),
+        });
+        await tx('audit_events').insert(archived.map((workspace) => ({
+          id: uuidv4(),
+          actorUserId,
+          actorRole: 'platform_admin',
+          action: 'workspace.restored_from_deactivation',
+          resourceType: 'workspace',
+          resourceId: workspace.id,
+          platformOverride: true,
+          reason,
+          metadata: { ownerId: userId, workspaceName: workspace.name },
+        })));
+      }
+
+      await tx('users').where({ id: userId }).update({
+        status: 'active',
+        deactivatedAt: null,
+        deactivatedByUserId: null,
+        deactivationReason: null,
+        updatedAt: tx.fn.now(),
+      });
+
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId,
+        actorRole: 'platform_admin',
+        action: 'user.reactivated',
+        resourceType: 'user',
+        resourceId: userId,
+        platformOverride: true,
+        reason,
+        metadata: { restoredWorkspaceIds },
+      });
+
+      return { restoredWorkspaceIds };
+    }).then((result) => {
+      this.invalidateUserStatus(userId);
+      return result;
+    });
   }
 
   async getUserDeletionImpact(userId: string): Promise<UserDeletionImpact | null> {
@@ -688,6 +1141,7 @@ export class UserService {
         email: user.email,
         externalId: user.externalId,
         isAdmin: user.isAdmin,
+        status: user.status || 'active',
       },
       ownedWorkspaces,
       sharedWorkspaceCount,
@@ -700,10 +1154,20 @@ export class UserService {
     };
   }
 
-  async deleteUser(userId: string): Promise<boolean> {
+  /**
+   * Permanently removes a user. Deliberately the *second* step: a user must
+   * already be deactivated, which is what guarantees their workspaces have been
+   * archived or handed over. Deleting straight from active used to cascade
+   * `workspaces.ownerId` and silently destroy Shared workspaces other people
+   * were working in.
+   */
+  async deleteUser(userId: string, actorUserId?: string): Promise<boolean> {
     const user = await this.getUserById(userId);
     if (!user) {
       return false;
+    }
+    if (!isUserDeactivated(user)) {
+      throw new ConflictError('Deactivate this user before deleting them');
     }
 
     await this.db.transaction(async (tx) => {
@@ -719,6 +1183,66 @@ export class UserService {
       if (governedReview) {
         throw new ConflictError('A user with governed skill review history cannot be deleted');
       }
+
+      // `workspaces.ownerId` is ON DELETE RESTRICT, so a straggler would fail the
+      // transaction with a constraint error nobody can act on. Resolve it here
+      // instead, with the split that matters:
+      //
+      //  - A *live* workspace still belongs to somebody's working life. Refuse,
+      //    and name it, so an admin hands it over deliberately.
+      //  - An archived or retired one is already out of use but must keep a real
+      //    owner to stay restorable. It passes to the admin doing the deletion,
+      //    who is then the accountable holder of whatever is recovered later.
+      //
+      // Without the second half, deleting a deactivated user would be impossible
+      // until their 30-day archives expired — a dead end the admin portal offers
+      // no way out of.
+      const stillOwned = await tx('workspaces')
+        .where({ ownerId: userId })
+        .select('id', 'name', 'status') as Array<{ id: string; name: string; status: string }>;
+      const live = stillOwned.filter(
+        (workspace) => workspace.status !== 'purged' && workspace.status !== 'trashed',
+      );
+      if (live.length) {
+        throw new ConflictError(
+          'This user still owns active workspaces. Transfer ownership or archive them first.',
+          { workspaces: live.map((workspace) => ({ id: workspace.id, name: workspace.name })) },
+        );
+      }
+      if (stillOwned.length) {
+        if (!actorUserId) {
+          throw new ConflictError('An acting administrator is required to inherit retained workspaces');
+        }
+        const inheritedIds = stillOwned.map((workspace) => workspace.id);
+        await tx('workspaces')
+          .whereIn('id', inheritedIds)
+          .update({ ownerId: actorUserId, lastModifiedBy: actorUserId, updatedAt: tx.fn.now() });
+        await tx('workspace_members')
+          .insert(inheritedIds.map((workspaceId) => ({
+            workspaceId,
+            userId: actorUserId,
+            role: 'owner',
+            canEdit: true,
+          })))
+          .onConflict(['workspaceId', 'userId'])
+          .merge({ role: 'owner', canEdit: true, updatedAt: tx.fn.now() });
+        await tx('audit_events').insert(stillOwned.map((workspace) => ({
+          id: uuidv4(),
+          actorUserId,
+          actorRole: 'platform_admin',
+          action: 'workspace.inherited_on_user_deletion',
+          resourceType: 'workspace',
+          resourceId: workspace.id,
+          platformOverride: true,
+          metadata: {
+            previousOwnerUserId: userId,
+            newOwnerUserId: actorUserId,
+            workspaceName: workspace.name,
+            workspaceStatus: workspace.status,
+          },
+        })));
+      }
+
       await this.detachUserReferences(tx, userId);
       await tx('group_members').where({ userId }).del();
       await tx('workspace_members').where({ userId }).del();
@@ -727,8 +1251,27 @@ export class UserService {
       await tx('skill_grants').where({ principalType: 'user', principalId: userId }).del();
       await tx('mcp_connection_grants').where({ principalType: 'user', principalId: userId }).del();
       await tx<UserRecord>('users').where({ id: userId }).del();
+      // Written last, and inside the transaction, so a deletion that rolls back
+      // leaves no record claiming it happened. `audit_events.actorUserId` is
+      // SET NULL rather than cascading, so the trail outlives its subject.
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: actorUserId || null,
+        actorRole: 'platform_admin',
+        action: 'user.deleted',
+        resourceType: 'user',
+        resourceId: userId,
+        platformOverride: true,
+        metadata: {
+          externalId: user.externalId,
+          displayName: user.displayName,
+          email: user.email || null,
+          wasAdmin: user.isAdmin,
+        },
+      });
     });
 
+    this.invalidateUserStatus(userId);
     return true;
   }
 

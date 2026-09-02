@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { UserService } from '../services/userService';
-import { WorkspaceService } from '../services/workspaceService';
 import { HttpError } from '../errors';
 import { findUnknownRuntimeMcpServerIds, loadRuntimeMcpServers } from './agent/policy';
 
@@ -23,6 +22,18 @@ const groupPromptAccessSchema = z.object({
   knowledgeBaseIds: z.array(z.string().uuid()).default([]),
 });
 
+const deactivateUserSchema = z.object({
+  reason: z.string().max(2000).optional(),
+  sharedWorkspaceOwners: z.array(z.object({
+    workspaceId: z.string().uuid(),
+    newOwnerUserId: z.string().uuid(),
+  })).max(500).default([]),
+});
+
+const reactivateUserSchema = z.object({
+  reason: z.string().max(2000).optional(),
+});
+
 const listUsersSchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().min(5).max(100).default(10),
@@ -31,7 +42,7 @@ const listUsersSchema = z.object({
   search: z.string().max(200).optional(),
 });
 
-export default function usersRoutes(userService: UserService, workspaceService: WorkspaceService) {
+export default function usersRoutes(userService: UserService) {
   const router = Router();
 
   router.get('/', async (req, res) => {
@@ -91,6 +102,67 @@ export default function usersRoutes(userService: UserService, workspaceService: 
     }
   });
 
+  router.get('/:userId/deactivation-impact', async (req, res) => {
+    try {
+      const impact = await userService.getUserDeactivationImpact(req.params.userId);
+      if (!impact) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      res.json(impact);
+    } catch (error) {
+      console.error('Failed to load user deactivation impact', error);
+      res.status(500).json({ error: 'Failed to load user deactivation impact' });
+    }
+  });
+
+  router.post('/:userId/deactivate', async (req, res) => {
+    try {
+      if (!req.userContext) {
+        return res.status(401).json({ error: 'Missing user context' });
+      }
+      const payload = deactivateUserSchema.parse(req.body || {});
+      const result = await userService.deactivateUser(
+        req.params.userId,
+        req.userContext.userId,
+        payload,
+      );
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0]?.message || 'Invalid deactivation payload' });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
+      console.error('Failed to deactivate user', error);
+      res.status(500).json({ error: 'Failed to deactivate user' });
+    }
+  });
+
+  router.post('/:userId/reactivate', async (req, res) => {
+    try {
+      if (!req.userContext) {
+        return res.status(401).json({ error: 'Missing user context' });
+      }
+      const payload = reactivateUserSchema.parse(req.body || {});
+      const result = await userService.reactivateUser(
+        req.params.userId,
+        req.userContext.userId,
+        payload,
+      );
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0]?.message || 'Invalid reactivation payload' });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
+      console.error('Failed to reactivate user', error);
+      res.status(500).json({ error: 'Failed to reactivate user' });
+    }
+  });
+
   router.delete('/:userId', async (req, res) => {
     try {
       if (!req.userContext) {
@@ -105,16 +177,12 @@ export default function usersRoutes(userService: UserService, workspaceService: 
         return res.status(404).json({ error: 'User not found' });
       }
 
-      const ownedWorkspaces = await userService.listOwnedWorkspaces(user.id);
-      await userService.deleteUser(user.id);
-
-      for (const workspace of ownedWorkspaces) {
-        try {
-          await workspaceService.cleanupWorkspaceArtifacts(workspace.id);
-        } catch (error) {
-          console.error(`Failed to clean up workspace artifacts for deleted user workspace: ${workspace.id}`, error);
-        }
-      }
+      // No artifact cleanup here any more. Deleting a user no longer implies
+      // destroying their workspaces: those were archived or handed over at
+      // deactivation, and anything still on the row is retained deliberately so
+      // it can be restored. `scripts/hard-purge-workspace.ts` is the only path
+      // that removes the bytes, and it is run on purpose.
+      await userService.deleteUser(user.id, req.userContext.userId);
 
       res.status(204).send();
     } catch (error) {
