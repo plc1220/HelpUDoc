@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import YAML from 'yaml';
 import {
-  Archive,
   BadgeCheck,
   Ban,
   BookOpenCheck,
@@ -1590,16 +1589,6 @@ const SkillGovernancePage = () => {
                         <button type="button" onClick={() => setVersionDialog(skill)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
                           <History size={16} /> {catalogView === 'compact' ? <span className="sr-only">Versions</span> : 'Versions'}
                         </button>
-                        {skill.canAdminister && skill.status !== 'retired' ? (
-                          <button
-                            type="button"
-                            onClick={() => setDetailSkill(skill)}
-                            title={`Archive ${skill.displayName}`}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-50 px-3 py-2.5 text-sm font-semibold text-rose-700"
-                          >
-                            <Archive size={16} /> {catalogView === 'compact' ? <span className="sr-only">Archive</span> : 'Archive'}
-                          </button>
-                        ) : null}
                         {skill.canAdminister && skill.status === 'retired' ? (
                           <button
                             type="button"
