@@ -197,6 +197,32 @@ export class DatabaseService {
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS users_status_idx ON users (status) WHERE status <> \'active\'',
     );
+
+    // Pre-registration: an admin creates the row, assigns teams and roles, and the
+    // person claims it on their first sign-in. `status` carries a third value,
+    // 'invited', which the deactivation gates ignore by design — an invited row
+    // must be able to authenticate, that is the whole point.
+    await this.ensureColumn('users', 'invitedByUserId', (table) =>
+      table.uuid('invitedByUserId').references('id').inTable('users').onDelete('SET NULL'));
+    await this.ensureColumn('users', 'invitedAt', (table) =>
+      table.timestamp('invitedAt', { useTz: true }));
+    await this.ensureColumn('users', 'claimedAt', (table) =>
+      table.timestamp('claimedAt', { useTz: true }));
+
+    // Deliberately partial. A plain unique index on email cannot be created on any
+    // deployment that has used header auth, because DEFAULT_USER_EMAIL stamps one
+    // address onto every such user — the dev database has eight rows sharing one.
+    // Only invited rows need the guarantee, and only they get it: two pending
+    // invitations for the same address would make the claim ambiguous.
+    await this.db.raw(
+      'CREATE UNIQUE INDEX IF NOT EXISTS users_invited_email_unique '
+      + 'ON users (lower(email)) WHERE status = \'invited\' AND email IS NOT NULL',
+    );
+    // The claim looks a user up by verified OIDC identity before anything else.
+    await this.db.raw(
+      'CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_identity_unique '
+      + 'ON users ("oidcIssuer", "oidcSubject") WHERE "oidcSubject" IS NOT NULL',
+    );
   }
 
   private async createGroupsTable(): Promise<void> {
