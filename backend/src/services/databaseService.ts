@@ -67,7 +67,55 @@ export class DatabaseService {
     await this.createSkillEvolutionSuggestionsTable();
     await this.createUnifiedGovernanceTables();
     await this.migrateLegacyTeamWorkspacesToSharedFreeflow();
+    await this.enforceWorkspaceOwnerDeleteRestrict();
     await this.backfillFileAuditTrail();
+  }
+
+  /**
+   * `workspaces.ownerId` was created as ON DELETE CASCADE, so deleting a user
+   * silently hard-deleted every workspace they owned — including Shared
+   * workspaces other people were still collaborating in. Worse, the retrofit
+   * path (`ensureColumn` on an existing table) adds the column with no foreign
+   * key at all, so the behaviour differed between a fresh and a migrated
+   * database.
+   *
+   * Both are normalized here to ON DELETE RESTRICT: a user deletion that would
+   * orphan a workspace now fails loudly instead of destroying data. Callers are
+   * expected to archive or hand over ownership first (see
+   * `UserService.deactivateUser`). Idempotent — it inspects `confdeltype` and
+   * only rewrites a constraint that is not already RESTRICT.
+   */
+  private async enforceWorkspaceOwnerDeleteRestrict(): Promise<void> {
+    await this.db.raw(`
+      DO $ownerfk$
+      DECLARE
+        existing_name text;
+        existing_action "char";
+      BEGIN
+        SELECT conname, confdeltype INTO existing_name, existing_action
+        FROM pg_constraint
+        WHERE conrelid = 'workspaces'::regclass
+          AND contype = 'f'
+          AND conkey = ARRAY[(
+            SELECT attnum FROM pg_attribute
+            WHERE attrelid = 'workspaces'::regclass AND attname = 'ownerId'
+          )]::smallint[];
+
+        IF existing_name IS NOT NULL AND existing_action = 'r' THEN
+          RETURN;
+        END IF;
+
+        IF existing_name IS NOT NULL THEN
+          EXECUTE format('ALTER TABLE workspaces DROP CONSTRAINT %I', existing_name);
+        END IF;
+
+        ALTER TABLE workspaces
+          ADD CONSTRAINT workspaces_ownerid_foreign
+          FOREIGN KEY ("ownerId") REFERENCES users (id)
+          ON DELETE RESTRICT;
+      END
+      $ownerfk$;
+    `);
   }
 
   private buildConnectionConfig(env: ReturnType<typeof getBackendEnv>): PgConnection {
@@ -134,6 +182,21 @@ export class DatabaseService {
       await this.ensureColumn('users', 'oidcIssuer', (table) => table.string('oidcIssuer'));
       await this.ensureColumn('users', 'oidcSubject', (table) => table.string('oidcSubject'));
     }
+
+    // Deactivation is a reversible suspension of a user's access. It is kept
+    // separate from deletion so an operator has a non-destructive lever, and
+    // separate from `isAdmin` so demoting and suspending stay independent.
+    await this.ensureColumn('users', 'status', (table) =>
+      table.string('status', 16).notNullable().defaultTo('active'));
+    await this.ensureColumn('users', 'deactivatedAt', (table) =>
+      table.timestamp('deactivatedAt', { useTz: true }));
+    await this.ensureColumn('users', 'deactivatedByUserId', (table) =>
+      table.uuid('deactivatedByUserId').references('id').inTable('users').onDelete('SET NULL'));
+    await this.ensureColumn('users', 'deactivationReason', (table) =>
+      table.text('deactivationReason'));
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS users_status_idx ON users (status) WHERE status <> \'active\'',
+    );
   }
 
   private async createGroupsTable(): Promise<void> {
@@ -1901,6 +1964,21 @@ export class DatabaseService {
       table.timestamp('purgeAfter', { useTz: true }));
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS workspaces_trash_purge_idx ON workspaces ("purgeAfter") WHERE status = \'trashed\' AND "purgeAfter" IS NOT NULL',
+    );
+
+    // `purged` retires a workspace without destroying it: the rows and the
+    // object bytes stay, every read path hides it, and only the CLI hard-purge
+    // actually deletes. `trashReason` distinguishes a trash the owner asked for
+    // from one an admin caused by deactivating them, so reactivation restores
+    // exactly the second kind and leaves the first alone.
+    await this.ensureColumn('workspaces', 'purgedAt', (table) =>
+      table.timestamp('purgedAt', { useTz: true }));
+    await this.ensureColumn('workspaces', 'trashReason', (table) =>
+      table.string('trashReason', 32));
+    // The admin oversight list and every deactivation sweep filter on ownerId.
+    await this.db.raw('CREATE INDEX IF NOT EXISTS workspaces_owner_idx ON workspaces ("ownerId")');
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspaces_owner_trash_reason_idx ON workspaces ("ownerId", "trashReason") WHERE "trashReason" IS NOT NULL',
     );
 
     // `archived` was the earlier shared-workspace lifecycle value. Preserve
