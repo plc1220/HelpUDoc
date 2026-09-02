@@ -34,6 +34,14 @@ const reactivateUserSchema = z.object({
   reason: z.string().max(2000).optional(),
 });
 
+const inviteUsersSchema = z.object({
+  emails: z.array(z.string().min(1).max(320)).min(1).max(200),
+  teamIds: z.array(z.string().uuid()).max(50).default([]),
+  leadTeamIds: z.array(z.string().uuid()).max(50).default([]),
+  isAdmin: z.boolean().default(false),
+  displayName: z.string().max(255).optional(),
+});
+
 const listUsersSchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().min(5).max(100).default(10),
@@ -66,6 +74,55 @@ export default function usersRoutes(userService: UserService) {
     } catch (error) {
       console.error('Failed to list user directory', error);
       res.status(500).json({ error: 'Failed to list user directory' });
+    }
+  });
+
+  // Declared before the `/:userId` routes so the literal prefix always wins.
+  // `DELETE /:userId` matches a single segment, so it could never have swallowed
+  // `/invitations/:userId`, but keeping the literal routes together is what stops
+  // that from becoming true after the next edit.
+  router.get('/invitations', async (_req, res) => {
+    try {
+      res.json({ invitations: await userService.listPendingInvitations() });
+    } catch (error) {
+      console.error('Failed to list invitations', error);
+      res.status(500).json({ error: 'Failed to list invitations' });
+    }
+  });
+
+  router.post('/invitations', async (req, res) => {
+    try {
+      if (!req.userContext) {
+        return res.status(401).json({ error: 'Missing user context' });
+      }
+      const payload = inviteUsersSchema.parse(req.body || {});
+      const results = await userService.inviteUsers(req.userContext.userId, payload);
+      res.status(201).json({ results });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0]?.message || 'Invalid invitation payload' });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
+      console.error('Failed to register users', error);
+      res.status(500).json({ error: 'Failed to register users' });
+    }
+  });
+
+  router.delete('/invitations/:userId', async (req, res) => {
+    try {
+      if (!req.userContext) {
+        return res.status(401).json({ error: 'Missing user context' });
+      }
+      await userService.revokeInvitation(req.params.userId, req.userContext.userId);
+      res.status(204).send();
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
+      console.error('Failed to revoke invitation', error);
+      res.status(500).json({ error: 'Failed to revoke invitation' });
     }
   });
 
