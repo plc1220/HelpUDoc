@@ -2,7 +2,7 @@ import { Server } from '@hocuspocus/server';
 import { Database } from '@hocuspocus/extension-database';
 import type { Knex } from 'knex';
 import { DatabaseService } from '../services/databaseService';
-import { UserService } from '../services/userService';
+import { UserService, isUserDeactivated } from '../services/userService';
 import { WorkspaceService } from '../services/workspaceService';
 
 const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'Local User';
@@ -71,6 +71,14 @@ export function startCollabServer(databaseService: DatabaseService, userService:
         displayName,
         email,
       });
+
+      // This server runs on its own port and authenticates from query
+      // parameters, so none of the Express middleware applies to it. Without
+      // this check a deactivated user keeps editing documents live over the
+      // websocket while every HTTP route refuses them.
+      if (isUserDeactivated(userRecord)) {
+        throw new Error('This account has been deactivated');
+      }
 
       const membership = await workspaceService.ensureMembership(workspaceId, userRecord.id);
       if (!membership.membership.canEdit) {

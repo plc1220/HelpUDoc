@@ -501,6 +501,22 @@ export class ScheduleService {
     return this.db.transaction(async (trx) => {
       const query = trx<WorkspaceScheduleRow>('workspace_schedules')
         .where({ status: 'active' })
+        // Defence in depth behind the pause that deactivation applies: a
+        // schedule must not fire for a suspended owner or into a workspace that
+        // has been archived or retired. Claiming on schedule status alone let a
+        // deactivated user keep launching agent runs as themselves.
+        .whereNotExists(function excludeDeactivatedOwner() {
+          this.select(trx.raw('1'))
+            .from('users as scheduleOwner')
+            .whereRaw('"scheduleOwner"."id" = "workspace_schedules"."createdBy"')
+            .andWhere('scheduleOwner.status', 'deactivated');
+        })
+        .whereExists(function requireLiveWorkspace() {
+          this.select(trx.raw('1'))
+            .from('workspaces as scheduleWorkspace')
+            .whereRaw('"scheduleWorkspace"."id" = "workspace_schedules"."workspaceId"')
+            .whereNotIn('scheduleWorkspace.status', ['trashed', 'purged']);
+        })
         .whereNotNull('nextRunAt')
         .andWhere('nextRunAt', '<=', trx.fn.now())
         .andWhere((builder) => {

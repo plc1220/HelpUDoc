@@ -1,5 +1,5 @@
 import { Request, Router } from 'express';
-import { UserService } from '../services/userService';
+import { UserService, isUserDeactivated } from '../services/userService';
 import { GoogleOAuthService, GoogleOAuthConfigError } from '../services/googleOAuthService';
 
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
@@ -205,6 +205,13 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         displayName: profile.name || profile.email || `google-${profile.sub}`,
         email: profile.email,
       });
+
+      // Refuse before a session exists. Minting one and relying on the request
+      // middleware to reject it afterwards would leave the user in a sign-in
+      // loop with no explanation of why.
+      if (isUserDeactivated(user)) {
+        return redirectWithError('account_deactivated');
+      }
 
       await googleOAuthService.upsertUserGoogleToken(user.id, tokenResponse);
 
