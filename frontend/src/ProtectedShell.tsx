@@ -7,6 +7,7 @@ const AgentSettingsPage = lazy(() => import('./pages/AgentSettingsPage'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const KnowledgeGovernancePage = lazy(() => import('./pages/KnowledgeGovernancePage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
+const AdminWorkspacesPage = lazy(() => import('./pages/AdminWorkspacesPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
 const SkillGovernancePage = lazy(() => import('./pages/SkillGovernancePage'));
 
@@ -84,6 +85,14 @@ const ProtectedShell: FC = () => {
           element={
             <RequireAuth>
               <UsersPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/settings/workspaces"
+          element={
+            <RequireAuth>
+              <AdminWorkspacesPage />
             </RequireAuth>
           }
         />

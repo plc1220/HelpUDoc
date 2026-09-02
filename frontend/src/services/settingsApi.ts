@@ -2,6 +2,8 @@ import type { PluginDefinition, SkillDefinition, SkillEvolutionSuggestion } from
 import type { AgentStreamChunk } from '@helpudoc/contracts/agentStream';
 import { API_URL, apiFetch } from './apiClient';
 
+export type UserStatus = 'active' | 'deactivated';
+
 export type ManagedUser = {
   id: string;
   externalId: string;
@@ -9,18 +11,123 @@ export type ManagedUser = {
   email?: string | null;
   isAdmin: boolean;
   isTeamLead?: boolean;
+  status?: UserStatus;
+  deactivatedAt?: string | null;
+  deactivationReason?: string | null;
   createdAt: string;
   updatedAt: string;
 };
+
+/** Absent status means active — older rows predate the column. */
+export const isUserDeactivated = (user: Pick<ManagedUser, 'status'>): boolean =>
+  user.status === 'deactivated';
 
 export type ManagedGroup = {
   id: string;
   name: string;
 };
 
+export type OwnedWorkspaceSummary = {
+  id: string;
+  name: string;
+  visibility: 'private' | 'team';
+  isShared: boolean;
+  status: string;
+  isSystem: boolean;
+};
+
+export type OwnershipCandidate = {
+  userId: string;
+  displayName: string;
+  email: string | null;
+  role: string;
+};
+
+export type SharedWorkspaceHandover = {
+  id: string;
+  name: string;
+  status: string;
+  candidates: OwnershipCandidate[];
+};
+
+export type UserDeactivationImpact = {
+  user: Pick<ManagedUser, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin' | 'status'>;
+  archivedWorkspaces: OwnedWorkspaceSummary[];
+  purgeAfter: string;
+  sharedWorkspaces: SharedWorkspaceHandover[];
+  activeScheduleCount: number;
+};
+
+export type AdminWorkspaceSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  visibility: 'private' | 'team';
+  workspaceType: 'private' | 'team';
+  status: string;
+  editingPolicy: string | null;
+  ownerId: string | null;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  ownerStatus: string;
+  teamId: string | null;
+  teamName: string | null;
+  fileCount: number;
+  memberCount: number;
+  contentRevision: number;
+  trashedAt: string | null;
+  trashReason: string | null;
+  purgeAfter: string | null;
+  purgedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminWorkspacePage = {
+  workspaces: AdminWorkspaceSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type AdminWorkspaceDetail = {
+  workspace: AdminWorkspaceSummary & Record<string, unknown>;
+  viewingAsAdmin: boolean;
+  collaborators: Array<{ userId: string; displayName: string; role: string; canEdit: boolean }>;
+  teams: Array<{ id: string; name: string; role: string }>;
+};
+
+export type AdminWorkspaceFile = {
+  id: number;
+  name: string;
+  mimeType?: string | null;
+  updatedAt?: string;
+};
+
+export type AdminFileContent = {
+  id: number;
+  name: string;
+  mimeType: string;
+  encoding: 'text' | 'base64';
+  content: string;
+  sizeBytes: number;
+  updatedAt: string;
+};
+
+export type AdminConversationSummary = {
+  id: string;
+  persona: string | null;
+  createdBy: string | null;
+  authorName: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type UserDeletionImpact = {
-  user: Pick<ManagedUser, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin'>;
-  ownedWorkspaces: Array<{ id: string; name: string }>;
+  user: Pick<ManagedUser, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin' | 'status'>;
+  ownedWorkspaces: OwnedWorkspaceSummary[];
   sharedWorkspaceCount: number;
   groupMembershipCount: number;
   oauthTokenCount: number;
@@ -591,6 +698,113 @@ export const deleteUser = async (userId: string): Promise<void> => {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || 'Failed to delete user');
   }
+};
+
+export const fetchUserDeactivationImpact = async (userId: string): Promise<UserDeactivationImpact> => {
+  const response = await apiFetch(`${API_URL}/users/${userId}/deactivation-impact`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load deactivation impact');
+  }
+  return response.json();
+};
+
+export const deactivateUser = async (
+  userId: string,
+  payload: { reason?: string; sharedWorkspaceOwners: Array<{ workspaceId: string; newOwnerUserId: string }> },
+): Promise<{ archivedWorkspaceIds: string[]; transferredWorkspaceIds: string[]; pausedScheduleCount: number }> => {
+  const response = await apiFetch(`${API_URL}/users/${userId}/deactivate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to deactivate user');
+  }
+  return response.json();
+};
+
+export const reactivateUser = async (
+  userId: string,
+  payload: { reason?: string } = {},
+): Promise<{ restoredWorkspaceIds: string[] }> => {
+  const response = await apiFetch(`${API_URL}/users/${userId}/reactivate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to reactivate user');
+  }
+  return response.json();
+};
+
+export const fetchAdminWorkspaces = async (options: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: string;
+  visibility?: string;
+  includePurged?: boolean;
+} = {}): Promise<AdminWorkspacePage> => {
+  const params = new URLSearchParams();
+  if (options.page) params.set('page', String(options.page));
+  if (options.pageSize) params.set('pageSize', String(options.pageSize));
+  if (options.search) params.set('search', options.search);
+  if (options.status) params.set('status', options.status);
+  if (options.visibility) params.set('visibility', options.visibility);
+  if (options.includePurged) params.set('includePurged', 'true');
+  const response = await apiFetch(`${API_URL}/admin/workspaces?${params.toString()}`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load workspaces');
+  }
+  return response.json();
+};
+
+export const fetchAdminWorkspaceDetail = async (workspaceId: string): Promise<AdminWorkspaceDetail> => {
+  const response = await apiFetch(`${API_URL}/admin/workspaces/${workspaceId}`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load workspace');
+  }
+  return response.json();
+};
+
+export const fetchAdminWorkspaceFiles = async (workspaceId: string): Promise<AdminWorkspaceFile[]> => {
+  const response = await apiFetch(`${API_URL}/admin/workspaces/${workspaceId}/files`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load files');
+  }
+  const data = await response.json();
+  return data.files || [];
+};
+
+export const fetchAdminFileContent = async (
+  workspaceId: string,
+  fileId: number,
+): Promise<AdminFileContent> => {
+  const response = await apiFetch(`${API_URL}/admin/workspaces/${workspaceId}/files/${fileId}/content`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to read file');
+  }
+  return response.json();
+};
+
+export const fetchAdminWorkspaceConversations = async (
+  workspaceId: string,
+): Promise<AdminConversationSummary[]> => {
+  const response = await apiFetch(`${API_URL}/admin/workspaces/${workspaceId}/conversations`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load conversations');
+  }
+  const data = await response.json();
+  return data.conversations || [];
 };
 
 export const fetchGroups = async (): Promise<ManagedGroup[]> => {

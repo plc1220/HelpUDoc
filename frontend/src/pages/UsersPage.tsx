@@ -14,10 +14,12 @@ import {
   KeyRound,
   Loader2,
   Plus,
+  RotateCcw,
   Search,
   ShieldCheck,
   ShieldOff,
   Trash2,
+  UserMinus,
   UserRound,
   Users2,
   Wrench,
@@ -43,15 +45,20 @@ import {
   fetchGroups,
   fetchRuntimeCapabilityCatalog,
   fetchSkills,
+  fetchUserDeactivationImpact,
   fetchUserDeletionImpact,
   fetchUserDirectory,
   fetchUsers,
+  deactivateUser,
+  isUserDeactivated,
+  reactivateUser,
   removeGroupMember,
   saveGroupPromptAccess,
   setUserAdmin,
   type GroupPromptAccess,
   type ManagedGroup,
   type ManagedUser,
+  type UserDeactivationImpact,
   type UserDeletionImpact,
   type UserSortField,
   type UserSortOrder,
@@ -77,6 +84,10 @@ const formatDate = (value: string) => {
 
 const UsersPage = () => {
   const currentUser = getAuthUser();
+  // `AuthUser.id` carries the *external* identity (header auth needs the stable
+  // one), so self-comparisons have to be made on externalId. Comparing it to the
+  // database uuid, as this page used to, silently never matched.
+  const currentExternalId = currentUser?.id || null;
   const [activeView, setActiveView] = useState<ManagementView>('users');
 
   const [users, setUsers] = useState<UserTableRow[]>([]);
@@ -104,6 +115,13 @@ const UsersPage = () => {
 
   const [pendingDeleteUser, setPendingDeleteUser] = useState<ManagedUser | null>(null);
   const [deletionImpact, setDeletionImpact] = useState<UserDeletionImpact | null>(null);
+  const [pendingDeactivateUser, setPendingDeactivateUser] = useState<ManagedUser | null>(null);
+  const [deactivationImpact, setDeactivationImpact] = useState<UserDeactivationImpact | null>(null);
+  const [deactivationImpactLoading, setDeactivationImpactLoading] = useState(false);
+  const [deactivationReason, setDeactivationReason] = useState('');
+  /** workspaceId -> nominated new owner, defaulting to the acting admin. */
+  const [handoverOwners, setHandoverOwners] = useState<Record<string, string>>({});
+  const [deactivatingUserId, setDeactivatingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [usersLoading, setUsersLoading] = useState(true);
   const [groupsLoading, setGroupsLoading] = useState(true);
@@ -112,6 +130,12 @@ const UsersPage = () => {
   const [accessSaving, setAccessSaving] = useState(false);
   const [deletionImpactLoading, setDeletionImpactLoading] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+
+  /** The acting admin's database id, resolved from the loaded page of users. */
+  const currentUserId = useMemo(
+    () => users.find((user) => user.externalId === currentExternalId)?.id || null,
+    [users, currentExternalId],
+  );
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -424,6 +448,62 @@ const UsersPage = () => {
     }
   };
 
+  const handleOpenDeactivateModal = useCallback(async (user: ManagedUser) => {
+    setPendingDeactivateUser(user);
+    setDeactivationImpact(null);
+    setDeactivationReason('');
+    setHandoverOwners({});
+    setDeactivationImpactLoading(true);
+    try {
+      const impact = await fetchUserDeactivationImpact(user.id);
+      setDeactivationImpact(impact);
+      // Default every Shared workspace to the acting admin: it is the choice
+      // that always works, and the picker is there to override it.
+      setHandoverOwners(Object.fromEntries(
+        impact.sharedWorkspaces.map((workspace) => [workspace.id, currentUserId || '']),
+      ));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load deactivation impact');
+    } finally {
+      setDeactivationImpactLoading(false);
+    }
+  }, [currentUserId]);
+
+  const handleConfirmDeactivateUser = async () => {
+    if (!pendingDeactivateUser) return;
+    setDeactivatingUserId(pendingDeactivateUser.id);
+    try {
+      await deactivateUser(pendingDeactivateUser.id, {
+        reason: deactivationReason.trim() || undefined,
+        sharedWorkspaceOwners: Object.entries(handoverOwners)
+          .filter(([, newOwnerUserId]) => Boolean(newOwnerUserId))
+          .map(([workspaceId, newOwnerUserId]) => ({ workspaceId, newOwnerUserId })),
+      });
+      setPendingDeactivateUser(null);
+      setDeactivationImpact(null);
+      await loadUsers();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to deactivate user');
+    } finally {
+      setDeactivatingUserId(null);
+    }
+  };
+
+  const handleReactivateUser = useCallback(async (user: ManagedUser) => {
+    setDeactivatingUserId(user.id);
+    try {
+      await reactivateUser(user.id);
+      await loadUsers();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reactivate user');
+    } finally {
+      setDeactivatingUserId(null);
+    }
+  }, [loadUsers]);
+
   const togglePluginBundle = (plugin: PluginDefinition) => {
     if (!pluginBundleAvailability.get(plugin.id)?.assignable) return;
     setGroupAccess((previous) => {
@@ -479,29 +559,77 @@ const UsersPage = () => {
       renderCell: (user) => <span className="text-sm text-slate-600">{formatDate(user.createdAt)}</span>,
     },
     {
+      key: 'status',
+      header: 'Status',
+      width: pixel(130),
+      renderCell: (user) => (
+        // Only the exceptional state is badged; a badge on every active user
+        // would be noise that hides the suspended ones.
+        isUserDeactivated(user)
+          ? <Badge label="Deactivated" variant="warning" />
+          : <span className="text-sm text-slate-600">Active</span>
+      ),
+    },
+    {
       key: 'actions',
       header: 'Actions',
-      width: pixel(120),
+      width: pixel(210),
       align: 'end',
       resizable: false,
       renderCell: (user) => {
-        const isCurrentUser = currentUser?.id === user.id;
+        const isCurrentUser = user.externalId === currentExternalId;
         const isDeleting = deletingUserId === user.id;
+        const isBusy = deactivatingUserId === user.id;
+        const deactivated = isUserDeactivated(user);
         return (
-          <Button
-            label="Delete"
-            variant="destructive"
-            size="sm"
-            icon={<Trash2 size={14} />}
-            isDisabled={isCurrentUser || isDeleting}
-            isLoading={isDeleting}
-            onClick={() => void handleOpenDeleteModal(user)}
-            tooltip={isCurrentUser ? 'Self-delete is blocked in the admin portal' : 'Delete user'}
-          />
+          <div className="flex items-center justify-end gap-2">
+            {deactivated ? (
+              <Button
+                label="Reactivate"
+                variant="secondary"
+                size="sm"
+                icon={<RotateCcw size={14} />}
+                isDisabled={isBusy}
+                isLoading={isBusy}
+                onClick={() => void handleReactivateUser(user)}
+                tooltip="Restore access and the workspaces this deactivation archived"
+              />
+            ) : (
+              <Button
+                label="Deactivate"
+                variant="secondary"
+                size="sm"
+                icon={<UserMinus size={14} />}
+                isDisabled={isCurrentUser || isBusy}
+                isLoading={isBusy}
+                onClick={() => void handleOpenDeactivateModal(user)}
+                tooltip={isCurrentUser
+                  ? 'You cannot deactivate your own account'
+                  : 'Suspend access, archive private workspaces, hand over shared ones'}
+              />
+            )}
+            <IconButton
+              label="Delete user"
+              variant="ghost"
+              size="sm"
+              icon={<Trash2 size={14} />}
+              // Deletion is the second step, never the first: deactivating is
+              // what archives their workspaces and hands over the shared ones,
+              // and the server refuses a delete that skipped it.
+              isDisabled={isCurrentUser || isDeleting || !deactivated}
+              isLoading={isDeleting}
+              onClick={() => void handleOpenDeleteModal(user)}
+              tooltip={isCurrentUser
+                ? 'Self-delete is blocked in the admin portal'
+                : deactivated
+                  ? 'Permanently delete this account'
+                  : 'Deactivate this user before deleting them'}
+            />
+          </div>
         );
       },
     },
-  ], [currentUser?.id, deletingUserId]);
+  ], [currentExternalId, deletingUserId, deactivatingUserId, handleOpenDeactivateModal, handleReactivateUser]);
 
   return (
     <SettingsShell
@@ -929,6 +1057,135 @@ const UsersPage = () => {
         )}
       </div>
 
+      {pendingDeactivateUser ? (
+        <div className="settings-modal-overlay fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="settings-modal-panel flex max-h-[min(90vh,860px)] w-full max-w-2xl flex-col rounded-[28px] p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-600">Reversible</p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-950">
+                  Deactivate {pendingDeactivateUser.displayName}?
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Their access stops immediately. Private workspaces are archived and stay
+                  recoverable; Shared workspaces are handed to the owner you pick, so nobody
+                  else is blocked. Reactivating restores the archive.
+                </p>
+              </div>
+              <IconButton
+                label="Close"
+                variant="ghost"
+                size="sm"
+                icon={<X size={16} />}
+                onClick={() => { setPendingDeactivateUser(null); setDeactivationImpact(null); }}
+              />
+            </div>
+
+            <div className="mt-5 min-h-0 flex-1 space-y-4 overflow-auto">
+              {deactivationImpactLoading ? <SettingsLoadingState label="Loading impact..." /> : null}
+
+              {!deactivationImpactLoading && deactivationImpact ? (
+                <>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    <p className="font-semibold">
+                      {deactivationImpact.archivedWorkspaces.length} private workspaces archived
+                    </p>
+                    <p className="mt-1 text-xs">
+                      {deactivationImpact.archivedWorkspaces.length
+                        ? `${deactivationImpact.archivedWorkspaces.map((workspace) => workspace.name).join(', ')} — retired on ${formatDate(deactivationImpact.purgeAfter)} if not reactivated, and recoverable after that.`
+                        : 'No private workspaces to archive.'}
+                    </p>
+                    {deactivationImpact.activeScheduleCount ? (
+                      <p className="mt-2 text-xs">
+                        {deactivationImpact.activeScheduleCount} active schedules will be paused.
+                        Reactivating does not resume them.
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {deactivationImpact.sharedWorkspaces.length ? (
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-slate-900">
+                        Choose a new owner for each Shared workspace
+                      </p>
+                      {deactivationImpact.sharedWorkspaces.map((workspace) => (
+                        <div
+                          key={workspace.id}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 px-4 py-3"
+                        >
+                          <span className="min-w-0 truncate text-sm text-slate-800">{workspace.name}</span>
+                          <select
+                            value={handoverOwners[workspace.id] || ''}
+                            onChange={(event) => setHandoverOwners((previous) => ({
+                              ...previous,
+                              [workspace.id]: event.target.value,
+                            }))}
+                            aria-label={`New owner for ${workspace.name}`}
+                            className="settings-portal-input h-9 rounded-xl px-3 text-sm"
+                          >
+                            <option value="">Select an owner…</option>
+                            {currentUserId ? <option value={currentUserId}>Me ({currentUser?.name})</option> : null}
+                            {workspace.candidates
+                              .filter((candidate) => candidate.userId !== currentUserId)
+                              .map((candidate) => (
+                                <option key={candidate.userId} value={candidate.userId}>
+                                  {candidate.displayName} ({candidate.role})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <label htmlFor="deactivation-reason" className="text-sm font-semibold text-slate-900">
+                      Reason
+                    </label>
+                    <p className="mb-2 text-xs text-slate-500">
+                      Recorded in the audit trail alongside this action.
+                    </p>
+                    <textarea
+                      id="deactivation-reason"
+                      value={deactivationReason}
+                      onChange={(event) => setDeactivationReason(event.target.value)}
+                      rows={2}
+                      placeholder="e.g. Left the company on 2 September"
+                      className="settings-portal-input w-full rounded-xl px-3 py-2 text-sm"
+                    />
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <Button
+                label="Cancel"
+                variant="secondary"
+                size="sm"
+                onClick={() => { setPendingDeactivateUser(null); setDeactivationImpact(null); }}
+              />
+              <Button
+                label="Deactivate"
+                variant="primary"
+                size="sm"
+                icon={<UserMinus size={16} />}
+                onClick={() => void handleConfirmDeactivateUser()}
+                // Every Shared workspace needs an owner. The server enforces this
+                // too; disabling here just avoids a round trip to be told so.
+                isDisabled={
+                  deactivationImpactLoading
+                  || !deactivationImpact
+                  || deactivationImpact.sharedWorkspaces.some((workspace) => !handoverOwners[workspace.id])
+                  || deactivatingUserId === pendingDeactivateUser.id
+                }
+                isLoading={deactivatingUserId === pendingDeactivateUser.id}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {pendingDeleteUser ? (
         <div className="settings-modal-overlay fixed inset-0 z-50 flex items-center justify-center px-4">
           <div className="settings-modal-panel w-full max-w-2xl rounded-[28px] p-6">
@@ -937,7 +1194,9 @@ const UsersPage = () => {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-rose-500">Destructive action</p>
                 <h3 className="mt-2 text-xl font-semibold text-slate-950">Delete {pendingDeleteUser.displayName}?</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  This removes the account, deletes owned workspaces, and detaches authorship metadata from shared records.
+                  This removes the account and detaches authorship metadata from shared records. Their
+                  workspaces were already archived or handed over when they were deactivated, and are
+                  not destroyed by this.
                 </p>
               </div>
               <IconButton
@@ -956,8 +1215,8 @@ const UsersPage = () => {
               {deletionImpactLoading ? <SettingsLoadingState label="Loading deletion impact..." /> : null}
               {!deletionImpactLoading && deletionImpact ? (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-                    <p className="font-semibold">{deletionImpact.ownedWorkspaces.length} owned workspaces will be deleted</p>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    <p className="font-semibold">{deletionImpact.ownedWorkspaces.length} owned workspaces remain</p>
                     <p className="mt-1 text-xs">
                       {deletionImpact.ownedWorkspaces.length
                         ? deletionImpact.ownedWorkspaces.map((workspace) => workspace.name).join(', ')

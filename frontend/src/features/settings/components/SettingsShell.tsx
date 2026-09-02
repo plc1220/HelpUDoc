@@ -7,6 +7,7 @@ import {
   PackageOpen,
   BookOpen,
   CreditCard,
+  FolderOpen,
   MessageCircle,
   ArrowLeftCircle,
   PanelLeftClose,
@@ -34,6 +35,7 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { label: 'Plugins & integrations', icon: PackageOpen, path: '/settings/agents' },
   { label: 'Knowledge', icon: BookOpen, path: '/settings/knowledge' },
   { label: 'Users', icon: MessageCircle, path: '/settings/users' },
+  { label: 'Workspaces', icon: FolderOpen, path: '/settings/workspaces' },
   { label: 'Billing', icon: CreditCard, path: '/settings/billing' },
 ];
 
