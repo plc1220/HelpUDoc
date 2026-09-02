@@ -337,8 +337,14 @@ export class FileService {
     return isInternalPath(fileName);
   }
 
-  async getFiles(workspaceId: string, userId: string, options?: { includeInternal?: boolean }) {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+  async getFiles(
+    workspaceId: string,
+    userId: string,
+    options?: { includeInternal?: boolean; allowSystemAdmin?: boolean },
+  ) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
     const files = await this.db('files').where({ workspaceId }).whereNull('deletedAt');
     const globalKnowledgeFiles = await this.db('knowledge_sources')
       .select('fileId')
@@ -1404,6 +1410,54 @@ export class FileService {
     }
     await this.clearLegacyPublicUrl(file);
     return file;
+  }
+
+  /**
+   * Reads a file for the admin oversight page. Strictly read-only, which is why
+   * it does not go through `getFileContent`: that materializes a canonical
+   * version row on the way past, and an oversight read must not write anything
+   * — least of all a version attributed to the admin who merely looked.
+   *
+   * Access is resolved by `ensureMembership`, whose override yields `viewer`
+   * for any workspace a person owns, so this cannot reach anything the admin is
+   * not entitled to read.
+   */
+  async readFileForAdmin(
+    workspaceId: string,
+    fileId: number,
+    adminUserId: string,
+  ): Promise<{
+    id: number;
+    name: string;
+    mimeType: string;
+    encoding: 'text' | 'base64';
+    content: string;
+    sizeBytes: number;
+    updatedAt: string;
+  }> {
+    await this.workspaceService.ensureMembership(workspaceId, adminUserId, {
+      allowSystemAdmin: true,
+    });
+    const file = await this.db('files')
+      .where({ id: fileId, workspaceId })
+      .whereNull('deletedAt')
+      .first();
+    if (!file) {
+      throw new NotFoundError('File not found');
+    }
+
+    const buffer = await this.readFileBuffer(file);
+    const mimeType = this.resolveMimeType(file.name, file.mimeType) || 'application/octet-stream';
+    const isText = this.isTextFile(file.name, mimeType);
+    return {
+      id: Number(file.id),
+      name: String(file.name),
+      mimeType,
+      encoding: isText ? 'text' : 'base64',
+      content: isText ? buffer.toString('utf-8') : buffer.toString('base64'),
+      sizeBytes: buffer.length,
+      updatedAt: String(file.updatedAt),
+    };
   }
 
   async readFileBuffer(file: any): Promise<Buffer> {
