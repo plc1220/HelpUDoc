@@ -16,45 +16,141 @@ const privateWorkspace = {
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
 
-function workspaceServiceForPrivateWorkspace() {
+/**
+ * @param options.admins external ids that `users`/`platform_role_bindings` should
+ *   report as platform admins.
+ * @param options.workspace overrides merged onto the base private workspace.
+ */
+let nextWorkspaceSuffix = 0;
+
+function workspaceServiceForPrivateWorkspace(options: {
+  admins?: string[];
+  workspace?: Record<string, unknown>;
+} = {}) {
+  const admins = new Set(options.admins || []);
+  // A distinct id per fixture: the override audit is deduplicated per
+  // (user, workspace) for a minute, so two tests sharing an id would have the
+  // second one silently observe no audit row.
+  const workspace = {
+    ...privateWorkspace,
+    id: `${privateWorkspace.id}-${nextWorkspaceSuffix += 1}`,
+    ...(options.workspace || {}),
+  };
+  const auditRows: any[] = [];
+
   const db = ((table: string) => {
     if (table === 'workspaces') {
+      return { where: () => ({ first: async () => workspace }) };
+    }
+    if (table === 'users') {
       return {
-        where: () => ({
-          first: async () => privateWorkspace,
-        }),
+        select: () => ({ where: ({ id }: any) => ({ first: async () => ({ isAdmin: admins.has(id) }) }) }),
+        where: ({ id }: any) => ({ first: async () => ({ isAdmin: admins.has(id) }) }),
       };
     }
-    // A private-workspace request must be rejected before an administrator
-    // lookup or membership lookup is attempted.
+    if (table === 'platform_role_bindings') {
+      return { where: ({ userId }: any) => ({ first: async () => (admins.has(userId) ? { userId } : undefined) }) };
+    }
+    if (table === 'workspace_members') {
+      return { where: () => ({ first: async () => undefined }) };
+    }
+    if (table === 'audit_events') {
+      return { insert: async (row: any) => { auditRows.push(row); } };
+    }
     throw new Error(`Unexpected query for ${table}`);
   }) as any;
 
-  return new WorkspaceService({ getDb: () => db } as any);
+  return { service: new WorkspaceService({ getDb: () => db } as any), auditRows, workspaceId: workspace.id };
 }
 
-test('private workspaces reject a platform-admin override for another user', async () => {
-  const service = workspaceServiceForPrivateWorkspace();
+test('a platform admin reads another user\'s private workspace, but only as a viewer', async () => {
+  const { service, auditRows, workspaceId } = workspaceServiceForPrivateWorkspace({ admins: ['platform-admin'] });
+
+  const { membership } = await service.ensureMembership(workspaceId, 'platform-admin', {
+    allowSystemAdmin: true,
+  });
+
+  assert.equal(membership.role, 'viewer');
+  assert.equal(membership.canEdit, false);
+  assert.equal(auditRows.length, 1);
+  assert.equal(auditRows[0].action, 'admin.workspace.accessed');
+  assert.equal(auditRows[0].platformOverride, true);
+  assert.equal(auditRows[0].actorUserId, 'platform-admin');
+});
+
+test('the admin override cannot be escalated into a write', async () => {
+  const { service, workspaceId } = workspaceServiceForPrivateWorkspace({ admins: ['platform-admin'] });
 
   await assert.rejects(
-    service.ensureMembership(privateWorkspace.id, 'platform-admin', {
+    service.ensureMembership(workspaceId, 'platform-admin', {
       requireEdit: true,
       allowSystemAdmin: true,
     }),
-    /Private workspace access denied/,
+    /read-only/,
   );
 });
 
-test('private workspaces authorize only their owner without consulting grants', async () => {
-  const service = workspaceServiceForPrivateWorkspace();
+test('a system workspace still grants the override full access', async () => {
+  // The Knowledge Library storage workspace is owned by a system identity and
+  // reachable by no other route, so global knowledge administration depends on
+  // this staying writable. It is the single exception, derived from the record.
+  const { service, auditRows, workspaceId } = workspaceServiceForPrivateWorkspace({
+    admins: ['platform-admin'],
+    workspace: { isSystem: true, visibility: 'team', workspaceType: 'team' },
+  });
 
-  const { membership } = await service.ensureMembership(privateWorkspace.id, 'owner-user', {
+  const { membership } = await service.ensureMembership(workspaceId, 'platform-admin', {
     requireEdit: true,
     allowSystemAdmin: true,
   });
 
   assert.equal(membership.role, 'owner');
   assert.equal(membership.canEdit, true);
+  // Platform plumbing on a workspace no person owns is not a privacy crossing.
+  assert.equal(auditRows.length, 0);
+});
+
+test('a non-admin is still refused a private workspace outright', async () => {
+  const { service, workspaceId } = workspaceServiceForPrivateWorkspace({ admins: ['platform-admin'] });
+
+  await assert.rejects(
+    service.ensureMembership(workspaceId, 'someone-else', { allowSystemAdmin: true }),
+    /Private workspace access denied/,
+  );
+});
+
+test('an admin gets nothing without the override flag', async () => {
+  // Ordinary workspace routes never pass `allowSystemAdmin`, so being an admin
+  // must not by itself widen access on the normal request path.
+  const { service, workspaceId } = workspaceServiceForPrivateWorkspace({ admins: ['platform-admin'] });
+
+  await assert.rejects(
+    service.ensureMembership(workspaceId, 'platform-admin', {}),
+    /Private workspace access denied/,
+  );
+});
+
+test('private workspaces authorize only their owner without consulting grants', async () => {
+  const { service, workspaceId } = workspaceServiceForPrivateWorkspace();
+
+  const { membership } = await service.ensureMembership(workspaceId, 'owner-user', {
+    requireEdit: true,
+    allowSystemAdmin: true,
+  });
+
+  assert.equal(membership.role, 'owner');
+  assert.equal(membership.canEdit, true);
+});
+
+test('a purged workspace is unreachable even for its owner', async () => {
+  const { service, workspaceId } = workspaceServiceForPrivateWorkspace({
+    workspace: { status: 'purged' },
+  });
+
+  await assert.rejects(
+    service.ensureMembership(workspaceId, 'owner-user', {}),
+    /Workspace not found/,
+  );
 });
 
 function workspaceServiceForSharedWorkspace(
