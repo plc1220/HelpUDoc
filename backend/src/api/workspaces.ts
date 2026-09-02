@@ -478,10 +478,15 @@ export default function workspaceRoutes(
         }
         await workspaceService.addCollaborator(req.params.workspaceId, user.userId, target.id, payload.role);
       } else if (payload.externalUserId) {
-        const collaborator = await userService.ensureUser({
-          externalId: payload.externalUserId,
-          displayName: payload.displayName || payload.externalUserId,
-        });
+        // Look the person up; never create them. This branch used to call
+        // `ensureUser`, so any workspace owner could mint a user row with no
+        // email — permanently unclaimable, because a pre-registration is matched
+        // on its address. Adding a person who is not on the platform yet is an
+        // admin action now: register them, which sets their teams too.
+        const collaborator = await userService.findByExternalId(payload.externalUserId);
+        if (!collaborator) {
+          throw new HttpError(404, 'User not found. Ask an administrator to register this person first.');
+        }
         if (collaborator.id === user.userId) {
           throw new HttpError(400, 'Cannot invite yourself');
         }
