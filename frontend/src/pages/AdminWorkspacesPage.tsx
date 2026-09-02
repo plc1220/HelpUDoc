@@ -279,7 +279,7 @@ const AdminWorkspacesPage = () => {
                   <SegmentedControlItem value="all" label="All" />
                   <SegmentedControlItem value="active" label="Active" />
                   <SegmentedControlItem value="trashed" label="Archived" />
-                  <SegmentedControlItem value="purged" label="Retired" />
+                  <SegmentedControlItem value="purged" label="Deleted" />
                 </SegmentedControl>
               </div>
             )}
