@@ -3,6 +3,8 @@ import { getBackendEnv } from '../config/env';
 import { StoredOAuthToken, UserOAuthTokenService } from './userOAuthTokenService';
 
 const GOOGLE_AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
+/** OIDC issuer recorded against a claimed identity, alongside the `sub`. */
+export const GOOGLE_OIDC_ISSUER = 'https://accounts.google.com';
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_TOKENINFO_ENDPOINT = 'https://oauth2.googleapis.com/tokeninfo';
 const GOOGLE_USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
@@ -22,6 +24,12 @@ const DEFAULT_SCOPES = [
 export type GoogleProfile = {
   sub: string;
   email?: string;
+  /**
+   * Whether Google vouches for the address. Required before an email can be used
+   * to claim a pre-registered account — otherwise anyone able to present an
+   * identity asserting an invited address would inherit its teams and roles.
+   */
+  emailVerified: boolean;
   name?: string;
   picture?: string;
 };
@@ -249,6 +257,9 @@ export class GoogleOAuthService {
     return {
       sub,
       email: typeof data.email === 'string' ? data.email : undefined,
+      // Absent means unverified. Google sends a real boolean, but treating a
+      // missing claim as verified would defeat the check entirely.
+      emailVerified: data.email_verified === true || data.email_verified === 'true',
       name: typeof data.name === 'string' ? data.name : undefined,
       picture: typeof data.picture === 'string' ? data.picture : undefined,
     };
