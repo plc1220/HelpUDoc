@@ -267,13 +267,47 @@ test('object-store provider config defaults to S3 and accepts native GCS', () =>
     GCS_BUCKET_NAME: 'managed-bucket',
     GOOGLE_CLOUD_PROJECT: 'helpudoc-project',
   }).objectStore;
-  assert.deepEqual(config, {
-    provider: 'gcs',
-    gcs: {
-      bucketName: 'managed-bucket',
-      projectId: 'helpudoc-project',
-      keyFilename: undefined,
-      apiEndpoint: undefined,
-    },
+  assert.deepEqual(config.gcs, {
+    bucketName: 'managed-bucket',
+    projectId: 'helpudoc-project',
+    keyFilename: undefined,
+    apiEndpoint: undefined,
   });
+  assert.equal(config.provider, 'gcs');
+});
+
+test('publishing falls back to the workspace bucket when none is configured', () => {
+  // Without a dedicated bucket the feature must still be exercisable locally,
+  // but published artifacts cannot sit loose among workspace objects.
+  const fallback = parseBackendEnv({}).objectStore.publication;
+  assert.equal(fallback.usingPrimaryStore, true);
+  assert.equal(fallback.bucketName, 'helpudoc');
+  assert.equal(fallback.prefix, 'published');
+  assert.equal(fallback.provider, 's3');
+});
+
+test('a dedicated publication bucket is used verbatim', () => {
+  const config = parseBackendEnv({
+    PUBLICATION_PROVIDER: 'gcs',
+    PUBLICATION_BUCKET_NAME: 'helpudoc-published',
+    PUBLICATION_GCS_PROJECT_ID: 'publish-project',
+  }).objectStore.publication;
+
+  assert.equal(config.usingPrimaryStore, false);
+  assert.equal(config.bucketName, 'helpudoc-published');
+  assert.equal(config.provider, 'gcs');
+  // A dedicated bucket needs no prefix to separate it from workspace storage.
+  assert.equal(config.prefix, '');
+  assert.equal(config.gcs.projectId, 'publish-project');
+});
+
+test('publication credentials fall back to the primary GCS ones', () => {
+  const config = parseBackendEnv({
+    PUBLICATION_BUCKET_NAME: 'helpudoc-published',
+    GCS_PROJECT_ID: 'shared-project',
+    GCS_KEY_FILENAME: '/keys/sa.json',
+  }).objectStore.publication;
+
+  assert.equal(config.gcs.projectId, 'shared-project');
+  assert.equal(config.gcs.keyFilename, '/keys/sa.json');
 });

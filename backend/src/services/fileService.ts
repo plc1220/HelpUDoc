@@ -10,6 +10,15 @@ import { Knex } from 'knex';
 import { WorkspaceService } from './workspaceService';
 import { ConflictError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
+import { isInternalWorkspacePath as isInternalPath } from '../lib/workspacePaths';
+import type { FileProvenanceDocument } from '@helpudoc/contracts/types';
+import { buildProvenanceDocument, verifyEventChain } from './fileProvenance';
+import {
+  eventTypeForChangeKind,
+  nextAuditSeq,
+  recordFileEvent,
+  resolveActorType,
+} from './fileAuditService';
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
 const TEXT_MIME_TYPES = [
@@ -22,7 +31,7 @@ const TEXT_MIME_TYPES = [
 ];
 
 const TEXT_FILE_EXTENSIONS = ['.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx', '.svg', '.csv'];
-const INTERNAL_WORKSPACE_DIR_NAMES = new Set(['.system', 'sandbox-runs']);
+
 const TEXT_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.md': 'text/markdown',
   '.mermaid': 'text/plain',
@@ -58,7 +67,20 @@ const normalizeS3Key = (workspaceId: string, fileName: string) => {
   return path.posix.normalize(`${workspaceId}/${sanitized}`);
 };
 
-type FileVersionChangeKind = 'create' | 'content' | 'rename' | 'move' | 'restore' | 'delete' | 'artifact';
+/**
+ * Run context for in-flight artifact commits, keyed by runId. Module scoped
+ * rather than an instance field because tests build services with
+ * `Object.create(FileService.prototype)`, which skips field initializers.
+ */
+const runContextByRunId = new Map<string, FileAuditRunContext | undefined>();
+
+export interface FileAuditRunContext {
+  conversationId?: string | null;
+  turnId?: string | null;
+  langfuseTraceId?: string | null;
+}
+
+export type FileVersionChangeKind = 'create' | 'content' | 'rename' | 'move' | 'restore' | 'delete' | 'artifact';
 
 export type WorkspaceArtifactBaseline = Record<string, {
   fileId: number;
@@ -175,9 +197,24 @@ export class FileService {
           changeKind: 'create',
           createdBy: userId,
         }));
+        const audit = await this.emitVersionEvent(tx, {
+          file: created,
+          filePath: relativePath,
+          changeKind: 'create',
+          versionId,
+          version: 1,
+          userId,
+          sha256,
+          objectKey: String(input.objectKey),
+          payload: { sizeBytes: metadata.sizeBytes, mimeType: input.mimeType, via: 'direct_upload' },
+        });
         const [current] = await tx('files')
           .where({ id: created.id })
-          .update({ currentVersionId: versionId })
+          .update({
+            currentVersionId: versionId,
+            auditSeq: audit.seq,
+            lastAuditHash: audit.eventHash,
+          })
           .returning('*');
         return current;
       });
@@ -297,9 +334,7 @@ export class FileService {
   }
 
   private isInternalWorkspacePath(fileName: string): boolean {
-    const normalized = fileName.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
-    const parts = normalized.split('/').filter(Boolean);
-    return parts.some((part) => INTERNAL_WORKSPACE_DIR_NAMES.has(part));
+    return isInternalPath(fileName);
   }
 
   async getFiles(workspaceId: string, userId: string, options?: { includeInternal?: boolean }) {
@@ -479,6 +514,64 @@ export class FileService {
 
   private hashBuffer(buffer: Buffer): string {
     return createHash('sha256').update(buffer).digest('hex');
+  }
+
+  /**
+   * Fans a durable file mutation out to the provenance trail.
+   *
+   * Callers must already hold the `files` row (locked, or freshly inserted in
+   * this transaction) so `seq` can be taken from its `auditSeq` counter without
+   * an extra query, and must fold the returned `seq`/`eventHash` into the
+   * `files` update they are already performing.
+   */
+  private runContextFor(runId: string): FileAuditRunContext {
+    const context = runContextByRunId.get(runId);
+    return {
+      conversationId: context?.conversationId ?? null,
+      turnId: context?.turnId ?? null,
+      langfuseTraceId: context?.langfuseTraceId ?? null,
+    };
+  }
+
+  private async emitVersionEvent(
+    tx: Knex.Transaction,
+    args: {
+      file: any;
+      filePath: string;
+      changeKind: FileVersionChangeKind;
+      versionId: string;
+      version: number;
+      userId: string;
+      sha256?: string | null;
+      objectKey?: string | null;
+      sourceRunId?: string | null;
+      payload?: Record<string, unknown>;
+    },
+  ) {
+    const recorded = await recordFileEvent(tx, {
+      fileId: Number(args.file.id),
+      workspaceId: String(args.file.workspaceId),
+      filePath: args.filePath,
+      eventType: eventTypeForChangeKind(args.changeKind),
+      seq: nextAuditSeq(args.file),
+      prevEventHash: args.file.lastAuditHash ?? null,
+      actorUserId: args.userId,
+      actorType: resolveActorType(args.changeKind, args.sourceRunId),
+      sha256: args.sha256 ?? null,
+      objectKey: args.objectKey ?? null,
+      fileVersionId: args.versionId,
+      fileVersion: args.version,
+      runId: args.sourceRunId ?? null,
+      ...(args.sourceRunId ? this.runContextFor(args.sourceRunId) : {}),
+      payload: args.payload ?? {},
+    });
+    // Internal paths are not audited. Hand back the file's current counters so
+    // the caller's existing UPDATE rewrites them unchanged rather than needing
+    // a separate branch at all six call sites.
+    return recorded ?? {
+      seq: Number(args.file.auditSeq ?? 0),
+      eventHash: args.file.lastAuditHash ?? null,
+    };
   }
 
   private buildVersionRecord(input: {
@@ -678,9 +771,31 @@ export class FileService {
           sourceRunId: options?.sourceRunId,
           operationId: options?.operationId,
         }));
+        const audit = await this.emitVersionEvent(tx, {
+          file: created,
+          filePath: relativePath,
+          changeKind: options?.changeKind || 'create',
+          versionId,
+          version: 1,
+          userId,
+          sha256: upload.sha256,
+          objectKey: upload.objectKey,
+          sourceRunId: options?.sourceRunId ?? null,
+          payload: {
+            sizeBytes: fileBuffer.length,
+            mimeType,
+            operationId: options?.operationId ?? null,
+          },
+        });
+        // Counters ride the update that already runs here, so the audit write
+        // costs one INSERT and no extra round-trip.
         const [updated] = await tx('files')
           .where({ id: created.id })
-          .update({ currentVersionId: versionId })
+          .update({
+            currentVersionId: versionId,
+            auditSeq: audit.seq,
+            lastAuditHash: audit.eventHash,
+          })
           .returning('*');
         return updated;
       });
@@ -784,6 +899,28 @@ export class FileService {
     options?: {
       baseline?: WorkspaceArtifactBaseline | null;
       assertLeaseOwned?: () => Promise<void>;
+      /** Recorded on the audit event so a file links straight to its turn. */
+      runContext?: FileAuditRunContext;
+    },
+  ) {
+    // Held only for the duration of the commit; always cleared so the map
+    // cannot grow with every run, including on the throwing paths.
+    runContextByRunId.set(sourceRunId, options?.runContext);
+    try {
+      return await this.commitWorkspaceArtifactsInner(workspaceId, userId, sourceRunId, options);
+    } finally {
+      runContextByRunId.delete(sourceRunId);
+    }
+  }
+
+  private async commitWorkspaceArtifactsInner(
+    workspaceId: string,
+    userId: string,
+    sourceRunId: string,
+    options?: {
+      baseline?: WorkspaceArtifactBaseline | null;
+      assertLeaseOwned?: () => Promise<void>;
+      runContext?: FileAuditRunContext;
     },
   ) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
@@ -994,6 +1131,172 @@ export class FileService {
       .orderBy('version', 'desc');
   }
 
+  /**
+   * Raw audit rows for a file, oldest first. Paginated because a long-lived
+   * document's trail can run to thousands of events.
+   */
+  async getFileAuditEvents(
+    fileId: number,
+    userId: string,
+    options?: { cursor?: number; limit?: number },
+  ) {
+    const file = await this.db('files').where({ id: fileId }).first();
+    if (!file) throw new NotFoundError('File not found');
+    await this.workspaceService.ensureMembership(file.workspaceId, userId);
+
+    const limit = Math.min(Math.max(Number(options?.limit) || 100, 1), 500);
+    const query = this.db('file_audit_events').where({ fileId }).orderBy('seq', 'asc');
+    if (typeof options?.cursor === 'number' && Number.isFinite(options.cursor)) {
+      query.andWhere('seq', '>', options.cursor);
+    }
+    // Fetch one extra to know whether another page exists without a count(*).
+    const rows = await query.limit(limit + 1);
+    const events = rows.slice(0, limit);
+    return {
+      events,
+      nextCursor: rows.length > limit ? Number(events[events.length - 1]?.seq) : null,
+    };
+  }
+
+  /**
+   * Re-walks the file's hash chain and reports the first event that does not
+   * reconcile. Each event hashes its own contents plus its predecessor's hash,
+   * so an edited, removed or reordered row breaks the chain from that point on.
+   */
+  async verifyFileProvenance(fileId: number, userId: string): Promise<{
+    fileId: number;
+    valid: boolean;
+    brokenAtSeq: number | null;
+    eventCount: number;
+    chainHead: string | null;
+    priorChain?: { workspaceId: string; fileId: number; valid: boolean; brokenAtSeq: number | null };
+  }> {
+    const file = await this.db('files').where({ id: fileId }).first();
+    if (!file) throw new NotFoundError('File not found');
+    await this.workspaceService.ensureMembership(file.workspaceId, userId);
+
+    const events = await this.db('file_audit_events').where({ fileId }).orderBy('seq', 'asc');
+    const chain = verifyEventChain(events);
+
+    // A published file's history spans two chains; report both so a break in
+    // the inherited half is not silently reported as intact.
+    let priorChain;
+    const bridgeVersionId = events
+      .map((event: any) => event.sourceFileVersionId)
+      .find((value: string | null) => Boolean(value));
+    if (bridgeVersionId) {
+      const sourceVersion = await this.db('file_versions').where({ id: bridgeVersionId }).first();
+      if (sourceVersion) {
+        const priorEvents = await this.db('file_audit_events')
+          .where({ fileId: Number(sourceVersion.fileId) })
+          .orderBy('seq', 'asc');
+        if (priorEvents.length) {
+          const prior = verifyEventChain(priorEvents);
+          priorChain = {
+            workspaceId: String(priorEvents[0].workspaceId),
+            fileId: Number(sourceVersion.fileId),
+            valid: prior.verified,
+            brokenAtSeq: prior.brokenAtSeq,
+          };
+        }
+      }
+    }
+
+    return {
+      fileId,
+      valid: chain.verified,
+      brokenAtSeq: chain.brokenAtSeq,
+      eventCount: events.length,
+      chainHead: events.length ? String(events[events.length - 1].eventHash) : null,
+      ...(priorChain ? { priorChain } : {}),
+    };
+  }
+
+  /**
+   * The assembled provenance document: where this file came from, everyone who
+   * touched it, and — when it arrived across a publication boundary — the
+   * history it inherited from the workspace it was published from.
+   */
+  async getFileProvenance(fileId: number, userId: string): Promise<FileProvenanceDocument> {
+    const file = await this.db('files').where({ id: fileId }).first();
+    if (!file) throw new NotFoundError('File not found');
+    await this.workspaceService.ensureMembership(file.workspaceId, userId);
+
+    const events = await this.db('file_audit_events')
+      .where({ fileId })
+      .orderBy('seq', 'asc');
+
+    // `files.id` is workspace-scoped, so a published document's history starts
+    // in another workspace. The sync event's sourceFileVersionId is the only
+    // durable link back to it.
+    const bridgeVersionId = events
+      .map((event: any) => event.sourceFileVersionId)
+      .find((value: string | null) => Boolean(value));
+    let priorEvents: any[] = [];
+    if (bridgeVersionId) {
+      const sourceVersion = await this.db('file_versions')
+        .where({ id: bridgeVersionId })
+        .first();
+      if (sourceVersion) {
+        // Bound the inherited history at the event that produced the exact
+        // content which was published. Anything the origin workspace did
+        // afterwards belongs to that file's ongoing life, not to this one's
+        // provenance.
+        const bridgeEvent = await this.db('file_audit_events')
+          .where({ fileId: Number(sourceVersion.fileId), fileVersionId: bridgeVersionId })
+          .first();
+        const priorQuery = this.db('file_audit_events')
+          .where({ fileId: Number(sourceVersion.fileId) })
+          .orderBy('seq', 'asc');
+        if (bridgeEvent) {
+          priorQuery.andWhere('seq', '<=', Number(bridgeEvent.seq));
+        }
+        priorEvents = await priorQuery;
+      }
+    }
+
+    const actorIds = [...new Set(
+      [...events, ...priorEvents]
+        .map((event: any) => event.actorUserId)
+        .filter((value: string | null): value is string => Boolean(value)),
+    )];
+    const actorNames: Record<string, string | null> = {};
+    if (actorIds.length) {
+      const users = await this.db('users').select('id', 'displayName').whereIn('id', actorIds);
+      for (const user of users) actorNames[String(user.id)] = user.displayName ?? null;
+    }
+
+    // Agent runs carry the prompt, response, skills and retrieved knowledge.
+    const runIds = [...new Set(
+      [...events, ...priorEvents]
+        .map((event: any) => event.runId)
+        .filter((value: string | null): value is string => Boolean(value)),
+    )];
+    const runProvenance: Record<string, any> = {};
+    if (runIds.length) {
+      const rows = await this.db('agent_run_provenance').whereIn('runId', runIds);
+      for (const row of rows) runProvenance[String(row.runId)] = row;
+    }
+
+    return buildProvenanceDocument({
+      runProvenance,
+      file: {
+        id: Number(file.id),
+        workspaceId: String(file.workspaceId),
+        name: String(file.name),
+        version: Number(file.version ?? 0),
+        createdAt: file.createdAt ?? null,
+        deletedAt: file.deletedAt ?? null,
+        status: file.status ?? null,
+        approvedAtVersion: file.approvedAtVersion ?? null,
+        publishedAtVersion: file.publishedAtVersion ?? null,
+      },
+      events,
+      priorEvents,
+      actorNames,
+    });
+  }
+
   async restoreFileVersion(
     fileId: number,
     versionId: string,
@@ -1032,6 +1335,17 @@ export class FileService {
         baseVersion: Number(source.version),
         createdBy: userId,
       }));
+      const audit = await this.emitVersionEvent(tx, {
+        file: locked,
+        filePath: String(locked.name),
+        changeKind: 'restore',
+        versionId: restoredVersionId,
+        version: nextVersion,
+        userId,
+        sha256: source.sha256 || null,
+        objectKey: String(source.objectKey),
+        payload: { restoredFromVersion: Number(source.version), restoredFromVersionId: String(source.id) },
+      });
       [updated] = await tx('files').where({ id: fileId }).update({
         storageType: 's3',
         path: source.objectKey,
@@ -1040,6 +1354,8 @@ export class FileService {
         version: nextVersion,
         updatedBy: userId,
         updatedAt: tx.fn.now(),
+        auditSeq: audit.seq,
+        lastAuditHash: audit.eventHash,
       }).returning('*');
       await tx('workspaces').where({ id: locked.workspaceId }).update({
         contentRevision: tx.raw('COALESCE("contentRevision", 0) + 1'),
@@ -1166,6 +1482,28 @@ export class FileService {
           sourceRunId: options?.sourceRunId,
           operationId: options?.operationId,
         }));
+        const commitChangeKind = options?.changeKind || 'content';
+        const audit = await this.emitVersionEvent(tx, {
+          file: lockedFile,
+          filePath: String(lockedFile.name),
+          changeKind: commitChangeKind,
+          versionId,
+          version: nextVersion,
+          userId,
+          sha256: upload.sha256,
+          objectKey: upload.objectKey,
+          sourceRunId: options?.sourceRunId ?? null,
+          payload: {
+            sizeBytes: payload.length,
+            mimeType,
+            baseVersion: currentVersion,
+            operationId: options?.operationId ?? null,
+            // Freeflow team workspaces skip the version-conflict check, so a
+            // save can land on top of another user's. Record it prominently:
+            // the clobbered content still exists as its own immutable version.
+            staleOverwrite,
+          },
+        });
         [updated] = await tx('files')
           .where({ id: fileId })
           .update({
@@ -1176,6 +1514,8 @@ export class FileService {
             updatedBy: userId,
             updatedAt: tx.fn.now(),
             version: nextVersion,
+            auditSeq: audit.seq,
+            lastAuditHash: audit.eventHash,
           })
           .returning('*');
         await tx('workspaces').where({ id: lockedFile.workspaceId }).update({
@@ -1296,12 +1636,25 @@ export class FileService {
         baseVersion: currentVersion,
         createdBy: userId,
       }));
+      const audit = await this.emitVersionEvent(tx, {
+        file: locked,
+        filePath: String(locked.name),
+        changeKind: 'delete',
+        versionId,
+        version: nextVersion,
+        userId,
+        sha256: current.sha256 || null,
+        objectKey: String(current.objectKey),
+        payload: { softDelete: true },
+      });
       await tx('files').where({ id: fileId }).update({
         currentVersionId: versionId,
         version: nextVersion,
         deletedAt: tx.fn.now(),
         updatedBy: userId,
         updatedAt: tx.fn.now(),
+        auditSeq: audit.seq,
+        lastAuditHash: audit.eventHash,
       });
       await tx('workspaces').where({ id: locked.workspaceId }).update({
         contentRevision: tx.raw('COALESCE("contentRevision", 0) + 1'),
@@ -1546,6 +1899,18 @@ export class FileService {
         baseVersion: currentVersion,
         createdBy: userId,
       }));
+      const renameChangeKind: FileVersionChangeKind = target.path !== undefined ? 'move' : 'rename';
+      const audit = await this.emitVersionEvent(tx, {
+        file: locked,
+        filePath: destinationRelativePath,
+        changeKind: renameChangeKind,
+        versionId,
+        version: nextVersion,
+        userId,
+        sha256: current.sha256 || null,
+        objectKey: String(current.objectKey),
+        payload: { previousPath: String(locked.name), newPath: destinationRelativePath },
+      });
       [updated] = await tx('files').where({ id: fileId }).update({
         name: destinationRelativePath,
         storageType: 's3',
@@ -1555,6 +1920,8 @@ export class FileService {
         updatedBy: userId,
         updatedAt: tx.fn.now(),
         version: nextVersion,
+        auditSeq: audit.seq,
+        lastAuditHash: audit.eventHash,
       }).returning('*');
       await tx('workspaces').where({ id: locked.workspaceId }).update({
         contentRevision: tx.raw('COALESCE("contentRevision", 0) + 1'),

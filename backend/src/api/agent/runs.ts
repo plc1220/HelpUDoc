@@ -606,6 +606,8 @@ export function registerRunRoutes(
         messageContent,
         internetSearchEnabled,
         knowledgeRefs: knowledgeContext.knowledgeRefs,
+        userPrompt: prompt,
+        taggedFileRefs: taggedContext.taggedFileRefs,
       });
       res.json({ runId, status });
     } catch (error: any) {
