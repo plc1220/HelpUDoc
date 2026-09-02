@@ -2,6 +2,12 @@ import { createHash, randomUUID } from 'crypto';
 import type { IncomingMessage } from 'http';
 import { redisClient } from '../redisService';
 import { RunTelemetryService } from '../runTelemetryService';
+import { collectKnowledgeChunks } from '../agentRunProvenanceService';
+import type {
+  AgentRunProvenanceService,
+  RunKnowledgeChunk,
+  RunSkillInvocation,
+} from '../agentRunProvenanceService';
 import { UserMemoryService } from '../userMemoryService';
 import type { SkillEvolutionService } from '../skillEvolutionService';
 import type { ConversationService } from '../conversationService';
@@ -56,6 +62,10 @@ type StartRunParams = {
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
   knowledgeRefs?: AgentKnowledgeRef[];
+  /** The prompt as the user typed it, before knowledge/file guidance is appended. */
+  userPrompt?: string;
+  /** Files the user @-referenced for this turn. */
+  taggedFileRefs?: Array<{ fileId: number; version?: number; name?: string }>;
 };
 
 type RunPendingInterrupt = {
@@ -168,6 +178,7 @@ const runAbortControllers = new Map<string, AbortController>();
 const runContexts = new Map<string, RunContext>();
 const workspaceRunLease = new WorkspaceRunLeaseManager(redisClient);
 let runTelemetryService: RunTelemetryService | null = null;
+let runProvenanceService: AgentRunProvenanceService | null = null;
 let userMemoryService: UserMemoryService | null = null;
 let skillEvolutionService: SkillEvolutionService | null = null;
 let conversationService: ConversationService | null = null;
@@ -181,6 +192,7 @@ let agentStreamClient = {
 
 export function configureAgentRunServices(services: {
   telemetryService?: RunTelemetryService | null;
+  runProvenanceService?: AgentRunProvenanceService | null;
   userMemoryService?: UserMemoryService | null;
   skillEvolutionService?: SkillEvolutionService | null;
   conversationService?: ConversationService | null;
@@ -189,6 +201,9 @@ export function configureAgentRunServices(services: {
 }) {
   if ('telemetryService' in services) {
     runTelemetryService = services.telemetryService || null;
+  }
+  if ('runProvenanceService' in services) {
+    runProvenanceService = services.runProvenanceService || null;
   }
   if ('userMemoryService' in services) {
     userMemoryService = services.userMemoryService || null;
@@ -2396,6 +2411,18 @@ const persistRunConversationMessage = async (
   } else if (terminalSummary) {
     metadata.bodySource = 'summary';
   }
+  // The frontend records these on the user's message; carry them onto the
+  // agent's reply too so one row answers "what was this turn allowed to see".
+  if (params.knowledgeRefs?.length) {
+    metadata.knowledgeRefs = params.knowledgeRefs.map((ref) => ({
+      id: ref.id,
+      title: ref.title,
+      snapshotHash: ref.snapshotHash ?? null,
+    }));
+  }
+  if (params.taggedFileRefs?.length) {
+    metadata.taggedFileRefs = params.taggedFileRefs;
+  }
 
   try {
     await conversationService.appendMessage(
@@ -3155,6 +3182,30 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
       queuedAt,
     });
   }
+  if (runProvenanceService) {
+    // Written now rather than at finalize: the enriched prompt otherwise lives
+    // only in Redis with a 24h TTL, and a crashed run would lose it entirely.
+    try {
+      await runProvenanceService.recordRunStart({
+        runId,
+        workspaceId: params.workspaceId,
+        userId: params.userId,
+        conversationId: params.conversationId,
+        turnId: params.turnId,
+        persona: params.persona,
+        userPrompt: params.userPrompt ?? params.prompt,
+        enrichedPrompt: params.prompt,
+        knowledgeRefsDeclared: params.knowledgeRefs ?? [],
+        taggedFileRefs: params.taggedFileRefs ?? [],
+      });
+    } catch (provenanceError) {
+      // Provenance must never stop a run from starting.
+      console.error('Failed to record run provenance', {
+        runId,
+        error: safeErrorForLog(provenanceError),
+      });
+    }
+  }
 
   // Fire and forget worker
   launchAgentRunWorker(runId, params);
@@ -3257,6 +3308,16 @@ async function runAgentRunWorker(
   };
 
   let langfuseStreamMeta: Record<string, unknown> = {};
+  // A turn can load several skills; the stream only ever surfaced the last
+  // one via `skillId`. Keep the whole ordered set for the provenance record.
+  const skillsInvoked: RunSkillInvocation[] = [];
+  const knowledgeChunksRetrieved: RunKnowledgeChunk[] = [];
+  const noteSkillInvocation = (candidate: string | null | undefined) => {
+    const trimmed = String(candidate || '').trim();
+    if (!trimmed) return;
+    if (skillsInvoked.some((entry) => entry.skillId === trimmed)) return;
+    skillsInvoked.push({ skillId: trimmed, loadedAt: new Date().toISOString() });
+  };
 
   if (DEBUG_AGENT_RUN_STREAM) {
     console.info('[agent-run-stream] start', {
@@ -3322,6 +3383,11 @@ async function runAgentRunWorker(
     // tools such as image generators can write valid files without returning a
     // structured artifact response.
     await fileService.commitWorkspaceArtifacts(params.workspaceId, params.userId, runId, {
+      runContext: {
+        conversationId: params.conversationId,
+        turnId: params.turnId,
+        langfuseTraceId: (langfuseStreamMeta.langfuseTraceId as string) || null,
+      },
       baseline: artifactBaseline,
       assertLeaseOwned: () => workspaceRunLease.assertOwned(runId),
     });
@@ -3540,6 +3606,29 @@ async function runAgentRunWorker(
     return true;
   };
 
+  const recordProvenanceFinish = async (finalStatus: AgentRunStatus) => {
+    if (!runProvenanceService) return;
+    try {
+      await runProvenanceService.recordRunFinish({
+        runId,
+        status: finalStatus,
+        responseText: assistantText,
+        skillsInvoked,
+        knowledgeChunksRetrieved,
+        langfuseTraceId: (langfuseStreamMeta.langfuseTraceId as string) || null,
+        langfuseTraceUrl: (langfuseStreamMeta.langfuseTraceUrl as string) || null,
+        conversationId: params.conversationId,
+        turnId: params.turnId,
+      });
+    } catch (provenanceError) {
+      // Never let provenance bookkeeping fail a finished run.
+      console.error('Failed to finalize run provenance', {
+        runId,
+        error: safeErrorForLog(provenanceError),
+      });
+    }
+  };
+
   const finalizeRun = async (status: AgentRunStatus, error?: string) => {
     if (settled) {
       return;
@@ -3740,6 +3829,7 @@ async function runAgentRunWorker(
           },
         });
       }
+      await recordProvenanceFinish('awaiting_approval');
       await cleanupRunWorker(runId, upstream || undefined);
       return;
     }
@@ -3763,6 +3853,7 @@ async function runAgentRunWorker(
         },
       });
     }
+    await recordProvenanceFinish(effectiveStatus);
     if (effectiveStatus === 'completed' && userMemoryService) {
       void userMemoryService
         .suggestForCompletedRun({
@@ -3883,6 +3974,7 @@ async function runAgentRunWorker(
     }
     if (parsed?.type === 'policy' && typeof parsed.skill === 'string' && parsed.skill.trim()) {
       skillId = parsed.skill.trim();
+      noteSkillInvocation(skillId);
     }
     if (parsed?.type === 'interaction_consumed' && resumePayload && 'response' in resumePayload) {
       await persistMeta(runId, {
@@ -3979,6 +4071,7 @@ async function runAgentRunWorker(
           const skillMatch = parsed.content.match(/skill[_-]?id["']?\s*[:=]\s*["']([^"']+)["']/i);
           if (skillMatch?.[1]) {
             skillId = skillMatch[1].trim();
+            noteSkillInvocation(skillId);
           }
         }
       }
@@ -3997,6 +4090,14 @@ async function runAgentRunWorker(
       }
       if (parsed.type === 'tool_end') {
         activeToolCalls = Math.max(0, activeToolCalls - 1);
+        if (parsed.name === 'load_skill') {
+          // The agent answers with "Loaded skill: <id>".
+          const loaded = coerceText(parsed.content).match(/^\s*Loaded skill:\s*(\S+)/im);
+          if (loaded?.[1]) noteSkillInvocation(loaded[1]);
+        }
+        if (parsed.name === 'knowledge_search' || parsed.name === 'knowledge_read') {
+          collectKnowledgeChunks(coerceText(parsed.content), knowledgeChunksRetrieved);
+        }
       }
       eventIndex += 1;
       if (runTelemetryService && typeof parsed.name === 'string' && parsed.name.trim()) {

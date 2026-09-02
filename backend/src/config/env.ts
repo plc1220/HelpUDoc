@@ -92,6 +92,25 @@ const backendEnvSchema = z.object({
       keyFilename: z.string().optional(),
       apiEndpoint: z.string().optional(),
     }),
+    /**
+     * Where published file artifacts are exported to. A single
+     * access-controlled bucket for the whole deployment; workspaces are
+     * separated by key prefix, not by bucket. Falls back to the primary store
+     * under a `published/` prefix so the feature is exercisable locally
+     * without GCS credentials.
+     */
+    publication: z.object({
+      provider: z.enum(['s3', 'gcs']),
+      bucketName: z.string().min(1),
+      prefix: z.string(),
+      /** True when no dedicated bucket is configured. */
+      usingPrimaryStore: z.boolean(),
+      gcs: z.object({
+        projectId: z.string().optional(),
+        keyFilename: z.string().optional(),
+        apiEndpoint: z.string().optional(),
+      }),
+    }),
   }),
   googleOauth: z.object({
     clientId: z.string().optional(),
@@ -173,6 +192,25 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
         keyFilename: trimEnv(e, 'GCS_KEY_FILENAME'),
         apiEndpoint: trimEnv(e, 'GCS_API_ENDPOINT'),
       },
+      publication: (() => {
+        const publicationBucket = trimEnv(e, 'PUBLICATION_BUCKET_NAME');
+        const usingPrimaryStore = !publicationBucket;
+        return {
+          provider: (trimEnv(e, 'PUBLICATION_PROVIDER')
+            || trimEnv(e, 'OBJECT_STORE_PROVIDER')) === 'gcs' ? 'gcs' as const : 's3' as const,
+          bucketName: publicationBucket || bucket,
+          // Without a dedicated bucket, published artifacts still need to be
+          // separated from workspace storage inside the shared one.
+          prefix: trimEnv(e, 'PUBLICATION_PREFIX') || (usingPrimaryStore ? 'published' : ''),
+          usingPrimaryStore,
+          gcs: {
+            projectId: trimEnv(e, 'PUBLICATION_GCS_PROJECT_ID')
+              || trimEnv(e, 'GCS_PROJECT_ID') || trimEnv(e, 'GOOGLE_CLOUD_PROJECT'),
+            keyFilename: trimEnv(e, 'PUBLICATION_GCS_KEY_FILENAME') || trimEnv(e, 'GCS_KEY_FILENAME'),
+            apiEndpoint: trimEnv(e, 'PUBLICATION_GCS_API_ENDPOINT') || trimEnv(e, 'GCS_API_ENDPOINT'),
+          },
+        };
+      })(),
     },
     googleOauth: {
       clientId: trimEnv(e, 'GOOGLE_OAUTH_CLIENT_ID'),

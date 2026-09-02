@@ -7,8 +7,30 @@ import { UserContext } from '../types/user';
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { legacyWorkspaceRoleToNamedGrant } from './workspaceAudiencePolicy';
+import { isPlatformAdmin } from './governance/teamRoles';
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
+
+/**
+ * How long a trashed workspace stays recoverable before the sweeper retires it.
+ * Shared so the owner-initiated trash and the archive-on-deactivation path can
+ * never drift to different windows.
+ */
+export const WORKSPACE_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+export const workspacePurgeDeadline = (from: Date = new Date()): Date =>
+  new Date(from.getTime() + WORKSPACE_TRASH_RETENTION_MS);
+
+/**
+ * Suppresses repeat audit rows for the same admin reading the same workspace.
+ * Without it a single admin session writes one row per polled request, and an
+ * audit trail nobody can read is the same as no audit trail at all.
+ *
+ * Module-scoped rather than an instance field on purpose: the test suite builds
+ * services with `Object.create(WorkspaceService.prototype)`, which skips field
+ * initializers and would leave a class-field Map undefined.
+ */
+const ADMIN_OVERRIDE_AUDIT_WINDOW_MS = 60_000;
+const adminOverrideAuditSeenAt = new Map<string, number>();
 
 export function buildWorkspaceTeamAccessQuery(db: Knex, workspaceId: string, teamId: string) {
   return db('groups as group')
@@ -25,6 +47,14 @@ export function buildWorkspaceTeamAccessQuery(db: Knex, workspaceId: string, tea
 }
 
 export type WorkspaceRole = 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
+
+/**
+ * Why a workspace is in the trash. `user` is an owner-initiated delete;
+ * `owner_deactivated` is an archive an admin caused by suspending the owner.
+ * Reactivation restores only the second kind — restoring the first would
+ * un-delete something the owner meant to throw away.
+ */
+export type WorkspaceTrashReason = 'user' | 'owner_deactivated';
 
 const WORKSPACE_ROLE_RANK: Record<WorkspaceRole, number> = {
   viewer: 0,
@@ -73,12 +103,15 @@ export interface WorkspaceRecord {
   visibility: 'private' | 'team';
   workspaceType?: 'private' | 'team';
   editingPolicy?: 'direct' | 'review' | null;
-  status?: 'active' | 'unshared' | 'trashed' | 'archived';
+  status?: 'active' | 'unshared' | 'trashed' | 'archived' | 'purged';
   unsharedAt?: string | Date | null;
   unsharedByUserId?: string | null;
   trashedAt?: string | Date | null;
   trashedByUserId?: string | null;
+  trashReason?: WorkspaceTrashReason | null;
   purgeAfter?: string | Date | null;
+  purgedAt?: string | Date | null;
+  isSystem?: boolean;
   teamId?: string | null;
   currentPublishedVersionId?: string | null;
   contentRevision: number;
@@ -86,9 +119,127 @@ export interface WorkspaceRecord {
   updatedAt: string;
 }
 
-const isSharedWorkspaceRecord = (workspace: Pick<WorkspaceRecord, 'visibility' | 'workspaceType'>): boolean => (
+export const isSharedWorkspaceRecord = (workspace: Pick<WorkspaceRecord, 'visibility' | 'workspaceType'>): boolean => (
   workspace.workspaceType === 'team' || workspace.visibility === 'team'
 );
+
+/**
+ * A purged workspace has passed its retention window. Its rows and object bytes
+ * are deliberately retained so an operator can still restore it, which means
+ * every read path has to hide it explicitly — it will not disappear on its own.
+ * Shared here rather than re-derived per service so the file browser, the
+ * workspace list and the access check cannot disagree about what "gone" means.
+ */
+export const isPurgedWorkspaceRecord = (workspace: Pick<WorkspaceRecord, 'status'>): boolean => (
+  workspace.status === 'purged'
+);
+
+/**
+ * Moves ownership of a Shared workspace onto `toUserId` inside an existing
+ * transaction: the `workspaces.ownerId` column, the owner membership row, and
+ * the publisher grant, with the outgoing owner demoted to editor.
+ *
+ * Module-level and transaction-scoped so the owner-initiated transfer and the
+ * admin handover on deactivation run the same writes. Authorization is
+ * deliberately *not* checked here — each caller owns its own guard (an owner may
+ * only transfer their own workspace; an admin may only do so while deactivating
+ * its owner), and folding both into one predicate would blur them.
+ */
+export async function applyWorkspaceOwnershipTransfer(
+  tx: Knex.Transaction,
+  params: {
+    workspace: WorkspaceRecord;
+    toUserId: string;
+    actorUserId: string;
+    reason?: string | null;
+  },
+): Promise<void> {
+  const { workspace, toUserId, actorUserId } = params;
+  const workspaceId = workspace.id;
+  const previousOwnerUserId = workspace.ownerId;
+  if (previousOwnerUserId === toUserId) return;
+
+  // In Review mode the outgoing owner keeps read-only access, matching what any
+  // other editor holds there; in Direct mode they keep editing.
+  const formerOwnerCanEdit = workspace.editingPolicy === 'direct';
+
+  await tx('workspaces').where({ id: workspaceId }).update({
+    ownerId: toUserId,
+    lastModifiedBy: actorUserId,
+    updatedAt: tx.fn.now(),
+  });
+  await tx('workspace_members')
+    .insert({ workspaceId, userId: toUserId, role: 'owner', canEdit: true })
+    .onConflict(['workspaceId', 'userId'])
+    .merge({ role: 'owner', canEdit: true, updatedAt: tx.fn.now() });
+  await tx('workspace_members')
+    .where({ workspaceId, userId: previousOwnerUserId })
+    .update({ role: 'editor', canEdit: formerOwnerCanEdit, updatedAt: tx.fn.now() });
+  await tx('workspace_user_grants')
+    .insert({
+      workspaceId,
+      userId: toUserId,
+      role: 'publisher',
+      grantedByUserId: actorUserId,
+    })
+    .onConflict(['workspaceId', 'userId'])
+    .merge({ role: 'publisher', grantedByUserId: actorUserId, updatedAt: tx.fn.now() });
+  await tx('audit_events').insert({
+    id: uuidv4(),
+    actorUserId,
+    actorRole: actorUserId === previousOwnerUserId ? 'workspace_owner' : 'platform_admin',
+    action: 'workspace.ownership_transferred',
+    resourceType: 'workspace',
+    resourceId: workspaceId,
+    platformOverride: actorUserId !== previousOwnerUserId,
+    reason: params.reason?.trim() || null,
+    metadata: { previousOwnerUserId, newOwnerUserId: toUserId },
+  });
+}
+
+export interface AdminWorkspaceListOptions {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: string;
+  visibility?: 'private' | 'team';
+  ownerId?: string;
+  /** Retired workspaces are hidden unless an operator asks for them by name. */
+  includePurged?: boolean;
+}
+
+export interface AdminWorkspaceSummary {
+  id: string;
+  name: string;
+  slug: string;
+  visibility: 'private' | 'team';
+  workspaceType: 'private' | 'team';
+  status: string;
+  editingPolicy: string | null;
+  ownerId: string | null;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  ownerStatus: string;
+  teamId: string | null;
+  teamName: string | null;
+  fileCount: number;
+  memberCount: number;
+  contentRevision: number;
+  trashedAt: string | null;
+  trashReason: WorkspaceTrashReason | null;
+  purgeAfter: string | null;
+  purgedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminWorkspacePage {
+  workspaces: AdminWorkspaceSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
 
 export interface WorkspaceMembershipRecord {
   workspaceId: string;
@@ -102,9 +253,11 @@ export interface WorkspaceMembershipRecord {
 interface MembershipCheckOptions {
   requireEdit?: boolean;
   /**
-   * Allows platform support operations for shared workspaces only. Private
-   * workspaces are intentionally excluded: their owner is the sole principal
-   * the application may authorize.
+   * Lets a platform admin resolve access to a workspace they hold no membership
+   * in, for oversight and support. What that grant is worth is derived from the
+   * workspace itself, not from this flag — see `buildAdminOverrideMembership`.
+   * In short: read-only everywhere except the platform's own system workspaces.
+   * Every use that actually crosses a membership boundary is audited.
    */
   allowSystemAdmin?: boolean;
 }
@@ -264,6 +417,8 @@ export class WorkspaceService {
           });
       })
       .andWhere('w.isSystem', false)
+      // A whitelist, not a blacklist: `purged` rows are retained for recovery
+      // and must never reappear here, including for the owner.
       .andWhere((statusQuery) => {
         statusQuery
           .where('w.status', 'active')
@@ -414,6 +569,167 @@ export class WorkspaceService {
     });
   }
 
+  /**
+   * Every workspace on the platform, for the admin oversight page.
+   *
+   * Written fresh rather than as a variant of `listWorkspacesForUser`: that
+   * query exists to answer "what can this person reach", and carries a large
+   * publication-state join to do it. This one answers "what exists", which is
+   * the opposite filter and needs none of that. Bending one query to serve both
+   * would make the membership rules harder to read, which is the last thing an
+   * authorization query should be.
+   *
+   * Metadata only — no file or conversation content is touched here.
+   */
+  async listAllWorkspacesForAdmin(options: AdminWorkspaceListOptions = {}): Promise<AdminWorkspacePage> {
+    const page = Math.max(1, Math.floor(options.page || 1));
+    const pageSize = Math.min(100, Math.max(5, Math.floor(options.pageSize || 25)));
+    const search = options.search?.trim() || '';
+
+    const applyFilters = <T extends Knex.QueryBuilder>(query: T): T => {
+      query.where('w.isSystem', false);
+      if (!options.includePurged) {
+        query.whereNot('w.status', 'purged');
+      }
+      if (options.status) {
+        query.where('w.status', options.status);
+      }
+      if (options.visibility) {
+        query.where('w.visibility', options.visibility);
+      }
+      if (options.ownerId) {
+        query.where('w.ownerId', options.ownerId);
+      }
+      if (search) {
+        // Same escaping as `UserService.listUsersPage`: an unescaped `%` or `_`
+        // in a search box would otherwise act as a wildcard.
+        const escaped = search.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+        const pattern = `%${escaped}%`;
+        query.where((builder) => {
+          builder
+            .where('w.name', 'ilike', pattern)
+            .orWhere('owner.displayName', 'ilike', pattern)
+            .orWhere('owner.email', 'ilike', pattern);
+        });
+      }
+      return query;
+    };
+
+    const countRow = await applyFilters(
+      this.db('workspaces as w').leftJoin('users as owner', 'owner.id', 'w.ownerId'),
+    ).count<{ count: string }>('w.id as count').first();
+    const total = Number(countRow?.count || 0);
+
+    const rows = await applyFilters(
+      this.db('workspaces as w')
+        .leftJoin('users as owner', 'owner.id', 'w.ownerId')
+        .leftJoin('groups as team', 'team.id', 'w.teamId'),
+    )
+      .select(
+        'w.id', 'w.name', 'w.slug', 'w.visibility', 'w.workspaceType', 'w.status',
+        'w.editingPolicy', 'w.ownerId', 'w.teamId', 'w.contentRevision',
+        'w.trashedAt', 'w.trashReason', 'w.purgeAfter', 'w.purgedAt',
+        'w.createdAt', 'w.updatedAt',
+        'owner.displayName as ownerName', 'owner.email as ownerEmail', 'owner.status as ownerStatus',
+        'team.name as teamName',
+        this.db.raw('(SELECT count(*) FROM files WHERE files."workspaceId" = w.id AND files."deletedAt" IS NULL) as "fileCount"'),
+        this.db.raw('(SELECT count(*) FROM workspace_members WHERE workspace_members."workspaceId" = w.id) as "memberCount"'),
+      )
+      .orderBy('w.updatedAt', 'desc')
+      .limit(pageSize)
+      .offset((page - 1) * pageSize) as Array<Record<string, unknown>>;
+
+    return {
+      workspaces: rows.map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        slug: String(row.slug),
+        visibility: row.visibility === 'team' ? 'team' : 'private',
+        workspaceType: row.workspaceType === 'team' ? 'team' : 'private',
+        status: String(row.status || 'active'),
+        editingPolicy: (row.editingPolicy as string | null) ?? null,
+        ownerId: (row.ownerId as string | null) ?? null,
+        ownerName: (row.ownerName as string | null) ?? null,
+        ownerEmail: (row.ownerEmail as string | null) ?? null,
+        ownerStatus: (row.ownerStatus as string | null) ?? 'active',
+        teamId: (row.teamId as string | null) ?? null,
+        teamName: (row.teamName as string | null) ?? null,
+        fileCount: Number(row.fileCount || 0),
+        memberCount: Number(row.memberCount || 0),
+        contentRevision: Number(row.contentRevision || 0),
+        trashedAt: (row.trashedAt as string | null) ?? null,
+        trashReason: (row.trashReason as WorkspaceTrashReason | null) ?? null,
+        purgeAfter: (row.purgeAfter as string | null) ?? null,
+        purgedAt: (row.purgedAt as string | null) ?? null,
+        createdAt: String(row.createdAt),
+        updatedAt: String(row.updatedAt),
+      })),
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
+  /**
+   * Conversations in a workspace, for admin oversight.
+   *
+   * `ConversationService` deliberately scopes every read to `createdBy = userId`
+   * — a conversation is personal to the person who had it — so it is the wrong
+   * place to relax. This is a separate, explicitly-admin path rather than a flag
+   * threaded through that one, so nothing on the normal user path can ever
+   * accidentally widen.
+   */
+  async listConversationsForAdmin(
+    workspaceId: string,
+    adminUserId: string,
+  ): Promise<Array<{
+    id: string;
+    persona: string | null;
+    createdBy: string | null;
+    authorName: string | null;
+    messageCount: number;
+    createdAt: string;
+    updatedAt: string;
+  }>> {
+    await this.ensureMembership(workspaceId, adminUserId, { allowSystemAdmin: true });
+    const rows = await this.db('conversations as c')
+      .leftJoin('users as author', 'author.id', 'c.createdBy')
+      .where('c.workspaceId', workspaceId)
+      .select(
+        'c.id', 'c.persona', 'c.createdBy', 'c.createdAt', 'c.updatedAt',
+        'author.displayName as authorName',
+        this.db.raw('(SELECT count(*) FROM conversation_messages m WHERE m."conversationId" = c.id) as "messageCount"'),
+      )
+      .orderBy('c.updatedAt', 'desc') as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      persona: (row.persona as string | null) ?? null,
+      createdBy: (row.createdBy as string | null) ?? null,
+      authorName: (row.authorName as string | null) ?? null,
+      messageCount: Number(row.messageCount || 0),
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+    }));
+  }
+
+  async readConversationForAdmin(
+    workspaceId: string,
+    conversationId: string,
+    adminUserId: string,
+  ): Promise<{ conversation: Record<string, unknown>; messages: Array<Record<string, unknown>> } | null> {
+    await this.ensureMembership(workspaceId, adminUserId, { allowSystemAdmin: true });
+    const conversation = await this.db('conversations')
+      .where({ id: conversationId, workspaceId })
+      .first();
+    if (!conversation) return null;
+    const messages = await this.db('conversation_messages')
+      .where({ conversationId })
+      .orderBy('createdAt', 'asc');
+    return { conversation, messages };
+  }
+
   async listEligibleTeams(userId: string): Promise<Array<{ id: string; name: string }>> {
     return this.db('groups as g')
       .join('group_members as gm', 'gm.groupId', 'g.id')
@@ -504,6 +820,11 @@ export class WorkspaceService {
     };
     const normalizedWorkspace: WorkspaceRecord = workspaceRest;
 
+    // A purged workspace still has rows and bytes so an operator can restore it,
+    // which means it has to be hidden explicitly rather than by absence.
+    if (isPurgedWorkspaceRecord(normalizedWorkspace)) {
+      throw new NotFoundError('Workspace not found');
+    }
     if (normalizedWorkspace.status === 'trashed') {
       throw new NotFoundError('Workspace is in trash');
     }
@@ -514,27 +835,9 @@ export class WorkspaceService {
       throw new AccessDeniedError('This Shared workspace is no longer shared');
     }
 
-    // Resolve private workspaces before any administrator override. A private
-    // workspace is an owner-only boundary, not merely a UI visibility flag.
-    if (normalizedWorkspace.visibility === 'private') {
-      if (normalizedWorkspace.ownerId !== userId) {
-        throw new AccessDeniedError('Private workspace access denied');
-      }
-      return {
-        workspace: normalizedWorkspace,
-        membership: {
-          workspaceId,
-          userId,
-          role: 'owner',
-          canEdit: true,
-          createdAt: normalizedWorkspace.createdAt,
-          updatedAt: normalizedWorkspace.updatedAt,
-        },
-      };
-    }
-
     // A workspace owner always has full access to their own workspace, regardless of
     // visibility or team membership (owners should never be locked out of what they own).
+    // This is resolved before any override so an owner is never recorded as one.
     if (normalizedWorkspace.ownerId === userId) {
       return {
         workspace: normalizedWorkspace,
@@ -549,32 +852,29 @@ export class WorkspaceService {
       };
     }
 
-    const isSystemAdmin = Boolean(
-      options.allowSystemAdmin
-      && await this.db('users').where({ id: userId, isAdmin: true }).first(),
-    );
+    // `isPlatformAdmin` rather than a bare `users.isAdmin` lookup: the governance
+    // services already treat a `platform_role_bindings` row as equivalent, and two
+    // definitions of "admin" that can disagree is not a distinction worth keeping.
+    const adminOverride = options.allowSystemAdmin && await isPlatformAdmin(this.db, userId)
+      ? this.buildAdminOverrideMembership(normalizedWorkspace, userId)
+      : null;
 
-    const directMembership = isSystemAdmin
-      ? null
-      : await this.db<WorkspaceMembershipRecord>('workspace_members')
-        .where({ workspaceId, userId })
-        .first();
+    // A private workspace is an owner-only boundary for everyone except a
+    // platform admin exercising oversight, whose reach is read-only and audited.
+    if (normalizedWorkspace.visibility === 'private' && !adminOverride) {
+      throw new AccessDeniedError('Private workspace access denied');
+    }
+
+    const directMembership = await this.db<WorkspaceMembershipRecord>('workspace_members')
+      .where({ workspaceId, userId })
+      .first();
 
     let membership = directMembership;
-    if (isSystemAdmin) {
-      membership = {
-        workspaceId,
-        userId,
-        role: 'owner',
-        canEdit: true,
-        createdAt: normalizedWorkspace.createdAt,
-        updatedAt: normalizedWorkspace.updatedAt,
-      };
-    } else if (normalizedWorkspace.teamId) {
+    if (normalizedWorkspace.teamId) {
       const groupMembership = await this.db('group_members')
         .where({ groupId: normalizedWorkspace.teamId, userId })
         .first();
-      if (!groupMembership && !membership) {
+      if (!groupMembership && !membership && !adminOverride) {
         throw new AccessDeniedError('Team membership is required to access this workspace');
       }
       if (groupMembership) {
@@ -594,8 +894,17 @@ export class WorkspaceService {
       }
     }
 
+    // Only now, with every real route to this workspace exhausted, does the
+    // override apply. An admin who holds a genuine membership resolves through
+    // it above and is not treated — or audited — as an override.
+    let usingAdminOverride = false;
     if (!membership) {
-      throw new AccessDeniedError('Workspace access denied');
+      if (!adminOverride) {
+        throw new AccessDeniedError('Workspace access denied');
+      }
+      membership = adminOverride;
+      usingAdminOverride = true;
+      await this.recordAdminOverrideAccess(normalizedWorkspace, userId);
     }
 
     const editingPolicy = normalizedWorkspace.editingPolicy || 'review';
@@ -607,7 +916,7 @@ export class WorkspaceService {
     const normalizedMembership: WorkspaceMembershipRecord = {
       ...membership,
       role: membership.role as WorkspaceRole,
-      canEdit: isSystemAdmin || roleCanEditShared,
+      canEdit: usingAdminOverride ? adminOverride!.canEdit : roleCanEditShared,
     };
 
     if (options.requireEdit && !normalizedMembership.canEdit) {
@@ -696,7 +1005,8 @@ export class WorkspaceService {
           status: 'trashed',
           trashedAt: tx.fn.now(),
           trashedByUserId: userId,
-          purgeAfter: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          trashReason: 'user',
+          purgeAfter: workspacePurgeDeadline(),
           updatedAt: tx.fn.now(),
           lastModifiedBy: userId,
         });
@@ -868,31 +1178,10 @@ export class WorkspaceService {
       if (workspace.status === 'trashed') {
         throw new ConflictError('Restore the Shared workspace before transferring ownership');
       }
-      const formerOwnerCanEdit = workspace.editingPolicy === 'direct';
-      await tx('workspaces').where({ id: workspaceId }).update({
-        ownerId: targetUserId,
-        lastModifiedBy: actingUserId,
-        updatedAt: tx.fn.now(),
-      });
-      await tx('workspace_members')
-        .insert({ workspaceId, userId: targetUserId, role: 'owner', canEdit: true })
-        .onConflict(['workspaceId', 'userId'])
-        .merge({ role: 'owner', canEdit: true, updatedAt: tx.fn.now() });
-      await tx('workspace_members')
-        .where({ workspaceId, userId: actingUserId })
-        .update({ role: 'editor', canEdit: formerOwnerCanEdit, updatedAt: tx.fn.now() });
-      await tx('workspace_user_grants')
-        .insert({
-          workspaceId,
-          userId: targetUserId,
-          role: 'publisher',
-          grantedByUserId: actingUserId,
-        })
-        .onConflict(['workspaceId', 'userId'])
-        .merge({ role: 'publisher', grantedByUserId: actingUserId, updatedAt: tx.fn.now() });
-      await this.recordWorkspaceLifecycleAudit(tx, workspaceId, actingUserId, 'workspace.ownership_transferred', {
-        previousOwnerUserId: actingUserId,
-        newOwnerUserId: targetUserId,
+      await applyWorkspaceOwnershipTransfer(tx, {
+        workspace,
+        toUserId: targetUserId,
+        actorUserId: actingUserId,
       });
     });
   }
@@ -1136,12 +1425,15 @@ export class WorkspaceService {
   async listCollaborators(
     workspaceId: string,
     userId: string,
+    options: MembershipCheckOptions = {},
   ): Promise<{
     collaborators: Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>;
     directCollaborators: Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>;
     teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }>;
   }> {
-    const { workspace } = await this.ensureMembership(workspaceId, userId);
+    // Read-only, so the admin oversight page can pass the override here. The
+    // mutating collaborator methods deliberately do not accept it.
+    const { workspace } = await this.ensureMembership(workspaceId, userId, options);
     const directCollaborators = await this.db('workspace_members')
       .join('users', 'workspace_members.userId', 'users.id')
       .select(
@@ -1225,6 +1517,79 @@ export class WorkspaceService {
       });
   }
 
+  /**
+   * What a platform-admin override is actually worth, derived from the workspace
+   * record rather than from the caller's intent (a per-call-site flag is only as
+   * correct as the enumeration of call sites, and this codebase has repeatedly
+   * had one more than expected).
+   *
+   * Only the platform's own system workspaces — the Knowledge Library storage,
+   * owned by a system identity and reachable by no other route — grant write.
+   * Every workspace a real person owns resolves to `viewer`/`canEdit: false`, so
+   * an override can read for oversight but can never mutate someone's content.
+   */
+  private buildAdminOverrideMembership(
+    workspace: WorkspaceRecord,
+    userId: string,
+  ): WorkspaceMembershipRecord {
+    const canManage = Boolean(workspace.isSystem);
+    return {
+      workspaceId: workspace.id,
+      userId,
+      role: canManage ? 'owner' : 'viewer',
+      canEdit: canManage,
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+    };
+  }
+
+  /**
+   * Records that an admin reached into a workspace they are not a member of.
+   * System workspaces are skipped: that is platform plumbing on a workspace no
+   * person owns, not a crossing of anyone's privacy boundary.
+   */
+  private async recordAdminOverrideAccess(
+    workspace: WorkspaceRecord,
+    actorUserId: string,
+  ): Promise<void> {
+    if (workspace.isSystem) return;
+
+    const key = `${actorUserId}:${workspace.id}`;
+    const now = Date.now();
+    const lastSeenAt = adminOverrideAuditSeenAt.get(key);
+    if (lastSeenAt && now - lastSeenAt < ADMIN_OVERRIDE_AUDIT_WINDOW_MS) return;
+    adminOverrideAuditSeenAt.set(key, now);
+    for (const [seenKey, seenAt] of adminOverrideAuditSeenAt) {
+      if (now - seenAt >= ADMIN_OVERRIDE_AUDIT_WINDOW_MS) adminOverrideAuditSeenAt.delete(seenKey);
+    }
+
+    try {
+      await this.db('audit_events').insert({
+        id: uuidv4(),
+        actorUserId,
+        actorRole: 'platform_admin',
+        action: 'admin.workspace.accessed',
+        resourceType: 'workspace',
+        resourceId: workspace.id,
+        platformOverride: true,
+        metadata: {
+          visibility: workspace.visibility,
+          workspaceType: workspace.workspaceType || null,
+          ownerId: workspace.ownerId,
+          workspaceName: workspace.name,
+        },
+      });
+    } catch (error) {
+      // An oversight read must not fail because its audit row could not be
+      // written, but a silent gap in the trail is worth shouting about.
+      console.error('Failed to record admin workspace override access', {
+        workspaceId: workspace.id,
+        actorUserId,
+        error: error instanceof Error ? error.message : 'unknown error',
+      });
+    }
+  }
+
   private async recordWorkspaceLifecycleAudit(
     tx: Knex.Transaction,
     workspaceId: string,
@@ -1254,45 +1619,58 @@ export class WorkspaceService {
   }
 
   /**
-   * Permanently removes expired Shared-workspace rows in a bounded batch.
-   * `FOR UPDATE SKIP LOCKED` lets every API pod run the same sweep without
-   * double-purging. Durable objects are intentionally retained until the
-   * reference-aware object GC can account for file versions, publications,
-   * and exact Working-base manifests.
+   * Retires expired trashed workspaces in a bounded batch. `FOR UPDATE SKIP
+   * LOCKED` lets every API pod run the same sweep without double-purging.
+   *
+   * This deliberately does **not** delete anything. The row is marked `purged`
+   * and every read path hides it, but the rows, the local mirror and the object
+   * bytes all survive so an operator can still restore the workspace — see
+   * `scripts/restore-purged-workspace.ts`. Wiping the workspace directory here
+   * would make that promise false for locally-stored files (`files.storageType
+   * === 'local'`), which exist nowhere else. Actual destruction is a separate,
+   * explicit, operator-run step: `scripts/hard-purge-workspace.ts`.
    */
   async purgeExpiredTrashedWorkspaces(limit = 25): Promise<string[]> {
     const batchSize = Math.max(1, Math.min(100, Math.floor(limit)));
-    const purged = await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const workspaces = await tx('workspaces')
-        .select('id')
+        .select('id', 'ownerId', 'name', 'trashReason')
         .where({ status: 'trashed', isSystem: false })
         .whereNotNull('purgeAfter')
         .andWhere('purgeAfter', '<=', tx.fn.now())
         .orderBy('purgeAfter', 'asc')
         .forUpdate()
         .skipLocked()
-        .limit(batchSize) as Array<{ id: string }>;
+        .limit(batchSize) as Array<{
+          id: string; ownerId: string; name: string; trashReason: string | null;
+        }>;
       const workspaceIds = workspaces.map((workspace) => String(workspace.id));
-      if (!workspaceIds.length) return { workspaceIds, publishedVersionIds: [] as string[] };
-      const publishedVersions = await tx('workspace_published_versions')
-        .select('id')
-        .whereIn('teamWorkspaceId', workspaceIds) as Array<{ id: string }>;
-      await tx('workspaces').whereIn('id', workspaceIds).del();
-      return {
-        workspaceIds,
-        publishedVersionIds: publishedVersions.map((version) => String(version.id)),
-      };
-    });
+      if (!workspaceIds.length) return workspaceIds;
 
-    await Promise.all([
-      ...purged.workspaceIds.map((workspaceId) => this.performWorkspaceCleanup(workspaceId)),
-      ...purged.publishedVersionIds.map((versionId) =>
-        fs.rm(path.join(WORKSPACE_DIR, '.published-versions', versionId), {
-          recursive: true,
-          force: true,
-        })),
-    ]);
-    return purged.workspaceIds;
+      await tx('workspaces').whereIn('id', workspaceIds).update({
+        status: 'purged',
+        purgedAt: tx.fn.now(),
+        purgeAfter: null,
+        updatedAt: tx.fn.now(),
+      });
+
+      await tx('audit_events').insert(workspaces.map((workspace) => ({
+        id: uuidv4(),
+        actorUserId: null,
+        actorRole: 'system',
+        action: 'workspace.purged',
+        resourceType: 'workspace',
+        resourceId: String(workspace.id),
+        metadata: {
+          workspaceName: workspace.name,
+          ownerId: workspace.ownerId,
+          trashReason: workspace.trashReason || null,
+          recoverable: true,
+        },
+      })));
+
+      return workspaceIds;
+    });
   }
 
   private async performWorkspaceDeletion(workspaceId: string): Promise<void> {

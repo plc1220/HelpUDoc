@@ -1,13 +1,22 @@
 export type WorkspaceLifecycleAction = 'unshare' | 'reshare' | 'trash' | 'restore' | 'leave' | 'reconnect';
 
+/**
+ * Why a workspace is in the trash. `owner_deactivated` marks an archive caused
+ * by an admin suspending the owner, which reactivation reverses; `user` marks a
+ * delete the owner asked for, which it does not.
+ */
+export type WorkspaceTrashReason = 'user' | 'owner_deactivated';
+
 export interface Workspace {
   id: string;
   name: string;
   lastUsed: string;
-  status?: 'active' | 'unshared' | 'trashed';
+  status?: 'active' | 'unshared' | 'trashed' | 'purged';
   unsharedAt?: string | null;
   trashedAt?: string | null;
+  trashReason?: WorkspaceTrashReason | null;
   purgeAfter?: string | null;
+  purgedAt?: string | null;
   slug?: string;
   role?: 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
   canEdit?: boolean;
@@ -52,6 +61,11 @@ export interface File {
   currentVersionId?: string | null;
   deletedAt?: string | null;
   staleOverwrite?: boolean;
+  status?: FileStatus;
+  statusUpdatedAt?: string | null;
+  statusUpdatedBy?: string | null;
+  approvedAtVersion?: number | null;
+  publishedAtVersion?: number | null;
 }
 
 /** Stable reference to a workspace file used by chat and agent-run payloads. */
@@ -506,4 +520,208 @@ export interface SkillEvolutionSuggestion {
   reviewedByUserId?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Per-file provenance audit trail.
+ *
+ * `file_audit_events` is append-only and deliberately denormalized: workspace
+ * deletion hard-deletes `files`/`file_versions`, so the trail carries its own
+ * copy of the identity it describes.
+ */
+export type FileAuditActorType = 'human' | 'agent' | 'system';
+
+export type FileAuditEventType =
+  | 'file.created'
+  | 'file.content_updated'
+  | 'file.agent_generated'
+  | 'file.renamed'
+  | 'file.moved'
+  | 'file.restored'
+  | 'file.deleted'
+  | 'file.canonicalized'
+  | 'file.synced_from_publication'
+  | 'file.tombstoned_by_sync'
+  | 'file.workspace_published'
+  | 'file.workspace_withdrawn'
+  | 'status.submitted'
+  | 'status.approved'
+  | 'status.changes_requested'
+  | 'status.published'
+  | 'status.reverted'
+  | 'status.unpublished'
+  /** Status carried into a private workspace from the Shared one on sync. */
+  | 'status.inherited';
+
+export interface FileAuditEvent {
+  id: string;
+  fileId: number;
+  workspaceId: string;
+  filePath: string;
+  seq: number;
+  eventType: FileAuditEventType;
+  actorUserId?: string | null;
+  actorType: FileAuditActorType;
+  actorDisplayName?: string | null;
+  sha256?: string | null;
+  objectKey?: string | null;
+  fileVersionId?: string | null;
+  sourceFileVersionId?: string | null;
+  fileVersion?: number | null;
+  runId?: string | null;
+  conversationId?: string | null;
+  turnId?: string | null;
+  conversationMessageId?: number | null;
+  langfuseTraceId?: string | null;
+  payload: Record<string, unknown>;
+  prevEventHash?: string | null;
+  eventHash: string;
+  occurredAt: string;
+}
+
+/** One event as rendered into a provenance document. */
+export interface FileProvenanceEvent extends FileAuditEvent {
+  /**
+   * `prior` marks events inherited from another workspace across a publication
+   * boundary — `files.id` is workspace-scoped, so a published document's
+   * history spans two chains.
+   */
+  chain: 'current' | 'prior';
+  actor?: { userId: string | null; displayName: string | null } | null;
+  /** Agent run detail, joined in when the event came from a run. */
+  provenance?: FileAgentProvenance | null;
+}
+
+export interface FileAgentProvenance {
+  runId: string;
+  userPrompt?: string | null;
+  enrichedPrompt?: string | null;
+  responseText?: string | null;
+  skillsInvoked?: Array<{ skillId: string; loadedAt?: string | null }>;
+  knowledgeRefsDeclared?: Array<{
+    id: number;
+    title: string;
+    snapshotHash?: string | null;
+    okfVersion?: string | null;
+  }>;
+  knowledgeChunksRetrieved?: Array<{
+    path: string;
+    title?: string | null;
+    snapshotId?: string | null;
+    score?: number | null;
+    sourceLocations?: unknown[];
+  }>;
+  taggedFileRefs?: TaggedFileRef[];
+  langfuseTraceId?: string | null;
+  langfuseTraceUrl?: string | null;
+  conversationMessageId?: number | null;
+  truncated?: Record<string, boolean>;
+}
+
+export type FileProvenanceOriginKind =
+  | 'uploaded'
+  | 'agent_generated'
+  | 'synced'
+  | 'unknown';
+
+export interface FileProvenanceOrigin {
+  kind: FileProvenanceOriginKind;
+  occurredAt: string | null;
+  actor?: { userId: string | null; displayName: string | null } | null;
+  runId?: string | null;
+  /** Set when the trail continues in a workspace this file was published from. */
+  priorWorkspace?: {
+    workspaceId: string;
+    fileId: number | null;
+    linkedVia: 'sourceFileVersionId';
+    bridgeVersionId: string;
+    eventCount: number;
+    accessible: boolean;
+  } | null;
+}
+
+export interface FileProvenanceDocument {
+  schemaVersion: string;
+  file: {
+    id: number;
+    workspaceId: string;
+    name: string;
+    currentVersion: number;
+    createdAt?: string | null;
+    deletedAt?: string | null;
+    /**
+     * Editorial state at the moment the document was assembled. A published
+     * artifact freezes this, so the snapshot records what was signed off
+     * rather than only what changed.
+     */
+    status?: FileStatus | null;
+    approvedAtVersion?: number | null;
+    publishedAtVersion?: number | null;
+    /** The decision attached to an earlier version than the current one. */
+    drift?: boolean;
+  };
+  origin: FileProvenanceOrigin;
+  events: FileProvenanceEvent[];
+  integrity: {
+    chainHead: string | null;
+    verified: boolean;
+    brokenAtSeq?: number | null;
+    eventCount: number;
+  };
+}
+
+/**
+ * Editorial lifecycle of a file.
+ *
+ * `published` is reached only by the per-file publication step, which exports
+ * an immutable artifact — it is never set directly through the status API.
+ */
+export type FileStatus = 'draft' | 'in_review' | 'approved' | 'published';
+
+/** A transition the calling user is currently permitted to make. */
+export interface FileStatusTransition {
+  toStatus: FileStatus;
+  /** True when the server will reject the call without a reason. */
+  requiresReason: boolean;
+  /** Moves the file backwards; restricted to privileged roles. */
+  isRevert: boolean;
+  label: string;
+}
+
+export interface FileStatusState {
+  fileId: number;
+  workspaceId: string;
+  status: FileStatus;
+  version: number;
+  statusUpdatedAt?: string | null;
+  statusUpdatedBy?: string | null;
+  approvedAtVersion?: number | null;
+  publishedAtVersion?: number | null;
+  /**
+   * The content has changed since it was approved or published. Approval
+   * attaches to a specific version, so this is how a reviewer sees that what
+   * they signed off is no longer what is there.
+   */
+  drift: boolean;
+  /** Rendered by the UI; the server remains the authority. */
+  allowedTransitions: FileStatusTransition[];
+}
+
+export interface FileStatusTransitionRequest {
+  toStatus: FileStatus;
+  reason?: string;
+  /** Rejects the change if the file moved on since it was read. */
+  expectedVersion?: number;
+}
+
+export interface WorkspaceFileStatusSummary {
+  counts: Record<FileStatus, number>;
+  reviewQueue: Array<{
+    fileId: number;
+    name: string;
+    version: number;
+    status: FileStatus;
+    statusUpdatedAt?: string | null;
+    drift: boolean;
+  }>;
 }

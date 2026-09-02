@@ -7,6 +7,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import { FileService } from '../services/fileService';
+import { FileStatusService } from '../services/fileStatusService';
+import { FilePublicationService } from '../services/filePublicationService';
 import { HttpError } from '../errors';
 import { WorkspaceService } from '../services/workspaceService';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
@@ -16,6 +18,8 @@ export default function(
   fileService: FileService,
   workspaceService: WorkspaceService,
   googleOAuthService: GoogleOAuthService,
+  fileStatusService: FileStatusService,
+  filePublicationService: FilePublicationService,
 ) {
   const router = Router({ mergeParams: true });
   const upload = multer({
@@ -80,6 +84,17 @@ export default function(
     query: z.string().optional(),
     scope: z.enum(['recent', 'my-drive', 'shared']).optional(),
     pageToken: z.string().optional(),
+  });
+
+  const fileStatusSchema = z.object({
+    toStatus: z.enum(['draft', 'in_review', 'approved', 'published']),
+    reason: z.string().trim().max(1000).optional(),
+    expectedVersion: z.number().int().positive().optional(),
+  });
+
+  const auditEventsQuerySchema = z.object({
+    cursor: z.coerce.number().int().nonnegative().optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
   });
 
   const googleDriveImportSchema = z.object({
@@ -271,6 +286,136 @@ export default function(
         return;
       }
       handleError(res, error, 'Failed to preview file');
+    }
+  });
+
+  router.get('/status-summary', async (req: Request, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const workspaceId = String((req.params as Record<string, string>).workspaceId);
+      res.json(await fileStatusService.getWorkspaceSummary(workspaceId, user.userId));
+    } catch (error) {
+      handleError(res, error, 'Failed to summarize file statuses');
+    }
+  });
+
+  router.get('/:fileId/status', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      res.json(await fileStatusService.getStatus(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      ));
+    } catch (error) {
+      handleError(res, error, 'Failed to read file status');
+    }
+  });
+
+  router.post('/:fileId/status', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = fileStatusSchema.parse(req.body || {});
+      res.json(await fileStatusService.transition(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+        payload,
+      ));
+    } catch (error) {
+      handleError(res, error, 'Failed to change file status');
+    }
+  });
+
+  router.get('/:fileId/publications', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const publications = await filePublicationService.listPublications(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      );
+      res.json({ publications });
+    } catch (error) {
+      handleError(res, error, 'Failed to list publications');
+    }
+  });
+
+  router.get(
+    '/:fileId/publications/:publicationVersion/download',
+    async (req: Request<{ fileId: string; publicationVersion: string }>, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        // Streamed through the API: the publication bucket is access-controlled,
+        // not public, so membership stays the access boundary.
+        const download = await filePublicationService.getPublicationDownload(
+          Number.parseInt(req.params.fileId, 10),
+          Number.parseInt(req.params.publicationVersion, 10),
+          user.userId,
+        );
+        res.setHeader('Content-Type', download.mimeType);
+        if (download.sizeBytes > 0) res.setHeader('Content-Length', String(download.sizeBytes));
+        res.setHeader('Content-Disposition', `attachment; filename="${download.downloadName}"`);
+        await pipeline(download.stream, res);
+      } catch (error) {
+        handleError(res, error, 'Failed to download published artifact');
+      }
+    },
+  );
+
+  router.get('/:fileId/provenance', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const document = await fileService.getFileProvenance(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      );
+      res.json(document);
+    } catch (error) {
+      handleError(res, error, 'Failed to load file provenance');
+    }
+  });
+
+  router.get('/:fileId/provenance/verify', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      res.json(await fileService.verifyFileProvenance(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      ));
+    } catch (error) {
+      handleError(res, error, 'Failed to verify file provenance');
+    }
+  });
+
+  router.get('/:fileId/provenance/download', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const document = await fileService.getFileProvenance(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+      );
+      const baseName = path.posix.basename(document.file.name) || `file-${document.file.id}`;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${baseName}.provenance.json"`,
+      );
+      res.send(JSON.stringify(document, null, 2));
+    } catch (error) {
+      handleError(res, error, 'Failed to download file provenance');
+    }
+  });
+
+  router.get('/:fileId/audit-events', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const query = auditEventsQuerySchema.parse(req.query || {});
+      const result = await fileService.getFileAuditEvents(
+        Number.parseInt(req.params.fileId, 10),
+        user.userId,
+        { cursor: query.cursor, limit: query.limit },
+      );
+      res.json(result);
+    } catch (error) {
+      handleError(res, error, 'Failed to list file audit events');
     }
   });
 

@@ -11,6 +11,7 @@ import knowledgeRoutes from './knowledge';
 import knowledgeCatalogRoutes from './knowledgeCatalog';
 import knowledgeBaseRoutes from './knowledgeBases';
 import usersRoutes from './users';
+import adminWorkspaceRoutes from './adminWorkspaces';
 import settingsReflectionRoutes from './settingsReflections';
 import governanceRoutes from './governance';
 import meMemoryRoutes from './meMemory';
@@ -21,6 +22,8 @@ import { WorkspacePublicationService } from '../services/workspacePublicationSer
 import { WorkspaceCollaborationService } from '../services/workspaceCollaborationService';
 import { WorkspaceTeamChatAgentService } from '../services/workspaceTeamChatAgentService';
 import { FileService } from '../services/fileService';
+import { FileStatusService } from '../services/fileStatusService';
+import { FilePublicationService } from '../services/filePublicationService';
 import { ConversationService } from '../services/conversationService';
 import { UserService } from '../services/userService';
 import { KnowledgeService } from '../services/knowledgeService';
@@ -48,6 +51,8 @@ export default function(
     workspacePublicationService,
   );
   const fileService = new FileService(dbService, workspaceService);
+  const filePublicationService = new FilePublicationService(dbService, fileService, workspaceService);
+  const fileStatusService = new FileStatusService(dbService, workspaceService, filePublicationService, fileService);
   const conversationService = new ConversationService(dbService, workspaceService);
   configureAgentRunServices({ conversationService, fileService });
   const knowledgeService = new KnowledgeService(dbService, workspaceService, fileService);
@@ -80,7 +85,14 @@ export default function(
   ));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
-  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
+  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
+  // Read-only workspace oversight. Every route under it is a GET; see the note
+  // in `adminWorkspaces.ts` for why the mutation surface is deliberately empty.
+  router.use(
+    '/admin/workspaces',
+    requireSystemAdmin(userService),
+    adminWorkspaceRoutes(workspaceService, fileService),
+  );
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
   router.use('/knowledge-catalog', knowledgeCatalogRoutes(knowledgeService));
   // Not admin-gated: team leads manage their own bases; access is enforced in the service.
@@ -90,7 +102,7 @@ export default function(
     '/workspaces/:workspaceId/collaboration',
     workspaceCollaborationRoutes(workspaceCollaborationService, workspaceTeamChatAgentService),
   );
-  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService));
+  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService, fileStatusService, filePublicationService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));

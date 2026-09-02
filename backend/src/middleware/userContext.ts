@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { UserService } from '../services/userService';
+import { UserService, isUserDeactivated } from '../services/userService';
 import { UserContext } from '../types/user';
 
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
@@ -25,10 +25,40 @@ export function userContextMiddleware(userService: UserService) {
   const defaultUserName = process.env.DEFAULT_USER_NAME || 'Local User';
   const defaultUserEmail = process.env.DEFAULT_USER_EMAIL || undefined;
 
+  /**
+   * A deactivated user is refused here rather than at each route, because this
+   * is the only place every authenticated `/api` request passes through. The
+   * session is destroyed on the way out so the SPA falls back to the login
+   * screen instead of retrying against a context that will never work again.
+   */
+  const rejectIfDeactivated = async (
+    req: Request,
+    res: Response,
+    userId: string,
+  ): Promise<boolean> => {
+    if (!await userService.isDeactivated(userId)) {
+      return false;
+    }
+    req.userContext = undefined;
+    res.locals.userContext = undefined;
+    if (req.session) {
+      await new Promise<void>((resolve) => req.session.destroy(() => resolve()));
+    }
+    res.status(403).json({
+      error: 'This account has been deactivated. Contact an administrator.',
+      code: 'account_deactivated',
+    });
+    return true;
+  };
+
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
       const useSessionAuth = authMode === 'oidc' || authMode === 'hybrid';
       if (useSessionAuth && req.session?.userContext) {
+        // The session carries a snapshot taken at sign-in; status is the one
+        // thing that must be re-checked, or deactivating a signed-in user does
+        // nothing until their session expires.
+        if (await rejectIfDeactivated(req, res, req.session.userContext.userId)) return;
         req.userContext = req.session.userContext;
         res.locals.userContext = req.session.userContext;
         return next();
@@ -49,6 +79,7 @@ export function userContextMiddleware(userService: UserService) {
       }
 
       if (req.session?.userContext && req.session.externalId === externalId) {
+        if (await rejectIfDeactivated(req, res, req.session.userContext.userId)) return;
         req.userContext = req.session.userContext;
         res.locals.userContext = req.session.userContext;
         return next();
@@ -62,6 +93,13 @@ export function userContextMiddleware(userService: UserService) {
         displayName,
         email,
       });
+
+      // `ensureUser` upserts by externalId, so in headers mode any request can
+      // reach a suspended account's row. It preserves `status`, and this is the
+      // gate that acts on it.
+      if (isUserDeactivated(userRecord)) {
+        if (await rejectIfDeactivated(req, res, userRecord.id)) return;
+      }
 
       const userContext: UserContext = {
         userId: userRecord.id,

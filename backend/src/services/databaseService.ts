@@ -1,4 +1,5 @@
 import knex, { Knex } from 'knex';
+import { backfillFileAuditEvents } from './fileAuditBackfill';
 import { getBackendEnv } from '../config/env';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '../types/knowledge';
 
@@ -38,6 +39,8 @@ export class DatabaseService {
     await this.createMcpConnectionGrantsTable();
     await this.createFilesTable();
     await this.createFileVersionsTable();
+    await this.createFileAuditEventsTable();
+    await this.createFilePublicationsTable();
     await this.createWorkspaceFileRevisionsTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
@@ -57,12 +60,62 @@ export class DatabaseService {
     await this.createWorkspaceScheduleRunsTable();
     await this.createAgentRunSummariesTable();
     await this.createAgentRunToolEventsTable();
+    await this.createAgentRunProvenanceTable();
     await this.createAgentDailyReflectionsTable();
     await this.createAgentDailyReflectionBreakdownsTable();
     await this.createUserMemorySuggestionsTable();
     await this.createSkillEvolutionSuggestionsTable();
     await this.createUnifiedGovernanceTables();
     await this.migrateLegacyTeamWorkspacesToSharedFreeflow();
+    await this.enforceWorkspaceOwnerDeleteRestrict();
+    await this.backfillFileAuditTrail();
+  }
+
+  /**
+   * `workspaces.ownerId` was created as ON DELETE CASCADE, so deleting a user
+   * silently hard-deleted every workspace they owned — including Shared
+   * workspaces other people were still collaborating in. Worse, the retrofit
+   * path (`ensureColumn` on an existing table) adds the column with no foreign
+   * key at all, so the behaviour differed between a fresh and a migrated
+   * database.
+   *
+   * Both are normalized here to ON DELETE RESTRICT: a user deletion that would
+   * orphan a workspace now fails loudly instead of destroying data. Callers are
+   * expected to archive or hand over ownership first (see
+   * `UserService.deactivateUser`). Idempotent — it inspects `confdeltype` and
+   * only rewrites a constraint that is not already RESTRICT.
+   */
+  private async enforceWorkspaceOwnerDeleteRestrict(): Promise<void> {
+    await this.db.raw(`
+      DO $ownerfk$
+      DECLARE
+        existing_name text;
+        existing_action "char";
+      BEGIN
+        SELECT conname, confdeltype INTO existing_name, existing_action
+        FROM pg_constraint
+        WHERE conrelid = 'workspaces'::regclass
+          AND contype = 'f'
+          AND conkey = ARRAY[(
+            SELECT attnum FROM pg_attribute
+            WHERE attrelid = 'workspaces'::regclass AND attname = 'ownerId'
+          )]::smallint[];
+
+        IF existing_name IS NOT NULL AND existing_action = 'r' THEN
+          RETURN;
+        END IF;
+
+        IF existing_name IS NOT NULL THEN
+          EXECUTE format('ALTER TABLE workspaces DROP CONSTRAINT %I', existing_name);
+        END IF;
+
+        ALTER TABLE workspaces
+          ADD CONSTRAINT workspaces_ownerid_foreign
+          FOREIGN KEY ("ownerId") REFERENCES users (id)
+          ON DELETE RESTRICT;
+      END
+      $ownerfk$;
+    `);
   }
 
   private buildConnectionConfig(env: ReturnType<typeof getBackendEnv>): PgConnection {
@@ -129,6 +182,47 @@ export class DatabaseService {
       await this.ensureColumn('users', 'oidcIssuer', (table) => table.string('oidcIssuer'));
       await this.ensureColumn('users', 'oidcSubject', (table) => table.string('oidcSubject'));
     }
+
+    // Deactivation is a reversible suspension of a user's access. It is kept
+    // separate from deletion so an operator has a non-destructive lever, and
+    // separate from `isAdmin` so demoting and suspending stay independent.
+    await this.ensureColumn('users', 'status', (table) =>
+      table.string('status', 16).notNullable().defaultTo('active'));
+    await this.ensureColumn('users', 'deactivatedAt', (table) =>
+      table.timestamp('deactivatedAt', { useTz: true }));
+    await this.ensureColumn('users', 'deactivatedByUserId', (table) =>
+      table.uuid('deactivatedByUserId').references('id').inTable('users').onDelete('SET NULL'));
+    await this.ensureColumn('users', 'deactivationReason', (table) =>
+      table.text('deactivationReason'));
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS users_status_idx ON users (status) WHERE status <> \'active\'',
+    );
+
+    // Pre-registration: an admin creates the row, assigns teams and roles, and the
+    // person claims it on their first sign-in. `status` carries a third value,
+    // 'invited', which the deactivation gates ignore by design — an invited row
+    // must be able to authenticate, that is the whole point.
+    await this.ensureColumn('users', 'invitedByUserId', (table) =>
+      table.uuid('invitedByUserId').references('id').inTable('users').onDelete('SET NULL'));
+    await this.ensureColumn('users', 'invitedAt', (table) =>
+      table.timestamp('invitedAt', { useTz: true }));
+    await this.ensureColumn('users', 'claimedAt', (table) =>
+      table.timestamp('claimedAt', { useTz: true }));
+
+    // Deliberately partial. A plain unique index on email cannot be created on any
+    // deployment that has used header auth, because DEFAULT_USER_EMAIL stamps one
+    // address onto every such user — the dev database has eight rows sharing one.
+    // Only invited rows need the guarantee, and only they get it: two pending
+    // invitations for the same address would make the claim ambiguous.
+    await this.db.raw(
+      'CREATE UNIQUE INDEX IF NOT EXISTS users_invited_email_unique '
+      + 'ON users (lower(email)) WHERE status = \'invited\' AND email IS NOT NULL',
+    );
+    // The claim looks a user up by verified OIDC identity before anything else.
+    await this.db.raw(
+      'CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_identity_unique '
+      + 'ON users ("oidcIssuer", "oidcSubject") WHERE "oidcSubject" IS NOT NULL',
+    );
   }
 
   private async createGroupsTable(): Promise<void> {
@@ -242,6 +336,25 @@ export class DatabaseService {
           WHERE workspace_members."workspaceId" = workspaces.id
         ) > 1
     `);
+  }
+
+  /**
+   * Reconstructs provenance for files that predate the audit table. Keyed in
+   * `application_migrations`, so it runs once and is a no-op thereafter.
+   */
+  private async backfillFileAuditTrail(): Promise<void> {
+    try {
+      const result = await backfillFileAuditEvents(this.db);
+      if (!result.alreadyApplied && result.eventsWritten) {
+        console.log(
+          `Backfilled ${result.eventsWritten} file audit events across ${result.filesProcessed} files.`,
+        );
+      }
+    } catch (error) {
+      // A backfill failure must not stop the service from booting; the trail
+      // simply starts empty for historical files until it is retried.
+      console.error('File audit backfill failed:', error);
+    }
   }
 
   private async migrateLegacyTeamWorkspacesToSharedFreeflow(): Promise<void> {
@@ -389,6 +502,15 @@ export class DatabaseService {
         table.uuid('updatedBy').references('id').inTable('users');
         table.integer('version').notNullable().defaultTo(1);
         table.uuid('currentVersionId');
+        table.integer('auditSeq').notNullable().defaultTo(0);
+        table.string('lastAuditHash', 64);
+        table.string('status', 16).notNullable().defaultTo('draft');
+        table.timestamp('statusUpdatedAt', { useTz: true });
+        table.uuid('statusUpdatedBy');
+        table.integer('approvedAtVersion');
+        table.integer('publishedAtVersion');
+        table.uuid('currentPublicationId');
+        table.integer('publicationVersion').notNullable().defaultTo(0);
         table.timestamp('deletedAt', { useTz: true });
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
@@ -439,6 +561,81 @@ export class DatabaseService {
         'CREATE UNIQUE INDEX file_versions_operation_idx ON "file_versions" ("workspaceId", "operationId") WHERE "operationId" IS NOT NULL',
       );
       console.log('Created "file_versions" table.');
+    }
+  }
+
+  private async createFileAuditEventsTable(): Promise<void> {
+    if (!await this.db.schema.hasTable('file_audit_events')) {
+      await this.db.schema.createTable('file_audit_events', (table) => {
+        table.uuid('id').primary();
+        // Identity is denormalized on purpose and carries no cascading FK:
+        // workspace deletion hard-deletes "files"/"file_versions", and the audit
+        // trail has to outlive them.
+        table.integer('fileId').notNullable();
+        table.uuid('workspaceId').notNullable();
+        table.text('filePath').notNullable();
+        table.integer('seq').notNullable();
+        table.string('eventType', 48).notNullable();
+        table.uuid('actorUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('actorType', 16).notNullable().defaultTo('human');
+        table.text('actorDisplayName');
+        table.string('sha256', 64);
+        table.text('objectKey');
+        table.uuid('fileVersionId');
+        table.uuid('sourceFileVersionId');
+        table.integer('fileVersion');
+        table.string('runId', 160);
+        table.uuid('conversationId');
+        table.string('turnId', 160);
+        table.bigInteger('conversationMessageId');
+        table.string('langfuseTraceId', 160);
+        table.jsonb('payload').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.string('prevEventHash', 64);
+        table.string('eventHash', 64).notNullable();
+        table.timestamp('occurredAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['fileId', 'seq']);
+        table.index(['fileId', 'occurredAt'], 'file_audit_events_file_occurred_idx');
+        table.index(['workspaceId', 'occurredAt'], 'file_audit_events_workspace_occurred_idx');
+        table.index(['runId'], 'file_audit_events_run_idx');
+        table.index(['sha256'], 'file_audit_events_sha256_idx');
+      });
+      console.log('Created "file_audit_events" table.');
+    }
+  }
+
+  private async createFilePublicationsTable(): Promise<void> {
+    if (!await this.db.schema.hasTable('file_publications')) {
+      await this.db.schema.createTable('file_publications', (table) => {
+        table.uuid('id').primary();
+        // Denormalized and without cascading FKs, for the same reason as
+        // file_audit_events: a published artifact outlives its workspace.
+        table.integer('fileId').notNullable();
+        table.uuid('workspaceId').notNullable();
+        table.integer('publicationVersion').notNullable();
+        table.text('sourcePath').notNullable();
+        table.text('publishedName').notNullable();
+        table.string('targetProvider', 16).notNullable();
+        table.string('targetBucket', 255).notNullable();
+        table.text('targetKey').notNullable();
+        table.text('targetUri').notNullable();
+        table.uuid('sourceFileVersionId');
+        table.integer('sourceFileVersion');
+        table.string('sha256', 64);
+        table.bigInteger('sizeBytes');
+        table.string('mimeType', 255);
+        table.text('provenanceKey');
+        table.string('provenanceSha256', 64);
+        table.uuid('publishedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('publishedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        // Withdrawal is a record, not a deletion: the artifact stays.
+        table.timestamp('withdrawnAt', { useTz: true });
+        table.uuid('withdrawnByUserId');
+        table.unique(['fileId', 'publicationVersion']);
+        table.unique(['targetBucket', 'targetKey']);
+        table.index(['workspaceId', 'publishedAt'], 'file_publications_workspace_idx');
+        table.index(['sha256'], 'file_publications_sha256_idx');
+      });
+      console.log('Created "file_publications" table.');
     }
   }
 
@@ -1241,6 +1438,19 @@ export class DatabaseService {
     await this.ensureColumn('files', 'version', (table) => table.integer('version').notNullable().defaultTo(1));
     await this.ensureColumn('files', 'currentVersionId', (table) => table.uuid('currentVersionId'));
     await this.ensureColumn('files', 'deletedAt', (table) => table.timestamp('deletedAt', { useTz: true }));
+    await this.ensureColumn('files', 'auditSeq', (table) => table.integer('auditSeq').notNullable().defaultTo(0));
+    await this.ensureColumn('files', 'lastAuditHash', (table) => table.string('lastAuditHash', 64));
+    await this.ensureColumn('files', 'status', (table) => table.string('status', 16).notNullable().defaultTo('draft'));
+    await this.ensureColumn('files', 'statusUpdatedAt', (table) => table.timestamp('statusUpdatedAt', { useTz: true }));
+    await this.ensureColumn('files', 'statusUpdatedBy', (table) => table.uuid('statusUpdatedBy'));
+    await this.ensureColumn('files', 'approvedAtVersion', (table) => table.integer('approvedAtVersion'));
+    await this.ensureColumn('files', 'publishedAtVersion', (table) => table.integer('publishedAtVersion'));
+    await this.ensureColumn('files', 'currentPublicationId', (table) => table.uuid('currentPublicationId'));
+    await this.ensureColumn('files', 'publicationVersion', (table) => table.integer('publicationVersion').notNullable().defaultTo(0));
+    // Drives the review queue: "what is waiting on me in this workspace".
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS files_workspace_status_idx ON files ("workspaceId", status) WHERE "deletedAt" IS NULL',
+    );
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS files_workspace_source_version_idx ON files ("workspaceId", "sourceProvider", "sourceExternalId", "sourceVersionFingerprint")',
     );
@@ -1526,6 +1736,39 @@ export class DatabaseService {
     }
   }
 
+  private async createAgentRunProvenanceTable(): Promise<void> {
+    if (!await this.db.schema.hasTable('agent_run_provenance')) {
+      await this.db.schema.createTable('agent_run_provenance', (table) => {
+        // One row per run, not per file: a run often writes several files and
+        // duplicating a large prompt across each of them is waste. File audit
+        // events reference this by runId.
+        table.string('runId', 160).primary();
+        table.uuid('workspaceId').notNullable();
+        table.uuid('userId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('conversationId');
+        table.string('turnId', 160);
+        table.bigInteger('conversationMessageId');
+        table.string('persona', 96);
+        table.text('userPrompt');
+        table.text('enrichedPrompt');
+        table.text('responseText');
+        table.jsonb('skillsInvoked').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('knowledgeRefsDeclared').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('knowledgeChunksRetrieved').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('taggedFileRefs').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.string('langfuseTraceId', 160);
+        table.text('langfuseTraceUrl');
+        table.jsonb('truncated').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.string('status', 32);
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['workspaceId', 'createdAt'], 'agent_run_provenance_workspace_idx');
+        table.index(['conversationId'], 'agent_run_provenance_conversation_idx');
+      });
+      console.log('Created "agent_run_provenance" table.');
+    }
+  }
+
   private async createAgentDailyReflectionsTable(): Promise<void> {
     const exists = await this.db.schema.hasTable('agent_daily_reflections');
     if (!exists) {
@@ -1747,6 +1990,21 @@ export class DatabaseService {
       table.timestamp('purgeAfter', { useTz: true }));
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS workspaces_trash_purge_idx ON workspaces ("purgeAfter") WHERE status = \'trashed\' AND "purgeAfter" IS NOT NULL',
+    );
+
+    // `purged` retires a workspace without destroying it: the rows and the
+    // object bytes stay, every read path hides it, and only the CLI hard-purge
+    // actually deletes. `trashReason` distinguishes a trash the owner asked for
+    // from one an admin caused by deactivating them, so reactivation restores
+    // exactly the second kind and leaves the first alone.
+    await this.ensureColumn('workspaces', 'purgedAt', (table) =>
+      table.timestamp('purgedAt', { useTz: true }));
+    await this.ensureColumn('workspaces', 'trashReason', (table) =>
+      table.string('trashReason', 32));
+    // The admin oversight list and every deactivation sweep filter on ownerId.
+    await this.db.raw('CREATE INDEX IF NOT EXISTS workspaces_owner_idx ON workspaces ("ownerId")');
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspaces_owner_trash_reason_idx ON workspaces ("ownerId", "trashReason") WHERE "trashReason" IS NOT NULL',
     );
 
     // `archived` was the earlier shared-workspace lifecycle value. Preserve

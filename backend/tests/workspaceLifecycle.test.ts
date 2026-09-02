@@ -9,10 +9,17 @@ class InsertBuilder implements PromiseLike<any> {
   private conflictColumns: string[] = [];
   private mergeValues: Row | null = null;
 
+  // Knex accepts a single row or an array; the fake has to as well, or a
+  // batched insert silently writes nothing and the assertion on it reads as a
+  // missing feature rather than a missing fake.
+  private readonly rows: Row[];
+
   constructor(
     private readonly table: Row[],
-    private readonly values: Row,
-  ) {}
+    values: Row | Row[],
+  ) {
+    this.rows = Array.isArray(values) ? values : [values];
+  }
 
   onConflict(columns: string[]): this {
     this.conflictColumns = columns;
@@ -29,12 +36,16 @@ class InsertBuilder implements PromiseLike<any> {
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
   ): PromiseLike<TResult1 | TResult2> {
     return Promise.resolve().then(() => {
-      const existing = this.conflictColumns.length
-        ? this.table.find((row) => this.conflictColumns.every((column) => row[column] === this.values[column]))
-        : undefined;
-      if (existing && this.mergeValues) Object.assign(existing, this.mergeValues);
-      else if (!existing) this.table.push({ ...this.values });
-      return [existing || this.values];
+      const written: Row[] = [];
+      for (const values of this.rows) {
+        const existing = this.conflictColumns.length
+          ? this.table.find((row) => this.conflictColumns.every((column) => row[column] === values[column]))
+          : undefined;
+        if (existing && this.mergeValues) Object.assign(existing, this.mergeValues);
+        else if (!existing) this.table.push({ ...values });
+        written.push(existing || values);
+      }
+      return written;
     }).then(onfulfilled, onrejected);
   }
 }
@@ -50,6 +61,30 @@ class Query implements PromiseLike<Row[]> {
   }
 
   forUpdate(): this {
+    return this;
+  }
+
+  skipLocked(): this { return this; }
+  orderBy(): this { return this; }
+  limit(): this { return this; }
+  select(): this { return this; }
+
+  whereNotNull(column: string): this {
+    this.predicates.push((row) => row[column] != null);
+    return this;
+  }
+
+  whereIn(column: string, values: any[]): this {
+    this.predicates.push((row) => values.includes(row[column]));
+    return this;
+  }
+
+  andWhere(column: string, operator: string, value: any): this {
+    this.predicates.push((row) => {
+      const left = row[column] instanceof Date ? row[column].getTime() : new Date(row[column]).getTime();
+      const right = value instanceof Date ? value.getTime() : new Date(value).getTime();
+      return operator === '<=' ? left <= right : left >= right;
+    });
     return this;
   }
 
@@ -76,7 +111,7 @@ class Query implements PromiseLike<Row[]> {
     return before - this.rows.length;
   }
 
-  insert(values: Row): InsertBuilder {
+  insert(values: Row | Row[]): InsertBuilder {
     return new InsertBuilder(this.rows, values);
   }
 
@@ -215,4 +250,59 @@ test('ownership transfer promotes the target and demotes the former owner atomic
   assert.equal(tables.workspace_members.find((row) => row.userId === nextOwnerId)?.role, 'owner');
   assert.equal(tables.workspace_members.find((row) => row.userId === ownerId)?.role, 'editor');
   assert.equal(tables.workspace_user_grants.find((row) => row.userId === nextOwnerId)?.role, 'publisher');
+});
+
+test('the retention sweep retires a workspace without destroying it', async () => {
+  const { service, tables, workspaceId, ownerId } = lifecycleHarness();
+  tables.workspaces[0].status = 'trashed';
+  tables.workspaces[0].trashReason = 'owner_deactivated';
+  tables.workspaces[0].purgeAfter = new Date('2026-08-01T00:00:00.000Z');
+  tables.workspaces[0].isSystem = false;
+
+  const purged = await service.purgeExpiredTrashedWorkspaces();
+
+  assert.deepEqual(purged, [workspaceId]);
+  // The row survives on purpose — recovery depends on it, and on the object
+  // bytes and local mirror this path deliberately leaves alone.
+  assert.equal(tables.workspaces.length, 1);
+  assert.equal(tables.workspaces[0].status, 'purged');
+  assert.ok(tables.workspaces[0].purgedAt);
+  assert.equal(tables.workspaces[0].purgeAfter, null);
+  assert.equal(
+    tables.audit_events.filter((row) => row.action === 'workspace.purged').length,
+    1,
+  );
+  // Members survive too: a restored workspace has to come back with its people.
+  assert.equal(tables.workspace_members.length, 3);
+  void ownerId;
+});
+
+test('a workspace whose retention has not expired is left alone', async () => {
+  const { service, tables } = lifecycleHarness();
+  tables.workspaces[0].status = 'trashed';
+  tables.workspaces[0].purgeAfter = new Date('2099-01-01T00:00:00.000Z');
+  tables.workspaces[0].isSystem = false;
+
+  assert.deepEqual(await service.purgeExpiredTrashedWorkspaces(), []);
+  assert.equal(tables.workspaces[0].status, 'trashed');
+});
+
+test('a purged workspace is unreachable through ensureMembership', async () => {
+  const { service, tables, workspaceId, ownerId, collaboratorId } = lifecycleHarness();
+  tables.workspaces[0].status = 'purged';
+
+  // Including for its owner, who would otherwise still see it in their trash.
+  await assert.rejects(service.ensureMembership(workspaceId, ownerId), /Workspace not found/);
+  await assert.rejects(service.ensureMembership(workspaceId, collaboratorId), /Workspace not found/);
+});
+
+test('an owner-initiated trash is stamped so reactivation cannot resurrect it', async () => {
+  const { service, tables, workspaceId, ownerId } = lifecycleHarness();
+
+  await service.deleteWorkspace(workspaceId, ownerId);
+
+  assert.equal(tables.workspaces[0].status, 'trashed');
+  // `user`, not `owner_deactivated` — reactivating someone must not un-delete
+  // what they threw away themselves.
+  assert.equal(tables.workspaces[0].trashReason, 'user');
 });

@@ -29,6 +29,10 @@ export type StartRunParams = {
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
   knowledgeRefs?: AgentKnowledgeRef[];
+  /** The prompt as the user typed it, before knowledge/file guidance is appended. */
+  userPrompt?: string;
+  /** Files the user @-referenced for this turn. */
+  taggedFileRefs?: Array<{ fileId: number; version?: number; name?: string }>;
 };
 
 export type RunPendingInterrupt = {
