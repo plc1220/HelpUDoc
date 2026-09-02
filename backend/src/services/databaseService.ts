@@ -2286,6 +2286,23 @@ export class DatabaseService {
       });
     }
 
+    // A Team Lead may switch off a skill for their own Team without destroying the
+    // grant an admin created. Keyed by `skillKey` rather than `skills.id` so one row
+    // overrides access from every source: the legacy `skill_grants` rows (which store a
+    // string skill id) as well as the governed `team_skill_grants` / `user_skill_grants`
+    // rows (which store a uuid).
+    if (!await this.db.schema.hasTable('team_skill_disables')) {
+      await this.db.schema.createTable('team_skill_disables', (table) => {
+        table.uuid('teamId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.string('skillKey', 128).notNullable();
+        table.uuid('disabledByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('reason', 512);
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['teamId', 'skillKey']);
+      });
+    }
+
     if (!await this.db.schema.hasTable('workspace_skill_pins')) {
       await this.db.schema.createTable('workspace_skill_pins', (table) => {
         table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');

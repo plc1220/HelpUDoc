@@ -328,3 +328,205 @@ test('governed skill lifecycle works against PostgreSQL', { skip: !enabled }, as
     await db.destroy();
   }
 });
+
+test('a Team Lead disables an admin-granted skill without destroying the grant', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const users = new UserService(database);
+  const adminId = uuidv4();
+  const leadId = uuidv4();
+  const memberId = uuidv4();
+  const ownerTeamId = uuidv4();
+  const consumerTeamId = uuidv4();
+  const skillId = uuidv4();
+  const versionId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `disable-smoke-${suffix}`;
+  const legacyKey = `legacy-disable-${suffix}`;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    await db('users').insert([
+      { id: adminId, externalId: `disable-admin-${suffix}`, email: `disable-admin-${suffix}@example.test`, displayName: 'Disable admin', isAdmin: true },
+      { id: leadId, externalId: `disable-lead-${suffix}`, email: `disable-lead-${suffix}@example.test`, displayName: 'Disable lead', isAdmin: false },
+      { id: memberId, externalId: `disable-member-${suffix}`, email: `disable-member-${suffix}@example.test`, displayName: 'Disable member', isAdmin: false },
+    ]);
+    await db('groups').insert([
+      { id: ownerTeamId, name: `Disable owner ${suffix}` },
+      { id: consumerTeamId, name: `Disable consumer ${suffix}` },
+    ]);
+    // The skill is owned by a Team the Lead does not belong to: this is exactly the case
+    // `setTeamSkillGrant` refuses, and the case a per-Team disable has to cover.
+    await db('group_members').insert([
+      { groupId: consumerTeamId, userId: leadId },
+      { groupId: consumerTeamId, userId: memberId },
+    ]);
+    await db('team_role_bindings').insert({
+      teamId: consumerTeamId, userId: leadId, role: 'lead', assignedByUserId: null,
+    });
+    await db('skills').insert({
+      id: skillId,
+      skillKey,
+      displayName: 'Disable smoke skill',
+      ownerTeamId,
+      status: 'active',
+    });
+    await db('skill_versions').insert({
+      id: versionId,
+      skillId,
+      semanticVersion: '1.0.0',
+      manifestHash: 'c'.repeat(64),
+      status: 'active',
+    });
+    await db('skills').where({ id: skillId }).update({ defaultVersionId: versionId });
+
+    const promptSkills = async (userId: string) =>
+      (await users.getEffectivePromptAccess(userId))?.skillIds || [];
+
+    // A Platform Admin assigns the skill to a Team that does not own it.
+    await governance.setTeamSkillGrant(adminId, consumerTeamId, skillKey, true);
+    assert.ok((await promptSkills(memberId)).includes(skillKey));
+    assert.ok((await governance.effectiveSkillAccess(memberId)).skillKeys.includes(skillKey));
+
+    // The Lead may not touch the grant itself, which is why the disable exists.
+    await assert.rejects(
+      () => governance.setTeamSkillGrant(leadId, consumerTeamId, skillKey, false),
+      (error: any) => error?.code === 'SKILL_ACTION_FORBIDDEN',
+    );
+
+    const listed = await governance.listTeamSkillAccess(leadId, consumerTeamId);
+    assert.ok((listed.skills as any[]).some((entry) => entry.skillKey === skillKey && entry.disabled === false));
+
+    await governance.setTeamSkillDisabled(leadId, consumerTeamId, skillKey, true, 'Not for this Team');
+    assert.ok(!(await promptSkills(memberId)).includes(skillKey));
+    assert.ok(!(await governance.effectiveSkillAccess(memberId)).skillKeys.includes(skillKey));
+    // The admin's grant survives, so the Lead can reverse their own decision.
+    assert.ok(await db('team_skill_grants').where({ teamId: consumerTeamId, skillId }).first());
+
+    await governance.setTeamSkillDisabled(leadId, consumerTeamId, skillKey, false);
+    assert.ok((await promptSkills(memberId)).includes(skillKey));
+
+    // An ordinary member of the Team has no such authority.
+    await assert.rejects(
+      () => governance.setTeamSkillDisabled(memberId, consumerTeamId, skillKey, true),
+      (error: any) => error?.code === 'SKILL_ACTION_FORBIDDEN',
+    );
+
+    // The same override has to work for skills granted through the pre-governance table,
+    // whose rows key on a string skill id rather than a `skills` uuid.
+    await db('skill_grants').insert({
+      principalType: 'group', principalId: consumerTeamId, skillId: legacyKey, effect: 'allow',
+    });
+    assert.ok((await promptSkills(memberId)).includes(legacyKey));
+    await governance.setTeamSkillDisabled(leadId, consumerTeamId, legacyKey, true);
+    assert.ok(!(await promptSkills(memberId)).includes(legacyKey));
+
+    // A skill the Team was never granted cannot be disabled.
+    await assert.rejects(
+      () => governance.setTeamSkillDisabled(leadId, consumerTeamId, `never-granted-${suffix}`, true),
+      (error: any) => error?.code === 'SKILL_RESOURCE_NOT_FOUND',
+    );
+  } finally {
+    await db('team_skill_disables').where({ teamId: consumerTeamId }).del().catch(() => undefined);
+    await db('skill_grants').where({ principalId: consumerTeamId }).del().catch(() => undefined);
+    await db('team_skill_grants').where({ skillId }).del().catch(() => undefined);
+    await db('skills').where({ id: skillId }).update({ defaultVersionId: null }).catch(() => undefined);
+    await db('skill_versions').where({ skillId }).del().catch(() => undefined);
+    await db('skills').where({ id: skillId }).del().catch(() => undefined);
+    await db('audit_events').whereIn('actorUserId', [adminId, leadId, memberId]).del().catch(() => undefined);
+    await db('notifications').whereIn('recipientUserId', [adminId, leadId, memberId]).del().catch(() => undefined);
+    await db('team_role_bindings').where({ teamId: consumerTeamId }).del().catch(() => undefined);
+    await db('group_members').whereIn('groupId', [ownerTeamId, consumerTeamId]).del().catch(() => undefined);
+    await db('groups').whereIn('id', [ownerTeamId, consumerTeamId]).del().catch(() => undefined);
+    await db('users').whereIn('id', [adminId, leadId, memberId]).del().catch(() => undefined);
+    await db.destroy();
+  }
+});
+
+test('a draft keeps subfolder files across partial saves', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const authorId = uuidv4();
+  const teamId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  let draftId: string | null = null;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    await db('users').insert({
+      id: authorId,
+      externalId: `subfolder-author-${suffix}`,
+      email: `subfolder-author-${suffix}@example.test`,
+      displayName: 'Subfolder author',
+      isAdmin: false,
+    });
+    await db('groups').insert({ id: teamId, name: `Subfolder team ${suffix}` });
+    await db('group_members').insert({ groupId: teamId, userId: authorId });
+
+    const created = await governance.createDraft(authorId, { proposalType: 'new' });
+    draftId = String(created.id);
+    assert.deepEqual(created.files.map((file: any) => file.path), ['SKILL.md']);
+
+    const withFiles = await governance.updateDraft(authorId, draftId, Number(created.draftRevision), {
+      proposedSkillKey: `subfolder-smoke-${suffix}`,
+      proposedOwnerTeamId: teamId,
+      files: [
+        { path: 'scripts/count.py', content: 'print("hi")\n' },
+        { path: 'references/style.md', content: '# Style\n' },
+        { path: 'assets/notes.txt', content: 'notes\n' },
+      ],
+    });
+    assert.deepEqual(
+      withFiles.files.map((file: any) => file.path).sort(),
+      ['SKILL.md', 'assets/notes.txt', 'references/style.md', 'scripts/count.py'],
+    );
+
+    // The editor only ever sends the files it changed, so a partial save must merge
+    // rather than replace: everything it left out has to survive untouched.
+    const partial = await governance.updateDraft(authorId, draftId, Number(withFiles.draftRevision), {
+      files: [{ path: 'scripts/count.py', content: 'print("bye")\n' }],
+      deletePaths: ['assets/notes.txt'],
+    });
+    const byPath = Object.fromEntries(partial.files.map((file: any) => [file.path, file]));
+    assert.deepEqual(Object.keys(byPath).sort(), ['SKILL.md', 'references/style.md', 'scripts/count.py']);
+    assert.equal(byPath['scripts/count.py'].content, 'print("bye")\n');
+    assert.equal(byPath['references/style.md'].content, '# Style\n');
+
+    // Every file is content-addressed, which is what lets the editor pin a declared
+    // sandbox script to the blob the validator will compare it against.
+    assert.match(byPath['scripts/count.py'].contentHash, /^[a-f0-9]{64}$/);
+
+    await assert.rejects(
+      () => governance.updateDraft(authorId, draftId!, Number(partial.draftRevision), {
+        deletePaths: ['SKILL.md'],
+      }),
+      (error: any) => error?.code === 'SKILL_VALIDATION_FAILED',
+    );
+    await assert.rejects(
+      () => governance.updateDraft(authorId, draftId!, Number(partial.draftRevision), {
+        files: [{ path: 'secrets/leak.txt', content: 'nope' }],
+      }),
+      (error: any) => error?.code === 'INVALID_SKILL_MANIFEST',
+    );
+  } finally {
+    if (draftId) {
+      await db('skill_draft_revision_files')
+        .whereIn('draftRevisionId', db('skill_draft_revisions').select('id').where({ draftId }))
+        .del().catch(() => undefined);
+      await db('private_skill_drafts').where({ id: draftId }).update({ currentDraftRevisionId: null }).catch(() => undefined);
+      await db('skill_draft_revisions').where({ draftId }).del().catch(() => undefined);
+      await db('private_skill_drafts').where({ id: draftId }).del().catch(() => undefined);
+    }
+    await db('audit_events').where({ actorUserId: authorId }).del().catch(() => undefined);
+    await db('group_members').where({ groupId: teamId }).del().catch(() => undefined);
+    await db('groups').where({ id: teamId }).del().catch(() => undefined);
+    await db('users').where({ id: authorId }).del().catch(() => undefined);
+    await db.destroy();
+  }
+});

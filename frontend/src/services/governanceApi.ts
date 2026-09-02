@@ -206,6 +206,28 @@ export type SkillDetail = {
   };
 };
 
+export type TeamSkillAccessEntry = {
+  id: string;
+  skillKey: string;
+  displayName: string;
+  description?: string | null;
+  status: string;
+  ownerTeamId: string | null;
+  ownerTeamName: string;
+  defaultSemanticVersion?: string | null;
+  defaultVersionStatus?: string | null;
+  grantSource: 'governed' | 'legacy';
+  ownedByTeam: boolean;
+  disabled: boolean;
+  disabledReason?: string | null;
+};
+
+export type TeamSkillAccess = {
+  teamId: string;
+  teamName: string;
+  skills: TeamSkillAccessEntry[];
+};
+
 const apiError = async (response: Response, fallback: string): Promise<never> => {
   const body = await response.json().catch(() => ({})) as {
     error?: string;
@@ -375,8 +397,25 @@ export const retrySkillActivation = (
   'Failed to retry governed skill activation',
 );
 
-export const fetchSkillCatalog = () =>
-  jsonRequest<{ skills: CatalogSkill[] }>(`${API_URL}/skills/catalog`, undefined, 'Failed to load governed skill catalog');
+const CATALOG_PAGE_SIZE = 100;
+
+/**
+ * The server caps `/skills/catalog` at 100 rows per request, so page until a short page
+ * comes back. Fetching a single default page silently hid every skill past the 50th.
+ */
+export const fetchSkillCatalog = async (): Promise<{ skills: CatalogSkill[] }> => {
+  const skills: CatalogSkill[] = [];
+  for (let offset = 0; ; offset += CATALOG_PAGE_SIZE) {
+    const page = await jsonRequest<{ skills: CatalogSkill[] }>(
+      `${API_URL}/skills/catalog?limit=${CATALOG_PAGE_SIZE}&offset=${offset}`,
+      undefined,
+      'Failed to load governed skill catalog',
+    );
+    skills.push(...page.skills);
+    if (page.skills.length < CATALOG_PAGE_SIZE) break;
+  }
+  return { skills };
+};
 
 export const fetchSkillVersions = (skillId: string) =>
   jsonRequest<{ skill: CatalogSkill; versions: GovernedSkillVersion[] }>(
@@ -461,3 +500,25 @@ export const setTeamLead = (teamId: string, userId: string, enabled: boolean) =>
     },
     'Failed to update Team Lead assignment',
   );
+
+export const fetchTeamSkillAccess = (teamId: string) =>
+  jsonRequest<TeamSkillAccess>(
+    `${API_URL}/teams/${encodeURIComponent(teamId)}/skill-access`,
+    undefined,
+    'Failed to load Team skill access',
+  );
+
+export const setTeamSkillDisabled = (
+  teamId: string,
+  skillKey: string,
+  disabled: boolean,
+  reason?: string,
+) => jsonRequest<{ teamId: string; skillKey: string; disabled: boolean }>(
+  `${API_URL}/teams/${encodeURIComponent(teamId)}/skill-disables`,
+  {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skillKey, disabled, reason }),
+  },
+  `Failed to ${disabled ? 'disable' : 'enable'} the skill for this Team`,
+);

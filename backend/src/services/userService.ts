@@ -1022,7 +1022,15 @@ export class UserService {
     const memberships = await this.db('group_members').select('groupId').where({ userId });
     const groupIds = normalizeUniqueStrings((memberships as Array<{ groupId?: string }>).map((row) => String(row.groupId || '')));
 
-    const [legacyGroupSkills, legacyDirectSkills, governedTeamSkills, governedDirectSkills, mcpRows, knowledgeRows] = await Promise.all([
+    const [
+      legacyGroupSkills,
+      legacyDirectSkills,
+      governedTeamSkills,
+      governedDirectSkills,
+      teamDisabledSkills,
+      mcpRows,
+      knowledgeRows,
+    ] = await Promise.all([
       groupIds.length
         ? this.db('skill_grants as grant')
           .leftJoin('skills as governedSkill', 'governedSkill.skillKey', 'grant.skillId')
@@ -1069,6 +1077,11 @@ export class UserService {
           'version.status': 'active',
         }),
       groupIds.length
+        ? this.db('team_skill_disables')
+          .select('skillKey')
+          .whereIn('teamId', groupIds)
+        : Promise.resolve([]),
+      groupIds.length
         ? this.db('mcp_server_group_grants')
           .select('serverId')
           .whereIn('groupId', groupIds)
@@ -1081,6 +1094,14 @@ export class UserService {
         : Promise.resolve([]),
     ]);
 
+    // A Team Lead may switch a skill off for their Team. The disable is an override, not
+    // a revocation: the admin's grant row stays intact, so re-enabling restores access.
+    const disabledSkillKeys = new Set(
+      (teamDisabledSkills as Array<{ skillKey?: string }>)
+        .map((row) => String(row.skillKey || ''))
+        .filter(Boolean),
+    );
+
     return {
       isAdmin: user.isAdmin,
       skillIds: normalizeUniqueStrings(
@@ -1090,7 +1111,7 @@ export class UserService {
           ...governedTeamSkills,
           ...governedDirectSkills,
         ].map((row: any) => String(row.skillId || '')),
-      ),
+      ).filter((skillId) => !disabledSkillKeys.has(skillId)),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
       knowledgeBaseIds: normalizeUniqueStrings(
         (knowledgeRows as Array<{ knowledgeBaseId?: string }>).map((row) => String(row.knowledgeBaseId || '')),

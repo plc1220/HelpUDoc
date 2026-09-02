@@ -45,6 +45,7 @@ export default function SkillDetailsDialog({
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<'archive' | 'restore' | 'improve' | null>(null);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -71,17 +72,11 @@ export default function SkillDetailsDialog({
   const skill = detail?.skill || initialSkill;
 
   const changeStatus = async (action: 'archive' | 'restore') => {
-    if (action === 'archive') {
-      const usage = detail?.usage;
-      const impact = usage
-        ? ` It is currently assigned to ${usage.teamGrantCount} Team(s), ${usage.userGrantCount} user(s), and pinned in ${usage.workspacePinCount} workspace(s).`
-        : '';
-      if (!window.confirm(`Archive “${skill.displayName}”? It will no longer be available to run or assign.${impact} Published versions and history will be kept.`)) return;
-    }
     setBusy(action);
     setError(null);
     try {
       await updateSkillStatus(skill.id, action);
+      setConfirmingArchive(false);
       await Promise.all([load(), onChanged()]);
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : `Failed to ${action} the skill`);
@@ -157,12 +152,49 @@ export default function SkillDetailsDialog({
           ) : null}
         </div>
 
+        {confirmingArchive && detail ? (
+          <div className="border-t border-rose-200 bg-rose-50 px-5 py-4 sm:px-6">
+            <h3 className="text-sm font-semibold text-rose-900">
+              Archive “{skill.displayName}”?
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-rose-800">
+              Archiving is how a skill is removed from use. It stops being runnable or assignable and is
+              withdrawn from the runtime registry. Published versions and audit history are kept, and a
+              Platform Admin or Team Lead can restore it later.
+            </p>
+            <ul className="mt-3 space-y-1 text-sm text-rose-800">
+              <li>Assigned to <strong>{detail.usage.teamGrantCount}</strong> Team(s)</li>
+              <li>Assigned directly to <strong>{detail.usage.userGrantCount}</strong> user(s)</li>
+              <li>Pinned in <strong>{detail.usage.workspacePinCount}</strong> workspace(s)</li>
+            </ul>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void changeStatus('archive')}
+                disabled={Boolean(busy)}
+                className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {busy === 'archive' ? <Loader2 size={16} className="animate-spin" /> : <Archive size={16} />}
+                Archive skill
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingArchive(false)}
+                disabled={Boolean(busy)}
+                className="settings-portal-button-secondary rounded-xl px-4 py-2.5 text-sm font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 sm:px-6">
           <button type="button" onClick={() => onVersions(skill)} className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold"><History size={16} /> Published versions</button>
           <div className="flex flex-wrap gap-2">
             {detail?.permissions.canArchive ? (
-              <button type="button" onClick={() => void changeStatus('archive')} disabled={Boolean(busy)} className="inline-flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 disabled:opacity-50">
-                {busy === 'archive' ? <Loader2 size={16} className="animate-spin" /> : <Archive size={16} />} Archive skill
+              <button type="button" onClick={() => setConfirmingArchive(true)} disabled={Boolean(busy) || confirmingArchive} className="inline-flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 disabled:opacity-50">
+                <Archive size={16} /> Archive (remove from use)
               </button>
             ) : null}
             {detail?.permissions.canRestore ? (

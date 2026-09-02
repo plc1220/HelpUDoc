@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import YAML from 'yaml';
 import {
+  Archive,
   BadgeCheck,
+  Ban,
   BookOpenCheck,
   CheckCircle2,
   ChevronRight,
@@ -14,6 +16,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   ShieldCheck,
@@ -23,6 +26,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
+import SkillFileTree from '../features/governance/SkillFileTree';
+import SkillCodeEditor from '../features/governance/SkillCodeEditor';
 import {
   SettingsEmptyState,
   SettingsLoadingState,
@@ -42,7 +47,10 @@ import {
   fetchSkillReview,
   fetchSkillVersions,
   fetchTeamReviews,
+  fetchTeamSkillAccess,
   pinWorkspaceSkillVersion,
+  setTeamSkillDisabled,
+  updateSkillStatus,
   retrySkillActivation,
   submitSkillDraft,
   setDefaultSkillVersion,
@@ -51,6 +59,7 @@ import {
   validateSkillDraft,
   type CatalogSkill,
   type GovernanceTeam,
+  type TeamSkillAccess,
   type GovernedSkillVersion,
   type MySkillsResponse,
   type SkillDraft,
@@ -65,7 +74,7 @@ import SkillDetailsDialog from '../features/governance/SkillDetailsDialog';
 import GovernanceViewToggle, { type GovernanceViewMode } from '../features/governance/GovernanceViewToggle';
 import type { Workspace } from '../types';
 
-type TabId = 'mine' | 'reviews' | 'catalog';
+type TabId = 'mine' | 'reviews' | 'team-skills' | 'catalog';
 
 const statusTone = (status: string) => {
   if (['active', 'approved', 'pass', 'activation_active'].includes(status)) return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
@@ -138,6 +147,77 @@ const updateSkillFrontmatter = (
   }
 };
 
+// Mirrors IMPORT_ALLOWED_PREFIXES in backend/src/services/skills/paths.ts. Validating
+// here turns a generic INVALID_SKILL_MANIFEST from the server into a precise message.
+const SKILL_FOLDER_PREFIXES = [
+  'scripts/',
+  'references/',
+  'assets/',
+  'templates/',
+  'docs/',
+  'examples/',
+  'tasks/',
+  'agents/',
+  'ooxml/',
+  'troubleshooting/',
+];
+const SKILL_ROOT_FILES = ['SKILL.md', 'README.md', 'LICENSE', 'LICENSE.txt', 'QUICKREF.md'];
+
+const isAllowedSkillPath = (path: string) =>
+  SKILL_ROOT_FILES.includes(path) || SKILL_FOLDER_PREFIXES.some((prefix) => path.startsWith(prefix));
+
+/**
+ * Rewrite `sandbox_scripts[].sha256` to the hash the server actually stored.
+ *
+ * The package validator rejects any declared sandbox script whose hash does not match its
+ * blob, and nobody can compute a SHA-256 by hand in a browser form, so a hand-authored
+ * `scripts/*.py` would otherwise be permanently un-submittable.
+ */
+const syncSandboxScriptHashes = (
+  markdown: string,
+  hashByPath: Record<string, string>,
+): string | null => {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) return null;
+  try {
+    const metadata = YAML.parse(match[1]) || {};
+    const scripts = metadata.sandbox_scripts;
+    if (!Array.isArray(scripts) || !scripts.length) return null;
+    let changed = false;
+    for (const script of scripts) {
+      if (!script || typeof script !== 'object') continue;
+      const scriptPath = String(script.path || '').trim();
+      const hash = hashByPath[scriptPath];
+      if (hash && script.sha256 !== hash) {
+        script.sha256 = hash;
+        changed = true;
+      }
+    }
+    if (!changed) return null;
+    return `---\n${YAML.stringify(metadata).trimEnd()}\n---\n${markdown.slice(match[0].length)}`;
+  } catch {
+    // Malformed frontmatter is left for the validator to report precisely.
+    return null;
+  }
+};
+
+type DraftFileState = {
+  content: string;
+  mimeType?: string | null;
+  contentHash: string;
+  binary: boolean;
+  dirty: boolean;
+};
+
+const toFileState = (files: SkillDraft['files']): Record<string, DraftFileState> =>
+  Object.fromEntries(files.map((file) => [file.path, {
+    content: file.content ?? '',
+    mimeType: file.mimeType,
+    contentHash: file.contentHash,
+    binary: file.encoding !== 'utf-8',
+    dirty: false,
+  }]));
+
 const DraftEditor = ({
   initialDraft,
   onClose,
@@ -152,9 +232,12 @@ const DraftEditor = ({
   const [displayName, setDisplayName] = useState(initialDraft.displayName || '');
   const [description, setDescription] = useState(initialDraft.description || '');
   const [teamId, setTeamId] = useState(initialDraft.proposedOwnerTeamId || initialDraft.eligibleTeams[0]?.id || '');
-  const [skillMarkdown, setSkillMarkdown] = useState(
-    initialDraft.files.find((file) => file.path === 'SKILL.md')?.content || '',
-  );
+  const [files, setFiles] = useState<Record<string, DraftFileState>>(() => toFileState(initialDraft.files));
+  const [deletedPaths, setDeletedPaths] = useState<string[]>([]);
+  const [selectedPath, setSelectedPath] = useState('SKILL.md');
+  const [newFileFolder, setNewFileFolder] = useState('scripts/');
+  const [newFileName, setNewFileName] = useState('');
+  const [addingFile, setAddingFile] = useState(false);
   const [semanticVersion, setSemanticVersion] = useState(initialDraft.proposalType === 'new' ? '1.0.0' : '1.0.1');
   const [submissionNote, setSubmissionNote] = useState('');
   const [validation, setValidation] = useState<SkillValidation | null>(
@@ -163,18 +246,104 @@ const DraftEditor = ({
   const [busy, setBusy] = useState<'save' | 'validate' | 'submit' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const fileEntries = useMemo(
+    () => Object.entries(files)
+      .map(([path, state]) => ({ path, dirty: state.dirty, binary: state.binary })),
+    [files],
+  );
+  const selected = files[selectedPath];
+
+  const editFile = (path: string, content: string) => {
+    setFiles((current) => (current[path]
+      ? { ...current, [path]: { ...current[path], content, dirty: true } }
+      : current));
+    setValidation(null);
+  };
+
+  const editSkillMarkdown = (updater: (current: string) => string) => {
+    setFiles((current) => {
+      const skill = current['SKILL.md'];
+      if (!skill) return current;
+      return { ...current, 'SKILL.md': { ...skill, content: updater(skill.content), dirty: true } };
+    });
+  };
+
+  const addFile = () => {
+    const name = newFileName.trim().replace(/^\/+/, '');
+    if (!name) return;
+    const path = `${newFileFolder}${name}`;
+    if (!isAllowedSkillPath(path)) {
+      setError(`${path} is outside the governed skill package boundary.`);
+      return;
+    }
+    if (files[path]) {
+      setSelectedPath(path);
+      setNewFileName('');
+      setAddingFile(false);
+      return;
+    }
+    setFiles((current) => ({
+      ...current,
+      [path]: { content: '', mimeType: null, contentHash: '', binary: false, dirty: true },
+    }));
+    setDeletedPaths((current) => current.filter((item) => item !== path));
+    setSelectedPath(path);
+    setNewFileName('');
+    setAddingFile(false);
+    setError(null);
+    setValidation(null);
+  };
+
+  const removeFile = (path: string) => {
+    if (path === 'SKILL.md') return;
+    setFiles((current) => {
+      const next = { ...current };
+      delete next[path];
+      return next;
+    });
+    // Only paths the server already knows about need an explicit delete instruction.
+    if (files[path]?.contentHash) setDeletedPaths((current) => [...new Set([...current, path])]);
+    if (selectedPath === path) setSelectedPath('SKILL.md');
+    setValidation(null);
+  };
+
+  const persist = async (): Promise<SkillDraft | undefined> => {
+    const dirtyFiles = Object.entries(files)
+      .filter(([, state]) => state.dirty && !state.binary)
+      .map(([path, state]) => ({ path, content: state.content }));
+
+    let next = await updateSkillDraft(draft.id, draft.draftRevision, {
+      displayName,
+      description,
+      proposedSkillKey: skillKey,
+      proposedOwnerTeamId: teamId || null,
+      ...(dirtyFiles.length ? { files: dirtyFiles } : {}),
+      ...(deletedPaths.length ? { deletePaths: deletedPaths } : {}),
+    });
+
+    // The server has now hashed every file, so any declared sandbox script can be pinned
+    // to the blob it actually refers to. This needs the saved hashes, hence a second pass.
+    const hashByPath = Object.fromEntries(next.files.map((file) => [file.path, file.contentHash]));
+    const skillMarkdown = next.files.find((file) => file.path === 'SKILL.md')?.content ?? '';
+    const reconciled = syncSandboxScriptHashes(skillMarkdown, hashByPath);
+    if (reconciled) {
+      next = await updateSkillDraft(next.id, next.draftRevision, {
+        files: [{ path: 'SKILL.md', content: reconciled }],
+      });
+    }
+
+    setDraft(next);
+    setFiles(toFileState(next.files));
+    setDeletedPaths([]);
+    if (!next.files.some((file) => file.path === selectedPath)) setSelectedPath('SKILL.md');
+    return next;
+  };
+
   const save = async () => {
     setBusy('save');
     setError(null);
     try {
-      const next = await updateSkillDraft(draft.id, draft.draftRevision, {
-        displayName,
-        description,
-        proposedSkillKey: skillKey,
-        proposedOwnerTeamId: teamId || null,
-        files: [{ path: 'SKILL.md', content: skillMarkdown }],
-      });
-      setDraft(next);
+      const next = await persist();
       setValidation(null);
       return next;
     } catch (saveError) {
@@ -202,14 +371,8 @@ const DraftEditor = ({
     setBusy('submit');
     setError(null);
     try {
-      const saved = await updateSkillDraft(draft.id, draft.draftRevision, {
-        displayName,
-        description,
-        proposedSkillKey: skillKey,
-        proposedOwnerTeamId: teamId || null,
-        files: [{ path: 'SKILL.md', content: skillMarkdown }],
-      });
-      setDraft(saved);
+      const saved = await persist();
+      if (!saved) return;
       const checked = await validateSkillDraft(saved.id);
       setValidation(checked);
       if (!checked.valid) {
@@ -234,7 +397,7 @@ const DraftEditor = ({
   return (
     <div className="settings-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <div
-        className="settings-modal-panel flex h-[min(92vh,980px)] w-full max-w-6xl flex-col overflow-hidden rounded-[28px]"
+        className="settings-modal-panel flex h-[min(92vh,980px)] w-full max-w-7xl flex-col overflow-hidden rounded-[28px]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="skill-draft-title"
@@ -262,7 +425,7 @@ const DraftEditor = ({
           </button>
         </div>
 
-        <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[300px_240px_minmax(0,1fr)]">
           <aside className="overflow-y-auto border-b border-slate-200 p-5 lg:border-b-0 lg:border-r">
             <div className="space-y-4">
               <label className="block text-sm font-medium text-slate-700">
@@ -281,7 +444,7 @@ const DraftEditor = ({
                   onChange={(event) => {
                     const value = event.target.value;
                     setDisplayName(value);
-                    setSkillMarkdown((current) => updateSkillFrontmatter(current, { name: value }));
+                    editSkillMarkdown((current) => updateSkillFrontmatter(current, { name: value }));
                   }}
                   className="settings-control mt-1.5 w-full rounded-xl px-3 py-2.5 text-sm"
                 />
@@ -293,7 +456,7 @@ const DraftEditor = ({
                   onChange={(event) => {
                     const value = event.target.value;
                     setDescription(value);
-                    setSkillMarkdown((current) => updateSkillFrontmatter(current, { description: value }));
+                    editSkillMarkdown((current) => updateSkillFrontmatter(current, { description: value }));
                   }}
                   rows={3}
                   className="settings-control mt-1.5 w-full rounded-xl px-3 py-2.5 text-sm"
@@ -360,24 +523,86 @@ const DraftEditor = ({
             ) : null}
           </aside>
 
+          <aside className="flex min-h-0 flex-col border-b border-slate-200 lg:border-b-0 lg:border-r">
+            <div className="flex items-center justify-between border-b border-slate-200 px-3 py-3">
+              <span className="text-sm font-semibold text-slate-800">Files</span>
+              <button
+                type="button"
+                onClick={() => setAddingFile((current) => !current)}
+                aria-expanded={addingFile}
+                className="settings-portal-button-secondary inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold"
+              >
+                <Plus size={13} /> New
+              </button>
+            </div>
+            {addingFile ? (
+              <div className="space-y-2 border-b border-slate-200 bg-slate-50 p-3">
+                <select
+                  value={newFileFolder}
+                  onChange={(event) => setNewFileFolder(event.target.value)}
+                  aria-label="Folder"
+                  className="settings-control w-full rounded-lg px-2 py-1.5 font-mono text-xs"
+                >
+                  <option value="">(root)</option>
+                  {SKILL_FOLDER_PREFIXES.map((prefix) => (
+                    <option key={prefix} value={prefix}>{prefix}</option>
+                  ))}
+                </select>
+                <input
+                  value={newFileName}
+                  onChange={(event) => setNewFileName(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') addFile(); }}
+                  placeholder="helper.py"
+                  aria-label="File name"
+                  className="settings-control w-full rounded-lg px-2 py-1.5 font-mono text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={addFile}
+                  disabled={!newFileName.trim()}
+                  className="settings-button-primary w-full rounded-lg px-2 py-1.5 text-xs font-semibold disabled:opacity-50"
+                >
+                  Add file
+                </button>
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              <SkillFileTree
+                entries={fileEntries}
+                selectedPath={selectedPath}
+                onSelect={setSelectedPath}
+                onDelete={removeFile}
+              />
+            </div>
+          </aside>
+
           <section className="flex min-h-0 flex-col">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
                 <FileCode2 size={16} />
-                SKILL.md
+                <span className="font-mono">{selectedPath}</span>
+                {selected?.dirty ? <span className="text-xs font-normal text-amber-600">unsaved</span> : null}
               </div>
-              <span className="text-xs text-slate-500">{skillMarkdown.length.toLocaleString()} characters</span>
+              <span className="text-xs text-slate-500">
+                {selected && !selected.binary ? `${selected.content.length.toLocaleString()} characters` : null}
+              </span>
             </div>
-            <textarea
-              value={skillMarkdown}
-              onChange={(event) => {
-                setSkillMarkdown(event.target.value);
-                setValidation(null);
-              }}
-              spellCheck={false}
-              aria-label="SKILL.md content"
-              className="min-h-0 flex-1 resize-none bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100 outline-none"
-            />
+            <div className="min-h-0 flex-1 bg-slate-950">
+              {!selected ? (
+                <p className="p-5 text-sm text-slate-400">Select a file to edit.</p>
+              ) : selected.binary ? (
+                <p className="p-5 text-sm text-slate-400">
+                  {selectedPath} is a binary asset ({selected.mimeType || 'unknown type'}). It ships with the package
+                  but cannot be edited here.
+                </p>
+              ) : (
+                <SkillCodeEditor
+                  path={selectedPath}
+                  value={selected.content}
+                  onChange={(next) => editFile(selectedPath, next)}
+                />
+              )}
+            </div>
           </section>
         </div>
 
@@ -418,6 +643,7 @@ const DraftEditor = ({
     </div>
   );
 };
+
 
 const ReviewDialog = ({
   review,
@@ -807,6 +1033,8 @@ const SkillGovernancePage = () => {
   const [versionDialog, setVersionDialog] = useState<CatalogSkill | null>(null);
   const [draftQuery, setDraftQuery] = useState('');
   const [catalogQuery, setCatalogQuery] = useState('');
+  const [catalogStatus, setCatalogStatus] = useState<'active' | 'archived' | 'all'>('active');
+  const [teamAccess, setTeamAccess] = useState<TeamSkillAccess | null>(null);
   const [draftView, setDraftView] = useStoredViewMode('drafts');
   const [catalogView, setCatalogView] = useStoredViewMode('catalog');
   const [loading, setLoading] = useState(true);
@@ -825,14 +1053,20 @@ const SkillGovernancePage = () => {
   }, [draftQuery, mine]);
   const visibleCatalog = useMemo(() => {
     const query = catalogQuery.trim().toLocaleLowerCase();
-    return catalog.filter((skill) => (
+    return catalog.filter((skill) => {
+      // Archived skills stay in the catalog payload so they can be found and restored,
+      // but they are hidden by default rather than mixed in with the usable ones.
+      if (catalogStatus === 'active') return skill.status !== 'retired';
+      if (catalogStatus === 'archived') return skill.status === 'retired';
+      return true;
+    }).filter((skill) => (
       !query
       || skill.displayName.toLocaleLowerCase().includes(query)
       || skill.skillKey.toLocaleLowerCase().includes(query)
       || (skill.description || '').toLocaleLowerCase().includes(query)
       || skill.ownerTeamName.toLocaleLowerCase().includes(query)
     ));
-  }, [catalog, catalogQuery]);
+  }, [catalog, catalogQuery, catalogStatus]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -867,9 +1101,25 @@ const SkillGovernancePage = () => {
     void load();
   }, [load]);
 
+  const loadTeamAccess = useCallback(async (teamId: string) => {
+    if (!teamId) {
+      setTeamAccess(null);
+      return;
+    }
+    try {
+      setTeamAccess(await fetchTeamSkillAccess(teamId));
+    } catch (accessError) {
+      setError(accessError instanceof Error ? accessError.message : 'Failed to load Team skill access');
+    }
+  }, []);
+
   useEffect(() => {
     if (selectedLeadTeamId) void loadReviews(selectedLeadTeamId);
   }, [loadReviews, selectedLeadTeamId]);
+
+  useEffect(() => {
+    if (tab === 'team-skills' && selectedLeadTeamId) void loadTeamAccess(selectedLeadTeamId);
+  }, [tab, loadTeamAccess, selectedLeadTeamId]);
 
   const openDraft = async (draftId: string) => {
     setActionBusy(draftId);
@@ -929,6 +1179,32 @@ const SkillGovernancePage = () => {
     }
   };
 
+  const restoreSkill = async (skill: CatalogSkill) => {
+    setActionBusy(`restore:${skill.id}`);
+    setError(null);
+    try {
+      await updateSkillStatus(skill.id, 'restore');
+      await load();
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : 'Failed to restore the skill');
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const toggleTeamSkill = async (skillKey: string, disabled: boolean) => {
+    setActionBusy(`team-skill:${skillKey}`);
+    setError(null);
+    try {
+      await setTeamSkillDisabled(selectedLeadTeamId, skillKey, disabled);
+      await loadTeamAccess(selectedLeadTeamId);
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : 'Failed to update the skill for this Team');
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   const openReview = async (requestId: string) => {
     setActionBusy(requestId);
     setError(null);
@@ -962,6 +1238,7 @@ const SkillGovernancePage = () => {
         tabs={[
           { id: 'mine', label: 'My skills', icon: Code2 },
           { id: 'reviews', label: `Team reviews${leadTeams.length ? ` (${reviews.length})` : ''}`, icon: Users2 },
+          ...(leadTeams.length ? [{ id: 'team-skills' as const, label: 'Team skills', icon: ShieldCheck }] : []),
           { id: 'catalog', label: 'Catalog', icon: Library },
         ]}
         value={tab}
@@ -1157,6 +1434,90 @@ const SkillGovernancePage = () => {
         </SettingsSurface>
       ) : null}
 
+      {!loading && mine && tab === 'team-skills' ? (
+        <SettingsSurface>
+          <SettingsSectionHeader
+            eyebrow="Team Lead"
+            title="Skills available to your Team"
+            description="Switch off a skill your Team should not use. The Platform Admin's assignment is kept, so you can switch it back on at any time."
+            actions={leadTeams.length ? (
+              <select
+                value={selectedLeadTeamId}
+                onChange={(event) => setSelectedLeadTeamId(event.target.value)}
+                className="settings-control rounded-xl px-3 py-2.5 text-sm"
+                aria-label="Team"
+              >
+                {leadTeams.map((team: GovernanceTeam) => <option key={team.id} value={team.id}>{team.name}</option>)}
+              </select>
+            ) : undefined}
+          />
+          {!teamAccess ? (
+            <SettingsLoadingState label="Loading Team skill access" />
+          ) : !teamAccess.skills.length ? (
+            <SettingsEmptyState
+              title="No skills assigned to this Team"
+              description="A Platform Admin assigns skills to a Team from Users & Teams."
+              icon={Library}
+            />
+          ) : (
+            <div className="mt-5 space-y-2">
+              {teamAccess.skills.map((entry) => (
+                <div
+                  key={entry.skillKey}
+                  className="settings-selection-card flex flex-wrap items-center justify-between gap-3 rounded-2xl p-4"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold text-slate-900">{entry.displayName}</p>
+                      {entry.disabled ? (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                          Disabled for this Team
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                          Available
+                        </span>
+                      )}
+                      {entry.ownedByTeam ? (
+                        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                          Owned by this Team
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 truncate font-mono text-xs text-slate-500">
+                      {entry.skillKey}{entry.defaultSemanticVersion ? `@${entry.defaultSemanticVersion}` : ''}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Owned by {entry.ownerTeamName}
+                      {entry.grantSource === 'legacy' ? ' · runtime registry skill' : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void toggleTeamSkill(entry.skillKey, !entry.disabled)}
+                    disabled={actionBusy === `team-skill:${entry.skillKey}`}
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50 ${
+                      entry.disabled
+                        ? 'settings-button-primary'
+                        : 'bg-amber-50 text-amber-800'
+                    }`}
+                  >
+                    {actionBusy === `team-skill:${entry.skillKey}` ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : entry.disabled ? (
+                      <RotateCcw size={16} />
+                    ) : (
+                      <Ban size={16} />
+                    )}
+                    {entry.disabled ? 'Enable' : 'Disable'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </SettingsSurface>
+      ) : null}
+
       {!loading && mine && tab === 'catalog' ? (
         <SettingsSurface>
           <SettingsSectionHeader
@@ -1173,10 +1534,35 @@ const SkillGovernancePage = () => {
                   <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} className="settings-control w-full rounded-xl py-2.5 pl-9 pr-3 text-sm" placeholder="Search Team skills" aria-label="Search Team skills" />
                 </label>
-                <GovernanceViewToggle value={catalogView} onChange={setCatalogView} />
+                <div className="flex items-center gap-2">
+                  <div className="flex rounded-xl bg-slate-100 p-1" role="group" aria-label="Filter by status">
+                    {([
+                      ['active', 'Active'],
+                      ['archived', 'Archived'],
+                      ['all', 'All'],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setCatalogStatus(value)}
+                        aria-pressed={catalogStatus === value}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                          catalogStatus === value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <GovernanceViewToggle value={catalogView} onChange={setCatalogView} />
+                </div>
               </div>
               {!visibleCatalog.length ? (
-                <SettingsEmptyState title="No matching skills" description="Try a different search." icon={Search} />
+                <SettingsEmptyState
+                  title={catalogStatus === 'archived' ? 'No archived skills' : 'No matching skills'}
+                  description={catalogStatus === 'archived' ? 'Archived skills appear here and can be restored.' : 'Try a different search.'}
+                  icon={Search}
+                />
               ) : (
                 <div className={`mt-4 ${catalogView === 'card' ? 'grid gap-4 md:grid-cols-2 xl:grid-cols-3' : 'space-y-2'}`}>
                   {visibleCatalog.map((skill) => (
@@ -1204,6 +1590,27 @@ const SkillGovernancePage = () => {
                         <button type="button" onClick={() => setVersionDialog(skill)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
                           <History size={16} /> {catalogView === 'compact' ? <span className="sr-only">Versions</span> : 'Versions'}
                         </button>
+                        {skill.canAdminister && skill.status !== 'retired' ? (
+                          <button
+                            type="button"
+                            onClick={() => setDetailSkill(skill)}
+                            title={`Archive ${skill.displayName}`}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-50 px-3 py-2.5 text-sm font-semibold text-rose-700"
+                          >
+                            <Archive size={16} /> {catalogView === 'compact' ? <span className="sr-only">Archive</span> : 'Archive'}
+                          </button>
+                        ) : null}
+                        {skill.canAdminister && skill.status === 'retired' ? (
+                          <button
+                            type="button"
+                            onClick={() => void restoreSkill(skill)}
+                            disabled={actionBusy === `restore:${skill.id}`}
+                            className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold disabled:opacity-50"
+                          >
+                            {actionBusy === `restore:${skill.id}` ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+                            {catalogView === 'compact' ? <span className="sr-only">Restore</span> : 'Restore'}
+                          </button>
+                        ) : null}
                       </div>
                     </article>
                   ))}

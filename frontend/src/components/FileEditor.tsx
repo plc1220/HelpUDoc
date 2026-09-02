@@ -8,6 +8,7 @@ import EditorLoadingState from './EditorLoadingState';
 import FileRenderer from './FileRenderer';
 import type { MarkdownRichEditorHandle } from './MarkdownRichEditor';
 import { isBinaryOfficeDocument } from '../utils/officeFiles';
+import { getLanguage } from '../utils/editorLanguage';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 const MarkdownRichEditor = lazy(() => import('./MarkdownRichEditor'));
@@ -34,57 +35,6 @@ const hashToColor = (seed: string) => {
 };
 
 const formatPresenceName = (name: string) => name.trim() || 'Anonymous';
-
-const getLanguage = (fileName: string) => {
-  const extension = fileName.split('.').pop()?.toLowerCase();
-  switch (extension) {
-    case 'js':
-    case 'jsx':
-      return 'javascript';
-    case 'ts':
-    case 'tsx':
-      return 'typescript';
-    case 'css':
-      return 'css';
-    case 'html':
-      return 'html';
-    case 'json':
-      return 'json';
-    case 'md':
-      return 'markdown';
-    case 'py':
-      return 'python';
-    case 'java':
-      return 'java';
-    case 'c':
-    case 'h':
-      return 'c';
-    case 'cpp':
-    case 'hpp':
-    case 'cc':
-      return 'cpp';
-    case 'go':
-      return 'go';
-    case 'rs':
-      return 'rust';
-    case 'php':
-      return 'php';
-    case 'rb':
-      return 'ruby';
-    case 'sh':
-    case 'bash':
-      return 'shell';
-    case 'yaml':
-    case 'yml':
-      return 'yaml';
-    case 'xml':
-      return 'xml';
-    case 'sql':
-      return 'sql';
-    default:
-      return 'plaintext';
-  }
-};
 
 interface FileEditorProps {
   file: WorkspaceFile | null;

@@ -103,6 +103,14 @@ const teamLeadSchema = z.object({
   enabled: z.boolean(),
 });
 
+// `skillKey` travels in the body, not the path: governed skill keys legitimately contain
+// a slash (`data/analyze`, `sales/forecast`) and would not survive a single path segment.
+const teamSkillDisableSchema = z.object({
+  skillKey: z.string().min(1).max(128),
+  disabled: z.boolean(),
+  reason: z.string().max(512).optional(),
+});
+
 const requireUser = (req: Request) => {
   if (!req.userContext) {
     throw new SkillGovernanceError(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required');
@@ -399,6 +407,31 @@ export default function governanceRoutes(service: SkillGovernanceService) {
     try {
       const user = requireUser(req);
       return res.json(await service.setTeamSkillGrant(user.userId, req.params.teamId, req.params.skillId, false));
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  router.get('/teams/:teamId/skill-access', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      return res.json(await service.listTeamSkillAccess(user.userId, req.params.teamId));
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  router.put('/teams/:teamId/skill-disables', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      const payload = teamSkillDisableSchema.parse(req.body);
+      return res.json(await service.setTeamSkillDisabled(
+        user.userId,
+        req.params.teamId,
+        payload.skillKey,
+        payload.disabled,
+        payload.reason,
+      ));
     } catch (error) {
       return handleError(res, error);
     }

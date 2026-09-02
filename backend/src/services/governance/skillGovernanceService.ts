@@ -1409,6 +1409,155 @@ export class SkillGovernanceService {
     return { teamId, skillId: skill.id, skillKey: skill.skillKey, granted: allow, auditEventId };
   }
 
+  /**
+   * Every skill the Team can currently reach, with the Lead's per-Team disable state.
+   *
+   * Deliberately queries the grant tables rather than `catalog()`: a disabled skill is
+   * subtracted from `effectiveSkillAccess`, so it would vanish from the catalog and the
+   * Lead would have no way to switch it back on.
+   */
+  async listTeamSkillAccess(userId: string, teamId: string): Promise<JsonRecord> {
+    await this.requireUser(userId);
+    if (!await this.isPlatformAdmin(userId)) await this.requireTeamLead(userId, teamId);
+    const team = await this.db('groups').where({ id: teamId }).first();
+    if (!team) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Team not found');
+
+    const [governed, legacy, disables] = await Promise.all([
+      this.db('team_skill_grants as tg')
+        .join('skills as s', 's.id', 'tg.skillId')
+        .join('groups as g', 'g.id', 's.ownerTeamId')
+        .leftJoin('skill_versions as v', 'v.id', 's.defaultVersionId')
+        .select(
+          's.id',
+          's.skillKey',
+          's.displayName',
+          's.description',
+          's.status',
+          'g.name as ownerTeamName',
+          's.ownerTeamId',
+          'v.semanticVersion as defaultSemanticVersion',
+          'v.status as defaultVersionStatus',
+        )
+        .where({ 'tg.teamId': teamId, 'tg.effect': 'allow' }),
+      this.db('skill_grants')
+        .select('skillId')
+        .where({ principalType: 'group', principalId: teamId, effect: 'allow' }),
+      this.db('team_skill_disables').select('skillKey', 'reason', 'updatedAt').where({ teamId }),
+    ]);
+
+    const disabledByKey = new Map(
+      (disables as any[]).map((row) => [String(row.skillKey), row]),
+    );
+    const governedKeys = new Set((governed as any[]).map((row) => String(row.skillKey)));
+    const skills = (governed as any[]).map((row) => ({
+      id: row.id,
+      skillKey: row.skillKey,
+      displayName: row.displayName,
+      description: row.description,
+      status: row.status,
+      ownerTeamId: row.ownerTeamId,
+      ownerTeamName: row.ownerTeamName,
+      defaultSemanticVersion: row.defaultSemanticVersion || null,
+      defaultVersionStatus: row.defaultVersionStatus || null,
+      grantSource: 'governed' as const,
+      ownedByTeam: String(row.ownerTeamId) === String(teamId),
+      disabled: disabledByKey.has(String(row.skillKey)),
+      disabledReason: disabledByKey.get(String(row.skillKey))?.reason || null,
+    }));
+
+    // Skills still granted through the pre-governance `skill_grants` table have no
+    // `skills` row to join, but a Lead must still be able to switch them off.
+    for (const row of legacy as any[]) {
+      const skillKey = String(row.skillId || '');
+      if (!skillKey || governedKeys.has(skillKey)) continue;
+      skills.push({
+        id: skillKey,
+        skillKey,
+        displayName: skillKey,
+        description: null,
+        status: 'active',
+        ownerTeamId: null,
+        ownerTeamName: 'Runtime registry',
+        defaultSemanticVersion: null,
+        defaultVersionStatus: null,
+        grantSource: 'legacy' as any,
+        ownedByTeam: false,
+        disabled: disabledByKey.has(skillKey),
+        disabledReason: disabledByKey.get(skillKey)?.reason || null,
+      });
+    }
+
+    skills.sort((a, b) => String(a.displayName).localeCompare(String(b.displayName)));
+    return { teamId, teamName: team.name, skills };
+  }
+
+  /**
+   * Switch a granted skill on or off for one Team.
+   *
+   * Unlike `setTeamSkillGrant` this does not require the Team to own the skill — the whole
+   * point is that a Lead can switch off something an admin granted from elsewhere. The
+   * grant row is left untouched, so re-enabling is always possible.
+   */
+  async setTeamSkillDisabled(
+    userId: string,
+    teamId: string,
+    skillKey: string,
+    disabled: boolean,
+    reason?: string,
+  ): Promise<JsonRecord> {
+    await this.requireUser(userId);
+    const isPlatformAdmin = await this.isPlatformAdmin(userId);
+    if (!isPlatformAdmin) await this.requireTeamLead(userId, teamId);
+    const team = await this.db('groups').where({ id: teamId }).first();
+    if (!team) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Team not found');
+
+    const normalizedKey = normalizeGovernedSkillKey(skillKey);
+    const [governedGrant, legacyGrant] = await Promise.all([
+      this.db('team_skill_grants as tg')
+        .join('skills as s', 's.id', 'tg.skillId')
+        .where({ 'tg.teamId': teamId, 'tg.effect': 'allow', 's.skillKey': normalizedKey })
+        .first(),
+      this.db('skill_grants')
+        .where({ principalType: 'group', principalId: teamId, skillId: normalizedKey, effect: 'allow' })
+        .first(),
+    ]);
+    if (!governedGrant && !legacyGrant) {
+      governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'That skill is not assigned to this Team');
+    }
+
+    if (disabled) {
+      await this.db('team_skill_disables').insert({
+        teamId,
+        skillKey: normalizedKey,
+        disabledByUserId: userId,
+        reason: reason?.trim() || null,
+      }).onConflict(['teamId', 'skillKey']).merge({
+        disabledByUserId: userId,
+        reason: reason?.trim() || null,
+        updatedAt: this.db.fn.now(),
+      });
+    } else {
+      await this.db('team_skill_disables').where({ teamId, skillKey: normalizedKey }).del();
+    }
+
+    const auditEventId = await this.audit({
+      actorUserId: userId,
+      actorRole: isPlatformAdmin ? 'platform_admin' : 'team_lead',
+      action: disabled ? 'skill_access.team_disabled' : 'skill_access.team_enabled',
+      resourceType: 'skill',
+      resourceId: normalizedKey,
+      metadata: { teamId, skillKey: normalizedKey, reason: reason?.trim() || null },
+    });
+    await this.notifyTeamMembers(
+      teamId,
+      disabled ? 'skill_access.disabled' : 'skill_access.enabled',
+      'skill',
+      normalizedKey,
+      { skillKey: normalizedKey, teamId, source: 'team' },
+    );
+    return { teamId, skillKey: normalizedKey, disabled, auditEventId };
+  }
+
   async setUserSkillGrant(
     adminUserId: string,
     targetUserId: string,
@@ -1872,9 +2021,14 @@ export class SkillGovernanceService {
     return { teamId, userId: targetUserId, role: 'lead', enabled, auditEventId };
   }
 
-  async effectiveSkillAccess(userId: string): Promise<{ skillIds: string[]; skillKeys: string[]; reasons: Record<string, string[]> }> {
+  async effectiveSkillAccess(userId: string): Promise<{
+    skillIds: string[];
+    skillKeys: string[];
+    reasons: Record<string, string[]>;
+    disabledReasons: Record<string, string>;
+  }> {
     const teamIds = await this.userTeamIds(userId);
-    const [direct, team] = await Promise.all([
+    const [direct, team, disabled] = await Promise.all([
       this.db('user_skill_grants as ug')
         .join('skills as s', 's.id', 'ug.skillId')
         .join('skill_versions as v', 'v.id', 's.defaultVersionId')
@@ -1894,7 +2048,18 @@ export class SkillGovernanceService {
           .where({ 'tg.effect': 'allow', 's.status': 'active', 'v.status': 'active' })
           .whereIn('tg.teamId', teamIds)
         : Promise.resolve([]),
+      teamIds.length
+        ? this.db('team_skill_disables as d')
+          .join('groups as g', 'g.id', 'd.teamId')
+          .select('d.skillKey', 'g.name as teamName')
+          .whereIn('d.teamId', teamIds)
+        : Promise.resolve([]),
     ]);
+    // Mirrors the subtraction in `UserService.getEffectivePromptAccess` so the catalog's
+    // `entitled` flag and `authorizeInvocation` agree with what the runtime will allow.
+    const disabledByKey = new Map(
+      (disabled as any[]).map((row) => [String(row.skillKey), String(row.teamName)]),
+    );
     const byId = new Map<string, { skillKey: string; reasons: string[] }>();
     for (const row of direct as any[]) {
       byId.set(row.id, { skillKey: row.skillKey, reasons: ['Direct access'] });
@@ -1905,10 +2070,16 @@ export class SkillGovernanceService {
       current.reasons.push(`via ${row.teamName} Team`);
       byId.set(row.id, current);
     }
+    for (const [id, value] of [...byId]) {
+      if (disabledByKey.has(value.skillKey)) byId.delete(id);
+    }
     return {
       skillIds: [...byId.keys()].sort(),
       skillKeys: [...byId.values()].map((item) => item.skillKey).sort(),
       reasons: Object.fromEntries([...byId].map(([id, value]) => [id, Array.from(new Set(value.reasons))])),
+      disabledReasons: Object.fromEntries(
+        [...disabledByKey].map(([skillKey, teamName]) => [skillKey, `Disabled by the ${teamName} Team lead`]),
+      ),
     };
   }
 
