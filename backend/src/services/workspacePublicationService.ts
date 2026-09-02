@@ -7,11 +7,14 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import { nextAuditSeq, recordFileEvent } from './fileAuditService';
+import { approveFilesOnProposalAccepted } from './fileStatusService';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { DatabaseService } from './databaseService';
 import type { ObjectStore } from './objectStore';
 import { getObjectStore } from './objectStoreFactory';
-import { WorkspaceRecord, WorkspaceRole, WorkspaceService } from './workspaceService';
+import {
+  isSharedWorkspaceRecord, WorkspaceRecord, WorkspaceRole, WorkspaceService,
+} from './workspaceService';
 import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
 
 import {
@@ -43,6 +46,12 @@ type ContentFile = {
   objectKey?: string | null;
   objectProvider?: string | null;
   providerVersion?: string | null;
+  /**
+   * Editorial status of the source row. Carried so a sync can show a private
+   * copy the status it inherited from the Shared workspace. Only ever applied
+   * when the destination is private — see `propagateStatus`.
+   */
+  status?: string | null;
 };
 
 type PublicationManifestFile = {
@@ -594,6 +603,17 @@ export class WorkspacePublicationService {
         content,
         userId,
         tx,
+        // Accepting the proposal is the review decision, so the files it put
+        // under review are approved here, in the same transaction as their
+        // content. Runs after the apply so the approval pins the new version.
+        async (innerTx, _revision, appliedFileIds) => {
+          await approveFilesOnProposalAccepted(innerTx, {
+            workspaceId: sharedWorkspaceId,
+            fileIds: appliedFileIds,
+            userId,
+            role: membership.role as WorkspaceRole,
+          });
+        },
       );
       await tx('workspace_publication_links')
         .where({ privateWorkspaceId, teamWorkspaceId: sharedWorkspaceId })
@@ -811,6 +831,9 @@ export class WorkspacePublicationService {
 
     const sharedChanged = !this.workspaceContentsMatch(baseContent, sharedContent);
     if (!sharedChanged) {
+      // Content matches, but an approval or publication in the Shared workspace
+      // moves no bytes, so the status still has to be brought across.
+      await this.reconcileInheritedStatus(privateWorkspaceId, sharedContent, userId);
       return {
         workspaceId: privateWorkspaceId,
         teamWorkspaceId: teamWorkspace.id,
@@ -1900,6 +1923,7 @@ export class WorkspacePublicationService {
         hash: row.versionSha256 || this.hashBuffer(buffer),
         size: Number(row.versionSizeBytes || buffer.length),
         fileVersionId: row.fileVersionId || null,
+        status: row.status ?? null,
         objectKey: row.versionObjectKey || (row.storageType === 's3' ? row.path : null),
         objectProvider: row.versionObjectProvider || (row.storageType === 's3' ? this.objectStore.provider : null),
         providerVersion: row.versionProviderVersion || null,
@@ -1962,14 +1986,96 @@ export class WorkspacePublicationService {
     }
   }
 
+  /**
+   * Carry the Shared workspace's editorial status onto a private row whose
+   * content did not change.
+   *
+   * Needed in two places, because a status change moves no bytes: the per-file
+   * loop skips unchanged content, and a sync whose content matches entirely
+   * returns `up_to_date` without writing at all. Publishing a file and then
+   * syncing goes through both, so neither can be left out.
+   */
+  private async inheritFileStatus(
+    tx: Knex | Knex.Transaction,
+    workspaceId: string,
+    existing: Record<string, any>,
+    incomingStatus: string | null | undefined,
+    userId: string,
+  ): Promise<boolean> {
+    if (!incomingStatus) return false;
+    if (String(existing.status ?? '') === String(incomingStatus)) return false;
+
+    const version = Number(existing.version || 1);
+    const audit = await recordFileEvent(tx, {
+      fileId: Number(existing.id),
+      workspaceId,
+      filePath: String(existing.name),
+      eventType: 'status.inherited',
+      seq: nextAuditSeq(existing),
+      prevEventHash: existing.lastAuditHash ?? null,
+      actorUserId: userId,
+      actorType: 'system',
+      fileVersion: version,
+      fileVersionId: existing.currentVersionId ?? null,
+      sha256: null,
+      payload: {
+        fromStatus: existing.status ?? null,
+        toStatus: incomingStatus,
+        inheritedBySync: true,
+      },
+    });
+    await tx('files').where({ id: existing.id }).update({
+      status: incomingStatus,
+      // Pinned to this workspace's own version numbering; the source's numbers
+      // mean nothing here and would report drift that never happened.
+      approvedAtVersion: incomingStatus === 'approved' ? version : null,
+      publishedAtVersion: incomingStatus === 'published' ? version : null,
+      statusUpdatedAt: tx.fn.now(),
+      statusUpdatedBy: userId,
+      ...(audit ? { auditSeq: audit.seq, lastAuditHash: audit.eventHash } : {}),
+    });
+    return true;
+  }
+
+  /**
+   * Bring a private copy's statuses in line with the Shared workspace when the
+   * content itself needs no sync.
+   */
+  private async reconcileInheritedStatus(
+    privateWorkspaceId: string,
+    sharedContent: WorkspaceContent,
+    userId: string,
+  ): Promise<void> {
+    const withStatus = [...sharedContent.files.values()].filter((file) => file.status);
+    if (!withStatus.length) return;
+    await this.db.transaction(async (tx) => {
+      const rows = await tx('files')
+        .where({ workspaceId: privateWorkspaceId })
+        .whereNull('deletedAt');
+      const byName = new Map(rows.map((row) => [String(row.name), row]));
+      for (const file of withStatus) {
+        const existing = byName.get(file.name);
+        if (!existing) continue;
+        await this.inheritFileStatus(tx, privateWorkspaceId, existing, file.status, userId);
+      }
+    });
+  }
+
   private async replaceWorkspaceContent(
     workspaceId: string,
     content: WorkspaceContent,
     userId: string,
     transaction?: Knex.Transaction,
-    afterDatabaseUpdate?: (transaction: Knex.Transaction, contentRevision: number) => Promise<void>,
+    afterDatabaseUpdate?: (
+      transaction: Knex.Transaction,
+      contentRevision: number,
+      appliedFileIds: number[],
+    ) => Promise<void>,
   ): Promise<number> {
     await this.ensureContentObjects(workspaceId, content);
+    // Rows whose content this call actually rewrote, so a caller can act on
+    // exactly those (accepting a proposal approves the files it applied).
+    const appliedFileIds: number[] = [];
     const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
     const stagePath = path.join(WORKSPACE_DIR, `.workspace-stage-${uuidv4()}`);
     const backupPath = path.join(WORKSPACE_DIR, `.workspace-backup-${uuidv4()}`);
@@ -1997,6 +2103,13 @@ export class WorkspacePublicationService {
 
       try {
         const updateDatabaseRecords = async (tx: Knex | Knex.Transaction) => {
+          // Editorial status is inherited only when writing into a private
+          // workspace. Propagating into the Shared workspace would let a
+          // private self-approval become a team approval, which is what review
+          // exists to prevent. Derived from the destination rather than passed
+          // by each caller, so it cannot be set wrongly at a call site.
+          const destination = await tx('workspaces').where({ id: workspaceId }).first();
+          const propagateStatus = Boolean(destination) && !isSharedWorkspaceRecord(destination);
           const existingFiles = await tx('files')
             .where({ workspaceId })
             .whereNull('deletedAt');
@@ -2075,7 +2188,27 @@ export class WorkspacePublicationService {
               && String(currentVersion.sha256 || '') === file.hash
               && String(currentVersion.name || existing.name) === file.name
               && (currentVersion.mimeType || null) === (file.mimeType || null);
-            if (contentIsUnchanged) continue;
+            // Status is pinned to the destination's own version numbering;
+            // the source's version numbers mean nothing here and copying them
+            // would report drift that has not happened.
+            const statusPatch = (targetVersion: number): Record<string, unknown> => (
+              propagateStatus && file.status
+                ? {
+                  status: file.status,
+                  approvedAtVersion: file.status === 'approved' ? targetVersion : null,
+                  publishedAtVersion: file.status === 'published' ? targetVersion : null,
+                }
+                : {}
+            );
+
+            if (contentIsUnchanged) {
+              // A file published in the Shared workspace and then synced has
+              // identical bytes, so this is the path its status arrives by.
+              if (propagateStatus) {
+                await this.inheritFileStatus(tx, workspaceId, existing, file.status, userId);
+              }
+              continue;
+            }
             const nextVersion = existing ? Number(existing.version || 1) + 1 : 1;
             const versionId = uuidv4();
             let fileId: number;
@@ -2090,6 +2223,7 @@ export class WorkspacePublicationService {
                 updatedBy: userId,
                 updatedAt: tx.fn.now(),
                 version: nextVersion,
+                ...statusPatch(nextVersion),
               });
             } else {
               const [created] = await tx('files').insert({
@@ -2103,9 +2237,11 @@ export class WorkspacePublicationService {
                 createdBy: userId,
                 updatedBy: userId,
                 version: nextVersion,
+                ...statusPatch(nextVersion),
               }).returning('id');
               fileId = Number(created.id);
             }
+            appliedFileIds.push(fileId);
             await tx('file_versions').insert({
               id: versionId,
               fileId,
@@ -2165,7 +2301,7 @@ export class WorkspacePublicationService {
         };
         const applyDatabaseChanges = async (tx: Knex.Transaction) => {
           const contentRevision = await updateDatabaseRecords(tx);
-          await afterDatabaseUpdate?.(tx, contentRevision);
+          await afterDatabaseUpdate?.(tx, contentRevision, appliedFileIds);
           return contentRevision;
         };
         const contentRevision = transaction
@@ -2228,7 +2364,11 @@ export class WorkspacePublicationService {
       } else {
         selected = privateFile;
       }
-      if (selected) files.set(filePath, selected);
+      if (selected) {
+        // Editorial status belongs to the Shared workspace whichever side's
+        // content won: a private edit that wins simply shows as drift.
+        files.set(filePath, teamFile ? { ...selected, status: teamFile.status ?? null } : selected);
+      }
     }
 
     return {

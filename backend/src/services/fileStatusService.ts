@@ -11,9 +11,10 @@ import type {
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import { jsonbParam } from '../lib/jsonb';
 import type { DatabaseService } from './databaseService';
-import type { WorkspaceService, WorkspaceRole } from './workspaceService';
+import { isSharedWorkspaceRecord } from './workspaceService';
+import type { WorkspaceService, WorkspaceRole, WorkspaceRecord } from './workspaceService';
 import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
-import { withGovernanceLock } from './governance/governanceLocks';
+import { governanceLockKeys, withGovernanceLock } from './governance/governanceLocks';
 import { nextAuditSeq, recordFileEvent } from './fileAuditService';
 import type { FilePublicationService, PublishedArtifact } from './filePublicationService';
 import type { FileService } from './fileService';
@@ -127,10 +128,19 @@ export const allowedTransitionsFor = (
   status: FileStatus,
   role: WorkspaceRole,
   isAuthor: boolean,
+  /**
+   * False in a private workspace. Publishing exports an immutable artifact to
+   * the shared release bucket, which is a team act: a private workspace stops
+   * at `approved`. A `published` status can still arrive there by syncing from
+   * the shared workspace, and is displayed read-only — moving out of it would
+   * imply withdrawing an artifact this workspace does not own.
+   */
+  canPublishHere: boolean,
 ): FileStatusTransition[] => {
   const capabilities = getWorkspaceRoleCapabilities(role);
   return TRANSITIONS
     .filter((rule) => rule.from === status)
+    .filter((rule) => canPublishHere || (rule.to !== 'published' && rule.from !== 'published'))
     .filter((rule) => capabilities[rule.capability] || (rule.authorMayAct && isAuthor))
     .map((rule) => ({
       toStatus: rule.to,
@@ -139,6 +149,109 @@ export const allowedTransitionsFor = (
       label: rule.label,
     }));
 };
+
+/**
+ * Approve the files a change proposal put under review, as part of accepting it.
+ *
+ * Accepting a proposal into the Shared workspace *is* the review decision, so
+ * the files that were `in_review` move to `approved` in the same transaction as
+ * the content. Anything else — a draft that rode along in the same proposal —
+ * is left alone, because nobody submitted it for review.
+ *
+ * A standalone function rather than a method because `WorkspacePublicationService`
+ * is constructed before `FileStatusService` (`api/routes.ts`), so it holds no
+ * reference to it. `recordFileEvent` is standalone for the same reason.
+ */
+export async function approveFilesOnProposalAccepted(
+  tx: Knex.Transaction,
+  input: {
+    workspaceId: string;
+    fileIds: number[];
+    userId: string;
+    role: WorkspaceRole;
+  },
+): Promise<number[]> {
+  if (!input.fileIds.length) return [];
+
+  // Same lock the manual path takes, but joined to this transaction: a reviewer
+  // clicking Approve must not interleave with an accept on the same file.
+  for (const fileId of input.fileIds) {
+    const [classId, objectId] = governanceLockKeys('file_status', String(fileId));
+    await tx.raw('SELECT pg_advisory_xact_lock(?, ?)', [classId, objectId]);
+  }
+
+  const candidates = await tx('files')
+    .whereIn('id', input.fileIds)
+    .where({ workspaceId: input.workspaceId, status: 'in_review' })
+    .whereNull('deletedAt');
+
+  const approved: number[] = [];
+  for (const file of candidates) {
+    const fileId = Number(file.id);
+    const version = Number(file.version ?? 0);
+    const auditEventId = randomUUID();
+
+    const audit = await recordFileEvent(tx, {
+      fileId,
+      workspaceId: input.workspaceId,
+      filePath: String(file.name),
+      eventType: 'status.approved',
+      seq: nextAuditSeq(file),
+      prevEventHash: file.lastAuditHash ?? null,
+      actorUserId: input.userId,
+      actorType: 'human',
+      fileVersion: version,
+      fileVersionId: file.currentVersionId ?? null,
+      sha256: null,
+      payload: {
+        fromStatus: 'in_review',
+        toStatus: 'approved',
+        actorRole: input.role,
+        reason: null,
+        isRevert: false,
+        // Not self-approval: the accepter is signing off someone else's
+        // proposal. Applying the content makes them `updatedBy`, so the usual
+        // guard would otherwise block every accept. Recorded rather than
+        // implied, so the exemption is visible in the trail.
+        selfApproved: false,
+        viaProposalAccept: true,
+        auditEventId,
+      },
+    });
+
+    await tx('files').where({ id: fileId }).update({
+      status: 'approved',
+      approvedAtVersion: version,
+      statusUpdatedAt: tx.fn.now(),
+      statusUpdatedBy: input.userId,
+      updatedAt: tx.fn.now(),
+      ...(audit ? { auditSeq: audit.seq, lastAuditHash: audit.eventHash } : {}),
+    });
+
+    await tx('audit_events').insert({
+      id: auditEventId,
+      actorUserId: input.userId,
+      actorRole: input.role,
+      action: 'file.status.approved',
+      resourceType: 'file',
+      resourceId: String(fileId),
+      reason: null,
+      policyVersion: FILE_STATUS_POLICY_VERSION,
+      selfApproved: false,
+      metadata: jsonbParam(tx, {
+        workspaceId: input.workspaceId,
+        filePath: String(file.name),
+        fromStatus: 'in_review',
+        toStatus: 'approved',
+        fileVersion: version,
+        fileVersionId: file.currentVersionId ?? null,
+        viaProposalAccept: true,
+      }),
+    });
+    approved.push(fileId);
+  }
+  return approved;
+}
 
 export class FileStatusService {
   private readonly db: Knex;
@@ -160,7 +273,7 @@ export class FileStatusService {
     return file;
   }
 
-  private toState(file: any, role: WorkspaceRole, userId: string): FileStatusState {
+  private toState(file: any, role: WorkspaceRole, userId: string, canPublishHere: boolean): FileStatusState {
     const status = normalizeFileStatus(file.status);
     return {
       fileId: Number(file.id),
@@ -172,7 +285,9 @@ export class FileStatusService {
       approvedAtVersion: file.approvedAtVersion ?? null,
       publishedAtVersion: file.publishedAtVersion ?? null,
       drift: hasDrifted(file),
-      allowedTransitions: allowedTransitionsFor(status, role, String(file.createdBy) === userId),
+      allowedTransitions: allowedTransitionsFor(
+        status, role, String(file.createdBy) === userId, canPublishHere,
+      ),
     };
   }
 
@@ -215,8 +330,22 @@ export class FileStatusService {
 
   async getStatus(fileId: number, userId: string): Promise<FileStatusState> {
     const file = await this.loadFile(fileId);
-    const { membership } = await this.workspaceService.ensureMembership(file.workspaceId, userId);
-    return this.toState(file, membership.role, userId);
+    const { workspace, membership } = await this.workspaceService.ensureMembership(
+      file.workspaceId, userId,
+    );
+    return this.toState(file, membership.role, userId, this.canPublishFrom(workspace));
+  }
+
+  /**
+   * Whether this workspace may publish at all; see `allowedTransitionsFor`.
+   *
+   * Deliberately only about visibility, not about whether the server has a
+   * publication target configured. Conflating the two would also block
+   * *unpublishing* on a server with no target, and withdrawing a publication
+   * does not need one.
+   */
+  private canPublishFrom(workspace: WorkspaceRecord): boolean {
+    return isSharedWorkspaceRecord(workspace);
   }
 
   async transition(
@@ -225,11 +354,22 @@ export class FileStatusService {
     input: { toStatus: FileStatus; reason?: string; expectedVersion?: number },
   ): Promise<FileStatusState> {
     const file = await this.loadFile(fileId);
-    const { membership } = await this.workspaceService.ensureMembership(file.workspaceId, userId, {
-      requireEdit: true,
-    });
+    const { workspace, membership } = await this.workspaceService.ensureMembership(
+      file.workspaceId, userId, { requireEdit: true },
+    );
     const role = membership.role as WorkspaceRole;
 
+    // Visibility is checked before server configuration: a private workspace
+    // cannot publish however the server is set up, and saying so is more use
+    // than "not configured". Checked before the artifact write, and
+    // `transition` is the only caller of `publishArtifact`, so this is the
+    // complete gate.
+    const canPublishHere = this.canPublishFrom(workspace);
+    if (!canPublishHere && (input.toStatus === 'published' || normalizeFileStatus(file.status) === 'published')) {
+      throw new ConflictError(
+        'Only a Shared workspace can publish a file. Approve it here, then publish from the Shared workspace.',
+      );
+    }
     if (input.toStatus === 'published' && !this.publicationService) {
       throw new ConflictError('Publishing is not configured on this server');
     }
@@ -372,7 +512,7 @@ export class FileStatusService {
         });
       });
 
-      return this.toState(updated, role, userId);
+      return this.toState(updated, role, userId, canPublishHere);
     });
   }
 

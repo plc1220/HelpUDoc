@@ -86,7 +86,7 @@ export interface WorkspaceRecord {
   updatedAt: string;
 }
 
-const isSharedWorkspaceRecord = (workspace: Pick<WorkspaceRecord, 'visibility' | 'workspaceType'>): boolean => (
+export const isSharedWorkspaceRecord = (workspace: Pick<WorkspaceRecord, 'visibility' | 'workspaceType'>): boolean => (
   workspace.workspaceType === 'team' || workspace.visibility === 'team'
 );
 

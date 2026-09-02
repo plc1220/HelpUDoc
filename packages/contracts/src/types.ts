@@ -540,7 +540,9 @@ export type FileAuditEventType =
   | 'status.changes_requested'
   | 'status.published'
   | 'status.reverted'
-  | 'status.unpublished';
+  | 'status.unpublished'
+  /** Status carried into a private workspace from the Shared one on sync. */
+  | 'status.inherited';
 
 export interface FileAuditEvent {
   id: string;

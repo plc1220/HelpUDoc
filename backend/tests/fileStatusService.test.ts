@@ -3,11 +3,13 @@ import test from 'node:test';
 
 import { AccessDeniedError, ConflictError, NotFoundError } from '../src/errors';
 import {
+  approveFilesOnProposalAccepted,
   FileStatusService,
   allowedTransitionsFor,
   hasDrifted,
   normalizeFileStatus,
 } from '../src/services/fileStatusService';
+import { readPayload } from './helpers/auditHarness';
 
 // --- pure helpers ------------------------------------------------------------
 
@@ -29,35 +31,35 @@ test('drift is content moving on after a decision', () => {
 });
 
 test('the transition menu reflects the role', () => {
-  const asViewer = allowedTransitionsFor('draft', 'viewer', false);
+  const asViewer = allowedTransitionsFor('draft', 'viewer', false, true);
   assert.deepEqual(asViewer, [], 'a viewer can move nothing');
 
-  const asContributor = allowedTransitionsFor('draft', 'contributor', false);
+  const asContributor = allowedTransitionsFor('draft', 'contributor', false, true);
   assert.deepEqual(asContributor.map((t) => t.toStatus), ['in_review']);
 
   // A contributor may submit but must not approve.
-  assert.deepEqual(allowedTransitionsFor('in_review', 'contributor', false), []);
+  assert.deepEqual(allowedTransitionsFor('in_review', 'contributor', false, true), []);
   assert.deepEqual(
-    allowedTransitionsFor('in_review', 'editor', false).map((t) => t.toStatus).sort(),
+    allowedTransitionsFor('in_review', 'editor', false, true).map((t) => t.toStatus).sort(),
     ['approved', 'draft'],
   );
 });
 
 test('the author of a file in review may pull it back', () => {
   // Not an approver, but it is their own submission.
-  const menu = allowedTransitionsFor('in_review', 'contributor', true);
+  const menu = allowedTransitionsFor('in_review', 'contributor', true, true);
   assert.deepEqual(menu.map((t) => t.toStatus), ['draft']);
   assert.equal(menu[0].requiresReason, true);
   assert.equal(menu[0].isRevert, true);
 });
 
 test('reverts are flagged and require a reason; forward moves do not', () => {
-  const submit = allowedTransitionsFor('draft', 'editor', false)[0];
+  const submit = allowedTransitionsFor('draft', 'editor', false, true)[0];
   assert.equal(submit.isRevert, false);
   assert.equal(submit.requiresReason, false);
 
   // From approved there is one forward move (publish) and the rest go back.
-  for (const t of allowedTransitionsFor('approved', 'editor', false)) {
+  for (const t of allowedTransitionsFor('approved', 'editor', false, true)) {
     if (t.toStatus === 'published') {
       assert.equal(t.isRevert, false, 'publishing moves the file forward');
       assert.equal(t.requiresReason, false);
@@ -69,18 +71,42 @@ test('reverts are flagged and require a reason; forward moves do not', () => {
 });
 
 test('only a publisher can unpublish', () => {
-  assert.deepEqual(allowedTransitionsFor('published', 'contributor', false), []);
+  assert.deepEqual(allowedTransitionsFor('published', 'contributor', false, true), []);
   assert.deepEqual(
-    allowedTransitionsFor('published', 'owner', false).map((t) => t.toStatus).sort(),
+    allowedTransitionsFor('published', 'owner', false, true).map((t) => t.toStatus).sort(),
     ['approved', 'draft', 'in_review'],
   );
+});
+
+test('a private workspace stops at approved', () => {
+  // Publishing exports an immutable artifact to the shared release bucket, so
+  // it is a team act. Everything up to approval still works privately.
+  assert.deepEqual(
+    allowedTransitionsFor('draft', 'owner', false, false).map((t) => t.toStatus),
+    ['in_review'],
+  );
+  assert.deepEqual(
+    allowedTransitionsFor('approved', 'owner', false, false).map((t) => t.toStatus).sort(),
+    ['draft', 'in_review'],
+    'approved offers only the ways back, never publish',
+  );
+});
+
+test('a published status inherited into a private workspace is read-only', () => {
+  // It arrives by syncing from the Shared workspace. Moving out of it here
+  // would imply withdrawing an artifact this workspace does not own.
+  assert.deepEqual(allowedTransitionsFor('published', 'owner', false, false), []);
 });
 
 // --- the service ------------------------------------------------------------
 
 type Row = Record<string, any>;
 
-function makeService(file: Row, role = 'editor', opts?: { requireEditDenied?: boolean }) {
+function makeService(
+  file: Row,
+  role = 'editor',
+  opts?: { requireEditDenied?: boolean; privateWorkspace?: boolean },
+) {
   const files = [file];
   const auditEvents: Row[] = [];
   const governanceEvents: Row[] = [];
@@ -93,6 +119,10 @@ function makeService(file: Row, role = 'editor', opts?: { requireEditDenied?: bo
         return api;
       },
       whereNull(col: string) { rows = rows.filter((r) => r[col] == null); return api; },
+      whereIn(col: string, values: unknown[]) {
+        rows = rows.filter((r) => values.includes(r[col]));
+        return api;
+      },
       select() { return api; },
       async first() { return rows[0]; },
       async insert(row: Row) {
@@ -131,7 +161,16 @@ function makeService(file: Row, role = 'editor', opts?: { requireEditDenied?: bo
         if (options?.requireEdit && opts?.requireEditDenied) {
           throw new AccessDeniedError('Read-only');
         }
-        return { workspace: { id: file.workspaceId }, membership: { role } };
+        // Shared unless a test says otherwise: publishing is a team act, and
+        // most of these cases exercise the publish path.
+        return {
+          workspace: {
+            id: file.workspaceId,
+            visibility: opts?.privateWorkspace ? 'private' : 'team',
+            workspaceType: opts?.privateWorkspace ? 'private' : 'team',
+          },
+          membership: { role },
+        };
       },
     },
   });
@@ -302,6 +341,32 @@ test('publishing exports an artifact and records where it went', async () => {
   assert.equal(payload.artifactSha256, 'abc123');
 });
 
+test('a private workspace cannot publish, and cannot leave an inherited published', async () => {
+  const approved = makeService(
+    baseFile({ status: 'approved', version: 4, approvedAtVersion: 4 }),
+    'owner',
+    { privateWorkspace: true },
+  );
+  await assert.rejects(
+    () => approved.service.transition(412, 'u-owner', { toStatus: 'published' }),
+    /Only a Shared workspace can publish/,
+  );
+  assert.equal(approved.files[0].status, 'approved', 'the file did not move');
+
+  // Synced in from the Shared workspace: shown, but not ours to withdraw.
+  const inherited = makeService(
+    baseFile({ status: 'published', version: 4, publishedAtVersion: 4 }),
+    'owner',
+    { privateWorkspace: true },
+  );
+  await assert.rejects(
+    () => inherited.service.transition(412, 'u-owner', {
+      toStatus: 'approved', reason: 'trying to withdraw from a private copy',
+    }),
+    /Only a Shared workspace can publish/,
+  );
+});
+
 test('withdrawing marks the publication but never deletes the artifact', async () => {
   const harness = makeService(
     baseFile({ status: 'published', version: 4, publishedAtVersion: 4, currentPublicationId: 'pub-1' }),
@@ -339,4 +404,111 @@ test('a missing file is a 404', async () => {
     () => service.transition(412, 'u-owner', { toStatus: 'in_review' }),
     (e: unknown) => e instanceof NotFoundError,
   );
+});
+
+// --- accepting a change proposal --------------------------------------------
+
+/** A minimal transaction over a fixed set of files rows. */
+function fakeTx(files: Row[]) {
+  const auditEvents: Row[] = [];
+  const governanceEvents: Row[] = [];
+  const raws: string[] = [];
+
+  const table = (name: string) => {
+    let rows: Row[] = name === 'files' ? files : [];
+    const api: any = {
+      where(clause: Row) {
+        rows = rows.filter((r) => Object.entries(clause).every(([k, v]) => r[k] === v));
+        return api;
+      },
+      whereIn(col: string, values: unknown[]) {
+        rows = rows.filter((r) => values.includes(r[col]));
+        return api;
+      },
+      whereNull(col: string) { rows = rows.filter((r) => r[col] == null); return api; },
+      async insert(row: Row) {
+        if (name === 'file_audit_events') auditEvents.push(row);
+        if (name === 'audit_events') governanceEvents.push(row);
+        return [row];
+      },
+      update(patch: Row) {
+        for (const r of rows) Object.assign(r, patch);
+        return { then: (res: any) => Promise.resolve(rows).then(res) } as any;
+      },
+      then(res: any, rej: any) { return Promise.resolve(rows).then(res, rej); },
+    };
+    return api;
+  };
+
+  const tx: any = (name: string) => table(name);
+  tx.raw = (sql: string, bindings: unknown[] = []) => {
+    raws.push(sql);
+    return { __raw: sql, bindings };
+  };
+  tx.fn = { now: () => new Date('2026-09-02T00:00:00Z') };
+  return { tx, auditEvents, governanceEvents, raws };
+}
+
+const proposalFile = (over: Row = {}): Row => ({
+  id: 701,
+  name: 'reports/q3.md',
+  workspaceId: 'ws-shared',
+  version: 6,
+  status: 'in_review',
+  currentVersionId: 'fv-6',
+  auditSeq: 3,
+  lastAuditHash: 'hash-3',
+  deletedAt: null,
+  ...over,
+});
+
+test('accepting a proposal approves the files that were under review', async () => {
+  const files = [proposalFile()];
+  const h = fakeTx(files);
+
+  const approved = await approveFilesOnProposalAccepted(h.tx, {
+    workspaceId: 'ws-shared',
+    fileIds: [701],
+    userId: 'u-reviewer',
+    role: 'editor' as any,
+  });
+
+  assert.deepEqual(approved, [701]);
+  assert.equal(files[0].status, 'approved');
+  assert.equal(files[0].approvedAtVersion, 6, 'pins the version that was accepted');
+  assert.equal(files[0].statusUpdatedBy, 'u-reviewer');
+
+  const event = h.auditEvents[0];
+  assert.equal(event.eventType, 'status.approved');
+  assert.equal(event.seq, 4, 'continues the file chain');
+  const payload = readPayload(event as any);
+  assert.equal(payload.viaProposalAccept, true);
+  // Applying the content makes the accepter `updatedBy`, so the exemption from
+  // the self-approval rule has to be recorded rather than implied.
+  assert.equal(payload.selfApproved, false);
+
+  assert.equal(h.governanceEvents.length, 1, 'mirrored into the governance log');
+  assert.equal(h.governanceEvents[0].action, 'file.status.approved');
+  assert.ok(h.raws.some((sql) => sql.includes('pg_advisory_xact_lock')), 'locks each file');
+});
+
+test('accepting a proposal leaves files nobody submitted alone', async () => {
+  // A draft can ride along in the same proposal; it was never under review.
+  const files = [
+    proposalFile({ id: 702, status: 'draft' }),
+    proposalFile({ id: 703, status: 'approved' }),
+  ];
+  const h = fakeTx(files);
+
+  const approved = await approveFilesOnProposalAccepted(h.tx, {
+    workspaceId: 'ws-shared',
+    fileIds: [702, 703],
+    userId: 'u-reviewer',
+    role: 'editor' as any,
+  });
+
+  assert.deepEqual(approved, []);
+  assert.equal(files[0].status, 'draft');
+  assert.equal(files[1].status, 'approved');
+  assert.equal(h.auditEvents.length, 0);
 });

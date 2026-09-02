@@ -18,7 +18,11 @@ import { readPayload, type CapturedAuditEvent } from './helpers/auditHarness';
 
 type Row = Record<string, any>;
 
-function fakeTransaction(existingFiles: Row[]) {
+function fakeTransaction(
+  existingFiles: Row[],
+  destinationVisibility: 'private' | 'team' = 'private',
+  existingVersions: Row[] = [],
+) {
   const audits: CapturedAuditEvent[] = [];
   const fileVersions: Row[] = [];
   const inserted: Row[] = [];
@@ -31,6 +35,12 @@ function fakeTransaction(existingFiles: Row[]) {
       where(clause: Row) { state.where = { ...state.where, ...clause }; return api; },
       whereNull() { return api; },
       whereIn(_column: string, _values: unknown[]) { return api; },
+      // The destination workspace decides whether editorial status is inherited.
+      async first() {
+        return table === 'workspaces'
+          ? { id: 'ws-dest', visibility: destinationVisibility, workspaceType: destinationVisibility }
+          : undefined;
+      },
       insert(row: Row) {
         let created: Row = row;
         if (table === 'file_audit_events') audits.push(row as CapturedAuditEvent);
@@ -55,7 +65,9 @@ function fakeTransaction(existingFiles: Row[]) {
         return result;
       },
       then(resolve: (rows: Row[]) => unknown, reject: (e: unknown) => unknown) {
-        const rows = table === 'files' ? existingFiles : table === 'file_versions' ? [] : [];
+        const rows = table === 'files'
+          ? existingFiles
+          : table === 'file_versions' ? existingVersions : [];
         return Promise.resolve(rows).then(resolve, reject);
       },
     };
@@ -69,7 +81,7 @@ function fakeTransaction(existingFiles: Row[]) {
   return { tx, audits, fileVersions, inserted, updates };
 }
 
-const makeContent = (name: string, body: string, fileVersionId: string) => ({
+const makeContent = (name: string, body: string, fileVersionId: string, status?: string) => ({
   files: new Map([[name, {
     name,
     mimeType: 'text/markdown',
@@ -80,16 +92,27 @@ const makeContent = (name: string, body: string, fileVersionId: string) => ({
     objectKey: `objects/${name}`,
     objectProvider: 's3',
     providerVersion: 'gen-1',
+    ...(status ? { status } : {}),
   }]]),
   folders: [] as string[],
 });
 
-async function runSync(existingFiles: Row[]) {
+async function runSync(
+  existingFiles: Row[],
+  opts?: {
+    destination?: 'private' | 'team';
+    incomingStatus?: string;
+    body?: string;
+    existingVersions?: Row[];
+  },
+) {
   const workspaceId = `sync-prov-${randomUUID()}`;
   const workspacePath = path.join(resolveWorkspaceRoot(), workspaceId);
   await fs.mkdir(workspacePath, { recursive: true });
 
-  const harness = fakeTransaction(existingFiles);
+  const harness = fakeTransaction(
+    existingFiles, opts?.destination ?? 'private', opts?.existingVersions ?? [],
+  );
   const service = Object.create(WorkspacePublicationService.prototype) as WorkspacePublicationService;
   Object.assign(service, {
     db: harness.tx,
@@ -99,7 +122,12 @@ async function runSync(existingFiles: Row[]) {
   try {
     await (service as any).replaceWorkspaceContent(
       workspaceId,
-      makeContent('reports/q3.md', 'published-body', 'fv-source-aaa'),
+      makeContent(
+        'reports/q3.md',
+        opts?.body ?? 'published-body',
+        'fv-source-aaa',
+        opts?.incomingStatus,
+      ),
       'u-carol',
       harness.tx,
     );
@@ -166,4 +194,70 @@ test('a file dropped by an incoming sync is tombstoned, not silently erased', as
   assert.equal(tombstone.actorType, 'system');
   assert.equal(tombstone.seq, 2);
   assert.equal(readPayload(tombstone).removedBySync, true);
+});
+
+// --- editorial status across the workspace boundary --------------------------
+
+/**
+ * A file published in the Shared workspace and then synced has *identical*
+ * bytes, so it takes the unchanged-content path. That is precisely the path its
+ * status has to arrive by, which is easy to miss.
+ */
+test('a private workspace inherits the Shared status even when the bytes match', async () => {
+  const existing = [{
+    id: 501,
+    name: 'reports/q3.md',
+    workspaceId: 'ws-dest',
+    version: 3,
+    status: 'draft',
+    currentVersionId: 'fv-local',
+    auditSeq: 4,
+    lastAuditHash: 'hash-4',
+  }];
+  const { audits, updates } = await runSync(existing, {
+    destination: 'private',
+    incomingStatus: 'published',
+    // Same bytes, same name, same type: the unchanged-content path.
+    existingVersions: [{
+      id: 'fv-local',
+      sha256: 'sha-published-body',
+      name: 'reports/q3.md',
+      mimeType: 'text/markdown',
+    }],
+  });
+
+  const inherited = audits.find((event) => event.eventType === 'status.inherited');
+  assert.ok(inherited, 'expected a status.inherited event');
+  assert.equal(readPayload(inherited).fromStatus, 'draft');
+  assert.equal(readPayload(inherited).toStatus, 'published');
+  assert.equal(inherited.seq, 5, 'continues the existing chain');
+
+  const patch = updates.find((u) => u.table === 'files' && u.patch.status)?.patch;
+  assert.equal(patch?.status, 'published');
+  // Pinned to *this* workspace's version, not the source's, or the file would
+  // report drift that never happened.
+  assert.equal(patch?.publishedAtVersion, 3);
+  assert.equal(patch?.approvedAtVersion, null);
+});
+
+test('status is never carried into the Shared workspace', async () => {
+  // The reverse direction would let a private self-approval become a team
+  // approval, which is exactly what review exists to prevent.
+  const existing = [{
+    id: 502,
+    name: 'reports/q3.md',
+    workspaceId: 'ws-dest',
+    version: 3,
+    status: 'draft',
+    currentVersionId: 'fv-local',
+    auditSeq: 4,
+    lastAuditHash: 'hash-4',
+  }];
+  const { audits, updates } = await runSync(existing, {
+    destination: 'team',
+    incomingStatus: 'approved',
+  });
+
+  assert.equal(audits.find((e) => e.eventType === 'status.inherited'), undefined);
+  assert.equal(updates.find((u) => u.table === 'files' && u.patch.status), undefined);
 });

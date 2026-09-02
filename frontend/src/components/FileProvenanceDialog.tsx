@@ -37,6 +37,7 @@ const EVENT_LABELS: Record<string, string> = {
   'status.published': 'Published',
   'status.reverted': 'Sent back',
   'status.unpublished': 'Unpublished',
+  'status.inherited': 'Status inherited from Shared',
 };
 
 const formatWhen = (value?: string | null) => {
