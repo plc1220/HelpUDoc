@@ -14,6 +14,7 @@ import {
   KeyRound,
   Loader2,
   Plus,
+  MailPlus,
   RotateCcw,
   Search,
   ShieldCheck,
@@ -50,14 +51,18 @@ import {
   fetchUserDirectory,
   fetchUsers,
   deactivateUser,
+  inviteUsers,
   isUserDeactivated,
+  isUserInvited,
   reactivateUser,
+  revokeInvitation,
   removeGroupMember,
   saveGroupPromptAccess,
   setUserAdmin,
   type GroupPromptAccess,
   type ManagedGroup,
   type ManagedUser,
+  type InviteResult,
   type UserDeactivationImpact,
   type UserDeletionImpact,
   type UserSortField,
@@ -115,6 +120,15 @@ const UsersPage = () => {
 
   const [pendingDeleteUser, setPendingDeleteUser] = useState<ManagedUser | null>(null);
   const [deletionImpact, setDeletionImpact] = useState<UserDeletionImpact | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmails, setInviteEmails] = useState('');
+  const [inviteTeamIds, setInviteTeamIds] = useState<string[]>([]);
+  const [inviteLeadTeamIds, setInviteLeadTeamIds] = useState<string[]>([]);
+  const [inviteIsAdmin, setInviteIsAdmin] = useState(false);
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteResults, setInviteResults] = useState<InviteResult[] | null>(null);
+  const [revokingUserId, setRevokingUserId] = useState<string | null>(null);
+
   const [pendingDeactivateUser, setPendingDeactivateUser] = useState<ManagedUser | null>(null);
   const [deactivationImpact, setDeactivationImpact] = useState<UserDeactivationImpact | null>(null);
   const [deactivationImpactLoading, setDeactivationImpactLoading] = useState(false);
@@ -448,6 +462,58 @@ const UsersPage = () => {
     }
   };
 
+  /** Split a pasted list on commas, semicolons, whitespace or newlines. */
+  const parsedInviteEmails = useMemo(
+    () => Array.from(new Set(
+      inviteEmails.split(/[\s,;]+/).map((entry) => entry.trim().toLowerCase()).filter(Boolean),
+    )),
+    [inviteEmails],
+  );
+
+  const handleSubmitInvite = useCallback(async () => {
+    if (!parsedInviteEmails.length) return;
+    setInviteSubmitting(true);
+    try {
+      const results = await inviteUsers({
+        emails: parsedInviteEmails,
+        teamIds: inviteTeamIds,
+        leadTeamIds: inviteLeadTeamIds,
+        isAdmin: inviteIsAdmin,
+      });
+      setInviteResults(results);
+      // The team picker reads a directory loaded once on mount, so refresh it or
+      // the people just registered will not be selectable until a page reload.
+      await Promise.all([loadUsers(), loadGroups()]);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to register users');
+    } finally {
+      setInviteSubmitting(false);
+    }
+  }, [parsedInviteEmails, inviteTeamIds, inviteLeadTeamIds, inviteIsAdmin, loadUsers, loadGroups]);
+
+  const handleRevokeInvitation = useCallback(async (user: ManagedUser) => {
+    setRevokingUserId(user.id);
+    try {
+      await revokeInvitation(user.id);
+      await Promise.all([loadUsers(), loadGroups()]);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to revoke registration');
+    } finally {
+      setRevokingUserId(null);
+    }
+  }, [loadUsers, loadGroups]);
+
+  const closeInviteDialog = useCallback(() => {
+    setInviteOpen(false);
+    setInviteEmails('');
+    setInviteTeamIds([]);
+    setInviteLeadTeamIds([]);
+    setInviteIsAdmin(false);
+    setInviteResults(null);
+  }, []);
+
   const handleOpenDeactivateModal = useCallback(async (user: ManagedUser) => {
     setPendingDeactivateUser(user);
     setDeactivationImpact(null);
@@ -562,13 +628,20 @@ const UsersPage = () => {
       key: 'status',
       header: 'Status',
       width: pixel(130),
-      renderCell: (user) => (
-        // Only the exceptional state is badged; a badge on every active user
-        // would be noise that hides the suspended ones.
-        isUserDeactivated(user)
-          ? <Badge label="Deactivated" variant="warning" />
-          : <span className="text-sm text-slate-600">Active</span>
-      ),
+      renderCell: (user) => {
+        // Only the exceptional states are badged; a badge on every active user
+        // would be noise that hides the ones needing attention.
+        if (isUserDeactivated(user)) return <Badge label="Deactivated" variant="warning" />;
+        if (isUserInvited(user)) {
+          return (
+            <div className="flex flex-col gap-1">
+              <Badge label="Invited" variant="info" />
+              <span className="text-xs text-slate-500">Not signed in yet</span>
+            </div>
+          );
+        }
+        return <span className="text-sm text-slate-600">Active</span>;
+      },
     },
     {
       key: 'actions',
@@ -581,6 +654,26 @@ const UsersPage = () => {
         const isDeleting = deletingUserId === user.id;
         const isBusy = deactivatingUserId === user.id;
         const deactivated = isUserDeactivated(user);
+
+        // A registration nobody has claimed is withdrawn, not suspended: there
+        // is no access to suspend and no content to archive.
+        if (isUserInvited(user)) {
+          return (
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                label="Revoke"
+                variant="secondary"
+                size="sm"
+                icon={<Trash2 size={14} />}
+                isDisabled={revokingUserId === user.id}
+                isLoading={revokingUserId === user.id}
+                onClick={() => void handleRevokeInvitation(user)}
+                tooltip="Withdraw this registration and its team assignments"
+              />
+            </div>
+          );
+        }
+
         return (
           <div className="flex items-center justify-end gap-2">
             {deactivated ? (
@@ -629,7 +722,8 @@ const UsersPage = () => {
         );
       },
     },
-  ], [currentExternalId, deletingUserId, deactivatingUserId, handleOpenDeactivateModal, handleReactivateUser]);
+  ], [currentExternalId, deletingUserId, deactivatingUserId, revokingUserId,
+    handleOpenDeactivateModal, handleReactivateUser, handleRevokeInvitation]);
 
   return (
     <SettingsShell
@@ -656,8 +750,19 @@ const UsersPage = () => {
             <SettingsSectionHeader
               eyebrow="Directory"
               title="Users"
-              description="Search the directory, sort user records, manage administrator roles, and remove accounts."
-              actions={<span className="text-sm font-medium text-slate-500">{userTotal} total</span>}
+              description="Search the directory, sort user records, manage administrator roles, and register people before they first sign in."
+              actions={(
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-slate-500">{userTotal} total</span>
+                  <Button
+                    label="Register people"
+                    variant="primary"
+                    size="sm"
+                    icon={<MailPlus size={14} />}
+                    onClick={() => setInviteOpen(true)}
+                  />
+                </div>
+              )}
             />
 
             <div className="settings-soft-panel mt-6 flex flex-col gap-3 rounded-2xl p-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1056,6 +1161,164 @@ const UsersPage = () => {
           </div>
         )}
       </div>
+
+      {inviteOpen ? (
+        <div className="settings-modal-overlay fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="settings-modal-panel flex max-h-[min(90vh,860px)] w-full max-w-2xl flex-col rounded-[28px] p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Onboarding</p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-950">Register people</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Their teams and roles are live straight away. When they first sign in with
+                  Google, that account is matched to what you set up here.
+                </p>
+              </div>
+              <IconButton
+                label="Close"
+                variant="ghost"
+                size="sm"
+                icon={<X size={16} />}
+                onClick={closeInviteDialog}
+              />
+            </div>
+
+            <div className="mt-5 min-h-0 flex-1 space-y-4 overflow-auto">
+              {inviteResults ? (
+                <>
+                  <div className="space-y-2">
+                    {inviteResults.map((result) => (
+                      <div
+                        key={result.email}
+                        className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm"
+                      >
+                        <span className="min-w-0 truncate text-slate-800">{result.email}</span>
+                        {result.outcome === 'invited' ? <Badge label="Registered" variant="success" /> : null}
+                        {result.outcome === 'already_active' ? <Badge label="Already a user" variant="neutral" /> : null}
+                        {result.outcome === 'already_invited' ? <Badge label="Already registered" variant="neutral" /> : null}
+                        {result.outcome === 'invalid' ? (
+                          <span className="shrink-0 text-xs text-rose-600">{result.reason || 'Invalid'}</span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Nothing is emailed — the app has no mail transport — so the
+                      admin needs the link to pass on themselves. */}
+                  <SettingsNotice variant="info">
+                    No email was sent. Ask them to sign in at{' '}
+                    <code>{window.location.origin}</code> with the Google account for that
+                    address.
+                  </SettingsNotice>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label htmlFor="invite-emails" className="text-sm font-semibold text-slate-900">
+                      Email addresses
+                    </label>
+                    <p className="mb-2 text-xs text-slate-500">
+                      One per line, or separated by commas. {parsedInviteEmails.length} address
+                      {parsedInviteEmails.length === 1 ? '' : 'es'} recognised.
+                    </p>
+                    <textarea
+                      id="invite-emails"
+                      value={inviteEmails}
+                      onChange={(event) => setInviteEmails(event.target.value)}
+                      rows={4}
+                      placeholder={'alice@acme.com\nbob@acme.com'}
+                      className="settings-control w-full rounded-xl px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Teams</p>
+                    <p className="mb-2 text-xs text-slate-500">
+                      They inherit the union of skill, tool and knowledge access from every team
+                      selected.
+                    </p>
+                    <div className="space-y-2">
+                      {groups.length ? groups.map((group) => {
+                        const selected = inviteTeamIds.includes(group.id);
+                        return (
+                          <div
+                            key={group.id}
+                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 px-4 py-2.5"
+                          >
+                            <label className="flex min-w-0 items-center gap-3 text-sm text-slate-800">
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={(event) => {
+                                  const next = event.target.checked;
+                                  setInviteTeamIds((previous) => (next
+                                    ? [...previous, group.id]
+                                    : previous.filter((id) => id !== group.id)));
+                                  // A lead role only means something alongside the
+                                  // membership it is scoped to.
+                                  if (!next) {
+                                    setInviteLeadTeamIds((previous) => previous.filter((id) => id !== group.id));
+                                  }
+                                }}
+                              />
+                              <span className="truncate">{group.name}</span>
+                            </label>
+                            <label className="flex shrink-0 items-center gap-2 text-xs text-slate-600">
+                              <input
+                                type="checkbox"
+                                checked={inviteLeadTeamIds.includes(group.id)}
+                                disabled={!selected}
+                                onChange={(event) => setInviteLeadTeamIds((previous) => (event.target.checked
+                                  ? [...previous, group.id]
+                                  : previous.filter((id) => id !== group.id)))}
+                              />
+                              Team lead
+                            </label>
+                          </div>
+                        );
+                      }) : (
+                        <SettingsEmptyState
+                          title="No teams yet"
+                          description="Create a team first to assign one here."
+                          align="left"
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-3 text-sm text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={inviteIsAdmin}
+                      onChange={(event) => setInviteIsAdmin(event.target.checked)}
+                    />
+                    Make them platform admins
+                  </label>
+                </>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <Button
+                label={inviteResults ? 'Done' : 'Cancel'}
+                variant="secondary"
+                size="sm"
+                onClick={closeInviteDialog}
+              />
+              {inviteResults ? null : (
+                <Button
+                  label="Register"
+                  variant="primary"
+                  size="sm"
+                  icon={<MailPlus size={16} />}
+                  onClick={() => void handleSubmitInvite()}
+                  isDisabled={!parsedInviteEmails.length || inviteSubmitting}
+                  isLoading={inviteSubmitting}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {pendingDeactivateUser ? (
         <div className="settings-modal-overlay fixed inset-0 z-50 flex items-center justify-center px-4">

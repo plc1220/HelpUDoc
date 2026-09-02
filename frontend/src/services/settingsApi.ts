@@ -2,7 +2,7 @@ import type { PluginDefinition, SkillDefinition, SkillEvolutionSuggestion } from
 import type { AgentStreamChunk } from '@helpudoc/contracts/agentStream';
 import { API_URL, apiFetch } from './apiClient';
 
-export type UserStatus = 'active' | 'deactivated';
+export type UserStatus = 'active' | 'invited' | 'deactivated';
 
 export type ManagedUser = {
   id: string;
@@ -21,6 +21,30 @@ export type ManagedUser = {
 /** Absent status means active — older rows predate the column. */
 export const isUserDeactivated = (user: Pick<ManagedUser, 'status'>): boolean =>
   user.status === 'deactivated';
+
+/** Pre-registered, but nobody has signed in to claim the account yet. */
+export const isUserInvited = (user: Pick<ManagedUser, 'status'>): boolean =>
+  user.status === 'invited';
+
+export type InviteOutcome = 'invited' | 'already_active' | 'already_invited' | 'invalid';
+
+export type InviteResult = {
+  email: string;
+  outcome: InviteOutcome;
+  userId?: string;
+  reason?: string;
+};
+
+export type PendingInvitation = {
+  id: string;
+  email: string | null;
+  displayName: string;
+  isAdmin: boolean;
+  invitedAt: string | null;
+  invitedByUserId: string | null;
+  invitedByName: string | null;
+  teams: Array<{ id: string; name: string; isLead: boolean }>;
+};
 
 export type ManagedGroup = {
   id: string;
@@ -805,6 +829,44 @@ export const fetchAdminWorkspaceConversations = async (
   }
   const data = await response.json();
   return data.conversations || [];
+};
+
+export const inviteUsers = async (payload: {
+  emails: string[];
+  teamIds: string[];
+  leadTeamIds: string[];
+  isAdmin: boolean;
+  displayName?: string;
+}): Promise<InviteResult[]> => {
+  const response = await apiFetch(`${API_URL}/users/invitations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to register users');
+  }
+  const data = await response.json();
+  return data.results || [];
+};
+
+export const fetchPendingInvitations = async (): Promise<PendingInvitation[]> => {
+  const response = await apiFetch(`${API_URL}/users/invitations`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load invitations');
+  }
+  const data = await response.json();
+  return data.invitations || [];
+};
+
+export const revokeInvitation = async (userId: string): Promise<void> => {
+  const response = await apiFetch(`${API_URL}/users/invitations/${userId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to revoke invitation');
+  }
 };
 
 export const fetchGroups = async (): Promise<ManagedGroup[]> => {
