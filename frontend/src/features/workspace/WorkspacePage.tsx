@@ -1490,7 +1490,10 @@ export default function WorkspacePage() {
         kind: 'knowledgeBase' as const,
         name: kb.name,
         mention: `@kb:${kb.name}`,
-        detail: 'knowledge base',
+        // Shows the prefix the row actually inserts. "knowledge base" described a
+        // tagging form that no longer exists, so it named nothing the reader
+        // could type.
+        detail: 'kb:',
       }));
     return [...knowledgeBaseSuggestions, ...fileSuggestions].slice(0, 8);
   }, [visibleFiles, knowledgeBaseCatalog, isMentionOpen, mentionQuery]);
