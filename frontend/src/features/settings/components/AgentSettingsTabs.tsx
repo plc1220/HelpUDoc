@@ -1,5 +1,5 @@
 import { Suspense, lazy, useState, useEffect, useCallback } from 'react';
-import { Wrench, Loader2, PackageOpen } from 'lucide-react';
+import { Cloud, Wrench, Loader2, PackageOpen } from 'lucide-react';
 import { fetchAgentConfig, saveAgentConfig } from '../../../services/settingsApi';
 import ToolsTab, { type AgentConfig } from './ToolsTab';
 import { SettingsEmptyState, SettingsLoadingState, SettingsTabPanel, SettingsTabs } from './SettingsScaffold';
@@ -7,9 +7,10 @@ import YAML from 'yaml';
 import { getAuthUser } from '../../../auth/authStore';
 
 const PluginsRegistryTab = lazy(() => import('./PluginsRegistryTab'));
+const GcsBucketsTab = lazy(() => import('./GcsBucketsTab'));
 
 const AgentSettingsTabs = () => {
-    const [activeTab, setActiveTab] = useState<'tools' | 'plugins'>('plugins');
+    const [activeTab, setActiveTab] = useState<'tools' | 'plugins' | 'gcs'>('plugins');
     const [config, setConfig] = useState<AgentConfig | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -97,6 +98,7 @@ const AgentSettingsTabs = () => {
                 tabs={[
                     { id: 'plugins', label: 'Plugins', icon: PackageOpen },
                     { id: 'tools', label: 'Tools & connections', icon: Wrench },
+                    { id: 'gcs', label: 'Cloud Storage', icon: Cloud },
                 ]}
                 value={activeTab}
                 onChange={setActiveTab}
@@ -109,6 +111,11 @@ const AgentSettingsTabs = () => {
                 {activeTab === 'plugins' && (
                     <Suspense fallback={<SettingsLoadingState label="Loading plugin registry..." />}>
                         <PluginsRegistryTab />
+                    </Suspense>
+                )}
+                {activeTab === 'gcs' && (
+                    <Suspense fallback={<SettingsLoadingState label="Loading Cloud Storage buckets..." />}>
+                        <GcsBucketsTab />
                     </Suspense>
                 )}
             </SettingsTabPanel>

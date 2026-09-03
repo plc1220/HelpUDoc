@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { WorkspaceService } from '../../services/workspaceService';
 import type { DatabaseService } from '../../services/databaseService';
 import type { UserService } from '../../services/userService';
+import type { GcsBucketRegistryService } from '../../services/gcsBucketRegistryService';
 import { buildWorkspaceOverview } from '../../services/workspaceOverviewService';
 import { fetchLangfuseAggregates } from '../../services/langfuseClient';
 import { skillsRoot } from '../../services/skills/constants';
@@ -9,11 +10,13 @@ import { registerAgentConfigRoutes } from './agentConfig';
 import { registerSkillsRoutes } from './skills';
 import { registerSkillBuilderRoutes } from './skillBuilder';
 import { registerGithubImportRoutes } from './githubImport';
+import { registerGcsBucketRoutes } from './gcsBuckets';
 
 export default function settingsRoutes(
   workspaceService: WorkspaceService,
   userService: UserService,
   databaseService: DatabaseService,
+  gcsBucketRegistryService: GcsBucketRegistryService,
 ) {
   const router = Router();
 
@@ -38,6 +41,7 @@ export default function settingsRoutes(
   registerSkillsRoutes(router);
   registerSkillBuilderRoutes(router, workspaceService);
   registerGithubImportRoutes(router);
+  registerGcsBucketRoutes(router, gcsBucketRegistryService);
 
   return router;
 }
