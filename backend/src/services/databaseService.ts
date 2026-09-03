@@ -209,6 +209,23 @@ export class DatabaseService {
     await this.ensureColumn('users', 'claimedAt', (table) =>
       table.timestamp('claimedAt', { useTz: true }));
 
+    // The workspace this user last opened, used to restore their surface on sign-in
+    // instead of always dropping them on the landing page.
+    //
+    // Deliberately NO foreign key, though `ensureColumn` could declare one (see
+    // `invitedByUserId` above). Coupling this to workspace deletion would buy
+    // nothing: the read path has to re-authorize the id against the caller's own
+    // workspace list anyway, because access can be revoked without the workspace
+    // ever being deleted. Depending on ON DELETE here would also mean depending on
+    // cascade behaviour that has already differed between a fresh and a migrated
+    // database once — see `enforceWorkspaceOwnerDeleteRestrict` above.
+    //
+    // A dangling id is therefore the expected steady state, not a defect.
+    await this.ensureColumn('users', 'lastWorkspaceId', (table) =>
+      table.uuid('lastWorkspaceId'));
+    await this.ensureColumn('users', 'lastWorkspaceOpenedAt', (table) =>
+      table.timestamp('lastWorkspaceOpenedAt', { useTz: true }));
+
     // Deliberately partial. A plain unique index on email cannot be created on any
     // deployment that has used header auth, because DEFAULT_USER_EMAIL stamps one
     // address onto every such user — the dev database has eight rows sharing one.

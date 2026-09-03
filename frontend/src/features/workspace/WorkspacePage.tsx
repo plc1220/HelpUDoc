@@ -183,6 +183,8 @@ import {
   SLASH_COMMANDS,
 } from '../../constants/workspace';
 import { isSystemFile, normalizeFilePath } from '../../utils/files';
+import { getLastWorkspaceId, setLastWorkspaceId } from '../../services/preferencesApi';
+import { resolveWorkspaceToRestore, shouldPersistWorkspaceOpen } from '../../utils/workspaceRestore';
 import { isBinaryOfficeDocument } from '../../utils/officeFiles';
 import {
   areStructuredClarificationQuestionsComplete,
@@ -905,6 +907,10 @@ export default function WorkspacePage() {
   const [isLandingPageVisible, setIsLandingPageVisible] = useState(true);
   const selectedWorkspaceIdRef = useRef<string | null>(null);
   const explicitWorkspaceOpenSequenceRef = useRef(0);
+  // Landing restore: attempted at most once per mount, and the id already written
+  // to the server so a re-render cannot re-PUT it.
+  const restoreAttemptedRef = useRef(false);
+  const persistedLastWorkspaceIdRef = useRef<string | null>(null);
   const autoSyncInFlightRef = useRef<Set<string>>(new Set());
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
   const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
@@ -3343,9 +3349,103 @@ export default function WorkspacePage() {
     return hydrated as Workspace[];
   }, []);
 
+  /**
+   * The restore counterpart to `handleSelectWorkspace`. It deliberately does NOT
+   * bump `explicitWorkspaceOpenSequenceRef` or set `explicitWorkspaceOpen`:
+   * autosync of a linked private draft is scoped to an *explicit* open (see
+   * `isLinkedDraftAutoSyncEligible`), and restoring a session is not one. Routing a
+   * restore through `handleSelectWorkspace` would rebase the user's draft against
+   * the Shared Working version on every single login, and could raise the conflict
+   * dialog before they had touched anything.
+   *
+   * Kept as its own `[]`-dep callback rather than an option on
+   * `handleSelectWorkspace` for a second reason: that callback closes over
+   * `publishedVersionView`, so depending on it would turn the mount-only effect
+   * below into one that re-fetches the workspace list on every published-snapshot
+   * enter and exit.
+   */
+  const applyRestoredWorkspace = useCallback((workspace: Workspace) => {
+    setWorkspaceNameDraft(workspace.name);
+    setSelectedWorkspace(workspace);
+    setIsLandingPageVisible(false);
+    if (workspace.visibility === 'team') {
+      setIsAgentPaneVisible(true);
+    }
+    // `setMobileSurface('canvas')` is intentionally not mirrored from
+    // `handleSelectWorkspace`: a restore means "resume where I was", which is the
+    // conversation, not the file canvas.
+  }, []);
+
   useEffect(() => {
-    void refreshWorkspaceList();
-  }, [refreshWorkspaceList]);
+    // StrictMode double-invokes mount effects, so claim the attempt synchronously —
+    // before the first await — or both passes race to restore. The guard also means
+    // the ten other `refreshWorkspaceList()` call sites (post-delete, post-lifecycle,
+    // post-sync) can never re-trigger a restore and undo a user's deliberate return
+    // to the landing page.
+    if (restoreAttemptedRef.current) {
+      return;
+    }
+    restoreAttemptedRef.current = true;
+
+    void (async () => {
+      const [hydrated, storedWorkspaceId] = await Promise.all([
+        refreshWorkspaceList(),
+        // A failed or missing preference is indistinguishable from a first-time
+        // user, and both mean the same thing: stay on the landing page.
+        getLastWorkspaceId().catch((error) => {
+          console.error('Failed to load last workspace preference', error);
+          return null;
+        }),
+      ]);
+
+      // The user can pick a workspace, or send a landing prompt that creates one,
+      // while these two requests are in flight. Their choice always wins.
+      if (selectedWorkspaceIdRef.current) {
+        return;
+      }
+
+      const target = resolveWorkspaceToRestore(hydrated, storedWorkspaceId);
+      if (!target) {
+        return;
+      }
+
+      // Restoring is not a new open. Seed the write dedupe so the effect below does
+      // not immediately PUT back the value it just read.
+      persistedLastWorkspaceIdRef.current = target.id;
+      applyRestoredWorkspace(target);
+    })();
+  }, [applyRestoredWorkspace, refreshWorkspaceList]);
+
+  /**
+   * Records the last used workspace at a single funnel, rather than at
+   * `handleSelectWorkspace`, `handleLandingWorkspaceSelect`, `handleCreateWorkspace`,
+   * `handleLandingSendMessage` and the published-version and private-copy paths
+   * individually. This repo has repeatedly had one more call site than expected.
+   *
+   * Keyed on the id, not the workspace object: the object's identity changes on every
+   * rename and publication-status patch, which would re-fire this on every edit.
+   */
+  useEffect(() => {
+    const workspaceId = selectedWorkspace?.id;
+    if (!shouldPersistWorkspaceOpen({
+      workspaceId,
+      isLandingPageVisible,
+      alreadyPersistedId: persistedLastWorkspaceIdRef.current,
+    })) {
+      return;
+    }
+    // Claim before the request so a re-render cannot fire a duplicate PUT.
+    const claimedWorkspaceId = workspaceId as string;
+    persistedLastWorkspaceIdRef.current = claimedWorkspaceId;
+    void setLastWorkspaceId(claimedWorkspaceId).catch((error) => {
+      // Losing a landing preference must never surface in the workspace UI. Release
+      // the claim so re-opening the same workspace retries.
+      if (persistedLastWorkspaceIdRef.current === claimedWorkspaceId) {
+        persistedLastWorkspaceIdRef.current = null;
+      }
+      console.error('Failed to persist last workspace', error);
+    });
+  }, [isLandingPageVisible, selectedWorkspace?.id]);
 
   useEffect(() => {
     if (!selectedWorkspace) {

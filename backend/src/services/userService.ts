@@ -31,6 +31,13 @@ export interface UserRecord {
   invitedByUserId?: string | null;
   invitedAt?: string | null;
   claimedAt?: string | null;
+  /**
+   * The workspace this user last opened. Unverified and allowed to dangle — see
+   * `getLastWorkspaceId`. Optional for the same reason as `status`: the hand-built
+   * database fakes in the test suite omit it.
+   */
+  lastWorkspaceId?: string | null;
+  lastWorkspaceOpenedAt?: string | null;
   oidcIssuer?: string | null;
   oidcSubject?: string | null;
   createdAt: string;
@@ -497,6 +504,35 @@ export class UserService {
       .andWhere('isSystem', false)
       .first();
     return user || null;
+  }
+
+  /**
+   * The workspace this user last opened, used to restore their surface on sign-in.
+   *
+   * The id is stored unvalidated and MAY DANGLE: the workspace can be deleted or
+   * trashed, or the user's access revoked, at any point after the write. It is
+   * therefore not evidence of anything — every consumer must re-authorize it. The
+   * client resolves it against `GET /api/workspaces`, which is fully authorized.
+   * Never fold this value into `/auth/me`, the session, or any payload where a
+   * caller might mistake its presence for access.
+   */
+  async getLastWorkspaceId(userId: string): Promise<string | null> {
+    const row = await this.db('users')
+      .where({ id: userId })
+      .first('lastWorkspaceId');
+    return (row?.lastWorkspaceId as string | null | undefined) ?? null;
+  }
+
+  async setLastWorkspaceId(userId: string, workspaceId: string | null): Promise<void> {
+    await this.db('users')
+      .where({ id: userId })
+      // `updatedAt` is deliberately not bumped. Opening a workspace is not an edit
+      // to the user record, and this fires on every open — bumping it would make
+      // the column useless as a profile-change timestamp.
+      .update({
+        lastWorkspaceId: workspaceId,
+        lastWorkspaceOpenedAt: workspaceId ? this.db.fn.now() : null,
+      });
   }
 
   /**

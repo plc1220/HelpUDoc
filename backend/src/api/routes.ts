@@ -15,6 +15,7 @@ import adminWorkspaceRoutes from './adminWorkspaces';
 import settingsReflectionRoutes from './settingsReflections';
 import governanceRoutes from './governance';
 import meMemoryRoutes from './meMemory';
+import mePreferencesRoutes from './mePreferences';
 import { requireSystemAdmin } from '../middleware/adminOnly';
 import { DatabaseService } from '../services/databaseService';
 import { WorkspaceService } from '../services/workspaceService';
@@ -106,6 +107,7 @@ export default function(
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));
+  router.use('/me', mePreferencesRoutes(userService));
   router.use('/', conversationRoutes(conversationService));
 
   scheduleService.startScheduler();
