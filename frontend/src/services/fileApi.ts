@@ -1,8 +1,39 @@
 import { API_URL, apiFetch, buildApiUrl } from './apiClient';
 import type {
+  GcsBrowseResult,
+  GcsBucketSummary,
   GoogleDrivePickerScope,
   GoogleDriveSearchResult,
 } from '../types';
+
+/**
+ * Raised when the signed-in user's Google grant predates a scope a connector
+ * needs. Carries the code so the picker can offer re-consent rather than showing
+ * a dead-end error.
+ */
+export class GoogleScopeMissingError extends Error {
+  readonly missingScopes: string[];
+
+  constructor(message: string, missingScopes: string[]) {
+    super(message);
+    this.name = 'GoogleScopeMissingError';
+    this.missingScopes = missingScopes;
+  }
+}
+
+const throwApiError = async (response: Response, fallbackMessage: string): Promise<never> => {
+  const payload = await response.json().catch(() => null);
+  const message = payload && typeof payload === 'object' && typeof payload.error === 'string'
+    ? payload.error
+    : fallbackMessage;
+  if (payload && typeof payload === 'object' && payload.code === 'google_scope_missing') {
+    throw new GoogleScopeMissingError(
+      message,
+      Array.isArray(payload.missingScopes) ? payload.missingScopes : [],
+    );
+  }
+  throw new Error(message);
+};
 
 export const getFiles = async (workspaceId: string) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files`);
@@ -293,6 +324,54 @@ export const importGoogleDriveFiles = async (
         ? payload.error
         : 'Failed to import Google Drive files',
     );
+  }
+  return response.json();
+};
+
+export const listGcsBuckets = async (workspaceId: string): Promise<{ buckets: GcsBucketSummary[] }> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/gcs/buckets`);
+  if (!response.ok) {
+    await throwApiError(response, 'Failed to list Cloud Storage buckets');
+  }
+  return response.json();
+};
+
+export const browseGcsObjects = async (
+  workspaceId: string,
+  params: { bucketId: string; prefix?: string; query?: string; pageToken?: string },
+): Promise<GcsBrowseResult> => {
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/gcs/objects`);
+  url.searchParams.set('bucketId', params.bucketId);
+  if (params.prefix) {
+    url.searchParams.set('prefix', params.prefix);
+  }
+  if (params.query?.trim()) {
+    url.searchParams.set('query', params.query.trim());
+  }
+  if (params.pageToken?.trim()) {
+    url.searchParams.set('pageToken', params.pageToken.trim());
+  }
+  const response = await apiFetch(url.toString());
+  if (!response.ok) {
+    await throwApiError(response, 'Failed to list Cloud Storage objects');
+  }
+  return response.json();
+};
+
+export const importGcsObjects = async (
+  workspaceId: string,
+  bucketId: string,
+  objectNames: string[],
+) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/gcs/import`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ bucketId, objectNames }),
+  });
+  if (!response.ok) {
+    await throwApiError(response, 'Failed to import Cloud Storage objects');
   }
   return response.json();
 };

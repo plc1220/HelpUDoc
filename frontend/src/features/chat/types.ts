@@ -1,4 +1,4 @@
-import type { GoogleDrivePickerItem } from '../../types';
+import type { GcsBrowseEntry, GoogleDrivePickerItem } from '../../types';
 
 export type ChatComposerAttachment =
   | {
@@ -13,4 +13,12 @@ export type ChatComposerAttachment =
       name: string;
       source: 'drive';
       driveItem: GoogleDrivePickerItem;
+    }
+  | {
+      id: string;
+      name: string;
+      source: 'gcs';
+      /** Object keys are only unique within a bucket, so the id travels too. */
+      bucketId: string;
+      gcsItem: GcsBrowseEntry;
     };

@@ -13,6 +13,8 @@ import { HttpError } from '../errors';
 import { WorkspaceService } from '../services/workspaceService';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
 import { GoogleDriveService } from '../services/googleDriveService';
+import { GoogleCloudStorageService } from '../services/googleCloudStorageService';
+import { GcsBucketRegistryService } from '../services/gcsBucketRegistryService';
 
 export default function(
   fileService: FileService,
@@ -20,6 +22,7 @@ export default function(
   googleOAuthService: GoogleOAuthService,
   fileStatusService: FileStatusService,
   filePublicationService: FilePublicationService,
+  gcsBucketRegistryService: GcsBucketRegistryService,
 ) {
   const router = Router({ mergeParams: true });
   const upload = multer({
@@ -34,6 +37,11 @@ export default function(
     }),
   });
   const googleDriveService = new GoogleDriveService(googleOAuthService, fileService);
+  const googleCloudStorageService = new GoogleCloudStorageService(
+    googleOAuthService,
+    fileService,
+    gcsBucketRegistryService,
+  );
 
   const updateFileSchema = z.object({
     content: z.string(),
@@ -101,6 +109,18 @@ export default function(
     fileIds: z.array(z.string().min(1)).min(1).max(20),
   });
 
+  const gcsBrowseSchema = z.object({
+    bucketId: z.string().uuid(),
+    prefix: z.string().optional(),
+    query: z.string().optional(),
+    pageToken: z.string().optional(),
+  });
+
+  const gcsImportSchema = z.object({
+    bucketId: z.string().uuid(),
+    objectNames: z.array(z.string().min(1)).min(1).max(20),
+  });
+
   const requireUserContext = (req: Request) => {
     if (!req.userContext) {
       throw new HttpError(401, 'Missing user context');
@@ -110,6 +130,13 @@ export default function(
 
   const handleError = (res: Response, error: unknown, fallbackMessage: string) => {
     if (error instanceof GoogleOAuthTokenMissingError) {
+      if (error.missingScopes.length) {
+        return res.status(400).json({
+          error: error.message,
+          code: 'google_scope_missing',
+          missingScopes: error.missingScopes,
+        });
+      }
       return res.status(400).json({ error: error.message });
     }
     if (error instanceof HttpError) {
@@ -152,6 +179,60 @@ export default function(
         return res.status(400).json({ error: 'Invalid Google Drive import payload' });
       }
       handleError(res, error, 'Failed to import Google Drive files');
+    }
+  });
+
+  router.get('/gcs/buckets', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      await workspaceService.ensureMembership(workspaceId, user.userId);
+      const buckets = await googleCloudStorageService.listBuckets(user.userId);
+      res.json({ buckets });
+    } catch (error) {
+      handleError(res, error, 'Failed to list Cloud Storage buckets');
+    }
+  });
+
+  router.get('/gcs/objects', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = gcsBrowseSchema.parse(req.query);
+      await workspaceService.ensureMembership(workspaceId, user.userId);
+      const result = await googleCloudStorageService.listObjects(user.userId, {
+        bucketId: payload.bucketId,
+        prefix: payload.prefix,
+        query: payload.query,
+        pageToken: payload.pageToken,
+      });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid Cloud Storage browse payload' });
+      }
+      handleError(res, error, 'Failed to list Cloud Storage objects');
+    }
+  });
+
+  router.post('/gcs/import', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = gcsImportSchema.parse(req.body);
+      await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
+      const files = await googleCloudStorageService.importObjects(
+        workspaceId,
+        user.userId,
+        payload.bucketId,
+        payload.objectNames,
+      );
+      res.status(201).json({ files });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid Cloud Storage import payload' });
+      }
+      handleError(res, error, 'Failed to import Cloud Storage objects');
     }
   });
 

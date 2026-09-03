@@ -55,6 +55,7 @@ import {
   createTextFile,
   getFolders,
   importGoogleDriveFiles,
+  importGcsObjects,
   updateFileContent,
   deleteFolder,
   deleteFile,
@@ -101,6 +102,8 @@ import type {
   InterruptAnswersByQuestionId,
   InterruptQuestion,
   GoogleDrivePickerItem,
+  GcsBrowseEntry,
+  GcsBucketSummary,
   PluginDefinition,
   SkillDefinition,
   WorkspaceSchedule,
@@ -161,7 +164,9 @@ import type { InteractionRequest, InteractionResponse } from '@helpudoc/contract
 import { buildApprovalDraftContent, buildApprovalReview } from '../chat/interrupts/approvalReview';
 import type { RenderableInterruptAction } from '../chat/interrupts/actions';
 import DrivePickerModal from '../../components/chat/DrivePickerModal';
+import GcsPickerModal from '../../components/chat/GcsPickerModal';
 import GoogleDriveIcon from '../../components/chat/GoogleDriveIcon';
+import GoogleCloudStorageIcon from '../../components/chat/GoogleCloudStorageIcon';
 import type { ChatComposerAttachment } from '../chat/types';
 import {
   getDashboardManifestPath,
@@ -244,7 +249,15 @@ const summarizeComposerAttachments = (attachments: ChatComposerAttachment[]): st
     return '';
   }
   return attachments
-    .map((attachment) => (attachment.source === 'drive' ? `${attachment.name} (Drive)` : attachment.name))
+    .map((attachment) => {
+      if (attachment.source === 'drive') {
+        return `${attachment.name} (Drive)`;
+      }
+      if (attachment.source === 'gcs') {
+        return `${attachment.name} (Cloud Storage)`;
+      }
+      return attachment.name;
+    })
     .join(', ');
 };
 
@@ -263,6 +276,17 @@ const createDriveComposerAttachment = (
   name: item.name,
   source: 'drive',
   driveItem: item,
+});
+
+const createGcsComposerAttachment = (
+  bucketId: string,
+  entry: GcsBrowseEntry,
+): Extract<ChatComposerAttachment, { source: 'gcs' }> => ({
+  id: `gcs:${bucketId}:${entry.path}:${Math.random().toString(16).slice(2)}`,
+  name: entry.name,
+  source: 'gcs',
+  bucketId,
+  gcsItem: entry,
 });
 
 const revokeLocalAttachmentPreview = (attachment: ChatComposerAttachment) => {
@@ -978,6 +1002,13 @@ export default function WorkspacePage() {
   const [activeConversationPersona, setActiveConversationPersona] = useState<string | null>(null);
   const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
   const [isDriveImporting, setIsDriveImporting] = useState(false);
+  const [isGcsPickerOpen, setIsGcsPickerOpen] = useState(false);
+  const [isGcsImporting, setIsGcsImporting] = useState(false);
+  /**
+   * Either connector's import holds the composer, so the two share one lock
+   * rather than each disabling the same controls separately.
+   */
+  const isImportingAttachments = isDriveImporting || isGcsImporting;
   const [workspaceFileDialog, setWorkspaceFileDialog] = useState<WorkspaceFileDialogState | null>(null);
   // Set to a freshly created folder so the tree expands down to it; a new folder is
   // empty, so without this it stays hidden inside a collapsed parent.
@@ -6636,7 +6667,7 @@ export default function WorkspacePage() {
   };
 
   const handleSendMessage = async (workspaceOverride?: Workspace | null) => {
-    if (sendLockRef.current || isDriveImporting) {
+    if (sendLockRef.current || isImportingAttachments) {
       return;
     }
     const trimmed = chatMessage.trim();
@@ -6645,6 +6676,9 @@ export default function WorkspacePage() {
     );
     const driveAttachments = chatAttachments.filter(
       (attachment): attachment is Extract<ChatComposerAttachment, { source: 'drive' }> => attachment.source === 'drive',
+    );
+    const gcsAttachments = chatAttachments.filter(
+      (attachment): attachment is Extract<ChatComposerAttachment, { source: 'gcs' }> => attachment.source === 'gcs',
     );
     const hasAttachments = chatAttachments.length > 0;
     const hasLocalAttachments = localAttachments.length > 0;
@@ -6774,6 +6808,21 @@ export default function WorkspacePage() {
             markPrivateWorkspaceChanged(workspaceId);
             if (Array.isArray(imported?.files)) {
               uploadedFiles.push(...imported.files);
+            }
+          }
+          if (gcsAttachments.length) {
+            const objectsByBucket = new Map<string, string[]>();
+            for (const attachment of gcsAttachments) {
+              const forBucket = objectsByBucket.get(attachment.bucketId) || [];
+              forBucket.push(attachment.gcsItem.path);
+              objectsByBucket.set(attachment.bucketId, forBucket);
+            }
+            for (const [bucketId, objectNames] of objectsByBucket) {
+              const imported = await importGcsObjects(workspaceId, bucketId, objectNames);
+              markPrivateWorkspaceChanged(workspaceId);
+              if (Array.isArray(imported?.files)) {
+                uploadedFiles.push(...imported.files);
+              }
             }
           }
           if (uploadedFiles.length && selectedWorkspaceIdRef.current === workspaceId) {
@@ -7673,6 +7722,71 @@ export default function WorkspacePage() {
     }
   };
 
+  const handleOpenGcsPicker = () => {
+    if (!selectedWorkspace) {
+      addLocalSystemMessage('Please select a workspace before importing Cloud Storage objects.');
+      return;
+    }
+    setIsGcsPickerOpen(true);
+  };
+
+  const handleGcsPickerConfirm = async (bucket: GcsBucketSummary, entries: GcsBrowseEntry[]) => {
+    if (!entries.length) {
+      setIsGcsPickerOpen(false);
+      return;
+    }
+    const workspaceId = selectedWorkspace?.id;
+    if (!workspaceId) {
+      setIsGcsPickerOpen(false);
+      addLocalSystemMessage('Please select a workspace before importing Cloud Storage objects.');
+      return;
+    }
+
+    const existingPaths = new Set(
+      chatAttachmentsRef.current
+        .filter((attachment): attachment is Extract<ChatComposerAttachment, { source: 'gcs' }> => attachment.source === 'gcs')
+        .filter((attachment) => attachment.bucketId === bucket.id)
+        .map((attachment) => attachment.gcsItem.path),
+    );
+    const pendingAttachments = entries
+      .filter((entry) => !existingPaths.has(entry.path))
+      .map((entry) => createGcsComposerAttachment(bucket.id, entry));
+    const pendingPaths = new Set(entries.map((entry) => entry.path));
+
+    // Show the chips straight away, then take them back if the import fails, so
+    // the composer never claims context the workspace does not actually hold.
+    if (pendingAttachments.length) {
+      setChatAttachments((prev) => [...prev, ...pendingAttachments]);
+    }
+    setIsGcsPickerOpen(false);
+
+    try {
+      setIsGcsImporting(true);
+      const imported = await importGcsObjects(
+        workspaceId,
+        bucket.id,
+        entries.map((entry) => entry.path),
+      );
+      markPrivateWorkspaceChanged(workspaceId);
+      const importedFiles = Array.isArray(imported.files) ? imported.files : [];
+      if (importedFiles.length && selectedWorkspaceIdRef.current === workspaceId) {
+        await loadFilesForWorkspace(workspaceId);
+      }
+    } catch (error) {
+      console.error('Failed to import Cloud Storage objects:', error);
+      setChatAttachments((prev) =>
+        prev.filter(
+          (attachment) => attachment.source !== 'gcs'
+            || attachment.bucketId !== bucket.id
+            || !pendingPaths.has(attachment.gcsItem.path),
+        ),
+      );
+      addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to import Cloud Storage objects.');
+    } finally {
+      setIsGcsImporting(false);
+    }
+  };
+
   const handleRemoveChatAttachment = (index: number) => {
     setChatAttachments((prev) => {
       const removed = prev[index];
@@ -8077,7 +8191,7 @@ export default function WorkspacePage() {
             chatInputRef={chatInputRef}
             attachmentInputRef={attachmentInputRef}
             isStreaming={isStreaming}
-            isPreparingAttachments={isDriveImporting}
+            isPreparingAttachments={isImportingAttachments}
             personas={personas}
             selectedPersona={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
             internetSearchEnabled={internetSearchEnabled}
@@ -8470,6 +8584,8 @@ export default function WorkspacePage() {
                             >
                               {attachment.source === 'drive' ? (
                                 <GoogleDriveIcon className="h-8 w-8 shrink-0 rounded-lg p-1.5" />
+                              ) : attachment.source === 'gcs' ? (
+                                <GoogleCloudStorageIcon className="h-8 w-8 shrink-0 rounded-lg p-1.5" />
                               ) : attachment.previewUrl ? (
                                 <img
                                   src={attachment.previewUrl}
@@ -8592,7 +8708,7 @@ export default function WorkspacePage() {
                               size="md"
                               icon={<Paperclip size={18} />}
                               onClick={() => setIsLandingAttachmentMenuOpen((prev) => !prev)}
-                              isDisabled={isDriveImporting}
+                              isDisabled={isImportingAttachments}
                             />
                             {isLandingAttachmentMenuOpen ? (
                               <div className={`absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border p-1.5 text-sm shadow-2xl backdrop-blur-md ${
@@ -8619,7 +8735,7 @@ export default function WorkspacePage() {
                                     setIsLandingAttachmentMenuOpen(false);
                                     handleOpenDrivePicker();
                                   }}
-                                  disabled={isDriveImporting}
+                                  disabled={isImportingAttachments}
                                   className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
                                     isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'
                                   }`}
@@ -8631,6 +8747,25 @@ export default function WorkspacePage() {
                                   )}
                                   <span>Google Drive</span>
                                 </button>
+                                <button
+                                  type="button"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => {
+                                    setIsLandingAttachmentMenuOpen(false);
+                                    handleOpenGcsPicker();
+                                  }}
+                                  disabled={isImportingAttachments}
+                                  className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                    isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {isGcsImporting ? (
+                                    <Loader2 size={16} className={`animate-spin ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`} />
+                                  ) : (
+                                    <GoogleCloudStorageIcon className="h-4 w-4 shrink-0" />
+                                  )}
+                                  <span>Google Cloud Storage</span>
+                                </button>
                               </div>
                             ) : null}
                           </div>
@@ -8641,7 +8776,7 @@ export default function WorkspacePage() {
                             size="md"
                             icon={<span className="lumo-composer-at">@</span>}
                             onClick={handleInsertKnowledgeTrigger}
-                            isDisabled={isDriveImporting}
+                            isDisabled={isImportingAttachments}
                           />
                           <IconButton
                             label="Commands"
@@ -8650,7 +8785,7 @@ export default function WorkspacePage() {
                             size="md"
                             icon={<span className="lumo-composer-slash">/</span>}
                             onClick={handleInsertSlashTrigger}
-                            isDisabled={isDriveImporting}
+                            isDisabled={isImportingAttachments}
                           />
                           </div>
                           <div className="landing-composer-routing flex min-w-0 items-center">
@@ -8752,7 +8887,7 @@ export default function WorkspacePage() {
                           size="lg"
                           icon={<ArrowUp size={20} />}
                           onClick={() => void handleLandingSendMessage()}
-                          isDisabled={isDriveImporting || (!chatMessage.trim() && !chatAttachments.length)}
+                          isDisabled={isImportingAttachments || (!chatMessage.trim() && !chatAttachments.length)}
                         />
                       </div>
                     </div>
@@ -9032,7 +9167,7 @@ export default function WorkspacePage() {
                                   setIsFileActionMenuOpen(false);
                                   handleOpenDrivePicker();
                                 }}
-                                disabled={!selectedWorkspace || isDriveImporting}
+                                disabled={!selectedWorkspace || isImportingAttachments}
                                 className={`flex w-full items-center gap-2 px-3 py-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${
                                   isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'
                                 }`}
@@ -9043,6 +9178,25 @@ export default function WorkspacePage() {
                                   <GoogleDriveIcon className="h-4 w-4 shrink-0" />
                                 )}
                                 <span>Google Drive</span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setIsFileActionMenuOpen(false);
+                                  handleOpenGcsPicker();
+                                }}
+                                disabled={!selectedWorkspace || isImportingAttachments}
+                                className={`flex w-full items-center gap-2 px-3 py-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'
+                                }`}
+                              >
+                                {isGcsImporting ? (
+                                  <Loader2 size={15} className={`shrink-0 animate-spin ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`} />
+                                ) : (
+                                  <GoogleCloudStorageIcon className="h-4 w-4 shrink-0" />
+                                )}
+                                <span>Google Cloud Storage</span>
                               </button>
                             </div>
                           )}
@@ -9352,7 +9506,7 @@ export default function WorkspacePage() {
               conversationStreaming={conversationStreaming}
               messages={messages}
               isStreaming={isStreaming}
-              isPreparingAttachments={isDriveImporting}
+              isPreparingAttachments={isImportingAttachments}
               personaDisplayName={personaDisplayName}
               messageBubbleMaxWidth={messageBubbleMaxWidth}
               markdownComponents={markdownComponents}
@@ -9624,6 +9778,12 @@ export default function WorkspacePage() {
         colorMode={colorMode}
         onClose={() => setIsDrivePickerOpen(false)}
         onConfirm={handleDrivePickerConfirm}
+      />
+      <GcsPickerModal
+        isOpen={isGcsPickerOpen}
+        workspaceId={selectedWorkspace?.id}
+        onClose={() => setIsGcsPickerOpen(false)}
+        onConfirm={handleGcsPickerConfirm}
       />
       <WorkspaceShareDialog
         open={shareWorkspace !== null}
