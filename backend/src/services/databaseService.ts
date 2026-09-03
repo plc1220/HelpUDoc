@@ -618,6 +618,12 @@ export class DatabaseService {
       });
       console.log('Created "file_audit_events" table.');
     }
+
+    // Platform-scope activity reads this table with no predicate. The existing
+    // indexes are all prefixed on fileId or workspaceId and cannot serve it.
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS file_audit_events_occurred_idx ON file_audit_events ("occurredAt" DESC)',
+    );
   }
 
   private async createFilePublicationsTable(): Promise<void> {
@@ -2376,6 +2382,22 @@ export class DatabaseService {
         table.index(['resourceType', 'resourceId', 'createdAt'], 'audit_events_resource_created_idx');
       });
     }
+
+    // Indexes for the scoped activity feed. Deliberately outside the `hasTable`
+    // guard above so an already-migrated database gets them too.
+    //
+    // The team scope reads file-typed rows through a jsonb field, which
+    // `audit_events_resource_created_idx` cannot serve — that index keys on
+    // `resourceId`, which for a file row is a file id, not the workspace.
+    await this.db.raw(
+      `CREATE INDEX IF NOT EXISTS audit_events_file_workspace_created_idx
+         ON audit_events ((metadata->>'workspaceId'), "createdAt" DESC)
+         WHERE "resourceType" = 'file'`,
+    );
+    // The platform scope has no predicate at all, so it needs a plain time index.
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS audit_events_created_idx ON audit_events ("createdAt" DESC)',
+    );
 
     if (!await this.db.schema.hasTable('idempotency_records')) {
       await this.db.schema.createTable('idempotency_records', (table) => {

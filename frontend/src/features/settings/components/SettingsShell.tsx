@@ -1,4 +1,4 @@
-import { useMemo, useState, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Link, useLocation } from 'react-router-dom';
@@ -13,12 +13,16 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ShieldCheck,
+  Activity,
 } from 'lucide-react';
+import { fetchCapabilities } from '../../../services/activityApi';
 
 type NavItem = {
   label: string;
   path: string;
   icon: ComponentType<{ size?: number }>;
+  /** Shown only when the server says this caller can reach it. */
+  requiresActivityAccess?: boolean;
 };
 
 type SettingsShellProps = {
@@ -31,6 +35,7 @@ type SettingsShellProps = {
 
 const BASE_NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/settings' },
+  { label: 'Activity', icon: Activity, path: '/settings/activity', requiresActivityAccess: true },
   { label: 'Skill Governance', icon: ShieldCheck, path: '/skills' },
   { label: 'Plugins & integrations', icon: PackageOpen, path: '/settings/agents' },
   { label: 'Knowledge', icon: BookOpen, path: '/settings/knowledge' },
@@ -56,7 +61,27 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
   const location = useLocation();
   const [isNavigationCollapsed, setIsNavigationCollapsed] = useState(getInitialNavigationState);
 
-  const navItems = useMemo(() => BASE_NAV_ITEMS, []);
+  const [canViewActivity, setCanViewActivity] = useState(false);
+
+  // Hiding the link is a courtesy, not a control: `/api/activity` enforces its
+  // own access, and a member who navigates to the page directly still gets a
+  // clear message rather than data.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCapabilities()
+      .then((capabilities) => {
+        if (!cancelled) setCanViewActivity(capabilities.canViewActivity);
+      })
+      .catch(() => {
+        if (!cancelled) setCanViewActivity(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const navItems = useMemo(
+    () => BASE_NAV_ITEMS.filter((item) => !item.requiresActivityAccess || canViewActivity),
+    [canViewActivity],
+  );
   const toggleNavigation = () => {
     setIsNavigationCollapsed((current) => {
       const next = !current;

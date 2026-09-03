@@ -16,6 +16,8 @@ import settingsReflectionRoutes from './settingsReflections';
 import governanceRoutes from './governance';
 import meMemoryRoutes from './meMemory';
 import mePreferencesRoutes from './mePreferences';
+import activityRoutes from './activity';
+import { requireActivityAudience } from '../middleware/activityAudience';
 import { requireSystemAdmin } from '../middleware/adminOnly';
 import { DatabaseService } from '../services/databaseService';
 import { WorkspaceService } from '../services/workspaceService';
@@ -107,7 +109,10 @@ export default function(
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));
-  router.use('/me', mePreferencesRoutes(userService));
+  router.use('/me', mePreferencesRoutes(userService, dbService.getDb()));
+  // Deliberately not under '/settings': that router is admin-only, and a team
+  // lead has to be able to reach this.
+  router.use('/activity', requireActivityAudience(userService, dbService.getDb()), activityRoutes(dbService.getDb()));
   router.use('/', conversationRoutes(conversationService));
 
   scheduleService.startScheduler();

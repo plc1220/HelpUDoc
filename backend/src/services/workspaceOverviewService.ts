@@ -45,13 +45,7 @@ export type WorkspaceOverviewResponse = {
 
 const MS_24H = 24 * 60 * 60 * 1000;
 const MS_7D = 7 * 24 * 60 * 60 * 1000;
-const MAX_ACTIVITY = 8;
 
-function previewText(s: string, n = 80) {
-  const t = s.replace(/\s+/g, ' ').trim();
-  if (t.length <= n) return t;
-  return `${t.slice(0, n - 1)}…`;
-}
 
 export function buildFocusAreas(
   input: { skillCount: number; totalUsers: number; messaged24h: number; langfuseConfigured: boolean; langfuseAvailable: boolean; langfuseError?: string },
@@ -93,25 +87,6 @@ export function buildFocusAreas(
   return out.slice(0, 3);
 }
 
-type RowMsg = {
-  id: string | number;
-  createdAt: Date;
-  text: string;
-  sender: string;
-  displayName: string | null;
-};
-
-function mergeActivity(
-  app: AppActivityItem[],
-  lf: LangfuseActivityItem[],
-): WorkspaceOverviewActivity[] {
-  return [...app, ...lf]
-    .map((it) => ({ it, t: Date.parse(it.at) }))
-    .filter((x) => !Number.isNaN(x.t))
-    .sort((a, b) => b.t - a.t)
-    .slice(0, MAX_ACTIVITY)
-    .map((x) => x.it);
-}
 
 export type BuildOverviewDeps = {
   db: Knex;
@@ -142,34 +117,6 @@ export async function buildWorkspaceOverview(
     .first() as { c?: string | number } | undefined;
   const rawC = countRow?.c;
   const messaged24h = typeof rawC === 'string' ? parseInt(rawC, 10) : Number(rawC) || 0;
-
-  const rows = await db('conversation_messages as m')
-    .leftJoin('users as u', 'm.authorId', 'u.id')
-    .select(
-      'm.id',
-      'm.createdAt',
-      'm.text',
-      'm.sender',
-      'u.displayName as displayName',
-    )
-    .orderBy('m.createdAt', 'desc')
-    .limit(5) as RowMsg[];
-
-  const appItems: AppActivityItem[] = rows.map((r) => {
-    const isUser = (r.sender || '') === 'user';
-    const who = isUser ? (r.displayName || 'User') : 'Assistant';
-    const at = r.createdAt instanceof Date
-      ? r.createdAt.toISOString()
-      : new Date(r.createdAt as string | number).toISOString();
-    const preview = previewText(r.text || '', 100);
-    return {
-      source: 'app' as const,
-      id: `m:${r.id}`,
-      title: isUser ? `${who}: ${preview}` : `Assistant: ${preview}`,
-      meta: isUser ? 'Chat · user message' : 'Chat · agent',
-      at,
-    };
-  });
 
   const from7 = new Date(t0 - MS_7D).toISOString();
   const to7 = new Date(t0).toISOString();
@@ -231,7 +178,12 @@ export async function buildWorkspaceOverview(
     skills: { count: skillIds.length },
     users: { total, messaged24h },
     langfuse,
-    activity: { items: mergeActivity(appItems, lfItems) },
+    // Always empty. The activity feed moved to `GET /api/activity`, which scopes
+    // by role and reads the audit trail. The query that used to fill this read
+    // the five most recent chat messages across every user, previews included,
+    // with no filter on the author. The field stays so the response shape does
+    // not change for older clients.
+    activity: { items: [] },
     focus,
   };
 }

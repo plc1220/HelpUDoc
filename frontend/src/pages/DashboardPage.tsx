@@ -3,36 +3,22 @@ import { Link } from 'react-router-dom';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
-import {
-  Activity,
-  ArrowRight,
-} from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
 import {
-  SettingsEmptyState,
   SettingsMetricCard,
   SettingsMetricsGrid,
   SettingsSectionHeader,
   SettingsSurface,
 } from '../components/settings/SettingsScaffold';
 import { fetchWorkspaceOverview, type WorkspaceOverview } from '../services/settingsApi';
-
-function formatRelativeTime(iso: string): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return '';
-  const diff = Math.max(0, Date.now() - t);
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric' });
-}
+import { fetchRecentActivity, type ActivityItem } from '../services/activityApi';
+import ActivityFeed from '../components/ActivityFeed';
 
 const DashboardPage = () => {
   const [data, setData] = useState<WorkspaceOverview | null>(null);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [activityLoading, setActivityLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -64,6 +50,20 @@ const DashboardPage = () => {
       cancelled = true;
     };
   }, [loadOverview]);
+
+  // The feed comes from the scoped activity endpoint, not from the overview.
+  // The overview used to carry the five most recent chat messages across every
+  // user, previews included; that is no longer read here.
+  useEffect(() => {
+    let cancelled = false;
+    setActivityLoading(true);
+    // First page only. The dashboard is a glance; paging lives on /settings/activity.
+    void fetchRecentActivity()
+      .then((feed) => { if (!cancelled) setActivity(feed.items); })
+      .catch(() => { if (!cancelled) setActivity([]); })
+      .finally(() => { if (!cancelled) setActivityLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const retryLoad = useCallback(() => {
     void loadOverview();
@@ -112,7 +112,6 @@ const DashboardPage = () => {
     ];
   }, [data, loadError, loading]);
 
-  const activities = data?.activity.items || [];
   const focusAreas = data?.focus || [];
 
   return (
@@ -187,7 +186,7 @@ const DashboardPage = () => {
           <SettingsSectionHeader
             eyebrow="Activity"
             title="Recent activity"
-            description="In-app messages and Langfuse traces when the API is reachable."
+            description="The 20 most recent recorded actions. See Activity for older pages."
             actions={data?.langfuse.publicUrl ? (
               <Button
                 label="Open Langfuse"
@@ -198,39 +197,8 @@ const DashboardPage = () => {
               />
             ) : null}
           />
-          <div className="mt-6 space-y-3">
-            {loading && activities.length === 0 ? (
-              <p className="text-sm text-slate-500">Loading recent activity…</p>
-            ) : null}
-            {!loading && activities.length === 0 ? (
-              <SettingsEmptyState
-                title="No recent activity yet"
-                description="Start a chat or run the agent to populate this list."
-                icon={Activity}
-                action={(
-                  <Link
-                    to="/settings/agents"
-                    className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition"
-                  >
-                    Manage skills
-                  </Link>
-                )}
-              />
-            ) : null}
-            {activities.map((a) => {
-              const rel = formatRelativeTime(a.at);
-              return (
-                <Card key={a.id} padding={4} variant="muted">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-900">{a.title}</p>
-                    <p className="text-xs text-slate-500">
-                      {rel ? `${rel} · ` : ''}
-                      {a.meta}
-                    </p>
-                  </div>
-                </Card>
-              );
-            })}
+          <div className="mt-6">
+            <ActivityFeed items={activity} loading={activityLoading} />
           </div>
         </SettingsSurface>
 

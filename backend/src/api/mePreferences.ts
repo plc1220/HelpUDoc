@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import type { Knex } from 'knex';
 import { UserService } from '../services/userService';
+import { resolveActivityScope } from '../services/activityService';
 import { HttpError } from '../errors';
 
 const lastWorkspaceSchema = z.object({
@@ -11,7 +13,7 @@ const lastWorkspaceSchema = z.object({
  * Self-service preferences for the signed-in user. Distinct from `users.ts`, which
  * is mounted behind `requireSystemAdmin` — nothing here is an admin operation.
  */
-export default function mePreferencesRoutes(userService: UserService) {
+export default function mePreferencesRoutes(userService: UserService, db: Knex) {
   const router = Router();
 
   const requireUserContext = (req: Request) => {
@@ -66,6 +68,24 @@ export default function mePreferencesRoutes(userService: UserService) {
         return res.status(400).json({ error: 'Invalid input' });
       }
       return handleError(res, error, 'Failed to save last workspace preference');
+    }
+  });
+
+  /**
+   * What this user is allowed to reach, so the client can hide a control rather
+   * than show one that 403s. It is a convenience for the interface only — every
+   * endpoint still enforces its own access, and nothing here grants anything.
+   */
+  router.get('/capabilities', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const scope = await resolveActivityScope(db, user.userId);
+      return res.json({
+        canViewActivity: scope !== null,
+        activityScope: scope === null ? null : scope.kind,
+      });
+    } catch (error) {
+      return handleError(res, error, 'Failed to load capabilities');
     }
   });
 
