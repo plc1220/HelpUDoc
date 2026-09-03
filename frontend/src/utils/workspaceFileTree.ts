@@ -1,5 +1,5 @@
 import type { File as WorkspaceFile } from '../types';
-import { normalizeFilePath } from './files';
+import { normalizeFilePath } from './filePaths.ts';
 
 export type WorkspaceFileTreeNode = WorkspaceFileTreeFolderNode | WorkspaceFileTreeLeafNode;
 
@@ -40,6 +40,37 @@ export const getWorkspaceParentFolderPath = (value: string): string => {
     return '';
   }
   return parts.slice(0, -1).join('/');
+};
+
+/**
+ * Join a folder name typed by the user onto the parent folder it is being created
+ * in. Returns `null` for a path that must not be built.
+ *
+ * Slashes in the typed part are kept, so `q1/drafts` under `reports` creates
+ * `reports/q1/drafts` — the backend already does a recursive mkdir, so there is no
+ * reason to forbid it. Traversal segments are refused here so the dialog can show a
+ * useful message; the server rejects them too (`normalizeRelativeFolderPath`), and
+ * this does not replace that check.
+ */
+export const buildWorkspaceSubfolderPath = (
+  parentFolderPath: string,
+  typedName: string,
+): string | null => {
+  // The typed part must contribute segments of its own. `splitWorkspacePath`
+  // swallows a lone '.', which would otherwise silently resolve to the parent and
+  // "succeed" by re-creating a folder that already exists.
+  const typedParts = splitWorkspacePath(typedName);
+  if (!typedParts.length) {
+    return null;
+  }
+  const parts = [...splitWorkspacePath(parentFolderPath), ...typedParts]
+    // Surrounding spaces in a directory name are a filesystem footgun, and a
+    // segment that is *only* whitespace would otherwise become a folder named '  '.
+    .map((part) => part.trim());
+  if (parts.some((part) => !part || part === '.' || part === '..')) {
+    return null;
+  }
+  return parts.join('/');
 };
 
 export const getWorkspaceAncestorFolderPaths = (value: string): string[] => {

@@ -194,6 +194,7 @@ import {
 } from '../../utils/clarifications';
 import {
   buildWorkspaceDestinationPath,
+  buildWorkspaceSubfolderPath,
   getWorkspaceParentFolderPath,
   normalizeWorkspaceFolderPath,
 } from '../../utils/workspaceFileTree';
@@ -319,7 +320,9 @@ const DEFAULT_PERSONAS: AgentPersona[] = [
 ];
 const LANDING_PERSONA_ORDER = ['lite', 'fast', 'pro'];
 type WorkspaceFileDialogState =
-  | { kind: 'create-folder'; value: string; busy: boolean; error?: string }
+  // `parentPath` is '' for the workspace-level "Create folder" action, and the
+  // folder's path when created from a folder row.
+  | { kind: 'create-folder'; parentPath: string; value: string; busy: boolean; error?: string }
   | { kind: 'rename-folder'; folder: { path: string; name: string; fileCount: number }; value: string; busy: boolean; error?: string }
   | { kind: 'rename-file'; file: WorkspaceFile; value: string; busy: boolean; error?: string }
   | { kind: 'delete-file'; file: WorkspaceFile; busy: boolean; error?: string }
@@ -976,6 +979,9 @@ export default function WorkspacePage() {
   const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
   const [isDriveImporting, setIsDriveImporting] = useState(false);
   const [workspaceFileDialog, setWorkspaceFileDialog] = useState<WorkspaceFileDialogState | null>(null);
+  // Set to a freshly created folder so the tree expands down to it; a new folder is
+  // empty, so without this it stays hidden inside a collapsed parent.
+  const [revealFolderPath, setRevealFolderPath] = useState<string | null>(null);
   const [isLandingAttachmentMenuOpen, setIsLandingAttachmentMenuOpen] = useState(false);
   const [isLandingWorkspacePickerOpen, setIsLandingWorkspacePickerOpen] = useState(false);
   const [landingWorkspaceQuery, setLandingWorkspaceQuery] = useState('');
@@ -7299,11 +7305,16 @@ export default function WorkspacePage() {
     });
   };
 
-  const handleCreateFolder = async () => {
+  const handleCreateFolder = async (parentFolderPath = '') => {
     if (!selectedWorkspace) {
       return;
     }
-    setWorkspaceFileDialog({ kind: 'create-folder', value: '', busy: false });
+    setWorkspaceFileDialog({
+      kind: 'create-folder',
+      parentPath: normalizeWorkspaceFolderPath(parentFolderPath),
+      value: '',
+      busy: false,
+    });
   };
 
   const handleCloseWorkspaceFileDialog = () => {
@@ -7331,9 +7342,18 @@ export default function WorkspacePage() {
 
     try {
       if (currentDialog.kind === 'create-folder') {
-        const normalizedFolder = normalizeWorkspaceFolderPath(currentDialog.value.trim());
-        if (!normalizedFolder) {
+        const typedName = currentDialog.value.trim();
+        if (!typedName) {
           setWorkspaceFileDialog({ ...currentDialog, busy: false, error: 'Enter a folder name.' });
+          return;
+        }
+        const normalizedFolder = buildWorkspaceSubfolderPath(currentDialog.parentPath, typedName);
+        if (!normalizedFolder) {
+          setWorkspaceFileDialog({
+            ...currentDialog,
+            busy: false,
+            error: 'That folder name is not valid. Avoid "." and ".." segments.',
+          });
           return;
         }
 
@@ -7341,6 +7361,7 @@ export default function WorkspacePage() {
         markPrivateWorkspaceChanged(selectedWorkspace.id);
         const createdPath = typeof created?.path === 'string' ? created.path : normalizedFolder;
         setFolderPaths((prev) => addFolderPath(prev, createdPath));
+        setRevealFolderPath(createdPath);
         setWorkspaceFileDialog(null);
         return;
       }
@@ -9106,6 +9127,8 @@ export default function WorkspacePage() {
                         onCopyPublicUrl={handleCopyFilePublicUrl}
                         onRenameFile={handleRenameFile}
                         onRenameFolder={handleRenameFolder}
+                        onCreateSubfolder={(folder) => { void handleCreateFolder(folder.path); }}
+                        revealFolderPath={revealFolderPath}
                         onDeleteFile={handleDeleteSingleFile}
                         onDeleteFolder={handleDeleteFolder}
                         onMoveFiles={handleMoveFiles}
@@ -9469,7 +9492,7 @@ export default function WorkspacePage() {
           >
             <h2 id="workspace-file-dialog-title" className="text-lg font-semibold">
               {workspaceFileDialog.kind === 'create-folder'
-                ? 'Create folder'
+                ? (workspaceFileDialog.parentPath ? 'New folder' : 'Create folder')
                 : workspaceFileDialog.kind === 'rename-folder'
                   ? 'Rename folder'
                 : workspaceFileDialog.kind === 'rename-file'
@@ -9483,6 +9506,11 @@ export default function WorkspacePage() {
             <div className={`mt-3 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
               {workspaceFileDialog.kind === 'create-folder' || workspaceFileDialog.kind === 'rename-folder' || workspaceFileDialog.kind === 'rename-file' ? (
                 <label className="block">
+                  {workspaceFileDialog.kind === 'create-folder' && workspaceFileDialog.parentPath ? (
+                    <span className={`mb-2 block break-all text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Inside <span className="font-medium">{workspaceFileDialog.parentPath}</span>
+                    </span>
+                  ) : null}
                   <span className="sr-only">
                     {workspaceFileDialog.kind === 'rename-file' ? 'File name' : 'Folder name'}
                   </span>

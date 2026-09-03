@@ -35,7 +35,8 @@ const TEXT_PREVIEW_EXTENSIONS = new Set([
   '.csv',
 ]);
 
-export const normalizeFilePath = (value: string) => value.replace(/\\/g, '/');
+export { normalizeFilePath } from './filePaths';
+import { normalizeFilePath } from './filePaths';
 
 export const isExtractedAssetFilePath = (value: string): boolean => {
   const normalized = normalizeFilePath(value || '').replace(/^\/+/, '').toLowerCase();

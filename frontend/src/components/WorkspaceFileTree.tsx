@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Folder,
   FolderOpen,
+  FolderPlus,
   Link as LinkIcon,
   Trash,
   Edit,
@@ -102,9 +103,12 @@ interface WorkspaceFileTreeProps {
   onCopyPublicUrl: (file: WorkspaceFile) => void;
   onRenameFile: (file: WorkspaceFile) => void;
   onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
+  onCreateSubfolder?: (folder: WorkspaceFileTreeFolderNode) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onMoveFiles: (files: WorkspaceFile[], destinationFolderPath: string) => void;
+  /** Newly created folder to expand and scroll into view. */
+  revealFolderPath?: string | null;
   onMoveFolder: (folder: WorkspaceFileTreeFolderNode, destinationFolderPath: string) => void;
 }
 
@@ -422,6 +426,7 @@ const TreeFolderRow: React.FC<{
   onSelectFolder?: (folderPath: string) => void;
   onToggle: (folderPath: string) => void;
   onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
+  onCreateSubfolder?: (folder: WorkspaceFileTreeFolderNode) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDropFilesToFolder: (fileId: string, folderPath: string) => void;
   onDropFolderToFolder: (folderPath: string, destinationFolderPath: string) => void;
@@ -441,6 +446,7 @@ const TreeFolderRow: React.FC<{
   onSelectFolder,
   onToggle,
   onRenameFolder,
+  onCreateSubfolder,
   onDeleteFolder,
   onDropFilesToFolder,
   onDropFolderToFolder,
@@ -588,6 +594,22 @@ const TreeFolderRow: React.FC<{
             </span>
           </div>
         </button>
+        {!readOnly && onCreateSubfolder ? <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onCreateSubfolder(node);
+          }}
+          className={`rounded p-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
+            isDarkMode
+              ? 'text-slate-400 hover:bg-slate-700/70 hover:text-slate-100'
+              : 'text-slate-500 hover:bg-slate-200 hover:text-slate-700'
+          }`}
+          title={`New folder inside ${node.path}`}
+          aria-label={`New folder inside ${node.path}`}
+        >
+          <FolderPlus size={14} />
+        </button> : null}
         {!readOnly ? <button
           type="button"
           onClick={(event) => {
@@ -645,6 +667,7 @@ const renderTreeNodes = (
     copiedPublicUrlFileId: string | null;
     onRenameFile: (file: WorkspaceFile) => void;
     onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
+    onCreateSubfolder?: (folder: WorkspaceFileTreeFolderNode) => void;
     onDeleteFile: (file: WorkspaceFile) => void;
     onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
     onToggleFolder: (folderPath: string) => void;
@@ -674,6 +697,7 @@ const renderTreeNodes = (
           onSelectFolder={options.onSelectFolder}
           onToggle={options.onToggleFolder}
           onRenameFolder={options.onRenameFolder}
+          onCreateSubfolder={options.onCreateSubfolder}
           onDeleteFolder={options.onDeleteFolder}
           onDropFilesToFolder={options.onDropFilesToFolder}
           onDropFolderToFolder={options.onDropFolderToFolder}
@@ -740,10 +764,12 @@ export default function WorkspaceFileTree({
   copiedPublicUrlFileId,
   onRenameFile,
   onRenameFolder,
+  onCreateSubfolder,
   onDeleteFile,
   onDeleteFolder,
   onMoveFiles,
   onMoveFolder,
+  revealFolderPath,
 }: WorkspaceFileTreeProps) {
   const isDarkMode = colorMode === 'dark';
   const tree = useMemo(() => buildWorkspaceFileTree(files, explicitFolderPaths), [files, explicitFolderPaths]);
@@ -801,6 +827,27 @@ export default function WorkspaceFileTree({
       return changed ? next : prev;
     });
   }, [selectedDashboardPath]);
+
+  // A folder created from a folder row is invisible until its parent is open, so
+  // expand the whole chain down to and including the new folder. Mirrors the
+  // selected-file and selected-dashboard effects above.
+  useEffect(() => {
+    if (!revealFolderPath) {
+      return;
+    }
+    const nextPaths = [...getWorkspaceAncestorFolderPaths(revealFolderPath), revealFolderPath];
+    setExpandedFolders((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const path of nextPaths) {
+        if (path && !next.has(path)) {
+          next.add(path);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [revealFolderPath]);
 
   const handleToggleFolder = (folderPath: string) => {
     setExpandedFolders((prev) => {
@@ -910,6 +957,7 @@ export default function WorkspaceFileTree({
               copiedPublicUrlFileId,
               onRenameFile,
               onRenameFolder,
+              onCreateSubfolder,
               onDeleteFile,
               onDeleteFolder,
               onToggleFolder: handleToggleFolder,
