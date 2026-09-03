@@ -40,7 +40,7 @@ const REPORT_CONTENT = `# Operation Epic Fury
 4. Regional shifts
 `;
 
-test("frontend-slides uses a paginated clarification wizard and submits structured answers", async ({
+test("frontend-slides collects deck mode and renders generated style previews", async ({
   page,
   baseURL,
 }) => {
@@ -160,10 +160,20 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
     // Trigger the frontend-slides flow using a tagged workspace file.
     const composer = page
       .locator(
-        'textarea[placeholder="Ask HelpUDoc anything..."], textarea[placeholder*="Interact with the agent"]',
+        'textarea[placeholder*="Ask Lumo"], textarea[placeholder="Ask HelpUDoc anything..."], textarea[placeholder*="Interact with the agent"]',
       )
       .first();
     await expect(composer).toBeVisible();
+
+    // Workspace selection refreshes the entitled slash commands asynchronously.
+    // Wait on the visible command palette entry before sending so the UI cannot
+    // reject a valid skill from a stale, empty command map.
+    await page.getByRole("button", { name: "Commands" }).click();
+    const frontendSlidesCommand = page.getByRole("button", {
+      name: /Frontend Slides.*\/skill frontend-slides/i,
+    });
+    await expect(frontendSlidesCommand).toBeVisible({ timeout: 30_000 });
+    await frontendSlidesCommand.click();
     await composer.fill(
       "/skill frontend-slides @operation-epic-fury-report.md",
     );
@@ -215,16 +225,10 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
           const discoveryTitleCount = await page
             .getByText(/Choose Deck Mode|File Not Found/i)
             .count();
-          const questionStepCount = await page
-            .getByText(/Question 1 of 1/i)
-            .count();
           return (
-            (questionStepCount > 0 &&
-              discoveryTitleCount > 0 &&
-              speakerLedOptionCount > 0) ||
-            (questionStepCount > 0 &&
-              deckModeQuestionCount > 0 &&
-              speakerLedOptionCount > 0)
+            discoveryTitleCount > 0 &&
+            deckModeQuestionCount > 0 &&
+            speakerLedOptionCount > 0
           );
         },
         { timeout: 120_000, message: "expected clarification UI to appear" },
@@ -246,15 +250,7 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
         /\/api\/agent\/runs\/[^/]+\/respond(?:\?|$)/.test(request.url()),
       { timeout: 30_000 },
     );
-    await page.getByRole("button", { name: /Review answers|Continue/i }).click();
-    await expect(page.getByText(/Review/i)).toBeVisible();
-    await page
-      .locator("textarea")
-      .last()
-      .fill("Keep it bold, fast-paced, and visually modern.");
-    await page
-      .getByRole("button", { name: /Continue|Start Designing/i })
-      .click();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
 
     await expect(page.getByText("Waiting for your input", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Response received", { exact: true })).toBeVisible();
@@ -311,9 +307,9 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
       .toBe("style_preview_selection");
 
     await expect(
-      page.getByText(/Choose Your Presentation Style|Choose Presentation Style/i),
+      page.getByRole("heading", { name: /Select a Style|Presentation Style/i }),
     ).toBeVisible();
-    const livePreview = page.locator('iframe[title$="live preview"]').first();
+    const livePreview = page.locator('iframe[title$="preview"]').first();
     await expect(livePreview).toBeVisible({ timeout: 30_000 });
     await expect(livePreview).not.toHaveAttribute('src', /\/files\/preview\/raw/);
     await expect(livePreview).toHaveAttribute('srcdoc', /<!doctype html|<html/i);

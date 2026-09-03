@@ -74,9 +74,13 @@ def _read_service_account_namespace() -> str | None:
 @dataclass(frozen=True)
 class SandboxK8sEnv:
     namespace: str
+    inline_namespace: str
     image: str
+    inline_image: str
     workspace_pvc: str
     runtime_class_name: str
+    inline_transport: str
+    inline_service_account: str
     cpu_limit: str
     memory_limit: str
     ephemeral_storage_limit: str
@@ -92,14 +96,25 @@ def load_sandbox_k8s_env() -> SandboxK8sEnv:
         or "helpudoc"
     )
     allow_raw = (os.getenv("HELPUDOC_SANDBOX_ALLOW_KUBECONFIG", "") or "").strip().lower()
+    inline_transport = (env_trim("HELPUDOC_INLINE_SANDBOX_TRANSPORT") or "pvc").lower()
+    if inline_transport not in {"pvc", "object_store"}:
+        raise ValueError("HELPUDOC_INLINE_SANDBOX_TRANSPORT must be pvc or object_store")
+    image = env_trim("HELPUDOC_SANDBOX_IMAGE") or "python:3.12-slim"
     return SandboxK8sEnv(
         namespace=namespace,
-        image=env_trim("HELPUDOC_SANDBOX_IMAGE") or "python:3.12-slim",
+        inline_namespace=env_trim("HELPUDOC_INLINE_SANDBOX_NAMESPACE") or namespace,
+        image=image,
+        inline_image=env_trim("HELPUDOC_INLINE_SANDBOX_IMAGE") or image,
         workspace_pvc=env_trim("HELPUDOC_SANDBOX_WORKSPACE_PVC") or "workspace-pvc",
         # RuntimeClass is an optional hardening layer. An unconditional gVisor
         # default makes every sandbox job unschedulable on clusters whose node
         # pools do not provide the matching handler.
         runtime_class_name=env_trim("HELPUDOC_SANDBOX_RUNTIME_CLASS") or "",
+        inline_transport=inline_transport,
+        inline_service_account=(
+            env_trim("HELPUDOC_INLINE_SANDBOX_SERVICE_ACCOUNT")
+            or "helpudoc-sandbox-runner"
+        ),
         cpu_limit=env_trim("HELPUDOC_SANDBOX_CPU_LIMIT") or "500m",
         memory_limit=env_trim("HELPUDOC_SANDBOX_MEMORY_LIMIT") or "512Mi",
         ephemeral_storage_limit=env_trim("HELPUDOC_SANDBOX_EPHEMERAL_STORAGE_LIMIT") or "1Gi",

@@ -19,6 +19,7 @@ pyyaml
 requests
 pillow
 kubernetes
+boto3>=1.35,<2
 
 # Langfuse v3 (align with self-hosted Langfuse / Langfuse Cloud; see infra).
 langfuse>=3.14.6,<4

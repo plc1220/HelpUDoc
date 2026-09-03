@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.7
+FROM python:3.12-slim-bookworm
+
+# This image is deliberately separate from the agent image: no cloud CLIs,
+# Kubernetes client, office suite, package cache, application credentials, or
+# network-facing service code is included.
+RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin sandbox \
+  && rm -rf \
+    /usr/local/lib/python3.12/site-packages/pip \
+    /usr/local/lib/python3.12/site-packages/pip-* \
+    /usr/local/lib/python3.12/site-packages/setuptools \
+    /usr/local/lib/python3.12/site-packages/setuptools-* \
+    /usr/local/lib/python3.12/site-packages/wheel \
+    /usr/local/lib/python3.12/site-packages/wheel-* \
+    /usr/local/lib/python3.12/ensurepip \
+    /usr/local/bin/pip \
+    /usr/local/bin/pip3 \
+    /usr/local/bin/pip3.12
+
+COPY --chown=1000:1000 agent/helpudoc_agent/sandbox_supervisor.py /opt/helpudoc/sandbox_supervisor.py
+
+USER 1000:1000
+WORKDIR /workspace
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/workspace/.tmp \
+    TMPDIR=/tmp
+
+ENTRYPOINT ["python", "/opt/helpudoc/sandbox_supervisor.py"]

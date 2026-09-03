@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from helpudoc_agent.sandbox_runner import run_skill_python_script_locally
+from helpudoc_agent.sandbox_runner import SandboxOutputFile, SandboxRunResult, run_skill_python_script_locally
 from helpudoc_agent.state import WorkspaceState
 from helpudoc_agent.tools.workspace.builtins.skills import build_run_skill_python_script_tool
 
@@ -13,8 +13,10 @@ ONE_PIXEL_PNG = (
 )
 
 
-def test_frontend_slides_blocks_inline_sandbox_execution(tmp_path):
+def test_frontend_slides_allows_inline_sandbox_execution(tmp_path, monkeypatch):
     repo_root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("SANDBOX_INLINE_ENABLED", "true")
+    monkeypatch.setenv("HELPUDOC_SANDBOX_BACKEND", "kubernetes")
     workspace = WorkspaceState(workspace_id="slides-inline-block", root_path=tmp_path)
     workspace.context["active_skill"] = "frontend-slides"
     settings = SimpleNamespace(
@@ -25,6 +27,22 @@ def test_frontend_slides_blocks_inline_sandbox_execution(tmp_path):
     )
     tool = build_run_skill_python_script_tool(settings, workspace)
 
+    def fake_inline(**_kwargs):
+        return SandboxRunResult(
+            run_id="inline-test",
+            job_name="sandbox-test",
+            stdout="ok",
+            stderr="",
+            output_files=[SandboxOutputFile(path="/preview.html", size=7)],
+            mode="inline",
+            source_sha256="a" * 64,
+        )
+
+    monkeypatch.setattr(
+        "helpudoc_agent.tools.workspace.builtins.skills.run_inline_skill_python",
+        fake_inline,
+    )
+
     result = tool.invoke(
         {
             "inline_code": "print('render preview')",
@@ -32,9 +50,8 @@ def test_frontend_slides_blocks_inline_sandbox_execution(tmp_path):
         }
     )
 
-    payload = json.loads(result)
-    assert payload["errorCode"] == "FRONTEND_SLIDES_INLINE_SANDBOX_BLOCKED"
-    assert not (tmp_path / "sandbox-runs").exists()
+    assert "SKILL_SANDBOX_INLINE_RUN_COMPLETED" in result
+    assert "/preview.html" in result
 
 
 def test_frontend_slides_pptx_export_copies_workspace_output_and_declares_artifact(tmp_path):

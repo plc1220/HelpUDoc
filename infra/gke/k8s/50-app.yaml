@@ -633,6 +633,8 @@ spec:
                   optional: true
             - name: HELPUDOC_SANDBOX_NAMESPACE
               value: helpudoc
+            - name: HELPUDOC_INLINE_SANDBOX_NAMESPACE
+              value: helpudoc-sandbox
             - name: HELPUDOC_SANDBOX_WORKSPACE_PVC
               value: workspace-pvc
             - name: HELPUDOC_SANDBOX_IMAGE
@@ -641,6 +643,24 @@ spec:
                   name: helpudoc-config
                   key: HELPUDOC_SANDBOX_IMAGE
                   optional: true
+            - name: HELPUDOC_INLINE_SANDBOX_IMAGE
+              value: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-inline-sandbox:latest
+            - name: HELPUDOC_INLINE_SANDBOX_TRANSPORT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: HELPUDOC_INLINE_SANDBOX_TRANSPORT
+                  optional: true
+            - name: HELPUDOC_INLINE_SANDBOX_SERVICE_ACCOUNT
+              value: helpudoc-sandbox-runner
+            - name: HELPUDOC_SANDBOX_RUNTIME_CLASS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: HELPUDOC_SANDBOX_RUNTIME_CLASS
+                  optional: true
+            - name: HELPUDOC_SANDBOX_S3_ENDPOINT
+              value: http://minio.helpudoc.svc.cluster.local:9000
             - name: HELPUDOC_SANDBOX_BACKEND
               valueFrom:
                 configMapKeyRef:

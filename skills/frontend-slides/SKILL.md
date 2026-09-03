@@ -98,7 +98,7 @@ After style preview selection, do not call the presentation complete until the f
 
 PowerPoint/PPTX/native deck work belongs to the `pptx` skill. Do not select or load `frontend-slides` because the user asks for `.pptx`, PowerPoint, Google Slides, native deck output, native deck editing, a deck template, or PPT conversion. The legacy `scripts/export-pptx.py` helper is only for finalizing an already-created HTML deck while this skill is already active; it is not a routing reason for new PPTX-related requests.
 
-Do not call `run_skill_python_script` to create, render, validate, or screenshot HTML previews or decks. Write the self-contained HTML/CSS/JavaScript directly with workspace file tools and let the Interaction preview surface render it. The only supported `run_skill_python_script` call in this skill is the declared `export-pptx` script after the user explicitly requests PowerPoint export for an HTML deck that already exists.
+Prefer direct workspace file authoring for straightforward HTML/CSS/JavaScript changes. Never use inline Python merely to list, search, filter, or read skill references; use `read_file` with offsets instead. For a genuinely programmatic multi-file transformation or validation, use `run_skill_python_script` inline mode only when its current tool schema explicitly exposes `inline_code`; keep outputs inside its private writable `/workspace` snapshot and let the host publish the validated successful diff. If `inline_code` is absent, continue with direct workspace tools. The declared `export-pptx` script remains the supported route after the user explicitly requests PowerPoint export for an HTML deck that already exists.
 
 ### Mode C: Modification Rules
 

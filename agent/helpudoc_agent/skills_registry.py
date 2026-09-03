@@ -18,6 +18,7 @@ class SkillPolicy:
     required_artifacts_mode: str | None = None
     required_artifacts: List[str] | None = None
     pre_plan_search_limit: int = 0
+    post_plan_search_limit: int = 0
 
 
 @dataclass(frozen=True)
@@ -279,6 +280,15 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
             pre_plan_search_limit = max(0, int(raw_pre_plan_limit.strip()))
         except ValueError:
             pre_plan_search_limit = 0
+    raw_post_plan_limit = meta.get("post_plan_search_limit")
+    post_plan_search_limit = 0
+    if isinstance(raw_post_plan_limit, int):
+        post_plan_search_limit = max(0, raw_post_plan_limit)
+    elif isinstance(raw_post_plan_limit, str):
+        try:
+            post_plan_search_limit = max(0, int(raw_post_plan_limit.strip()))
+        except ValueError:
+            post_plan_search_limit = 0
 
     required_artifacts_mode = explicit_required_artifacts_mode
     required_artifacts = explicit_required_artifacts
@@ -291,6 +301,7 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
         required_artifacts_mode=required_artifacts_mode,
         required_artifacts=required_artifacts,
         pre_plan_search_limit=pre_plan_search_limit,
+        post_plan_search_limit=post_plan_search_limit,
     )
 
 
@@ -727,6 +738,7 @@ def activate_skill_context(
         "required_artifacts_mode": skill.policy.required_artifacts_mode,
         "required_artifacts": skill.policy.required_artifacts or [],
         "pre_plan_search_limit": max(0, int(skill.policy.pre_plan_search_limit or 0)),
+        "post_plan_search_limit": max(0, int(skill.policy.post_plan_search_limit or 0)),
     }
     # Plan approval is per top-level task; a newly activated skill starts fresh unless
     # the workspace is explicitly configured to auto-approve plan reviews.
@@ -734,6 +746,7 @@ def activate_skill_context(
         context.get("skip_plan_approvals") or context.get("host_plan_approved")
     )
     context["pre_plan_search_count"] = 0
+    context["post_plan_search_count"] = 0
 
 
 def read_skill_content(skill: SkillMetadata) -> str:

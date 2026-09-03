@@ -1677,7 +1677,9 @@ def register_chat_routes(
         if not isinstance(raw_policy, dict):
             raw_policy = {}
         raw_limit = raw_policy.get("pre_plan_search_limit", 0)
+        raw_post_limit = raw_policy.get("post_plan_search_limit", 0)
         raw_used = context.get("pre_plan_search_count", 0)
+        raw_post_used = context.get("post_plan_search_count", 0)
         try:
             pre_plan_search_limit = max(0, int(raw_limit or 0))
         except (TypeError, ValueError):
@@ -1686,6 +1688,14 @@ def register_chat_routes(
             pre_plan_search_used = max(0, int(raw_used or 0))
         except (TypeError, ValueError):
             pre_plan_search_used = 0
+        try:
+            post_plan_search_limit = max(0, int(raw_post_limit or 0))
+        except (TypeError, ValueError):
+            post_plan_search_limit = 0
+        try:
+            post_plan_search_used = max(0, int(raw_post_used or 0))
+        except (TypeError, ValueError):
+            post_plan_search_used = 0
         return {
             "skill": context.get("active_skill"),
             "skillVersion": context.get("active_skill_version"),
@@ -1694,6 +1704,8 @@ def register_chat_routes(
             "requiredArtifactsMode": raw_policy.get("required_artifacts_mode"),
             "prePlanSearchLimit": pre_plan_search_limit,
             "prePlanSearchUsed": pre_plan_search_used,
+            "postPlanSearchLimit": post_plan_search_limit,
+            "postPlanSearchUsed": post_plan_search_used,
         }
 
     def _missing_required_artifacts(runtime: AgentRuntimeState) -> List[str]:
@@ -1771,6 +1783,7 @@ def register_chat_routes(
         reset_document_tool_run_state(context)
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
+        context["post_plan_search_count"] = 0
         context["google_search_count"] = 0
         context["google_search_upstream_attempt_count"] = 0
         context["google_search_consecutive_failures"] = 0
@@ -1816,6 +1829,11 @@ def register_chat_routes(
                     break
         if not prompt_for_tagged_files:
             prompt_for_tagged_files = message.message or ""
+        if fresh_turn:
+            # Keep the normalized current request available to deterministic
+            # workflow guards. This is a fallback for transports that omit or
+            # lose optional trace hints such as frontendSlidesEditExisting.
+            runtime.workspace_state.context["current_user_prompt"] = prompt_for_tagged_files
         if message.internetSearchEnabled:
             internet_guidance = (
                 "Internet search is enabled for this turn. "

@@ -134,3 +134,60 @@ test('workspace artifact commit does not republish unchanged durable mirrors', a
     await fs.rm(workspacePath, { recursive: true, force: true });
   }
 });
+
+test('workspace artifact commit persists a baseline file removed by a successful run', async () => {
+  const workspaceId = `artifact-delete-${randomUUID()}`;
+  const workspacePath = path.join(resolveWorkspaceRoot(), workspaceId);
+  const durableFile = {
+    id: 77,
+    workspaceId,
+    name: 'obsolete-slide.html',
+    version: 4,
+  };
+  const deletions: Array<{ fileId: number; expectedVersion?: number; sourceRunId?: string | null }> = [];
+
+  await fs.mkdir(workspacePath, { recursive: true });
+
+  try {
+    const service = Object.create(FileService.prototype) as FileService;
+    (service as any).workspaceService = {
+      ensureMembership: async () => undefined,
+    };
+    (service as any).db = () => filesQuery([durableFile]);
+    (service as any).walkWorkspace = async () => [];
+    (service as any).restoreDurableWorkspaceMirror = async () => undefined;
+    (service as any).deleteFile = async (fileId: number, _userId: string, options: any) => {
+      deletions.push({
+        fileId,
+        expectedVersion: options.expectedVersion,
+        sourceRunId: options.sourceRunId,
+      });
+      return { ...durableFile, deletedAt: new Date().toISOString() };
+    };
+
+    const committed = await service.commitWorkspaceArtifacts(
+      workspaceId,
+      'user-1',
+      'run-delete-1',
+      {
+        baseline: {
+          'obsolete-slide.html': {
+            fileId: 77,
+            version: 4,
+            sha256: 'old-hash',
+          },
+        },
+      },
+    );
+
+    assert.deepEqual(deletions, [{
+      fileId: 77,
+      expectedVersion: 4,
+      sourceRunId: 'run-delete-1',
+    }]);
+    assert.equal(committed.length, 1);
+    assert.ok(committed[0].deletedAt);
+  } finally {
+    await fs.rm(workspacePath, { recursive: true, force: true });
+  }
+});

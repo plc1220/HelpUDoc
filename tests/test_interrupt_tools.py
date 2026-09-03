@@ -145,6 +145,86 @@ def test_request_plan_approval_records_edit_decision(monkeypatch) -> None:
     assert workspace.context["plan_approved"] is False
 
 
+def test_request_plan_approval_keeps_human_approval_authoritative_over_model_feedback(
+    monkeypatch,
+) -> None:
+    def fake_interrupt(_payload):
+        return {"decisions": [{"type": "approve"}]}
+
+    monkeypatch.setattr(tools_and_schemas, "interrupt", fake_interrupt)
+    workspace = SimpleNamespace(context={})
+    tool = build_request_plan_approval_tool(workspace)
+
+    result = tool.invoke(
+        {
+            "plan_title": "Research plan",
+            "plan_summary": "Research the narrow question",
+            "execution_checklist": "- Gather sources\n- Write report",
+            "reviewer_feedback": "Model-authored note that must not override the user",
+        }
+    )
+
+    assert "PLAN_APPROVAL_RECORDED" in result
+    assert "PLAN_EDIT_FEEDBACK_RECORDED" not in result
+    assert workspace.context["plan_approved"] is True
+    assert workspace.context["last_plan_decision"] == "approve"
+
+
+def test_request_plan_approval_does_not_add_a_gate_for_unrequired_skill(monkeypatch) -> None:
+    def unexpected_interrupt(_payload):
+        raise AssertionError("an unrequired plan review must not interrupt the user")
+
+    monkeypatch.setattr(tools_and_schemas, "interrupt", unexpected_interrupt)
+    workspace = SimpleNamespace(
+        context={
+            "active_skill": "frontend-slides",
+            "active_skill_policy": {"requires_hitl_plan": False},
+            "current_user_prompt": "Create a concise browser-native HTML presentation.",
+        }
+    )
+    tool = build_request_plan_approval_tool(workspace)
+
+    result = tool.invoke(
+        {
+            "plan_title": "Deck production",
+            "plan_summary": "Create the selected deck",
+            "execution_checklist": "- Build slides\n- Verify layout",
+        }
+    )
+
+    assert "PLAN_APPROVAL_NOT_REQUIRED" in result
+    assert "continue" in result.lower()
+    assert "plan_approved" not in workspace.context
+
+
+def test_request_plan_approval_honors_explicit_review_request_for_optional_skill(
+    monkeypatch,
+) -> None:
+    def fake_interrupt(_payload):
+        return {"decisions": [{"type": "approve"}]}
+
+    monkeypatch.setattr(tools_and_schemas, "interrupt", fake_interrupt)
+    workspace = SimpleNamespace(
+        context={
+            "active_skill": "frontend-slides",
+            "active_skill_policy": {"requires_hitl_plan": False},
+            "current_user_prompt": "Show me the plan and ask me to approve it before creating the deck.",
+        }
+    )
+    tool = build_request_plan_approval_tool(workspace)
+
+    result = tool.invoke(
+        {
+            "plan_title": "Deck production",
+            "plan_summary": "Create the selected deck",
+            "execution_checklist": "- Build slides\n- Verify layout",
+        }
+    )
+
+    assert "PLAN_APPROVAL_RECORDED" in result
+    assert workspace.context["plan_approved"] is True
+
+
 def test_request_clarification_accepts_native_question_and_context_payloads(monkeypatch) -> None:
     seen_payload = {}
 

@@ -137,9 +137,107 @@ def _record_completed_interaction_gate(workspace_state: WorkspaceState, interact
     )
 
 
-def _normalize_style_preview_props(props: Dict[str, Any]) -> Dict[str, Any]:
-    """Project the legacy options/preview_path shape onto the Interaction contract."""
+def _read_workspace_preview_html(
+    workspace_state: WorkspaceState,
+    preview_path: str,
+) -> str:
+    """Read a generated HTML preview without allowing paths outside the workspace."""
+    relative_path = _normalize_workspace_preview_path(preview_path)
+    if not relative_path or Path(relative_path).suffix.lower() not in {".html", ".htm"}:
+        return ""
+    root = Path(workspace_state.root_path).resolve()
+    candidate = (root / relative_path).resolve()
+    if candidate != root and root not in candidate.parents:
+        return ""
+    try:
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        logger.warning("Could not read generated style preview: %s", relative_path, exc_info=True)
+    return ""
+
+
+def _normalize_workspace_preview_path(preview_path: str) -> str:
+    """Return the canonical workspace-relative form of a model-supplied path."""
+    candidate = preview_path.strip().replace("\\", "/").lstrip("/")
+    if not candidate:
+        return ""
+    parts = [part for part in candidate.split("/") if part not in {"", "."}]
+    if not parts or any(part == ".." for part in parts):
+        return ""
+    return "/".join(parts)
+
+
+def _discover_canonical_style_previews(
+    workspace_state: WorkspaceState,
+    props: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Resolve generated previews from the skill-owned canonical directory.
+
+    The files are already workspace state, so requiring the model to repeat
+    every path in ``props_json`` creates a redundant and failure-prone join.
+    Discovery stays deliberately narrow to avoid treating a final deck or an
+    unrelated HTML artifact as a style preview.
+    """
+    root = Path(workspace_state.root_path).resolve()
+    preview_dir = (root / ".frontend-slides" / "slide-previews").resolve()
+    if root not in preview_dir.parents or not preview_dir.is_dir():
+        return []
+
+    candidates = sorted(
+        (
+            path
+            for path in preview_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".html", ".htm"}
+        ),
+        key=lambda path: path.name.lower(),
+    )
+    raw_choices = props.get("choices")
+    choices = raw_choices if isinstance(raw_choices, list) else []
+    discovered: List[Dict[str, Any]] = []
+    for index, path in enumerate(candidates):
+        try:
+            preview_html = path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            logger.warning("Could not read canonical style preview: %s", path, exc_info=True)
+            continue
+        if not preview_html:
+            continue
+
+        raw_choice = choices[index] if index < len(choices) and isinstance(choices[index], dict) else {}
+        option_id = str(
+            raw_choice.get("id")
+            or raw_choice.get("choiceId")
+            or raw_choice.get("value")
+            or path.stem
+        ).strip()
+        label = str(
+            raw_choice.get("label")
+            or raw_choice.get("name")
+            or raw_choice.get("title")
+            or path.stem.replace("-", " ").replace("_", " ").title()
+        ).strip()
+        preview: Dict[str, Any] = {
+            "id": option_id,
+            "label": label,
+            "path": path.relative_to(root).as_posix(),
+            "html": preview_html,
+        }
+        description = str(raw_choice.get("description") or raw_choice.get("summary") or "").strip()
+        if description:
+            preview["description"] = description
+        discovered.append(preview)
+    return discovered
+
+
+def _normalize_style_preview_props(
+    props: Dict[str, Any],
+    workspace_state: WorkspaceState | None = None,
+) -> Dict[str, Any]:
+    """Project legacy preview shapes and embed generated workspace HTML."""
     options = props.get("options")
+    if not isinstance(options, list) or not options:
+        options = props.get("previews")
     if not isinstance(options, list) or not options:
         return props
 
@@ -173,20 +271,22 @@ def _normalize_style_preview_props(props: Dict[str, Any]) -> Dict[str, Any]:
             choice["description"] = description
         choices.append(choice)
 
-        preview_path = str(
+        preview_path = _normalize_workspace_preview_path(str(
             raw_option.get("path")
             or raw_option.get("preview_path")
             or raw_option.get("previewPath")
             or raw_option.get("filePath")
             or raw_option.get("file")
             or ""
-        ).strip()
+        ))
         preview_html = str(
             raw_option.get("html")
             or raw_option.get("srcDoc")
             or raw_option.get("content")
             or ""
         ).strip()
+        if not preview_html and preview_path and workspace_state is not None:
+            preview_html = _read_workspace_preview_html(workspace_state, preview_path)
         preview: Dict[str, Any] = {
             "id": option_id,
             "label": label,
@@ -203,7 +303,7 @@ def _normalize_style_preview_props(props: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(props)
     if choices and not normalized.get("choices"):
         normalized["choices"] = choices
-    if previews and not normalized.get("previews"):
+    if previews:
         normalized["previews"] = previews
     return normalized
 
@@ -216,6 +316,7 @@ def _build_interaction_interrupt_payload(
     gate_id: str = "",
     required: bool = True,
     resume_mode: str = "submit",
+    workspace_state: WorkspaceState | None = None,
 ) -> tuple[Dict[str, Any] | None, str | None]:
     presentation_kind = (presentation or "").strip()
     if not presentation_kind:
@@ -227,7 +328,32 @@ def _build_interaction_interrupt_payload(
     skill = parsed_context.get("skill") or parsed_context.get("skillId") or ""
     gate = (gate_id or parsed_context.get("gateId") or parsed_context.get("gate_id") or "").strip()
     if str(skill or "").strip().lower() == "frontend-slides" and gate == "style_preview_selection":
-        parsed_props = _normalize_style_preview_props(parsed_props)
+        parsed_props = _normalize_style_preview_props(parsed_props, workspace_state)
+        usable_previews = [
+            preview
+            for preview in parsed_props.get("previews", [])
+            if isinstance(preview, dict) and str(preview.get("html") or "").strip()
+        ]
+        if workspace_state is not None and len(usable_previews) < 2:
+            discovered_previews = _discover_canonical_style_previews(workspace_state, parsed_props)
+            if len(discovered_previews) >= 2:
+                parsed_props["previews"] = discovered_previews
+                if not isinstance(parsed_props.get("choices"), list) or not parsed_props["choices"]:
+                    parsed_props["choices"] = [
+                        {
+                            "id": preview["id"],
+                            "label": preview["label"],
+                            "value": preview["id"],
+                        }
+                        for preview in discovered_previews
+                    ]
+                usable_previews = discovered_previews
+        if workspace_state is not None and len(usable_previews) < 2:
+            return None, (
+                "Workflow action blocked: gate 'style_preview_selection' requires at least two real "
+                "generated HTML preview files. Write the preview files into the workspace, pass their "
+                "paths in props_json previews/options, then call the workflow action again."
+            )
     if str(skill or "").strip().lower() == "frontend-slides" and gate == "outline_confirmation":
         for key in ("outlineMarkdown", "slideOutline", "slides", "outline"):
             if key not in parsed_props and parsed_context.get(key):
@@ -299,6 +425,7 @@ def _request_user_interaction(
         gate_id=gate_id,
         required=required,
         resume_mode=resume_mode,
+        workspace_state=workspace_state,
     )
     if error:
         return error

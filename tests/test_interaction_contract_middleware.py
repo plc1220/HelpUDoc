@@ -249,6 +249,44 @@ def test_frontend_slides_contract_sequence_and_resume_skip_completed_gate():
     assert next_pending_gate(context) is None
 
 
+def test_frontend_slides_existing_deck_edit_skips_declared_gates_from_trace_hint():
+    skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
+    context = {
+        "active_skill": "frontend-slides",
+        "active_skill_scope": {
+            "interaction_contract": skills["frontend-slides"].interaction_contract,
+        },
+        "frontend_slides_edit_existing": True,
+    }
+
+    assert next_pending_gate(context) is None
+
+
+def test_frontend_slides_existing_deck_edit_skips_declared_gates_from_current_prompt():
+    skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
+    context = {
+        "active_skill": "frontend-slides",
+        "active_skill_scope": {
+            "interaction_contract": skills["frontend-slides"].interaction_contract,
+        },
+        "current_user_prompt": (
+            "Enhance @reliable_agent_workflows.html in place and add a final slide. "
+            "Do not create a copy."
+        ),
+    }
+
+    assert next_pending_gate(context) is None
+
+
+def test_frontend_slides_new_deck_with_html_output_still_requires_discovery_gate():
+    context = {
+        "active_skill": "frontend-slides",
+        "current_user_prompt": "Create a new HTML deck and include image credits.",
+    }
+
+    assert next_pending_gate(context)["gate_id"] == "presentation_context"
+
+
 def test_frontend_slides_does_not_require_outline_approval():
     skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
     contract = skills["frontend-slides"].interaction_contract

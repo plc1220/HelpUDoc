@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
+import io
+import json
 import logging
 import os
 from pathlib import Path
@@ -11,12 +13,16 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import time
 from typing import Any, Iterable, Iterator, List, Sequence
 from uuid import uuid4
 
 from .config.env import load_sandbox_k8s_env
+from .sandbox_object_store import SandboxObjectStore, SandboxObjectStoreError
+from .sandbox_supervisor import CONTROL_DIR_NAME, ENTRYPOINT_NAME, INPUT_MANIFEST_NAME, RESULT_MANIFEST_NAME
 from .skills_registry import SkillMetadata, SkillSandboxScript, find_skill_for_context, resolve_skill_scope
 from .state import WorkspaceState
 
@@ -27,7 +33,9 @@ INLINE_RUN_ID_PREFIX = "inline-"
 INLINE_ENTRYPOINT_NAME = "inline_main.py"
 INLINE_MAX_SOURCE_BYTES = 64 * 1024
 INLINE_MAX_INPUT_FILES = 16
-INLINE_MAX_OUTPUT_FILES = 16
+INLINE_MAX_SNAPSHOT_FILES = 512
+INLINE_MAX_INPUT_BYTES = 256 * 1024 * 1024
+INLINE_MAX_OUTPUT_FILES = 64
 INLINE_MAX_OUTPUT_BYTES = 100 * 1024 * 1024
 INLINE_MAX_TOTAL_OUTPUT_BYTES = 256 * 1024 * 1024
 INLINE_DEFAULT_TIMEOUT_SECONDS = 120
@@ -73,6 +81,7 @@ class SandboxRunResult:
     output_files: List[SandboxOutputFile]
     mode: str = "declared"
     source_sha256: str | None = None
+    deleted_files: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -85,6 +94,10 @@ class SandboxConfig:
     memory_limit: str
     ephemeral_storage_limit: str
     poll_interval_seconds: float
+    inline_namespace: str | None = None
+    inline_image: str | None = None
+    inline_transport: str = "pvc"
+    inline_service_account: str = "helpudoc-sandbox-runner"
 
     @classmethod
     def from_env(cls) -> "SandboxConfig":
@@ -98,7 +111,19 @@ class SandboxConfig:
             memory_limit=e.memory_limit,
             ephemeral_storage_limit=e.ephemeral_storage_limit,
             poll_interval_seconds=e.poll_interval_seconds,
+            inline_namespace=e.inline_namespace,
+            inline_image=e.inline_image,
+            inline_transport=e.inline_transport,
+            inline_service_account=e.inline_service_account,
         )
+
+    @property
+    def effective_inline_namespace(self) -> str:
+        return self.inline_namespace or self.namespace
+
+    @property
+    def effective_inline_image(self) -> str:
+        return self.inline_image or self.image
 
 
 def _sha256_file(path: Path) -> str:
@@ -673,6 +698,14 @@ def _resolve_sandbox_backend() -> str:
     return raw
 
 
+def inline_sandbox_available() -> bool:
+    """Whether this process can truthfully advertise agent-authored inline code."""
+    try:
+        return inline_sandbox_enabled() and _resolve_sandbox_backend() == "kubernetes"
+    except SandboxExecutionError:
+        return False
+
+
 # --- Inline agent-authored Python -------------------------------------------
 
 
@@ -745,22 +778,34 @@ def _reserve_inline_execution(workspace_state: WorkspaceState) -> None:
         workspace_state.context[INLINE_EXECUTIONS_CONTEXT_KEY] = used + 1
 
 
-def _reject_workspace_mount_path(raw_path: str, *, field: str) -> str:
-    """Reject `/workspace` requests; inline Jobs have no workspace mount."""
+def _normalize_inline_workspace_path(
+    raw_path: str,
+    *,
+    field: str,
+    workspace_available: bool,
+) -> str:
+    """Normalize a workspace reference for the configured inline transport."""
     cleaned = str(raw_path or "").strip().replace("\\", "/")
     probe = cleaned.rstrip("/") or cleaned
     if probe == "/workspace" or cleaned.startswith("/workspace/"):
-        raise InlineWorkspaceUnavailableError(
-            f"INLINE_WORKSPACE_UNAVAILABLE: {field} may not reference /workspace. Inline code runs "
-            "without a workspace mount; request workspace-relative paths and read staged inputs by "
-            "filename from the run directory."
-        )
+        if not workspace_available:
+            raise InlineWorkspaceUnavailableError(
+                f"INLINE_WORKSPACE_UNAVAILABLE: {field} may not reference /workspace. Inline code runs "
+                "without a workspace mount; request workspace-relative paths and read staged inputs by "
+                "filename from the run directory."
+            )
+        cleaned = cleaned[len("/workspace/") :] if cleaned.startswith("/workspace/") else ""
     return cleaned
 
 
-def _normalize_inline_outputs(output_paths: Iterable[str] | None) -> List[Path]:
+def _normalize_inline_outputs(
+    output_paths: Iterable[str] | None,
+    *,
+    workspace_available: bool = False,
+    require_explicit: bool = True,
+) -> List[Path]:
     raw_items = [str(item) for item in (output_paths or [])]
-    if not raw_items:
+    if not raw_items and require_explicit:
         raise SandboxExecutionError(
             "INLINE_OUTPUTS_REQUIRED: inline_code requires explicit output_paths; only declared "
             "outputs are published."
@@ -772,7 +817,11 @@ def _normalize_inline_outputs(output_paths: Iterable[str] | None) -> List[Path]:
     normalized: List[Path] = []
     seen: set[str] = set()
     for raw in raw_items:
-        cleaned = _reject_workspace_mount_path(raw, field="output_paths")
+        cleaned = _normalize_inline_workspace_path(
+            raw,
+            field="output_paths",
+            workspace_available=workspace_available,
+        )
         rel = Path(cleaned)
         if not _is_relative_safe(cleaned) or rel == Path("."):
             raise SandboxExecutionError(
@@ -790,7 +839,11 @@ def _normalize_inline_outputs(output_paths: Iterable[str] | None) -> List[Path]:
     return normalized
 
 
-def _normalize_inline_inputs(input_paths: Iterable[str] | None) -> List[str]:
+def _normalize_inline_inputs(
+    input_paths: Iterable[str] | None,
+    *,
+    workspace_available: bool = False,
+) -> List[str]:
     raw_items = [str(item) for item in (input_paths or [])]
     if len(raw_items) > INLINE_MAX_INPUT_FILES:
         raise SandboxExecutionError(
@@ -798,7 +851,11 @@ def _normalize_inline_inputs(input_paths: Iterable[str] | None) -> List[str]:
         )
     normalized: List[str] = []
     for raw in raw_items:
-        cleaned = _reject_workspace_mount_path(raw, field="input_paths")
+        cleaned = _normalize_inline_workspace_path(
+            raw,
+            field="input_paths",
+            workspace_available=workspace_available,
+        )
         if not _is_relative_safe(cleaned):
             raise SandboxExecutionError(f"Input path is outside the workspace: {raw}")
         normalized.append(cleaned)
@@ -1085,6 +1142,358 @@ def cleanup_stale_inline_run_dirs_under_root(
     return removed
 
 
+_INLINE_SNAPSHOT_INTERNAL_ROOTS = {
+    ".system",
+    ".published-versions",
+    "sandbox-runs",
+    CONTROL_DIR_NAME,
+}
+
+
+def _is_inline_snapshot_internal(relative: str) -> bool:
+    parts = Path(relative).parts
+    return bool(parts and parts[0] in _INLINE_SNAPSHOT_INTERNAL_ROOTS)
+
+
+def _normalize_snapshot_reference(raw_path: str) -> str:
+    cleaned = _normalize_inline_workspace_path(
+        raw_path,
+        field="input_paths",
+        workspace_available=True,
+    )
+    if not _is_relative_safe(cleaned):
+        raise SandboxExecutionError(f"Input path is outside the workspace: {raw_path}")
+    if _is_inline_snapshot_internal(cleaned):
+        raise SandboxExecutionError(f"Input path is reserved for internal state: {raw_path}")
+    return Path(cleaned).as_posix()
+
+
+def _snapshot_workspace_files(
+    workspace_state: WorkspaceState,
+    input_paths: Sequence[str],
+) -> list[tuple[str, Path]]:
+    """Resolve either selected paths or the whole visible workspace into files."""
+    root = workspace_state.root_path.resolve()
+    candidates: dict[str, Path] = {}
+    roots: list[Path]
+    if input_paths:
+        roots = []
+        for raw in input_paths:
+            relative = _normalize_snapshot_reference(raw)
+            candidate = (root / relative).resolve()
+            if candidate != root and root not in candidate.parents:
+                raise SandboxExecutionError(f"Input path is outside the workspace: {raw}")
+            if candidate.is_symlink() or not candidate.exists():
+                raise SandboxExecutionError(f"Input path does not exist or is a symlink: {raw}")
+            roots.append(candidate)
+    else:
+        roots = [root]
+
+    for selected_root in roots:
+        if selected_root.is_file():
+            selected = [selected_root]
+        elif selected_root.is_dir():
+            selected = sorted(selected_root.rglob("*"))
+        else:
+            raise SandboxExecutionError(f"Input path is not a regular file or directory: {selected_root}")
+        for source in selected:
+            try:
+                relative = source.relative_to(root).as_posix()
+            except ValueError as exc:
+                raise SandboxExecutionError(f"Input path is outside the workspace: {source}") from exc
+            if not relative or _is_inline_snapshot_internal(relative):
+                continue
+            source_stat = os.lstat(source)
+            if stat.S_ISDIR(source_stat.st_mode):
+                continue
+            if stat.S_ISLNK(source_stat.st_mode):
+                raise SandboxExecutionError(f"Input workspace contains a symlink: {relative}")
+            if not stat.S_ISREG(source_stat.st_mode):
+                raise SandboxExecutionError(f"Input workspace contains a special file: {relative}")
+            candidates[relative] = source
+            if len(candidates) > INLINE_MAX_SNAPSHOT_FILES:
+                raise SandboxExecutionError(
+                    "INLINE_INPUT_LIMIT_EXCEEDED: workspace snapshot contains more than "
+                    f"{INLINE_MAX_SNAPSHOT_FILES} files."
+                )
+    return sorted(candidates.items())
+
+
+def _add_tar_bytes(archive: tarfile.TarFile, name: str, payload: bytes, mode: int = 0o600) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = len(payload)
+    info.mode = mode
+    info.uid = 1000
+    info.gid = 1000
+    info.uname = "sandbox"
+    info.gname = "sandbox"
+    info.mtime = 0
+    archive.addfile(info, io.BytesIO(payload))
+
+
+def _create_inline_input_bundle(
+    *,
+    workspace_state: WorkspaceState,
+    inline_code: str,
+    input_paths: Sequence[str],
+    output_paths: Sequence[Path],
+    run_id: str,
+    destination: Path,
+    timeout_seconds: int = INLINE_DEFAULT_TIMEOUT_SECONDS,
+) -> tuple[str, dict[str, dict[str, Any]]]:
+    source = str(inline_code or "")
+    if not source.strip():
+        raise SandboxExecutionError("inline_code cannot be empty.")
+    encoded = source.encode("utf-8")
+    if len(encoded) > INLINE_MAX_SOURCE_BYTES:
+        raise SandboxExecutionError(
+            "INLINE_SOURCE_TOO_LARGE: inline_code exceeds "
+            f"{INLINE_MAX_SOURCE_BYTES} bytes ({len(encoded)} bytes supplied)."
+        )
+    source_sha256 = hashlib.sha256(encoded).hexdigest()
+    effective_timeout = _resolve_inline_timeout(timeout_seconds)
+    snapshot_files = _snapshot_workspace_files(workspace_state, input_paths)
+    baseline: dict[str, dict[str, Any]] = {}
+    total_bytes = 0
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(destination, mode="w") as archive:
+        for relative, source_path in snapshot_files:
+            payload = source_path.read_bytes()
+            if len(payload) > INLINE_MAX_OUTPUT_BYTES:
+                raise SandboxExecutionError(
+                    f"INLINE_INPUT_TOO_LARGE: {relative} exceeds {INLINE_MAX_OUTPUT_BYTES} bytes."
+                )
+            total_bytes += len(payload)
+            if total_bytes > INLINE_MAX_INPUT_BYTES:
+                raise SandboxExecutionError(
+                    "INLINE_INPUT_TOO_LARGE: workspace snapshot exceeds "
+                    f"{INLINE_MAX_INPUT_BYTES} bytes."
+                )
+            digest = hashlib.sha256(payload).hexdigest()
+            baseline[relative] = {"sha256": digest, "size": len(payload)}
+            _add_tar_bytes(archive, relative, payload, mode=0o644)
+
+        manifest = {
+            "version": 1,
+            "run_id": run_id,
+            "source_sha256": source_sha256,
+            "timeout_seconds": effective_timeout,
+            "baseline": baseline,
+            "output_paths": [item.as_posix() for item in output_paths],
+        }
+        _add_tar_bytes(
+            archive,
+            f"{CONTROL_DIR_NAME}/{INPUT_MANIFEST_NAME}",
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
+        _add_tar_bytes(
+            archive,
+            f"{CONTROL_DIR_NAME}/{ENTRYPOINT_NAME}",
+            encoded,
+            mode=0o500,
+        )
+    return source_sha256, baseline
+
+
+def _safe_extract_inline_result(
+    archive_path: Path,
+    destination: Path,
+) -> tuple[dict[str, Any], dict[str, Path]]:
+    destination.mkdir(parents=True, exist_ok=True)
+    extracted_files: dict[str, Path] = {}
+    manifest_payload: bytes | None = None
+    expanded_bytes = 0
+    member_count = 0
+    with tarfile.open(archive_path, mode="r:*") as archive:
+        for member in archive:
+            name = str(member.name or "").replace("\\", "/")
+            if name == RESULT_MANIFEST_NAME:
+                relative = name
+            elif name.startswith("files/"):
+                relative = name[len("files/") :]
+                if not _is_relative_safe(relative) or _is_inline_snapshot_internal(relative):
+                    raise SandboxExecutionError(
+                        f"INLINE_OUTPUT_REJECTED: unsafe result path: {relative}"
+                    )
+            else:
+                raise SandboxExecutionError(
+                    f"INLINE_OUTPUT_REJECTED: unexpected result bundle member: {name}"
+                )
+            if not member.isfile():
+                raise SandboxExecutionError(
+                    f"INLINE_OUTPUT_REJECTED: result bundle contains a link or special file: {name}"
+                )
+            member_count += 1
+            if member_count > INLINE_MAX_OUTPUT_FILES + 1:
+                raise SandboxExecutionError("INLINE_OUTPUT_LIMIT_EXCEEDED: result bundle has too many files.")
+            expanded_bytes += int(member.size)
+            if int(member.size) > INLINE_MAX_OUTPUT_BYTES:
+                raise SandboxExecutionError(
+                    f"INLINE_OUTPUT_TOO_LARGE: result member exceeds {INLINE_MAX_OUTPUT_BYTES} bytes: {name}"
+                )
+            if expanded_bytes > INLINE_MAX_TOTAL_OUTPUT_BYTES + 1024 * 1024:
+                raise SandboxExecutionError("INLINE_TOTAL_OUTPUT_TOO_LARGE: result bundle is too large.")
+            source = archive.extractfile(member)
+            if source is None:
+                raise SandboxExecutionError(f"INLINE_OUTPUT_REJECTED: cannot read result member: {name}")
+            payload = source.read(INLINE_MAX_OUTPUT_BYTES + 1)
+            if len(payload) != int(member.size):
+                raise SandboxExecutionError(f"INLINE_OUTPUT_REJECTED: truncated result member: {name}")
+            if name == RESULT_MANIFEST_NAME:
+                manifest_payload = payload
+                continue
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+            extracted_files[relative] = target
+    if manifest_payload is None:
+        raise SandboxExecutionError("INLINE_OUTPUT_REJECTED: result manifest is missing.")
+    try:
+        manifest = json.loads(manifest_payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SandboxExecutionError("INLINE_OUTPUT_REJECTED: result manifest is invalid.") from exc
+    if not isinstance(manifest, dict) or int(manifest.get("version") or 0) != 1:
+        raise SandboxExecutionError("INLINE_OUTPUT_REJECTED: result manifest version is invalid.")
+    return manifest, extracted_files
+
+
+def _current_workspace_hash(workspace_root: Path, relative: str) -> str | None:
+    candidate = workspace_root / relative
+    if candidate.is_symlink():
+        raise SandboxExecutionError(
+            f"INLINE_OUTPUT_REJECTED: workspace destination is a symlink: {relative}"
+        )
+    if not candidate.exists():
+        return None
+    if not candidate.is_file():
+        raise SandboxExecutionError(
+            f"INLINE_OUTPUT_REJECTED: workspace destination is not a regular file: {relative}"
+        )
+    return _sha256_file(candidate)
+
+
+def _publish_inline_workspace_delta(
+    *,
+    workspace_state: WorkspaceState,
+    manifest: dict[str, Any],
+    extracted_files: dict[str, Path],
+    baseline: dict[str, dict[str, Any]],
+    run_id: str,
+    source_sha256: str,
+) -> tuple[List[SandboxOutputFile], List[str]]:
+    if str(manifest.get("run_id") or "") != run_id:
+        raise SandboxExecutionError("INLINE_OUTPUT_REJECTED: result run ID does not match.")
+    if str(manifest.get("source_sha256") or "").lower() != source_sha256.lower():
+        raise SandboxExecutionError("INLINE_OUTPUT_REJECTED: result source hash does not match.")
+    raw_files = manifest.get("files")
+    raw_deleted = manifest.get("deleted")
+    if not isinstance(raw_files, list) or not isinstance(raw_deleted, list):
+        raise SandboxExecutionError("INLINE_OUTPUT_REJECTED: result operations are invalid.")
+    if len(raw_files) + len(raw_deleted) > INLINE_MAX_OUTPUT_FILES:
+        raise SandboxExecutionError("INLINE_OUTPUT_LIMIT_EXCEEDED: result has too many operations.")
+
+    workspace_root = workspace_state.root_path.resolve()
+    writes: list[tuple[str, Path, int]] = []
+    seen: set[str] = set()
+    total_bytes = 0
+    for item in raw_files:
+        if not isinstance(item, dict):
+            raise SandboxExecutionError("INLINE_OUTPUT_REJECTED: invalid file operation.")
+        relative = str(item.get("path") or "").strip().replace("\\", "/")
+        if not _is_relative_safe(relative) or _is_inline_snapshot_internal(relative):
+            raise SandboxExecutionError(f"INLINE_OUTPUT_REJECTED: unsafe output path: {relative}")
+        if relative in seen:
+            raise SandboxExecutionError(f"INLINE_OUTPUT_REJECTED: duplicate output path: {relative}")
+        seen.add(relative)
+        source = extracted_files.get(relative)
+        if source is None or not source.is_file() or source.is_symlink():
+            raise SandboxExecutionError(f"INLINE_OUTPUT_REJECTED: output payload is missing: {relative}")
+        size = source.stat().st_size
+        digest = _sha256_file(source)
+        if size != int(item.get("size") or -1) or digest != str(item.get("sha256") or ""):
+            raise SandboxExecutionError(f"INLINE_OUTPUT_REJECTED: output integrity mismatch: {relative}")
+        expected_kind = "update" if relative in baseline else "create"
+        if str(item.get("kind") or "") != expected_kind:
+            raise SandboxExecutionError(f"INLINE_OUTPUT_REJECTED: output operation mismatch: {relative}")
+        total_bytes += size
+        writes.append((relative, source, size))
+
+    deleted: list[str] = []
+    for raw in raw_deleted:
+        relative = str(raw or "").strip().replace("\\", "/")
+        if (
+            not _is_relative_safe(relative)
+            or _is_inline_snapshot_internal(relative)
+            or relative in seen
+            or relative not in baseline
+        ):
+            raise SandboxExecutionError(f"INLINE_OUTPUT_REJECTED: invalid deletion: {relative}")
+        seen.add(relative)
+        deleted.append(relative)
+    if set(extracted_files) != {relative for relative, _source, _size in writes}:
+        raise SandboxExecutionError("INLINE_OUTPUT_REJECTED: result bundle contains undeclared payloads.")
+    if total_bytes > INLINE_MAX_TOTAL_OUTPUT_BYTES:
+        raise SandboxExecutionError("INLINE_TOTAL_OUTPUT_TOO_LARGE: result exceeds the total output limit.")
+
+    # Reject stale publication before changing any path.  The backend run lease
+    # normally serializes the workspace; hashes make that assumption explicit.
+    for relative, _source, _size in writes:
+        current = _current_workspace_hash(workspace_root, relative)
+        before = baseline.get(relative)
+        if before is None and current is not None:
+            raise SandboxExecutionError(f"INLINE_WORKSPACE_CONFLICT: path appeared during run: {relative}")
+        if before is not None and current != str(before.get("sha256") or ""):
+            raise SandboxExecutionError(f"INLINE_WORKSPACE_CONFLICT: path changed during run: {relative}")
+    for relative in deleted:
+        current = _current_workspace_hash(workspace_root, relative)
+        if current != str(baseline[relative].get("sha256") or ""):
+            raise SandboxExecutionError(f"INLINE_WORKSPACE_CONFLICT: path changed during run: {relative}")
+
+    affected = [relative for relative, _source, _size in writes] + deleted
+    published: List[SandboxOutputFile] = []
+    with tempfile.TemporaryDirectory(prefix="helpudoc-inline-rollback-") as rollback_dir_raw:
+        rollback_dir = Path(rollback_dir_raw)
+        originals: dict[str, Path | None] = {}
+        staged: dict[str, Path] = {}
+        try:
+            for relative in affected:
+                destination = workspace_root / relative
+                if destination.exists():
+                    backup = rollback_dir / relative
+                    backup.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(destination, backup)
+                    originals[relative] = backup
+                else:
+                    originals[relative] = None
+            for relative, source, _size in writes:
+                destination = workspace_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                temporary = destination.parent / f".{destination.name}.{uuid4().hex}.partial"
+                shutil.copy2(source, temporary)
+                temporary.chmod(0o644)
+                staged[relative] = temporary
+            for relative, _source, size in writes:
+                destination = workspace_root / relative
+                os.replace(staged[relative], destination)
+                published.append(SandboxOutputFile(path=f"/{relative}", size=size))
+            for relative in deleted:
+                (workspace_root / relative).unlink()
+        except Exception:
+            for temporary in staged.values():
+                temporary.unlink(missing_ok=True)
+            for relative, original in originals.items():
+                destination = workspace_root / relative
+                if original is None:
+                    destination.unlink(missing_ok=True)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                restore = destination.parent / f".{destination.name}.{uuid4().hex}.restore"
+                shutil.copy2(original, restore)
+                os.replace(restore, destination)
+            raise
+    return published, deleted
+
+
 def build_inline_sandbox_job_manifest(
     *,
     job_name: str,
@@ -1092,8 +1501,10 @@ def build_inline_sandbox_job_manifest(
     run_id: str,
     timeout_seconds: int,
     sandbox_config: SandboxConfig,
+    input_url: str | None = None,
+    result_url: str | None = None,
 ) -> dict[str, Any]:
-    """Job manifest for inline code: no /workspace mount, no workspace root env."""
+    """Build the inline Job for legacy PVC staging or isolated object transport."""
     labels = {
         "app": "helpudoc-skill-sandbox",
         "helpudoc.io/workspace-id": workspace_id,
@@ -1103,6 +1514,119 @@ def build_inline_sandbox_job_manifest(
     safe_workspace_id = _safe_subpath_segment(workspace_id, "workspace_id")
     safe_run_id = _safe_subpath_segment(run_id, "run_id")
     effective_timeout = max(1, int(timeout_seconds))
+    if sandbox_config.inline_transport == "object_store":
+        if not str(input_url or "").strip() or not str(result_url or "").strip():
+            raise SandboxExecutionError(
+                "INLINE_OBJECT_TRANSPORT_INVALID: signed input and result URLs are required."
+            )
+        manifest = {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "name": job_name,
+                "namespace": sandbox_config.effective_inline_namespace,
+                "labels": labels,
+            },
+            "spec": {
+                "backoffLimit": 0,
+                "activeDeadlineSeconds": effective_timeout + 30,
+                "ttlSecondsAfterFinished": 300,
+                "template": {
+                    "metadata": {"labels": labels},
+                    "spec": {
+                        "restartPolicy": "Never",
+                        "serviceAccountName": sandbox_config.inline_service_account,
+                        "automountServiceAccountToken": False,
+                        "enableServiceLinks": False,
+                        "securityContext": {
+                            "runAsNonRoot": True,
+                            "runAsUser": 1000,
+                            "runAsGroup": 1000,
+                            "fsGroup": 1000,
+                            "seccompProfile": {"type": "RuntimeDefault"},
+                        },
+                        "containers": [
+                            {
+                                "name": "runner",
+                                "image": sandbox_config.effective_inline_image,
+                                "imagePullPolicy": "IfNotPresent",
+                                "workingDir": "/workspace",
+                                "command": ["python", "/opt/helpudoc/sandbox_supervisor.py"],
+                                "args": [],
+                                "env": [
+                                    {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
+                                    {"name": "PYTHONUNBUFFERED", "value": "1"},
+                                    {"name": "TMPDIR", "value": "/tmp"},
+                                    {"name": "HOME", "value": "/workspace/.tmp"},
+                                    {"name": "HELPUDOC_WORKSPACE_ROOT", "value": "/workspace"},
+                                    {"name": "HELPUDOC_SANDBOX_MODE", "value": "inline"},
+                                    {"name": "HELPUDOC_SANDBOX_INPUT_URL", "value": str(input_url)},
+                                    {"name": "HELPUDOC_SANDBOX_RESULT_URL", "value": str(result_url)},
+                                    {
+                                        "name": "HELPUDOC_SANDBOX_MAX_INPUT_FILES",
+                                        "value": str(INLINE_MAX_SNAPSHOT_FILES),
+                                    },
+                                    {
+                                        "name": "HELPUDOC_SANDBOX_MAX_INPUT_BYTES",
+                                        "value": str(INLINE_MAX_INPUT_BYTES),
+                                    },
+                                    {
+                                        "name": "HELPUDOC_SANDBOX_MAX_OUTPUT_FILES",
+                                        "value": str(INLINE_MAX_OUTPUT_FILES),
+                                    },
+                                    {
+                                        "name": "HELPUDOC_SANDBOX_MAX_OUTPUT_BYTES",
+                                        "value": str(INLINE_MAX_TOTAL_OUTPUT_BYTES),
+                                    },
+                                    {
+                                        "name": "HELPUDOC_SANDBOX_MAX_FILE_BYTES",
+                                        "value": str(INLINE_MAX_OUTPUT_BYTES),
+                                    },
+                                    {
+                                        "name": "HELPUDOC_SANDBOX_MAX_TRANSFER_BYTES",
+                                        "value": str(INLINE_MAX_TOTAL_OUTPUT_BYTES + 32 * 1024 * 1024),
+                                    },
+                                ],
+                                "resources": {
+                                    "limits": {
+                                        "cpu": sandbox_config.cpu_limit,
+                                        "memory": sandbox_config.memory_limit,
+                                        "ephemeral-storage": sandbox_config.ephemeral_storage_limit,
+                                    },
+                                    "requests": {
+                                        "cpu": "100m",
+                                        "memory": "128Mi",
+                                        "ephemeral-storage": "128Mi",
+                                    },
+                                },
+                                "securityContext": {
+                                    "allowPrivilegeEscalation": False,
+                                    "readOnlyRootFilesystem": True,
+                                    "capabilities": {"drop": ["ALL"]},
+                                },
+                                "volumeMounts": [
+                                    {"name": "workspace", "mountPath": "/workspace"},
+                                    {"name": "tmp", "mountPath": "/tmp"},
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "workspace",
+                                "emptyDir": {"sizeLimit": sandbox_config.ephemeral_storage_limit},
+                            },
+                            {"name": "tmp", "emptyDir": {"sizeLimit": "128Mi"}},
+                        ],
+                    },
+                },
+            },
+        }
+        if sandbox_config.runtime_class_name:
+            manifest["spec"]["template"]["spec"]["runtimeClassName"] = (
+                sandbox_config.runtime_class_name
+            )
+        return manifest
+
     manifest = {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -1197,6 +1721,138 @@ def build_inline_sandbox_job_manifest(
     return manifest
 
 
+def _run_inline_python_via_object_store(
+    *,
+    workspace_state: WorkspaceState,
+    inline_code: str,
+    input_paths: Sequence[str],
+    output_paths: Sequence[Path],
+    timeout_seconds: int,
+    global_ceiling: int,
+    batch_api: Any,
+    core_api: Any,
+    sandbox_config: SandboxConfig,
+    object_store: SandboxObjectStore | Any | None,
+) -> SandboxRunResult:
+    run_id = f"{INLINE_RUN_ID_PREFIX}{uuid4().hex}"
+    job_name = f"helpudoc-sandbox-{run_id[:24]}"
+    namespace = sandbox_config.effective_inline_namespace
+    store = object_store
+    if store is None:
+        try:
+            store = SandboxObjectStore()
+        except SandboxObjectStoreError as exc:
+            raise SandboxUnavailableError(f"INLINE_OBJECT_STORE_UNAVAILABLE: {exc}") from exc
+
+    input_key, result_key = store.run_keys(workspace_state.workspace_id, run_id)
+    uploaded_input = False
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"helpudoc-{run_id}-") as temporary_raw:
+            temporary = Path(temporary_raw)
+            input_bundle = temporary / "input.tar"
+            result_bundle = temporary / "result.tar"
+            extracted_result = temporary / "result"
+            source_sha256, baseline = _create_inline_input_bundle(
+                workspace_state=workspace_state,
+                inline_code=inline_code,
+                input_paths=input_paths,
+                output_paths=output_paths,
+                run_id=run_id,
+                destination=input_bundle,
+                timeout_seconds=timeout_seconds,
+            )
+            try:
+                store.upload(input_bundle, input_key)
+                uploaded_input = True
+                input_url = store.presign_download(input_key)
+                result_url = store.presign_upload(result_key)
+            except SandboxObjectStoreError as exc:
+                raise SandboxUnavailableError(f"INLINE_OBJECT_STORE_UNAVAILABLE: {exc}") from exc
+
+            manifest = build_inline_sandbox_job_manifest(
+                job_name=job_name,
+                workspace_id=workspace_state.workspace_id,
+                run_id=run_id,
+                timeout_seconds=timeout_seconds,
+                sandbox_config=sandbox_config,
+                input_url=input_url,
+                result_url=result_url,
+            )
+            logger.info(
+                "Inline object-store sandbox %s starting: job=%s namespace=%s source_sha256=%s "
+                "inputs=%d snapshot_files=%d output_filters=%d timeout=%ds",
+                run_id,
+                job_name,
+                namespace,
+                source_sha256,
+                len(input_paths),
+                len(baseline),
+                len(output_paths),
+                timeout_seconds,
+            )
+            with _inline_job_slot(workspace_state.workspace_id, global_ceiling=global_ceiling):
+                try:
+                    batch_api.create_namespaced_job(namespace=namespace, body=manifest)
+                    stdout, stderr = _wait_for_job(
+                        batch_api,
+                        core_api,
+                        namespace=namespace,
+                        job_name=job_name,
+                        timeout_seconds=timeout_seconds,
+                        poll_interval_seconds=sandbox_config.poll_interval_seconds,
+                        max_stdout_bytes=INLINE_MAX_STDOUT_BYTES,
+                        max_stderr_bytes=INLINE_MAX_STDERR_BYTES,
+                    )
+                finally:
+                    try:
+                        batch_api.delete_namespaced_job(
+                            name=job_name,
+                            namespace=namespace,
+                            propagation_policy="Background",
+                        )
+                    except Exception:
+                        logger.info(
+                            "Inline sandbox job cleanup skipped or failed for %s",
+                            job_name,
+                            exc_info=True,
+                        )
+            try:
+                store.download(result_key, result_bundle)
+            except SandboxObjectStoreError as exc:
+                raise SandboxExecutionError(
+                    f"INLINE_RESULT_UNAVAILABLE: sandbox completed without a readable result bundle: {exc}"
+                ) from exc
+            result_manifest, extracted_files = _safe_extract_inline_result(
+                result_bundle,
+                extracted_result,
+            )
+            outputs, deleted = _publish_inline_workspace_delta(
+                workspace_state=workspace_state,
+                manifest=result_manifest,
+                extracted_files=extracted_files,
+                baseline=baseline,
+                run_id=run_id,
+                source_sha256=source_sha256,
+            )
+            return SandboxRunResult(
+                run_id=run_id,
+                job_name=job_name,
+                stdout=stdout[:INLINE_MAX_STDOUT_BYTES],
+                stderr=stderr[:INLINE_MAX_STDERR_BYTES],
+                output_files=outputs,
+                mode="inline",
+                source_sha256=source_sha256,
+                deleted_files=[f"/{item}" for item in deleted],
+            )
+    finally:
+        if uploaded_input:
+            for key in (input_key, result_key):
+                try:
+                    store.delete(key)
+                except Exception:
+                    logger.warning("Failed cleaning sandbox object %s", key, exc_info=True)
+
+
 def run_inline_python_in_kubernetes(
     *,
     skills_root: Path | None,
@@ -1208,22 +1864,46 @@ def run_inline_python_in_kubernetes(
     batch_api: Any | None = None,
     core_api: Any | None = None,
     sandbox_config: SandboxConfig | None = None,
+    object_store: SandboxObjectStore | Any | None = None,
 ) -> SandboxRunResult:
     if not inline_sandbox_enabled():
         raise InlineSandboxDisabledError(
             "SANDBOX_INLINE_DISABLED: inline Python execution is turned off. Use a declared "
             "sandbox script from the active skill."
         )
-    # An active skill is required in both modes.
+    # An active skill is required in both transport modes.
     _resolve_skill(skills_root=skills_root, workspace_state=workspace_state)
-    normalized_inputs = _normalize_inline_inputs(input_paths)
-    normalized_outputs = _normalize_inline_outputs(output_paths)
+    sandbox_config = sandbox_config or SandboxConfig.from_env()
+    workspace_available = sandbox_config.inline_transport == "object_store"
+    normalized_inputs = _normalize_inline_inputs(
+        input_paths,
+        workspace_available=workspace_available,
+    )
+    normalized_outputs = _normalize_inline_outputs(
+        output_paths,
+        workspace_available=workspace_available,
+        require_explicit=not workspace_available,
+    )
     effective_timeout = _resolve_inline_timeout(timeout_seconds)
     global_ceiling = inline_global_job_ceiling()
 
-    sandbox_config = sandbox_config or SandboxConfig.from_env()
     if batch_api is None or core_api is None:
         batch_api, core_api = _load_kubernetes_clients()
+
+    _reserve_inline_execution(workspace_state)
+    if sandbox_config.inline_transport == "object_store":
+        return _run_inline_python_via_object_store(
+            workspace_state=workspace_state,
+            inline_code=inline_code,
+            input_paths=normalized_inputs,
+            output_paths=normalized_outputs,
+            timeout_seconds=effective_timeout,
+            global_ceiling=global_ceiling,
+            batch_api=batch_api,
+            core_api=core_api,
+            sandbox_config=sandbox_config,
+            object_store=object_store,
+        )
 
     cleanup_stale_inline_run_dirs(workspace_state)
     run_id, run_dir, source_sha256 = _stage_inline_run(
@@ -1232,7 +1912,6 @@ def run_inline_python_in_kubernetes(
         input_paths=normalized_inputs,
         output_paths=normalized_outputs,
     )
-    _reserve_inline_execution(workspace_state)
     job_name = f"helpudoc-sandbox-{run_id[:24]}"
     logger.info(
         "Inline sandbox run %s starting: job=%s source_sha256=%s inputs=%d outputs=%d timeout=%ds",

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,34 @@ from ..interrupt_helpers import (
 from ..human_action_parse import parse_human_actions
 from ..json_args import parse_json_dict_arg
 from ..schemas import RequestClarificationInput
+
+
+_EXPLICIT_PLAN_REVIEW_RE = re.compile(
+    r"(?:\b(?:approve|review|confirm|sign[ -]?off)\b.{0,80}\b(?:plan|approach|steps)\b|"
+    r"\b(?:plan|approach|steps)\b.{0,80}\b(?:approve|review|confirm|sign[ -]?off)\b)",
+    re.IGNORECASE,
+)
+
+
+def _plan_review_is_required_or_requested(context: Dict[str, Any]) -> bool:
+    policy = context.get("active_skill_policy")
+    if isinstance(policy, dict):
+        requires_plan = bool(policy.get("requires_hitl_plan"))
+    else:
+        requires_plan = bool(getattr(policy, "requires_hitl_plan", False))
+    if requires_plan:
+        return True
+    prompt = " ".join(
+        str(context.get(key) or "")
+        for key in (
+            "current_user_prompt",
+            "prompt",
+            "user_prompt",
+            "original_prompt",
+            "message",
+        )
+    )
+    return _EXPLICIT_PLAN_REVIEW_RE.search(prompt) is not None
 
 def _extract_interaction_gate_id(display_payload: Dict[str, Any]) -> str:
     gate_id = display_payload.get("gateId")
@@ -87,6 +116,14 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
         if not normalized_steps and not checklist:
             return "Plan approval blocked: steps or execution_checklist is required."
 
+        active_skill = str(workspace_state.context.get("active_skill") or "").strip()
+        if active_skill and not _plan_review_is_required_or_requested(workspace_state.context):
+            return (
+                "PLAN_APPROVAL_NOT_REQUIRED\n"
+                f"The active skill '{active_skill}' does not require plan approval and the user did "
+                "not request a plan review. Continue the skill workflow without pausing for this gate."
+            )
+
         workspace_state.context["last_plan_feedback"] = feedback
         workspace_state.context["last_plan_file_path"] = plan_path
 
@@ -144,8 +181,6 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
             edit_feedback = (
                 str(edited_args.get("reviewer_feedback") or "").strip() or decision_message or feedback
             )
-        elif feedback:
-            edit_feedback = feedback
         edited_draft_content = str(edited_args.get("edited_plan_content") or "").strip() or draft_content
         edited_plan_path = str(edited_args.get("plan_file_path") or "").strip()
         if edited_plan_path:

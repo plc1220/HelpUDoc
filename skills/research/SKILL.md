@@ -39,6 +39,7 @@ required_artifacts:
   - /final_quality_check.md
   - /final-research-report.md
 pre_plan_search_limit: 3
+post_plan_search_limit: 12
 source_skills:
   - research-core
   - research-sub_researcher

@@ -1362,12 +1362,35 @@ def test_inline_tool_reports_disabled_flag_without_running(
     settings = SimpleNamespace(backend=SimpleNamespace(skills_root=skills_root, plugins_root=None))
     tool_obj = build_run_skill_python_script_tool(settings, workspace)
 
+    assert "inline_code" not in tool_obj.args
+    assert "output_paths" not in tool_obj.args
+    assert "timeout_seconds" not in tool_obj.args
+
     response = tool_obj.func(
         inline_code="print('hi')\n",
         output_paths=["outputs/final.txt"],
     )
 
     assert "SANDBOX_INLINE_DISABLED" in response
+
+
+def test_inline_tool_advertises_inline_arguments_only_on_enabled_kubernetes_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.helpudoc_agent.tools.workspace.builtins.skills import (
+        build_run_skill_python_script_tool,
+    )
+
+    _enable_inline(monkeypatch)
+    monkeypatch.setenv("HELPUDOC_SANDBOX_BACKEND", "kubernetes")
+    skills_root, workspace = _inline_workspace(tmp_path)
+    settings = SimpleNamespace(backend=SimpleNamespace(skills_root=skills_root, plugins_root=None))
+
+    tool_obj = build_run_skill_python_script_tool(settings, workspace)
+
+    assert "inline_code" in tool_obj.args
+    assert "output_paths" in tool_obj.args
+    assert "timeout_seconds" in tool_obj.args
 
 
 def test_inline_tool_rejects_both_and_neither_modes(
@@ -1422,11 +1445,15 @@ def test_tool_rejects_arguments_from_the_other_execution_mode(
     assert "SKILL_SANDBOX_REQUEST_INVALID" in declared_with_outputs
 
 
-def test_inline_tool_description_explains_both_filesystem_modes(tmp_path: Path) -> None:
+def test_inline_tool_description_explains_enabled_kubernetes_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from agent.helpudoc_agent.tools.workspace.builtins.skills import (
         build_run_skill_python_script_tool,
     )
 
+    _enable_inline(monkeypatch)
+    monkeypatch.setenv("HELPUDOC_SANDBOX_BACKEND", "kubernetes")
     skills_root, workspace = _inline_workspace(tmp_path)
     settings = SimpleNamespace(backend=SimpleNamespace(skills_root=skills_root, plugins_root=None))
     tool_obj = build_run_skill_python_script_tool(settings, workspace)
@@ -1434,6 +1461,6 @@ def test_inline_tool_description_explains_both_filesystem_modes(tmp_path: Path) 
     description = tool_obj.description
 
     assert "inline_code" in description
-    assert "no\n/workspace mount" in description or "no /workspace mount" in description
-    assert "read-only workspace access" in description
+    assert "private writable /workspace snapshot" in description
     assert "output_paths" in description
+    assert "Never use inline_code merely to list, search, or read skill assets" in description

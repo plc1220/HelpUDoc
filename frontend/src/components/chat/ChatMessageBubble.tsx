@@ -242,15 +242,6 @@ const normalizePreviewKey = (value: string): string => (
   value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 );
 
-const inferStylePreviewPath = (label: string, value: string): string | undefined => {
-  const source = `${label} ${value}`;
-  const styleMatch = source.match(/\bstyle\s*([a-c])\b/i);
-  if (!styleMatch?.[1]) {
-    return undefined;
-  }
-  return `.frontend-slides/slide-previews/style-${styleMatch[1].toLowerCase()}.html`;
-};
-
 const parseStylePreviewChoiceMetadata = (
   payload?: Record<string, unknown>,
 ): Map<string, Partial<StylePreviewChoice>> => {
@@ -331,7 +322,9 @@ const buildStylePreviewChoices = (
           {};
         const label = matchingMetadata.label || choiceLabel;
         const value = matchingMetadata.value || choiceValue;
-        const path = matchingMetadata.path || inferStylePreviewPath(label, value);
+        // Never invent a conventional preview path. The style workflow must
+        // provide a generated workspace artifact or embedded HTML explicitly.
+        const path = matchingMetadata.path;
         const description = matchingMetadata.description || choiceRecord.description;
         const html = matchingMetadata.html;
         const isHtmlPreview = Boolean(path && /\.html?$/i.test(path));

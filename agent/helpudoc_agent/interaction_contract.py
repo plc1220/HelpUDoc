@@ -1,6 +1,7 @@
 """Runtime Interaction gate contracts and ledger helpers."""
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
@@ -70,6 +71,54 @@ def active_skill_id(context: Any) -> str:
 def is_frontend_slides_skill(skill_id: str | None) -> bool:
     normalized = normalize_skill_id(skill_id).lower()
     return normalized == "frontend-slides" or normalized.endswith("/frontend-slides")
+
+
+_FRONTEND_SLIDES_EDIT_RE = re.compile(
+    r"\b(?:edit(?:ed|ing)?|revis(?:e|ed|ing)|updat(?:e|ed|ing)|modif(?:y|ied|ying)|"
+    r"fix(?:ed|ing)?|polish(?:ed|ing)?|adjust(?:ed|ing)?|chang(?:e|ed|ing)|"
+    r"improv(?:e|ed|ing)|enhanc(?:e|ed|ing)|iterat(?:e|ed|ing))\b",
+    re.IGNORECASE,
+)
+
+
+def is_frontend_slides_edit_existing_context(context: Any) -> bool:
+    """Return whether the current frontend-slides turn edits an existing deck.
+
+    This check belongs in the shared gate resolver because the interaction
+    middleware runs before the post-model fallback guard. Keeping the exemption
+    here prevents either layer from synthesizing new-deck discovery gates for a
+    direct edit request.
+    """
+    if not isinstance(context, dict):
+        return False
+    if context.get("frontend_slides_edit_existing") is True:
+        return True
+    raw = " ".join(
+        str(context.get(key) or "")
+        for key in (
+            "current_user_prompt",
+            "prompt",
+            "user_prompt",
+            "original_prompt",
+            "message",
+        )
+    ).lower()
+    if not raw:
+        return False
+    mentions_existing_artifact = any(
+        token in raw
+        for token in (
+            ".html",
+            ".ppt",
+            ".pptx",
+            "existing deck",
+            "existing slides",
+            "current deck",
+            "presentation deck",
+        )
+    )
+    asks_for_edit = _FRONTEND_SLIDES_EDIT_RE.search(raw) is not None
+    return mentions_existing_artifact and asks_for_edit
 
 
 def _frontend_slides_default_props(gate_id: str) -> dict[str, Any]:
@@ -419,6 +468,8 @@ def next_pending_gate(context: Any) -> dict[str, Any] | None:
         return None
     skill_id = active_skill_id(context)
     if not skill_id:
+        return None
+    if is_frontend_slides_skill(skill_id) and is_frontend_slides_edit_existing_context(context):
         return None
     declared = _declared_gate_contracts(context, skill_id)
     if declared:

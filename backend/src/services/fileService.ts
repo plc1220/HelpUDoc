@@ -801,9 +801,11 @@ export class FileService {
       byLocalPath.set(path.normalize(this.getLocalPath(workspaceId, String(file.name))), file);
     }
     const committed: any[] = [];
+    const diskNames = new Set<string>();
     for (const absolutePath of diskFiles) {
       const relativeName = path.relative(workspacePath, absolutePath).replace(/\\/g, '/');
       if (this.isInternalWorkspacePath(relativeName)) continue;
+      diskNames.add(relativeName);
       await options?.assertLeaseOwned?.();
       const payload = await fs.readFile(absolutePath);
       const digest = this.hashBuffer(payload);
@@ -864,6 +866,38 @@ export class FileService {
           if (error instanceof NotFoundError) {
             throw new ConflictError(`Artifact path changed concurrently: ${relativeName}`);
           }
+        }
+        throw error;
+      }
+    }
+    for (const [relativeName, baseline] of Object.entries(options?.baseline || {})) {
+      if (this.isInternalWorkspacePath(relativeName) || diskNames.has(relativeName)) continue;
+      await options?.assertLeaseOwned?.();
+      const existing = byLocalPath.get(path.normalize(path.join(workspacePath, relativeName)));
+      if (!existing || Number(existing.id) !== baseline.fileId) {
+        await this.restoreDurableWorkspaceMirror(workspaceId, relativeName);
+        throw new ConflictError(`Artifact deletion changed concurrently: ${relativeName}`);
+      }
+      if (this.assertVersion(existing.version) !== baseline.version) {
+        await this.restoreDurableWorkspaceMirror(workspaceId, relativeName);
+        throw new ConflictError(`Artifact deletion changed concurrently: ${relativeName}`, {
+          expectedVersion: baseline.version,
+          actualVersion: this.assertVersion(existing.version),
+        });
+      }
+      try {
+        await options?.assertLeaseOwned?.();
+        const deleted = await this.deleteFile(Number(existing.id), userId, {
+          expectedVersion: baseline.version,
+          strictVersion: true,
+          sourceRunId,
+          operationId: `${sourceRunId}:delete:${existing.id}:${baseline.version}`,
+        });
+        if (deleted) committed.push(deleted);
+      } catch (error) {
+        if (error instanceof ConflictError || error instanceof NotFoundError) {
+          await this.restoreDurableWorkspaceMirror(workspaceId, relativeName);
+          throw new ConflictError(`Artifact deletion changed concurrently: ${relativeName}`);
         }
         throw error;
       }
@@ -1264,7 +1298,17 @@ export class FileService {
     };
   }
 
-  async deleteFile(fileId: number, userId: string, options?: { allowSystemAdmin?: boolean }) {
+  async deleteFile(
+    fileId: number,
+    userId: string,
+    options?: {
+      allowSystemAdmin?: boolean;
+      expectedVersion?: number;
+      strictVersion?: boolean;
+      sourceRunId?: string | null;
+      operationId?: string | null;
+    },
+  ) {
     const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
     if (!file) {
       return;
@@ -1277,10 +1321,21 @@ export class FileService {
 
     const current = await this.ensureCanonicalVersion(file, userId);
     const versionId = randomUUID();
+    let deleted: any = null;
     await this.db.transaction(async (tx) => {
       const locked = await tx('files').where({ id: fileId }).whereNull('deletedAt').forUpdate().first();
       if (!locked) return;
       const currentVersion = this.assertVersion(locked.version);
+      if (
+        options?.strictVersion
+        && typeof options.expectedVersion === 'number'
+        && currentVersion !== options.expectedVersion
+      ) {
+        throw new ConflictError(`File version conflict for ${locked.name}`, {
+          expectedVersion: options.expectedVersion,
+          actualVersion: currentVersion,
+        });
+      }
       const nextVersion = currentVersion + 1;
       await tx('file_versions').insert(this.buildVersionRecord({
         id: versionId,
@@ -1295,14 +1350,16 @@ export class FileService {
         changeKind: 'delete',
         baseVersion: currentVersion,
         createdBy: userId,
+        sourceRunId: options?.sourceRunId,
+        operationId: options?.operationId,
       }));
-      await tx('files').where({ id: fileId }).update({
+      [deleted] = await tx('files').where({ id: fileId }).update({
         currentVersionId: versionId,
         version: nextVersion,
         deletedAt: tx.fn.now(),
         updatedBy: userId,
         updatedAt: tx.fn.now(),
-      });
+      }).returning('*');
       await tx('workspaces').where({ id: locked.workspaceId }).update({
         contentRevision: tx.raw('COALESCE("contentRevision", 0) + 1'),
         updatedAt: tx.fn.now(),
@@ -1313,7 +1370,7 @@ export class FileService {
     await fs.unlink(localPath).catch((error: any) => {
       if (error?.code !== 'ENOENT') console.error(`Failed to evict local file cache: ${localPath}`, error);
     });
-
+    return deleted;
   }
 
   async deleteFolder(workspaceId: string, folderPath: string, userId: string) {
@@ -1583,10 +1640,15 @@ export class FileService {
       const dirEntries = await fs.readdir(current, { withFileTypes: true });
       for (const entry of dirEntries) {
         const entryPath = path.join(current, entry.name);
+        if (entry.isSymbolicLink()) {
+          throw new ConflictError(`Workspace contains an unsupported symbolic link: ${entryPath}`);
+        }
         if (entry.isDirectory()) {
           stack.push(entryPath);
         } else if (entry.isFile()) {
           results.push(entryPath);
+        } else {
+          throw new ConflictError(`Workspace contains an unsupported special file: ${entryPath}`);
         }
       }
     }
