@@ -22,3 +22,14 @@ kubernetes
 
 # Langfuse v3 (align with self-hosted Langfuse / Langfuse Cloud; see infra).
 langfuse>=3.14.6,<4
+
+# Cloud Trace export alongside Langfuse, so trace data survives a Langfuse
+# outage. The OTel SDK itself already arrives transitively via langfuse.
+#
+# This exporter is deprecated upstream in favour of OTLP to
+# telemetry.googleapis.com, and emits a DeprecationWarning on construction.
+# Kept anyway: it resolves credentials from ADC on its own, while the OTLP
+# path needs hand-rolled google-auth token plumbing and targets an API that
+# is still pre-GA. No removal date is announced. Revisit when the Telemetry
+# API reaches GA.
+opentelemetry-exporter-gcp-trace==1.9.0

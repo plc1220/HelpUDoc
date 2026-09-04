@@ -13,6 +13,7 @@ from helpudoc_agent.logging_setup import configure_logging
 from helpudoc_agent.memory_store import MemoryStoreManager
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
 from helpudoc_agent.tools_and_schemas import GeminiClientManager, ToolFactory
+from helpudoc_agent.tracing_setup import configure_tracing
 from helpudoc_agent.utils import SourceTracker
 
 from .lifecycle import (
@@ -36,6 +37,10 @@ def create_app() -> FastAPI:
     # Before any other statement here can log: the env files above may set
     # LOG_LEVEL/LOG_FORMAT, and records emitted earlier would be dropped.
     configure_logging()
+    # Before the first Langfuse client is built in the chat routes: Langfuse
+    # reuses an already-installed global TracerProvider, so this must win the
+    # race to install one or GCP export never gets a processor.
+    configure_tracing()
     config_path: Optional[Path] = None
     env_config_path = os.getenv("AGENT_CONFIG_PATH")
     if env_config_path:

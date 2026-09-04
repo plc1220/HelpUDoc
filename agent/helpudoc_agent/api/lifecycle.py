@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from helpudoc_agent.memory_store import MemoryStoreManager
+from helpudoc_agent.tracing_setup import shutdown_tracing
 from .paths import AGENT_PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -70,3 +71,5 @@ def register_app_lifecycle(
             memory_store_manager.stop()
         except Exception:
             logger.exception("Failed to stop persistent memory store cleanly")
+        # Flush buffered spans last, so anything the stop path logged is included.
+        shutdown_tracing()

@@ -434,6 +434,19 @@ spec:
               value: json
             - name: LOG_LEVEL
               value: INFO
+            # Second span export path alongside Langfuse, so trace data survives a
+            # Langfuse outage. Off until deliberately enabled; when off no
+            # TracerProvider is installed and Langfuse behaves exactly as before.
+            - name: GCP_TRACE_ENABLED
+              value: "false"
+            - name: GOOGLE_CLOUD_PROJECT
+              value: my-rd-coe-demo-gen-ai
+            - name: GCP_TRACE_SAMPLE_RATIO
+              value: "1.0"
+            # Prompt/completion bodies exceed the 256 KiB Cloud Logging entry
+            # limit and are the most sensitive data the agent handles.
+            - name: GCP_TRACE_INCLUDE_PAYLOADS
+              value: "false"
             - name: KNOWLEDGE_MARKITDOWN_MODE
               value: primary
             - name: KNOWLEDGE_OCR_MODE
