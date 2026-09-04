@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import FastAPI
 
 from helpudoc_agent.configuration import describe_workspace_root, load_settings
+from helpudoc_agent.logging_setup import configure_logging
 from helpudoc_agent.memory_store import MemoryStoreManager
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
 from helpudoc_agent.tools_and_schemas import GeminiClientManager, ToolFactory
@@ -32,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     load_process_env_files()
+    # Before any other statement here can log: the env files above may set
+    # LOG_LEVEL/LOG_FORMAT, and records emitted earlier would be dropped.
+    configure_logging()
     config_path: Optional[Path] = None
     env_config_path = os.getenv("AGENT_CONFIG_PATH")
     if env_config_path:
@@ -54,7 +58,6 @@ def create_app() -> FastAPI:
         f"(source={workspace_root_diagnostic['source']} "
         f"raw={workspace_root_diagnostic['raw_value'] or '<config>'})"
     )
-    print(workspace_root_message)
     logger.info(workspace_root_message)
     dependency_diag = build_dependency_diagnostic()
     source_tracker = SourceTracker()

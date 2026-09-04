@@ -427,6 +427,13 @@ spec:
               value: redis://redis:6379
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
+            # Structured JSON on stdout so Cloud Logging parses severity and
+            # keeps a traceback in one entry. LOG_FORMAT is inferred in-cluster;
+            # set explicitly so the manifest states the intent.
+            - name: LOG_FORMAT
+              value: json
+            - name: LOG_LEVEL
+              value: INFO
             - name: KNOWLEDGE_MARKITDOWN_MODE
               value: primary
             - name: KNOWLEDGE_OCR_MODE
