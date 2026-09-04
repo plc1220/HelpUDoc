@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import path from 'path';
 import { HttpError } from '../errors';
 import { FileService } from './fileService';
+import { fetchGoogleBuffer, fetchGoogleJson } from './googleApiFetch';
 import { GoogleOAuthService } from './googleOAuthService';
 
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
@@ -650,35 +651,12 @@ export class GoogleDriveService {
     return this.fetchBuffer(accessToken, url.toString(), 'Failed to download Google Drive file');
   }
 
-  private async fetchJson<T>(accessToken: string, url: string, fallbackMessage: string): Promise<T> {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new HttpError(response.status, `${fallbackMessage} (${response.status}): ${text.slice(0, 300)}`);
-    }
-
-    return response.json() as Promise<T>;
+  private fetchJson<T>(accessToken: string, url: string, fallbackMessage: string): Promise<T> {
+    return fetchGoogleJson<T>(accessToken, url, fallbackMessage);
   }
 
-  private async fetchBuffer(accessToken: string, url: string, fallbackMessage: string): Promise<Buffer> {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new HttpError(response.status, `${fallbackMessage} (${response.status}): ${text.slice(0, 300)}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
+  private fetchBuffer(accessToken: string, url: string, fallbackMessage: string): Promise<Buffer> {
+    return fetchGoogleBuffer(accessToken, url, fallbackMessage);
   }
 
   private async resolveUniqueFileName(

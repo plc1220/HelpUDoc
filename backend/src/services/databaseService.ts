@@ -37,6 +37,8 @@ export class DatabaseService {
     await this.createMcpServerGrantsTable();
     await this.createMcpConnectionsTable();
     await this.createMcpConnectionGrantsTable();
+    await this.createGcsBucketsTable();
+    await this.createGcsBucketTeamGrantsTable();
     await this.createFilesTable();
     await this.createFileVersionsTable();
     await this.createFileAuditEventsTable();
@@ -472,6 +474,53 @@ export class DatabaseService {
         table.unique(['principalType', 'principalId', 'connectionId']);
       });
       console.log('Created "mcp_connection_grants" table.');
+    }
+  }
+
+  /**
+   * Buckets an admin has registered as importable sources for the Google Cloud
+   * Storage connector. Registration is app-level gating only — reads still go
+   * out under each user's own OAuth token, so GCS IAM remains the authority on
+   * what any individual can actually see.
+   */
+  private async createGcsBucketsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('gcs_buckets');
+    if (!exists) {
+      await this.db.schema.createTable('gcs_buckets', (table) => {
+        table.uuid('id').primary();
+        table.string('bucketName', 222).notNullable();
+        // '' rather than null for "whole bucket": Postgres does not treat nulls
+        // as equal, so a nullable column would let the unique index be bypassed.
+        table.string('pathPrefix', 512).notNullable().defaultTo('');
+        table.string('displayName', 128).notNullable();
+        table.string('description', 512);
+        // Defaults to deny, unlike `mcp_connections`. A bucket is a data source
+        // an admin should have to hand out on purpose.
+        table.string('defaultAccess', 16).notNullable().defaultTo('deny');
+        table.boolean('isArchived').notNullable().defaultTo(false);
+        table.uuid('createdByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['bucketName', 'pathPrefix'], { indexName: 'gcs_buckets_name_prefix_uidx' });
+      });
+      console.log('Created "gcs_buckets" table.');
+    }
+  }
+
+  /** Shaped like `team_skill_grants`: teams are rows in `groups`. */
+  private async createGcsBucketTeamGrantsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('gcs_bucket_team_grants');
+    if (!exists) {
+      await this.db.schema.createTable('gcs_bucket_team_grants', (table) => {
+        table.uuid('bucketId').notNullable().references('id').inTable('gcs_buckets').onDelete('CASCADE');
+        table.uuid('teamId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.string('effect', 16).notNullable().defaultTo('allow');
+        table.uuid('grantedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['bucketId', 'teamId']);
+      });
+      console.log('Created "gcs_bucket_team_grants" table.');
     }
   }
 

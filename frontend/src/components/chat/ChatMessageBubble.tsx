@@ -53,6 +53,7 @@ const ATTACHMENT_MARKER_PATTERN = /\n*\[Attachments:\s*([^\]]+)\]\s*$/i;
 type MessageAttachmentPreview = {
   name: string;
   isDrive: boolean;
+  isGcs: boolean;
   isImage: boolean;
   previewUrl?: string;
 };
@@ -94,7 +95,19 @@ const WORKFLOW_ACTION_LABELS: Record<string, string> = {
 };
 const stripAttachmentMarker = (text: string) => text.replace(ATTACHMENT_MARKER_PATTERN, '').trimEnd();
 
-const parseAttachmentNames = (text: string): Array<{ name: string; isDrive: boolean }> => {
+/**
+ * The composer records where each attachment came from as a suffix on the
+ * attachment marker (see `summarizeComposerAttachments`). This reverses it, so
+ * the bubble can label a file by its connector rather than its extension.
+ */
+const ATTACHMENT_SOURCE_SUFFIXES = [
+  { pattern: /\s+\(Drive\)$/i, source: 'drive' as const },
+  { pattern: /\s+\(Cloud Storage\)$/i, source: 'gcs' as const },
+];
+
+const parseAttachmentNames = (
+  text: string,
+): Array<{ name: string; isDrive: boolean; isGcs: boolean }> => {
   const match = text.match(ATTACHMENT_MARKER_PATTERN);
   if (!match?.[1]) {
     return [];
@@ -104,10 +117,11 @@ const parseAttachmentNames = (text: string): Array<{ name: string; isDrive: bool
     .map((rawName) => rawName.trim())
     .filter(Boolean)
     .map((rawName) => {
-      const isDrive = /\s+\(Drive\)$/i.test(rawName);
+      const matched = ATTACHMENT_SOURCE_SUFFIXES.find((entry) => entry.pattern.test(rawName));
       return {
-        name: rawName.replace(/\s+\(Drive\)$/i, '').trim(),
-        isDrive,
+        name: matched ? rawName.replace(matched.pattern, '').trim() : rawName,
+        isDrive: matched?.source === 'drive',
+        isGcs: matched?.source === 'gcs',
       };
     })
     .filter((attachment) => attachment.name.length > 0);
@@ -787,6 +801,7 @@ export default function ChatMessageBubble({
       return {
         name: attachment.name,
         isDrive: attachment.isDrive,
+        isGcs: attachment.isGcs,
         isImage,
         previewUrl: isImage ? getAttachmentPreviewUrl(workspaceId, attachment.name) : undefined,
       };
@@ -2611,6 +2626,7 @@ export default function ChatMessageBubble({
                     label={attachment.name}
                     description={getAttachmentTypeLabel(attachment.name, {
                       isDrive: attachment.isDrive,
+                      isGcs: attachment.isGcs,
                       isImage: attachment.isImage,
                     })}
                     labelLines={1}

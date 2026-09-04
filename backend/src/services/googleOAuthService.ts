@@ -21,6 +21,22 @@ const DEFAULT_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets.readonly',
 ];
 
+/**
+ * Read-only access to Google Cloud Storage, used by the GCS connector.
+ *
+ * This one is deliberately *not* in the required set. Every scope in
+ * `DEFAULT_SCOPES` is enforced on every `getDelegatedAccessToken` call, so
+ * adding a scope there would lock out every already-connected user — their
+ * stored token predates the new scope, and Drive, BigQuery and the agent's
+ * MCP auth would all start failing until they re-consented. Instead we ask
+ * Google for this scope at sign-in and only demand it at the call sites that
+ * actually need it, via `getDelegatedAccessToken(userId, { requireScopes })`.
+ */
+export const GCS_READ_SCOPE = 'https://www.googleapis.com/auth/devstorage.read_only';
+
+/** Requested at sign-in, but never required of an existing token. */
+const OPTIONAL_SCOPES = [GCS_READ_SCOPE];
+
 export type GoogleProfile = {
   sub: string;
   email?: string;
@@ -41,7 +57,19 @@ export type DelegatedAccessToken = {
 };
 
 export class GoogleOAuthConfigError extends Error {}
-export class GoogleOAuthTokenMissingError extends Error {}
+export class GoogleOAuthTokenMissingError extends Error {
+  /**
+   * Populated when the failure is a missing scope rather than a missing
+   * connection, so a route can tell the caller which consent to re-request
+   * instead of just saying "sign in again".
+   */
+  readonly missingScopes: string[];
+
+  constructor(message: string, missingScopes: string[] = []) {
+    super(message);
+    this.missingScopes = missingScopes;
+  }
+}
 
 function oauthConfig() {
   return getBackendEnv().googleOauth;
@@ -55,7 +83,8 @@ function requireOAuth(value: string | undefined, name: string): string {
   return v;
 }
 
-function getScopes(): string[] {
+/** The scopes an existing token must still hold for any delegated call to work. */
+function getRequiredScopes(): string[] {
   const configured = (oauthConfig().scopesRaw || '').trim();
   if (!configured) {
     return [...DEFAULT_SCOPES];
@@ -64,6 +93,17 @@ function getScopes(): string[] {
     .split(/[\s,]+/)
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+/**
+ * The scopes we ask Google for at sign-in: everything required, plus the
+ * optional ones. `include_granted_scopes=true` on the authorize URL means a
+ * returning user upgrades cleanly rather than losing what they already granted.
+ */
+function getRequestedScopes(): string[] {
+  const required = getRequiredScopes();
+  const seen = new Set(required);
+  return [...required, ...OPTIONAL_SCOPES.filter((scope) => !seen.has(scope))];
 }
 
 function toNumber(value: unknown): number | undefined {
@@ -106,18 +146,28 @@ function hasRequiredScope(granted: Set<string>, required: string): boolean {
   return equivalents.some((scope) => granted.has(scope));
 }
 
-function getMissingScopes(grantedScope?: string): string[] {
+function getMissingScopes(grantedScope?: string, extraRequired: string[] = []): string[] {
   const granted = splitScopes(grantedScope);
-  return getScopes().filter((scope) => !hasRequiredScope(granted, scope));
+  const seen = new Set<string>();
+  return [...getRequiredScopes(), ...extraRequired]
+    .filter((scope) => {
+      if (seen.has(scope)) {
+        return false;
+      }
+      seen.add(scope);
+      return true;
+    })
+    .filter((scope) => !hasRequiredScope(granted, scope));
 }
 
-function ensureRequiredScopes(grantedScope?: string): void {
-  const missingScopes = getMissingScopes(grantedScope);
+function ensureRequiredScopes(grantedScope?: string, extraRequired: string[] = []): void {
+  const missingScopes = getMissingScopes(grantedScope, extraRequired);
   if (!missingScopes.length) {
     return;
   }
   throw new GoogleOAuthTokenMissingError(
     `Google account is missing required scopes. Please sign in with Google again to grant: ${missingScopes.join(', ')}`,
+    missingScopes,
   );
 }
 
@@ -152,7 +202,7 @@ export class GoogleOAuthService {
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', getScopes().join(' '));
+    url.searchParams.set('scope', getRequestedScopes().join(' '));
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('include_granted_scopes', 'true');
     url.searchParams.set('prompt', 'consent');
@@ -292,13 +342,23 @@ export class GoogleOAuthService {
     await this.tokenStore.upsertToken(userId, 'google', token);
   }
 
-  async getDelegatedAccessToken(userId: string): Promise<DelegatedAccessToken> {
+  /**
+   * @param options.requireScopes Scopes this particular call needs on top of the
+   *   globally required set. Pass them here rather than adding to
+   *   `DEFAULT_SCOPES`, so a feature that needs a new scope does not invalidate
+   *   every existing user's connection.
+   */
+  async getDelegatedAccessToken(
+    userId: string,
+    options: { requireScopes?: string[] } = {},
+  ): Promise<DelegatedAccessToken> {
+    const requireScopes = options.requireScopes || [];
     const existing = await this.tokenStore.getToken(userId, 'google');
     if (!existing || !existing.refreshToken) {
       throw new GoogleOAuthTokenMissingError('Google account is not connected for this user');
     }
 
-    ensureRequiredScopes(existing.scope);
+    ensureRequiredScopes(existing.scope, requireScopes);
 
     const now = Math.floor(Date.now() / 1000);
     if (existing.accessToken && existing.expiryDate && existing.expiryDate > now + 60) {
@@ -343,7 +403,7 @@ export class GoogleOAuthService {
     const expiresIn = toNumber(data.expires_in);
     const expiryDate = computeExpiryEpoch(expiresIn);
     const grantedScope = typeof data.scope === 'string' ? data.scope : existing.scope;
-    ensureRequiredScopes(grantedScope);
+    ensureRequiredScopes(grantedScope, requireScopes);
 
     await this.tokenStore.upsertToken(userId, 'google', {
       refreshToken: existing.refreshToken,

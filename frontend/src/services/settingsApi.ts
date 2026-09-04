@@ -1011,3 +1011,96 @@ export const generateSkillEvolutionSuggestions = async (
   }
   return response.json() as Promise<{ processed: number; inserted: number }>;
 };
+
+/** A Cloud Storage bucket registration as an admin manages it. */
+export type GcsBucketRegistration = {
+  id: string;
+  bucketName: string;
+  pathPrefix: string;
+  displayName: string;
+  description: string | null;
+  defaultAccess: 'allow' | 'deny';
+  isArchived: boolean;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  teamGrants: Array<{ teamId: string; teamName: string | null; effect: 'allow' | 'deny' }>;
+};
+
+const readGcsBucket = async (response: Response, fallback: string): Promise<GcsBucketRegistration> => {
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || fallback);
+  }
+  const data = await response.json();
+  return data.bucket;
+};
+
+export const fetchGcsBuckets = async (
+  options: { includeArchived?: boolean } = {},
+): Promise<GcsBucketRegistration[]> => {
+  const url = new URL(`${API_URL}/settings/gcs-buckets`, window.location.origin);
+  if (options.includeArchived) {
+    url.searchParams.set('includeArchived', 'true');
+  }
+  const response = await apiFetch(url.toString());
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load Cloud Storage buckets');
+  }
+  const data = await response.json();
+  return data.buckets;
+};
+
+export const createGcsBucket = async (payload: {
+  bucketName: string;
+  pathPrefix?: string;
+  displayName?: string;
+  description?: string | null;
+  defaultAccess?: 'allow' | 'deny';
+}): Promise<GcsBucketRegistration> => {
+  const response = await apiFetch(`${API_URL}/settings/gcs-buckets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return readGcsBucket(response, 'Failed to register Cloud Storage bucket');
+};
+
+export const updateGcsBucket = async (
+  bucketId: string,
+  payload: {
+    pathPrefix?: string;
+    displayName?: string;
+    description?: string | null;
+    defaultAccess?: 'allow' | 'deny';
+    isArchived?: boolean;
+  },
+): Promise<GcsBucketRegistration> => {
+  const response = await apiFetch(`${API_URL}/settings/gcs-buckets/${bucketId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return readGcsBucket(response, 'Failed to update Cloud Storage bucket');
+};
+
+/** Archives rather than deletes, so the registration and its grants come back. */
+export const archiveGcsBucket = async (bucketId: string): Promise<GcsBucketRegistration> => {
+  const response = await apiFetch(`${API_URL}/settings/gcs-buckets/${bucketId}`, {
+    method: 'DELETE',
+  });
+  return readGcsBucket(response, 'Failed to archive Cloud Storage bucket');
+};
+
+export const setGcsBucketGrants = async (
+  bucketId: string,
+  grants: Array<{ teamId: string; effect: 'allow' | 'deny' }>,
+): Promise<GcsBucketRegistration> => {
+  const response = await apiFetch(`${API_URL}/settings/gcs-buckets/${bucketId}/grants`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ grants }),
+  });
+  return readGcsBucket(response, 'Failed to update Cloud Storage bucket grants');
+};

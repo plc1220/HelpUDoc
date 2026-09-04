@@ -83,10 +83,13 @@ export const splitMessageTextSegments = (text: string): MessageTextSegment[] => 
 
 export const getAttachmentTypeLabel = (
   name: string,
-  options: { isDrive?: boolean; isImage?: boolean } = {},
+  options: { isDrive?: boolean; isGcs?: boolean; isImage?: boolean } = {},
 ): string => {
   if (options.isDrive) {
     return 'Google Drive';
+  }
+  if (options.isGcs) {
+    return 'Google Cloud Storage';
   }
   if (options.isImage) {
     return 'Image';

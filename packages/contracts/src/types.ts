@@ -96,6 +96,56 @@ export interface GoogleDriveSearchResult {
   nextPageToken?: string | null;
 }
 
+/** A bucket an admin registered and this user is allowed to browse. */
+export interface GcsBucketSummary {
+  id: string;
+  bucketName: string;
+  displayName: string;
+  /** '' for the whole bucket, otherwise a prefix ending in '/'. */
+  pathPrefix: string;
+  description?: string | null;
+}
+
+/**
+ * `prefix` entries are the pseudo-folders GCS synthesises when a listing is made
+ * with `delimiter=/`. They are not objects and cannot be imported.
+ */
+export type GcsEntryKind = 'object' | 'prefix';
+
+export interface GcsBrowseEntry {
+  kind: GcsEntryKind;
+  /** Leaf label for display. */
+  name: string;
+  /** Full object key, or the folder prefix including its trailing '/'. */
+  path: string;
+  sizeBytes?: number | null;
+  contentType?: string | null;
+  updated?: string | null;
+  /** GCS object generation; the version fingerprint used to skip re-imports. */
+  generation?: string | null;
+  iconHint: GoogleDriveIconHint;
+}
+
+export interface GcsBrowseResult {
+  bucket: GcsBucketSummary;
+  /** The prefix that was listed, relative to the bucket root. */
+  prefix: string;
+  entries: GcsBrowseEntry[];
+  nextPageToken?: string | null;
+}
+
+export interface GcsImportRequest {
+  bucketId: string;
+  objectNames: string[];
+}
+
+/** Error body returned when the user's Google grant predates a needed scope. */
+export interface GoogleScopeMissingError {
+  error: string;
+  code: 'google_scope_missing';
+  missingScopes: string[];
+}
+
 export interface AgentPersona {
   name: string;
   displayName: string;

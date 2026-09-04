@@ -28,7 +28,14 @@ import {
 } from 'react';
 
 import type { ChatComposerAttachment } from './chatTypes';
+
+const ATTACHMENT_SOURCE_LABELS: Record<ChatComposerAttachment['source'], string> = {
+  local: 'Attached file',
+  drive: 'Google Drive attachment',
+  gcs: 'Cloud Storage attachment',
+};
 import GoogleDriveIcon from './GoogleDriveIcon';
+import GoogleCloudStorageIcon from './GoogleCloudStorageIcon';
 import type { AgentPersona } from '../../types';
 
 const CHAT_INPUT_MIN_HEIGHT = 52;
@@ -171,10 +178,12 @@ export default function ChatInputArea({
                     key={attachment.id}
                     label={attachment.name}
                     size="sm"
-                    description={attachment.source === 'drive' ? 'Google Drive attachment' : 'Attached file'}
+                    description={ATTACHMENT_SOURCE_LABELS[attachment.source]}
                     icon={attachment.source === 'drive'
                       ? <GoogleDriveIcon className="h-4 w-4" />
-                      : <Icon icon={Paperclip} size="sm" />}
+                      : attachment.source === 'gcs'
+                        ? <GoogleCloudStorageIcon className="h-4 w-4" />
+                        : <Icon icon={Paperclip} size="sm" />}
                     onRemove={() => onRemoveChatAttachment(index)}
                   />
                 ))}

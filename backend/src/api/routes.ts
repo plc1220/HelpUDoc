@@ -35,6 +35,7 @@ import { DailyReflectionService } from '../services/dailyReflectionService';
 import { UserMemoryService } from '../services/userMemoryService';
 import { UserOAuthTokenService } from '../services/userOAuthTokenService';
 import { GoogleOAuthService } from '../services/googleOAuthService';
+import { GcsBucketRegistryService } from '../services/gcsBucketRegistryService';
 import { ScheduleService } from '../services/scheduleService';
 import { configureAgentRunServices } from '../services/agentRunService';
 import { SkillGovernanceService } from '../services/governance/skillGovernanceService';
@@ -62,6 +63,7 @@ export default function(
   const knowledgeBaseService = new KnowledgeBaseService(dbService, knowledgeService);
   const userOAuthTokenService = new UserOAuthTokenService(dbService);
   const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);
+  const gcsBucketRegistryService = new GcsBucketRegistryService(dbService.getDb(), userService);
   const workspaceTeamChatAgentService = new WorkspaceTeamChatAgentService(
     workspaceService,
     userService,
@@ -86,7 +88,7 @@ export default function(
     conversationService,
     knowledgeService,
   ));
-  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
+  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService, gcsBucketRegistryService));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
   // Read-only workspace oversight. Every route under it is a GET; see the note
@@ -105,7 +107,7 @@ export default function(
     '/workspaces/:workspaceId/collaboration',
     workspaceCollaborationRoutes(workspaceCollaborationService, workspaceTeamChatAgentService),
   );
-  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService, fileStatusService, filePublicationService));
+  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService, fileStatusService, filePublicationService, gcsBucketRegistryService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));
