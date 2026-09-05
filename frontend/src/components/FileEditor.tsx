@@ -5,12 +5,15 @@ import { getAuthUser } from '../auth/authStore';
 import { createFile, getFileContent } from '../services/fileApi';
 import { createCollabSession } from '../services/collabClient';
 import EditorLoadingState from './EditorLoadingState';
-import FileRenderer from './FileRenderer';
 import type { MarkdownRichEditorHandle } from './MarkdownRichEditor';
 import { isBinaryOfficeDocument } from '../utils/officeFiles';
 
-const MonacoEditor = lazy(() => import('@monaco-editor/react'));
+const MonacoEditor = lazy(async () => {
+  await import('../config/monaco');
+  return import('@monaco-editor/react');
+});
 const MarkdownRichEditor = lazy(() => import('./MarkdownRichEditor'));
+const FileRenderer = lazy(() => import('./FileRenderer'));
 
 const COLLAB_COLORS = [
   '#0ea5e9',
@@ -113,7 +116,9 @@ const OfficeDocumentReadOnlyPane: React.FC<{
         Read-only preview. Word and PowerPoint files are not editable in the workspace editor.
       </div>
       <div className="min-h-0 flex-1">
-        <FileRenderer file={file} fileContent={fileContent} workspaceId={workspaceId} />
+        <Suspense fallback={<EditorLoadingState />}>
+          <FileRenderer file={file} fileContent={fileContent} workspaceId={workspaceId} />
+        </Suspense>
       </div>
     </div>
   );
@@ -212,45 +217,13 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
     void bindMonaco();
   };
 
-  const applyFormat = (format: 'bold' | 'italic' | 'heading') => {
-    const editorInstance = editorRef.current;
-    if (!editorInstance) return;
-
-    const selection = editorInstance.getSelection();
-    if (!selection) return;
-
-    const model = editorInstance.getModel();
-    if (!model) return;
-
-    const text = model.getValueInRange(selection);
-    let formattedText = '';
-
-    switch (format) {
-      case 'bold':
-        formattedText = `**${text}**`;
-        break;
-      case 'italic':
-        formattedText = `*${text}*`;
-        break;
-      case 'heading':
-        formattedText = `# ${text}`;
-        break;
-    }
-
-    editorInstance.executeEdits('toolbar', [
-      {
-        range: selection,
-        text: formattedText,
-        forceMoveMarkers: true,
-      },
-    ]);
-  };
-
   const handleUndo = () => {
+    editorRef.current?.focus();
     editorRef.current?.trigger('toolbar', 'undo', null);
   };
 
   const handleRedo = () => {
+    editorRef.current?.focus();
     editorRef.current?.trigger('toolbar', 'redo', null);
   };
 
@@ -484,12 +457,12 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
 
   return (
     <div className="h-full flex flex-col">
-      <div className={`border-b px-3 py-2 flex items-center justify-between text-xs ${
+      <div className={`border-b px-3 py-2 flex flex-wrap gap-2 items-center justify-between text-xs ${
         isDarkMode ? 'border-slate-700/70 bg-slate-950/70' : 'bg-gray-100'
       }`}>
         <div className={`flex items-center gap-2 ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>
           <span className={`inline-block h-2 w-2 rounded-full ${statusColor}`} />
-          <span>{statusLabel}</span>
+          <span title="Collaboration connection; file saving is separate">{statusLabel === 'Offline' ? 'Collaboration offline' : statusLabel}</span>
         </div>
         <div className="flex items-center gap-1">
           {visibleUsers.map((user) => (
@@ -534,28 +507,15 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
             Redo
           </button>
           <button
-            onClick={() => applyFormat('bold')}
-            className={`px-2 py-1 mr-1 border rounded font-bold ${
-              isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            B
-          </button>
-          <button
-            onClick={() => applyFormat('italic')}
-            className={`px-2 py-1 mr-1 border rounded italic ${
-              isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            I
-          </button>
-          <button
-            onClick={() => applyFormat('heading')}
+            onClick={() => {
+              editorRef.current?.focus();
+              editorRef.current?.trigger('toolbar', 'actions.find', null);
+            }}
             className={`px-2 py-1 mr-1 border rounded ${
               isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-100'
             }`}
           >
-            H
+            Find
           </button>
         </div>
       )}
@@ -601,6 +561,10 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
               }}
               theme={monacoTheme}
               options={{
+                // Use Monaco's established textarea input, including browser automation
+                // and assistive technology, instead of the experimental EditContext API.
+                editContext: false,
+                automaticLayout: true,
                 wordWrap: 'on',
                 wrappingIndent: 'indent',
                 minimap: { enabled: false },
@@ -629,7 +593,7 @@ const FileEditor: React.FC<FileEditorProps> = (props) => {
       />
     );
   }
-  return <CollabWorkspaceFileEditor {...props} />;
+  return <CollabWorkspaceFileEditor key={`${props.workspaceId}:${props.file.id}`} {...props} />;
 };
 
 export default FileEditor;

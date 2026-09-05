@@ -44,7 +44,7 @@ export default function WorkspaceHtmlPreviewFrame({
       };
     }
 
-    const loadHtml = sourcePath
+    const loadHtml = sourcePath && !embeddedHtml
       ? getWorkspaceFilePreview(workspaceId, sourcePath).then(previewPayloadToHtml)
       : Promise.resolve(embeddedHtml);
     void loadHtml
@@ -71,6 +71,8 @@ export default function WorkspaceHtmlPreviewFrame({
             (assetPath) => getWorkspaceFilePreview(workspaceId, assetPath),
           ).then((fallbackHtml) => {
             if (!cancelled) setResolvedHtml(fallbackHtml);
+          }).catch(() => {
+            if (!cancelled) setError('Preview could not be loaded.');
           });
           return;
         }

@@ -916,6 +916,7 @@ export default function WorkspacePage() {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [dashboardArtifactsByPath, setDashboardArtifactsByPath] = useState<Record<string, DashboardArtifactInfo>>({});
   const [fileContent, setFileContent] = useState('');
+  const [fileSaveStatus, setFileSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
   const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
@@ -7072,11 +7073,19 @@ export default function WorkspacePage() {
     targetFile: WorkspaceFile | null,
     content: string,
   ): Promise<boolean> => {
-    const pendingSave = handleUpdateFile(targetFile, content);
+    setFileSaveStatus('saving');
+    // Keep automatic and explicit saves in order so a slower earlier request
+    // cannot overwrite the latest edit.
+    const previousSave = pendingAutoSaveRef.current;
+    const pendingSave = (async () => {
+      if (previousSave) await previousSave;
+      return handleUpdateFile(targetFile, content);
+    })();
     pendingAutoSaveRef.current = pendingSave;
-    void pendingSave.finally(() => {
+    void pendingSave.then((saved) => {
       if (pendingAutoSaveRef.current === pendingSave) {
         pendingAutoSaveRef.current = null;
+        setFileSaveStatus(saved ? 'saved' : 'error');
       }
     });
     return pendingSave;
@@ -8978,13 +8987,13 @@ export default function WorkspacePage() {
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
                   isDarkMode ? 'bg-[#0e1728]' : 'bg-gray-50'
                 }`}>
-                  <div className={`px-4 py-3 flex justify-between items-center ${
+                  <div className={`px-4 py-3 flex flex-wrap gap-2 justify-between items-center ${
                     isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
                   }`}>
-                    <div className="flex items-center gap-3">
-                      <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <h3 title={canvasTitle} className={`truncate text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
                       {selectedWorkspace?.linkedTeamWorkspaceId
                         && selectedWorkspace.publicationStatus !== 'detached' ? (
                         <Button
@@ -9045,12 +9054,17 @@ export default function WorkspacePage() {
                       )}
                       {isPublishedMode ? null : (
                         <Button
-                          label="Save"
+                          label={fileSaveStatus === 'saving' ? 'Saving…' : 'Save'}
                           variant="primary"
                           size="sm"
                           onClick={() => selectedFile && runTrackedWorkspaceSave(selectedFile, fileContent)}
-                          isDisabled={!canMutateContent || !isEditMode}
+                          isDisabled={!canMutateContent || !isEditMode || !selectedFile || fileSaveStatus === 'saving' || (fileSaveStatus !== 'error' && !isDraftWorkspaceFile(selectedFile) && fileContent === lastAutoSavedContentRef.current)}
                         />
+                      )}
+                      {isEditMode && !isPublishedMode && (
+                        <span role={fileSaveStatus === 'error' ? 'alert' : 'status'} className={`text-xs ${fileSaveStatus === 'error' ? 'text-red-500' : 'text-slate-400'}`}>
+                          {fileSaveStatus === 'saving' ? 'Saving changes…' : fileSaveStatus === 'error' ? 'Save failed. Your edits are still open; retry Save.' : selectedFile && isDraftWorkspaceFile(selectedFile) ? 'Save to create this file' : fileContent !== lastAutoSavedContentRef.current ? 'Unsaved changes · autosaves after 2 seconds' : 'All changes saved · autosave on'}
+                        </span>
                       )}
                       {!isEditMode && (
                         <ButtonGroup label="Canvas zoom" size="sm">
