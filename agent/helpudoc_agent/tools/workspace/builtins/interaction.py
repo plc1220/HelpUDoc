@@ -11,7 +11,10 @@ from langchain_core.tools import Tool, tool
 from pydantic import BaseModel, Field, field_validator
 
 from ....interaction_workflows import FRONTEND_SLIDES_GATE_PRESENTATIONS
-from ....interaction_contract import gate_is_completed, mark_gate_completed, mark_gate_pending
+from ....interaction_contract import (
+    gate_is_completed, mark_gate_completed, mark_gate_pending,
+    is_frontend_slides_skill, is_frontend_slides_edit_existing_context,
+)
 from ....state import WorkspaceState
 from ..interrupt_helpers import interrupt_with_retry
 from ..json_args import parse_json_dict_arg
@@ -435,6 +438,16 @@ def _request_user_interaction(
         skill = str(interaction_request.get("skill") or "").strip()
         gate = str(interaction_request.get("gateId") or "").strip()
         presentation_name = str(interaction_request.get("presentation") or "").strip()
+        if (
+            is_frontend_slides_skill(skill)
+            and is_frontend_slides_edit_existing_context(workspace_state.context)
+            and gate in {"presentation_context", "outline_confirmation", "style_path_selection", "mood_or_preset_selection"}
+        ):
+            return (
+                "Workflow action blocked: this turn edits an existing HTML deck. "
+                "Read the current deck and apply the requested revision without restarting setup. "
+                "Preserve its content and density; ask style_preview_selection only if the user wants alternatives."
+            )
         if skill and gate and gate_is_completed(workspace_state.context, skill_id=skill, gate_id=gate):
             return (
                 "Workflow action blocked: Interaction gate "

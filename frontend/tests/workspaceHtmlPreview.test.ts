@@ -1,10 +1,33 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 import {
   hydrateWorkspaceHtmlAssets,
   previewPayloadToHtml,
+  withPreviewStorage,
 } from '../src/utils/workspaceHtmlPreview.ts';
+
+test('preview storage bootstraps before deck code without exposing persistent storage', () => {
+  const output = withPreviewStorage('<!doctype html><html><head><script>deck()</script></head></html>');
+  assert.ok(output.indexOf('data-preview-storage') < output.indexOf('deck()'));
+  assert.ok(output.startsWith('<!doctype html>'));
+  const bootstrap = output.match(/<script data-preview-storage>([\s\S]*?)<\/script>/)![1];
+  const window: Record<string, any> = {};
+  Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('Opaque origin'); } });
+  runInNewContext(bootstrap, { window });
+  assert.equal(window.localStorage.getItem('missing'), null);
+  window.localStorage.setItem('key', 123);
+  assert.equal(window.localStorage.getItem('key'), '123');
+  assert.equal(window.localStorage.length, 1);
+  assert.equal(window.localStorage.key(0), 'key');
+  assert.equal(window.sessionStorage.getItem('key'), null);
+  window.localStorage.removeItem('key');
+  assert.equal(window.localStorage.length, 0);
+  window.localStorage.setItem('key', 'value');
+  runInNewContext(bootstrap, { window });
+  assert.equal(window.localStorage.length, 0);
+});
 
 test('workspace HTML preview preserves authenticated text responses', () => {
   const html = '<!doctype html><title>Style A</title>';

@@ -62,6 +62,26 @@ def _replace_content_text(content: Any, text: str) -> Any:
     return text
 
 
+def prepare_current_turn_payload(message: str, history=None, message_content=None) -> List[Dict[str, Any]]:
+    """Keep the current request authoritative without losing history or attachments."""
+    payload = [dict(item) if isinstance(item, dict) else {"role": "user", "content": str(item)}
+               for item in (history or [])]
+    trailing_user = bool(payload and str(payload[-1].get("role") or "").strip().lower() in {"user", "human"})
+    if message_content:
+        content = [_copy_content_block(block) for block in message_content]
+    elif message:
+        content = _replace_content_text(payload[-1].get("content"), message) if trailing_user else message
+    elif payload:
+        return payload
+    else:
+        content = message
+    if trailing_user:
+        payload[-1]["content"] = content
+    else:
+        payload.append({"role": "user", "content": content})
+    return payload
+
+
 def _host_datetime_context_block() -> str:
     """Wall-clock snapshot for the model; agent system prompts are cached and omit real time."""
     utc_now = datetime.now(timezone.utc)

@@ -11,7 +11,8 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "preview": "vite preview",
     "e2e:install": "playwright install --with-deps chromium",
-    "e2e": "playwright test --project=chromium"
+    "e2e": "playwright test --project=chromium",
+    "e2e:production:slides": "RUN_PRODUCTION_SLIDES_E2E=1 playwright test e2e/production-slides-smoke.spec.ts --project=chromium"
   },
   "dependencies": {
     "@astryxdesign/core": "^0.1.7",

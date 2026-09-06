@@ -21,8 +21,6 @@ backend:
   plugins_root: plugins
   sync_skills_to_workspace: false
   implicit_input_guard: true
-  # Long multi-section skill runs need a high ceiling. Do not lower this to
-  # work around tool loops; the runtime breaks document tool loops directly.
   recursion_limit: 1000
   code_interpreter:
     enabled: true
@@ -77,7 +75,8 @@ tools:
       files on demand
   - name: document_execute
     kind: builtin
-    description: Atomically create or edit DOCX, XLSX, and PPTX workspace artifacts with pinned OfficeCLI
+    description: Atomically create or edit DOCX, XLSX, and PPTX workspace artifacts
+      with pinned OfficeCLI
   - name: knowledge_navigation
     kind: builtin
     description: Search and progressively read published OKF workspace knowledge

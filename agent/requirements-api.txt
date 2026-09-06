@@ -9,7 +9,7 @@ langchain-google-genai==4.2.4
 google-genai==1.70.0
 langchain-google-vertexai==3.2.3
 deepagents[quickjs]==0.6.7
-langchain-mcp-adapters==0.2.2
+langchain-mcp-adapters==0.3.2
 langgraph-checkpoint-postgres>=3.0.5
 psycopg[binary]>=3.3.0
 python-dotenv

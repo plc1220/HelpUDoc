@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
@@ -14,6 +14,7 @@ import type {
 import { buildApiUrl } from '../services/apiClient';
 import { resolveStylePreviewSource } from '../utils/stylePreview';
 import WorkspaceHtmlPreviewFrame from '../components/WorkspaceHtmlPreviewFrame';
+import type { SlideStyle } from '../components/slides/slideStyleWorkflow';
 
 type Choice = {
   id?: string;
@@ -135,6 +136,7 @@ export function InteractionSurfaceRenderer({
   const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionLock = useRef(false);
   const [error, setError] = useState<string>();
   const inputMode = String(props.inputMode || '').toLowerCase();
   const hasStructuredQuestions = questions.length > 0;
@@ -145,19 +147,26 @@ export function InteractionSurfaceRenderer({
     && !hasStructuredQuestions
     && (inputMode !== 'choice' || choices.length === 0);
 
-  const submit = async (response: Omit<InteractionResponse, 'interactionId'>) => {
+  const submit = async (response: Omit<InteractionResponse, 'interactionId'>, propagateError = false) => {
+    if (submissionLock.current) {
+      if (propagateError) throw new Error('This choice is already being submitted. Follow its progress in chat.');
+      return;
+    }
+    submissionLock.current = true;
     setIsSubmitting(true);
     setError(undefined);
     try {
       await onSubmit({ interactionId: request.interactionId, ...response });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not submit your response.');
+      if (propagateError) throw caught;
     } finally {
+      submissionLock.current = false;
       setIsSubmitting(false);
     }
   };
 
-  const renderChoiceList = (items: Choice[], questionId?: string) => {
+  const renderChoiceList = (items: Choice[], questionId?: string, labelOffset = 0) => {
     const selected = questionId ? answers[questionId] : selectedChoiceId;
     return (
       <List>
@@ -173,7 +182,7 @@ export function InteractionSurfaceRenderer({
               startContent={(
                 <Badge
                   variant={isSelected ? 'info' : 'neutral'}
-                  label={String.fromCharCode(65 + index)}
+                  label={String.fromCharCode(65 + index + labelOffset)}
                 />
               )}
               isSelected={isSelected}
@@ -254,13 +263,13 @@ export function InteractionSurfaceRenderer({
                   path={html ? undefined : sourcePath}
                   html={html}
                   title={`${choiceLabel(choice, index)} preview`}
-                  sandbox=""
+                  sandbox="allow-scripts"
                   className="block h-[240px] w-full border-0"
                   placeholderClassName="flex h-[240px] w-full items-center justify-center bg-slate-950"
                 />
               </div>
             ) : null}
-            {renderChoiceList([choice])}
+            {renderChoiceList([choice], undefined, index)}
           </Stack>
         );
       })}
@@ -314,7 +323,19 @@ export function InteractionSurfaceRenderer({
           />
         ) : null}
 
-        {request.presentation === 'style_preview' ? renderStylePreviews() : null}
+        {request.presentation === 'style_preview' ? <>
+          {renderStylePreviews()}
+          {workspaceId && <Button label="Browse all styles" variant="secondary" size="sm" isDisabled={isSubmitting} onClick={() => {
+            window.dispatchEvent(new CustomEvent('lumo:browse-slide-styles', { detail: {
+              workspaceId, interactionId: request.interactionId,
+              onSelect: (style: SlideStyle) => submit({
+                decision: 'submit', actionId: request.resumeAction?.actionId || 'submit',
+                values: { selectedChoiceId: style.id, selectedValues: [style.name], designPath: style.designPath },
+                message: `Use ${style.name} from the full style library. Read ${style.designPath} in frontend-slides. Continue from this style-selection step; do not restart the brief, outline or other completed gates. If editing an existing deck, keep its content and filename.`,
+              }, true),
+            } }));
+          }} />}
+        </> : null}
 
         {request.presentation === 'plan_review' ? (
           <Stack direction="vertical" gap={2} width="100%">

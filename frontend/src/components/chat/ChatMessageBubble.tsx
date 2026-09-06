@@ -818,6 +818,9 @@ export default function ChatMessageBubble({
     [pendingInterrupt, workspaceId],
   );
   const hasStylePreviewChooser = isClarificationInterrupt && stylePreviewChoices.length > 0;
+  const useSpecializedStylePreviewChooser = Boolean(
+    interactionRequest?.presentation === 'style_preview' && hasStylePreviewChooser,
+  );
   const [activeStylePreviewId, setActiveStylePreviewId] = useState<string | null>(null);
   const activeStylePreviewChoice = useMemo(() => {
     if (!stylePreviewChoices.length) {
@@ -1954,7 +1957,7 @@ export default function ChatMessageBubble({
                 {displayThinkingText ? 'Finalizing response...' : 'Thinking...'}
               </span>
             ) : null}
-            {interactionRequest ? (
+            {interactionRequest && !useSpecializedStylePreviewChooser ? (
               <div className="mt-3">
                 <InteractionSurfaceRenderer
                   request={interactionRequest}
@@ -2120,7 +2123,8 @@ export default function ChatMessageBubble({
                 </div>
               </div>
             ) : null}
-            {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed && !(interactionRequest) ? (
+            {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed
+              && (!interactionRequest || useSpecializedStylePreviewChooser) ? (
               <div className="mt-3 rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">

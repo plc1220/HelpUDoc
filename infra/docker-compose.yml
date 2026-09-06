@@ -204,7 +204,7 @@ services:
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       SESSION_SAVE_UNINITIALIZED: ${SESSION_SAVE_UNINITIALIZED:-}
-      AUTH_MODE: ${AUTH_MODE:-hybrid}
+      AUTH_MODE: ${AUTH_MODE:-oidc}
       AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
       DEFAULT_USER_ID: ${DEFAULT_USER_ID:-local-admin@local.com}
       DEFAULT_USER_NAME: ${DEFAULT_USER_NAME:-admin}
@@ -360,7 +360,7 @@ services:
       args:
         VITE_API_URL: ${FRONTEND_API_URL:-/api}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com}
-        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-hybrid}
+        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-oidc}
     depends_on:
       backend:
         condition: service_started

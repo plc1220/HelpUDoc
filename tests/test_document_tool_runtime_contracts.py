@@ -11,6 +11,7 @@ sys.path.insert(0, str(REPO_ROOT / "agent"))
 from helpudoc_agent.api.routes.chat import (  # noqa: E402
     _configured_recursion_limit,
     _is_terminal_tool_failure,
+    _record_terminal_tool_failure,
 )
 from helpudoc_agent.configuration import load_settings  # noqa: E402
 from helpudoc_agent.document_tool_guard import LOOP_BREAK_ERROR_CODE  # noqa: E402
@@ -53,6 +54,30 @@ def test_terminal_tool_failure_keeps_legacy_google_search_detection() -> None:
     assert _is_terminal_tool_failure("google_search", "Google search timed out") is True
     assert _is_terminal_tool_failure("google_search", '{"ok": true}') is False
     assert _is_terminal_tool_failure("write_file", "wrote /a.md") is False
+
+
+def test_terminal_sandbox_failure_budget_aborts_after_three_failures() -> None:
+    counts: dict[str, int] = {}
+
+    assert _record_terminal_tool_failure(
+        counts, name="run_skill_python_script", failed=True
+    ) is False
+    assert _record_terminal_tool_failure(
+        counts, name="run_skill_python_script", failed=True
+    ) is False
+    assert _record_terminal_tool_failure(
+        counts, name="run_skill_python_script", failed=True
+    ) is True
+
+
+def test_success_resets_terminal_sandbox_failure_budget() -> None:
+    counts: dict[str, int] = {}
+    _record_terminal_tool_failure(counts, name="run_skill_python_script", failed=True)
+    _record_terminal_tool_failure(counts, name="run_skill_python_script", failed=False)
+
+    assert _record_terminal_tool_failure(
+        counts, name="run_skill_python_script", failed=True
+    ) is False
 
 
 def test_terminal_tool_failure_honors_structured_search_retryability() -> None:

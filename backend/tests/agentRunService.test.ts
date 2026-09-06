@@ -1219,7 +1219,7 @@ test('getRunMeta completes frontend-slides runs that wrote the final deck before
   const workspaceId = 'workspace-deck-recovered-frontend-slides';
   const turnId = `turn-${Date.now()}`;
   const nowIso = new Date().toISOString();
-  const requiredGates = ['presentation_context', 'style_preview_selection'];
+  const requiredGates = ['presentation_context'];
 
   try {
     await redisClient.hSet(metaKey, {
@@ -1247,7 +1247,6 @@ test('getRunMeta completes frontend-slides runs that wrote the final deck before
         name: 'write_file',
         outputFiles: [
           { path: 'slides/final-research-report-deck.html', mimeType: 'text/html', size: 4096 },
-          { path: 'slides/final-research-report-deck.pptx', mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', size: 8192 },
         ],
       }),
     });

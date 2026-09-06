@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { getWorkspaceFilePreview } from '../services/fileApi';
-import { hydrateWorkspaceHtmlAssets, previewPayloadToHtml } from '../utils/workspaceHtmlPreview';
+import { hydrateWorkspaceHtmlAssets, previewPayloadToHtml, withPreviewStorage } from '../utils/workspaceHtmlPreview';
 
 export default function WorkspaceHtmlPreviewFrame({
   workspaceId,
@@ -88,7 +88,7 @@ export default function WorkspaceHtmlPreviewFrame({
     return (
       <iframe
         title={title}
-        srcDoc={resolvedHtml}
+        srcDoc={withPreviewStorage(resolvedHtml)}
         loading="lazy"
         sandbox={sandbox}
         referrerPolicy="no-referrer"

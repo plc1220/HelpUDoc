@@ -34,6 +34,9 @@ export default function(
   const updateFileSchema = z.object({
     content: z.string(),
     version: z.number().int().positive().optional(),
+    strictVersion: z.boolean().optional(),
+  }).refine(value => !value.strictVersion || value.version !== undefined, {
+    message: 'Strict saves require the expected version',
   });
 
   const restoreFileVersionSchema = z.object({
@@ -386,10 +389,11 @@ export default function(
     try {
       const { fileId } = req.params;
       const user = requireUserContext(req);
-      const { content, version } = updateFileSchema.parse(req.body);
-      const updatedFile = await fileService.updateFile(parseInt(fileId, 10), content, user.userId, version);
+      const { content, version, strictVersion } = updateFileSchema.parse(req.body);
+      const updatedFile = await fileService.updateFile(parseInt(fileId, 10), content, user.userId, version, { strictVersion });
       res.json(updatedFile);
     } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid content update payload' });
       handleError(res, error, 'Failed to update file content');
     }
   });

@@ -201,6 +201,9 @@ import { getImplicitContinuationContext, buildContinuationPrompt } from '../../u
 import { createMarkdownComponents } from '../../components/markdown/MarkdownShared';
 import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../../theme';
 
+import { assertUnchangedDeck, buildStylePreviewPrompt, isHtmlSlideDeck, stylePreviewPath, withActiveSlideContext, type SlideStyle, type BrowseSlideStylesRequest } from '../../components/slides/slideStyleWorkflow';
+import type { DeckRevision, StyleDraft } from '../../components/slides/SlideStyleBrowser';
+const SlideStyleBrowser = lazy(() => import('../../components/slides/SlideStyleBrowser'));
 const FileEditor = lazy(() => import('../../components/FileEditor'));
 const UIBlockRenderer = lazy(() => import('../../components/UIBlockRenderer'));
 
@@ -912,6 +915,9 @@ export default function WorkspacePage() {
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
+  const [openSlideStylesToken, setOpenSlideStylesToken] = useState(0);
+  const [slideStyleChoice, setSlideStyleChoice] = useState<BrowseSlideStylesRequest | null>(null);
+  const slideSelectionRef = useRef('');
   const [selectedDashboardPath, setSelectedDashboardPath] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [dashboardArtifactsByPath, setDashboardArtifactsByPath] = useState<Record<string, DashboardArtifactInfo>>({});
@@ -1795,6 +1801,8 @@ export default function WorkspacePage() {
   const normalizedFileName = activeFileName.toLowerCase();
   const isMarkdownFile = !!activeFile && MARKDOWN_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isHtmlFile = !!activeFile && HTML_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
+  const isSlideDeck = Boolean(activeFile && isHtmlSlideDeck(activeFile.name, fileContent));
+  slideSelectionRef.current = `${selectedWorkspace?.id}:${activeFile?.id}`;
   const isImageFile = !!activeFile && IMAGE_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const canPrintOrDownloadFile = Boolean(activeFile && (isMarkdownFile || isHtmlFile));
   const canCopyImageUrl = Boolean(isImageFile && activeFile?.publicUrl);
@@ -6569,7 +6577,11 @@ export default function WorkspacePage() {
       const messageContent = hasAttachments
         ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
         : trimmed;
-      const agentPromptBase = buildAgentPromptFromDirective(directive) || messageContent;
+      const agentPromptBase = withActiveSlideContext(
+        buildAgentPromptFromDirective(directive) || messageContent,
+        isSlideDeck && !isEditMode && activeFile && !isDraftWorkspaceFile(activeFile)
+          ? normalizeWorkspaceRelativePath(activeFile.name) : undefined,
+      );
       const conversationId = await ensureConversation(activeWorkspace);
       if (!conversationId) {
         addLocalSystemMessage('Unable to start a conversation right now.');
@@ -7139,6 +7151,121 @@ export default function WorkspacePage() {
     }
   }, [fileContent, isEditMode, runTrackedWorkspaceSave, selectedFile, selectedWorkspace?.id]);
 
+  const requireSlideIdle = () => {
+    if (!canMutateContent || !selectedWorkspace || !activeFile || isEditMode || isDraftWorkspaceFile(activeFile)) {
+      throw new Error('Open a saved slide deck in Preview before changing its style.');
+    }
+    if (sendLockRef.current || isDriveImporting || pendingAutoSaveRef.current || Object.values(activeRunsRef.current).some(run => run.workspaceId === selectedWorkspace.id)) {
+      throw new Error('Finish or cancel the current agent run before changing slide styles.');
+    }
+    return { workspace: selectedWorkspace, file: activeFile, selection: `${selectedWorkspace.id}:${activeFile.id}` };
+  };
+
+  const handleGenerateSlideStyle = async (style: SlideStyle): Promise<StyleDraft> => {
+    const { workspace, file, selection } = requireSlideIdle();
+    sendLockRef.current = true;
+    setIsAgentPaneVisible(true);
+    try {
+      const source = await getFileContent(workspace.id, file.id);
+      if (source.content !== fileContent || !Number.isInteger(source.version) || source.version < 1) {
+        throw new Error('The deck has changed or is still loading. Reopen it before generating a style preview.');
+      }
+      // File.path is the storage/object-store locator, not the workspace-relative name.
+      const sourcePath = normalizeWorkspaceRelativePath(file.name);
+      const outputPath = stylePreviewPath(sourcePath, crypto.randomUUID());
+      const prompt = buildStylePreviewPrompt(sourcePath, outputPath, style);
+      const conversationId = await ensureConversation(workspace);
+      if (!conversationId) throw new Error('Unable to open the agent conversation. Please try again.');
+      const turnId = generateTurnId();
+      const visibleRequest = `Preview ${style.name} on @${sourcePath}. Keep the original deck unchanged until I apply the style.`;
+      const message = mergeMessageMetadata(await appendConversationMessage(conversationId, 'user', visibleRequest, { turnId, metadata: { taggedFiles: [sourcePath] } }));
+      upsertConversationMessage(conversationId, message);
+      lastUserMessageMapRef.current[conversationId] = prompt;
+      stopRequestedRef.current = false;
+      await launchPreparedAgentRun({
+        workspaceId: workspace.id, conversationId, turnId,
+        persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+        prompt, historyPayload: mapMessagesToAgentHistory(getConversationMessagesSnapshot(conversationId)),
+        taggedFiles: [sourcePath],
+      });
+      if (slideSelectionRef.current !== selection) throw new Error('The open deck changed. Open the original deck to start a new preview.');
+      const updatedFiles: WorkspaceFile[] = await getFiles(workspace.id);
+      const output = updatedFiles.find(candidate => normalizeWorkspaceRelativePath(candidate.name) === outputPath);
+      if (!output) throw new Error('The agent has not delivered a preview. Check chat for errors or required input, then retry.');
+      const result = await getFileContent(workspace.id, output.id);
+      if (!isHtmlSlideDeck('deck.html', String(result.content || ''))) throw new Error('The agent output is not a slide deck. Ask it to finish the preview in chat, then retry.');
+      const parser = new DOMParser();
+      const countSlides = (html: string) => parser.parseFromString(html, 'text/html').querySelectorAll('.slide').length;
+      if (!countSlides(source.content) || countSlides(result.content) !== countSlides(source.content)) {
+        throw new Error('The preview changed the slide count. Ask the agent to preserve every slide, then retry. Nothing has been applied.');
+      }
+      const base = { content: source.content as string, version: source.version as number };
+      assertUnchangedDeck(base, await getFileContent(workspace.id, file.id));
+      return { content: result.content, path: outputPath, base };
+    } finally { sendLockRef.current = false; }
+  };
+
+  const handleCommitSlideStyle = async (content: string, base: DeckRevision): Promise<DeckRevision> => {
+    const { workspace, file, selection } = requireSlideIdle();
+    sendLockRef.current = true;
+    try {
+      if (fileContent !== base.content) throw new Error('The open deck changed. Generate a fresh preview before applying.');
+      assertUnchangedDeck(base, await getFileContent(workspace.id, file.id));
+      if (slideSelectionRef.current !== selection) throw new Error('The open deck changed. Nothing was applied.');
+      const updated = await updateFileContent(workspace.id, Number(file.id), content, base.version, true);
+      markPrivateWorkspaceChanged(workspace.id);
+      if (selectedWorkspaceIdRef.current === workspace.id) {
+        setFiles(prev => prev.map(item => String(item.id) === String(file.id) ? { ...item, ...updated, content } : item));
+      }
+      if (slideSelectionRef.current === selection) {
+        setFileContent(content);
+        lastAutoSavedContentRef.current = content;
+        setSelectedFile(prev => prev?.id === file.id ? { ...prev, ...updated, content } : prev);
+        setSelectedFileDetails(prev => prev?.id === file.id ? { ...prev, ...updated, content } : prev);
+      }
+      addLocalSystemMessage(`Saved a style revision to ${file.name}. The existing deck and its version history are preserved.`);
+      return { content, version: updated.version };
+    } finally { sendLockRef.current = false; }
+  };
+
+  useEffect(() => {
+    const browse = (event: Event) => {
+      const detail = (event as CustomEvent<BrowseSlideStylesRequest>).detail;
+      if (detail?.workspaceId !== selectedWorkspace?.id) return;
+      if (typeof detail?.onSelect !== 'function') return;
+      setSlideStyleChoice(detail);
+      setIsEditMode(false);
+      setOpenSlideStylesToken(value => value + 1);
+      setMobileSurface('canvas');
+    };
+    window.addEventListener('lumo:browse-slide-styles', browse);
+    return () => window.removeEventListener('lumo:browse-slide-styles', browse);
+  }, [selectedWorkspace?.id, isSlideDeck, addLocalSystemMessage]);
+
+  const activeSlideStyleChoice = slideStyleChoice?.workspaceId === selectedWorkspace?.id ? slideStyleChoice : null;
+  useEffect(() => { setSlideStyleChoice(null); }, [selectedWorkspace?.id, activeConversationId]);
+  useEffect(() => {
+    if (!hasPendingInterruptMessage && !isStreaming) setSlideStyleChoice(null);
+  }, [hasPendingInterruptMessage, isStreaming]);
+  const slideStyleCanvas = (isSlideDeck || activeSlideStyleChoice) && !isEditMode && selectedWorkspace ? (
+    <Suspense fallback={canvasLoadingFallback}>
+      <SlideStyleBrowser key={`${selectedWorkspace.id}:${activeFile?.id || 'library'}:${activeSlideStyleChoice?.interactionId || ''}`} workspaceId={selectedWorkspace.id}
+        sourcePath={isSlideDeck && activeFile ? normalizeWorkspaceRelativePath(activeFile.name) : ''} colorMode={colorMode}
+        openStylesToken={openSlideStylesToken}
+        disabledReason={!canMutateContent ? 'Read-only deck. Open its Working version to apply a style.' : isStreaming || (!activeSlideStyleChoice && hasPendingInterruptMessage) ? 'Finish the current agent task before generating or applying a style.' : undefined}
+        onChooseStyle={activeSlideStyleChoice ? async style => {
+          await activeSlideStyleChoice.onSelect(style);
+          setSlideStyleChoice(null);
+          setIsAgentPaneVisible(true);
+        } : undefined}
+        onGenerate={handleGenerateSlideStyle} onCommit={handleCommitSlideStyle}>
+        <div className="h-full w-full overflow-auto"><div className="h-full origin-top-left" style={{ transform: `scale(${canvasZoom})`, width: `${100 / canvasZoom}%`, minHeight: `${100 / canvasZoom}%` }}>
+          <UIBlockRenderer blocks={canvasBlocks} workspaceId={selectedWorkspace.id} className="h-full w-full" />
+        </div></div>
+      </SlideStyleBrowser>
+    </Suspense>
+  ) : null;
+
   const handleBulkDelete = async () => {
     if (!selectedWorkspace) return;
     if (selectedFiles.size === 0) {
@@ -7675,7 +7802,7 @@ export default function WorkspacePage() {
               colorMode={colorMode}
             />
           </Suspense>
-        ) : isDashboardCanvas ? (
+        ) : slideStyleCanvas ? slideStyleCanvas : isDashboardCanvas ? (
           selectedWorkspace && resolvedDashboardFolder ? (
             <DashboardCanvas
               workspaceId={selectedWorkspace.id}
@@ -9105,7 +9232,7 @@ export default function WorkspacePage() {
                           colorMode={colorMode}
                         />
                       </Suspense>
-                    ) : (
+                    ) : slideStyleCanvas ? slideStyleCanvas : (
                       <div className={isDashboardCanvas ? 'flex h-full w-full min-h-0 flex-col overflow-hidden' : 'h-full w-full overflow-y-auto overflow-x-hidden'}>
                         {isDashboardCanvas ? (
                           selectedWorkspace && resolvedDashboardFolder ? (

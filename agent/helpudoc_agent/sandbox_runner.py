@@ -98,6 +98,7 @@ class SandboxConfig:
     inline_image: str | None = None
     inline_transport: str = "pvc"
     inline_service_account: str = "helpudoc-sandbox-runner"
+    declared_runtime_class_name: str = ""
 
     @classmethod
     def from_env(cls) -> "SandboxConfig":
@@ -115,6 +116,7 @@ class SandboxConfig:
             inline_image=e.inline_image,
             inline_transport=e.inline_transport,
             inline_service_account=e.inline_service_account,
+            declared_runtime_class_name=e.declared_runtime_class_name,
         )
 
     @property
@@ -460,8 +462,10 @@ def build_sandbox_job_manifest(
             },
         },
     }
-    if sandbox_config.runtime_class_name:
-        manifest["spec"]["template"]["spec"]["runtimeClassName"] = sandbox_config.runtime_class_name
+    if sandbox_config.declared_runtime_class_name:
+        manifest["spec"]["template"]["spec"]["runtimeClassName"] = (
+            sandbox_config.declared_runtime_class_name
+        )
     return manifest
 
 

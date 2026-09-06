@@ -14,6 +14,12 @@ from helpudoc_agent.configuration import Settings  # noqa: E402
 from helpudoc_agent.mcp_manager import describe_mcp_servers  # noqa: E402
 
 
+def test_langchain_mcp_adapter_imports():
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+
+    assert MultiServerMCPClient is not None
+
+
 def _build_settings(payload):
     try:
         return Settings.model_validate(payload)

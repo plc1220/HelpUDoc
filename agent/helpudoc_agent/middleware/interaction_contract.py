@@ -9,6 +9,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
 
 from helpudoc_agent.interaction_contract import (
+    active_skill_id,
+    is_frontend_slides_skill,
+    is_frontend_slides_edit_existing_context,
     find_gate_record,
     gate_instruction,
     next_pending_gate,
@@ -52,6 +55,19 @@ class InteractionContractMiddleware(AgentMiddleware):
         if not self.enabled:
             return None
         context = _runtime_context(runtime)
+        if is_frontend_slides_skill(active_skill_id(context)) and is_frontend_slides_edit_existing_context(context):
+            return {"messages": [SystemMessage(content=(
+                "This turn revises an existing HTML presentation (Mode C). Loading frontend-slides "
+                "does not restart creation. Resolve the target from the user's file reference or the "
+                "most recent delivered deck in this conversation, then read the current workspace file. "
+                "If multiple targets remain plausible, ask only which deck. Preserve its filename, "
+                "content, density and chosen design except where the user requests a change. "
+                "Do not ask presentation_context, outline_confirmation, style_path_selection or "
+                "mood_or_preset_selection again. Apply an explicit style request directly. If the user "
+                "asks to compare alternatives, preview those alternatives on existing slide content "
+                "and ask only style_preview_selection; selecting a style resumes this revision. "
+                "Validate the modified slides and report the changed slides and same artifact path."
+            ))]}
         gate = next_pending_gate(context)
         if gate is None:
             return None

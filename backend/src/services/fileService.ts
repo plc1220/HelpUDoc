@@ -1240,7 +1240,7 @@ export class FileService {
     content: string,
     userId: string,
     expectedVersion?: number,
-    options?: { allowSystemAdmin?: boolean },
+    options?: { allowSystemAdmin?: boolean; strictVersion?: boolean },
   ) {
     const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
     if (!file) {

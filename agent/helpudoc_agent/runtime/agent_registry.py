@@ -24,6 +24,7 @@ from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddle
 from langchain_quickjs.middleware import CodeInterpreterMiddleware
 
 from helpudoc_agent.middleware.interaction_contract import InteractionContractMiddleware
+from helpudoc_agent.middleware.slide_style_preview import SlideStylePreviewMiddleware
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
@@ -39,6 +40,7 @@ from ..skills_registry import (
 )
 from ..mcp_manager import MCPServerManager
 from ..tool_guard import GuardedTool
+from ..slide_style_preview import preview_tool_error
 from ..memory_store import UserScopedStoreBackend
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,8 @@ GENERAL_SYSTEM_PROMPT = (
     "then load_skill for only the matching SKILL.md and follow its instructions. "
     "If tools are listed in a skill frontmatter, use only those tools while executing that skill; "
     "if no tools are listed, you may use any appropriate tools. "
-    "Routing override: if the request mentions .ppt, .pptx, PowerPoint, Google Slides, native slide decks, deck templates, editing an existing deck, or producing a PowerPoint/Google Slides deliverable, load the pptx skill. "
+    "Routing override: for .ppt, .pptx, PowerPoint, Google Slides, native slide decks/templates, or editing an existing native deck, load the pptx skill. "
+    "Editing or restyling an existing HTML/web deck stays in frontend-slides Mode C, without restarting creation. "
     "Do not load frontend-slides for PPTX-related work. Use frontend-slides only when the user explicitly asks for a browser-native HTML/web presentation or an animated interactive HTML deck. "
     "For tagged or named PDFs load the pdf skill; for DOCX or Word documents load the docx skill; "
     "for XLSX, XLSM, CSV, or TSV files load the xlsx skill. Search the original document on demand "
@@ -112,6 +115,9 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
 
     def _workspace_write_error(self, operation: str, file_path: str) -> str | None:
         context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        preview_error = preview_tool_error(context, "write_file", {"file_path": file_path})
+        if preview_error:
+            return preview_error
         virtual_path = self._virtual_path(file_path)
         if (
             str(context.get("active_skill") or "").strip() == "research"
@@ -632,6 +638,7 @@ class AgentRegistry:
         if interrupt_on:
             middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
         middleware.append(InteractionContractMiddleware(enabled=True))
+        middleware.append(SlideStylePreviewMiddleware())
         if self.settings.backend.implicit_input_guard:
             middleware.append(ImplicitInputGuardMiddleware(enabled=True))
 

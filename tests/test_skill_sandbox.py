@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -286,7 +287,7 @@ def test_runner_creates_hardened_job_and_deletes_it(tmp_path: Path) -> None:
     body = batch_api.created_body
     pod_spec = body["spec"]["template"]["spec"]
     container = pod_spec["containers"][0]
-    assert pod_spec["runtimeClassName"] == "gvisor"
+    assert "runtimeClassName" not in pod_spec
     assert pod_spec["automountServiceAccountToken"] is False
     affinity_term = pod_spec["affinity"]["podAffinity"][
         "requiredDuringSchedulingIgnoredDuringExecution"
@@ -323,8 +324,29 @@ def test_declared_manifest_omits_unconfigured_runtime_class() -> None:
         sandbox_config=config,
     )
 
-    assert config.runtime_class_name == ""
+    assert config.declared_runtime_class_name == ""
     assert "runtimeClassName" not in manifest["spec"]["template"]["spec"]
+
+
+def test_declared_manifest_uses_its_own_runtime_class() -> None:
+    config = replace(_sandbox_config(), declared_runtime_class_name="runc-sandbox")
+    manifest = build_sandbox_job_manifest(
+        job_name="job",
+        workspace_id="ws",
+        run_id="run",
+        staged_script_name="scripts/run.py",
+        args=[],
+        script=SkillSandboxScript(
+            name="run",
+            path="scripts/run.py",
+            sha256="0" * 64,
+            timeout_seconds=120,
+            outputs=[],
+        ),
+        sandbox_config=config,
+    )
+
+    assert manifest["spec"]["template"]["spec"]["runtimeClassName"] == "runc-sandbox"
 
 
 def test_runner_stages_skill_scripts_tree_for_imports(tmp_path: Path) -> None:

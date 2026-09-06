@@ -3,9 +3,49 @@ import test from 'node:test';
 import {
   createAgentPolicyApi,
   findUnknownRuntimeMcpServerIds,
+  resolveRuntimeMcpAccess,
   resolveRuntimeSkillAccess,
   type EffectiveAgentPolicy,
 } from '../src/api/agent/policy';
+
+test('default-allow MCP servers are available to everyone unless explicitly denied', () => {
+  assert.deepEqual(resolveRuntimeMcpAccess(
+    [],
+    [
+      { name: 'google-workspace', default_access: 'allow' },
+      { name: 'restricted-server', default_access: 'deny' },
+    ],
+  ), {
+    allowIds: ['google-workspace'],
+    denyIds: ['restricted-server'],
+  });
+
+  assert.deepEqual(resolveRuntimeMcpAccess(
+    [],
+    [{ name: 'google-workspace', default_access: 'allow' }],
+    [],
+    ['google-workspace'],
+  ), {
+    allowIds: [],
+    denyIds: ['google-workspace'],
+  });
+});
+
+test('default-deny MCP servers still require assignment and workspace allow', () => {
+  const configured = [{ name: 'restricted-server', default_access: 'deny' }];
+  assert.deepEqual(resolveRuntimeMcpAccess(['restricted-server'], configured), {
+    allowIds: [],
+    denyIds: ['restricted-server'],
+  });
+  assert.deepEqual(resolveRuntimeMcpAccess(
+    ['restricted-server'],
+    configured,
+    ['restricted-server'],
+  ), {
+    allowIds: ['restricted-server'],
+    denyIds: [],
+  });
+});
 
 test('MCP Team assignments reject unknown or disabled runtime servers', () => {
   assert.deepEqual(findUnknownRuntimeMcpServerIds(

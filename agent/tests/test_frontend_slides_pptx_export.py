@@ -54,6 +54,70 @@ def test_frontend_slides_allows_inline_sandbox_execution(tmp_path, monkeypatch):
     assert "/preview.html" in result
 
 
+def test_frontend_slides_blocks_unrequested_pptx_export(tmp_path, monkeypatch):
+    repo_root = Path(__file__).resolve().parents[2]
+    workspace = WorkspaceState(workspace_id="slides-html-only", root_path=tmp_path)
+    workspace.context.update({
+        "active_skill": "frontend-slides",
+        "current_user_prompt": "Create a browser-native HTML slide deck.",
+    })
+    settings = SimpleNamespace(
+        backend=SimpleNamespace(
+            skills_root=repo_root / "skills",
+            plugins_root=repo_root / "plugins",
+        )
+    )
+    tool = build_run_skill_python_script_tool(settings, workspace)
+    called = False
+
+    def fake_declared(**_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("export should have been blocked before sandbox execution")
+
+    monkeypatch.setattr(
+        "helpudoc_agent.tools.workspace.builtins.skills.run_declared_skill_python_script",
+        fake_declared,
+    )
+
+    payload = json.loads(tool.invoke({"script_name": "export-pptx"}))
+
+    assert called is False
+    assert payload["errorCode"] == "FRONTEND_SLIDES_PPTX_EXPORT_NOT_REQUESTED"
+    assert payload["retryable"] is False
+
+
+def test_frontend_slides_allows_explicit_pptx_export(tmp_path, monkeypatch):
+    repo_root = Path(__file__).resolve().parents[2]
+    workspace = WorkspaceState(workspace_id="slides-pptx-requested", root_path=tmp_path)
+    workspace.context.update({
+        "active_skill": "frontend-slides",
+        "current_user_prompt": "Please export the finished HTML deck to PowerPoint.",
+    })
+    settings = SimpleNamespace(
+        backend=SimpleNamespace(
+            skills_root=repo_root / "skills",
+            plugins_root=repo_root / "plugins",
+        )
+    )
+    tool = build_run_skill_python_script_tool(settings, workspace)
+
+    monkeypatch.setattr(
+        "helpudoc_agent.tools.workspace.builtins.skills.run_declared_skill_python_script",
+        lambda **_kwargs: SandboxRunResult(
+            run_id="pptx-explicit",
+            job_name="sandbox-pptx-explicit",
+            stdout="ok",
+            stderr="",
+            output_files=[],
+        ),
+    )
+
+    result = tool.invoke({"script_name": "export-pptx"})
+
+    assert "SKILL_SANDBOX_RUN_COMPLETED" in result
+
+
 def test_frontend_slides_pptx_export_copies_workspace_output_and_declares_artifact(tmp_path):
     repo_root = Path(__file__).resolve().parents[2]
     workspace = WorkspaceState(workspace_id="pptx-export-test", root_path=tmp_path)

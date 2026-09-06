@@ -79,7 +79,7 @@ from ..constants import (
 )
 from ..directives import _extract_directive_from_text
 from ..message_utils import (
-    _copy_content_block,
+    prepare_current_turn_payload,
     _extract_text_from_content,
     _inject_host_datetime_context,
     _message_to_text,
@@ -172,6 +172,26 @@ def _is_terminal_tool_failure(name: str, text: str) -> bool:
             or "search failed" in normalized_text
         )
     return False
+
+
+_TERMINAL_SANDBOX_FAILURE_LIMIT = 3
+
+
+def _record_terminal_tool_failure(
+    counts: Dict[str, int],
+    *,
+    name: str,
+    failed: bool,
+) -> bool:
+    """Return True when a tool has exhausted its per-stream failure budget."""
+    normalized_name = str(name or "").strip().lower()
+    if normalized_name != "run_skill_python_script":
+        return False
+    if not failed:
+        counts.pop(normalized_name, None)
+        return False
+    counts[normalized_name] = counts.get(normalized_name, 0) + 1
+    return counts[normalized_name] >= _TERMINAL_SANDBOX_FAILURE_LIMIT
 
 
 def _research_source_contract_error(
@@ -317,25 +337,7 @@ def register_chat_routes(
         }
 
     def _prepare_payload(message: ChatRequest) -> List[Dict[str, Any]]:
-        payload: List[Dict[str, Any]] = []
-        if message.history:
-            for item in message.history:
-                if isinstance(item, dict):
-                    payload.append(dict(item))
-                else:
-                    payload.append({"role": "user", "content": str(item)})
-        if message.messageContent:
-            copied_blocks = [_copy_content_block(block) for block in message.messageContent]
-            for index in range(len(payload) - 1, -1, -1):
-                role = str(payload[index].get("role") or "").strip().lower()
-                if role in {"user", "human"}:
-                    payload[index]["content"] = copied_blocks
-                    return payload
-            payload.append({"role": "user", "content": copied_blocks})
-            return payload
-        if payload:
-            return payload
-        return [{"role": "user", "content": message.message}]
+        return prepare_current_turn_payload(message.message, message.history, message.messageContent)
 
     def _build_preloaded_skill_prompt(
         runtime: AgentRuntimeState,
@@ -818,6 +820,8 @@ def register_chat_routes(
             self._native_dashboard_builder_run_keys: Set[str] = set()
             self._v3_text_blocks: Dict[Tuple[str, str], str] = {}
             self._cancel_run: Optional[Callable[[], None]] = None
+            self._terminal_tool_failure_counts: Dict[str, int] = {}
+            self._fatal_tool_failure_message = ""
             self._suppress_interrupt_tool_start = suppress_interrupt_tool_start
             self._should_suppress_assistant_text = should_suppress_assistant_text
 
@@ -836,6 +840,10 @@ def register_chat_routes(
         @property
         def resume_interrupt_consumed(self) -> bool:
             return self._resume_interrupt_consumed
+
+        @property
+        def fatal_tool_failure_message(self) -> str:
+            return self._fatal_tool_failure_message
 
         def queue_pending_interrupt(self, payload: Dict[str, Any]) -> None:
             # Callback events can arrive before LangGraph has committed the
@@ -1006,6 +1014,16 @@ def register_chat_routes(
                 # may precede this callback and must not end the resumed stream.
                 self._resume_interrupt_consumed = True
             tool_failed = _is_terminal_tool_failure(name, text)
+            should_abort = _record_terminal_tool_failure(
+                self._terminal_tool_failure_counts,
+                name=name,
+                failed=tool_failed,
+            )
+            if should_abort:
+                self._fatal_tool_failure_message = (
+                    "Stopped after 3 non-retryable sandbox failures in one agent stream. "
+                    "The same operation will not be retried automatically."
+                )
             await _emit_progress(
                 self,
                 "using_tool",
@@ -1016,7 +1034,13 @@ def register_chat_routes(
                     if tool_failed
                     else f"Finished {_friendly_tool_label(name)}"
                 ),
-                detail=("The agent will continue without retrying this tool." if tool_failed else name),
+                detail=(
+                    self._fatal_tool_failure_message
+                    if should_abort
+                    else "The agent will continue without retrying this tool."
+                    if tool_failed
+                    else name
+                ),
                 tool_name=name,
                 status="error" if tool_failed else "completed",
             )
@@ -1770,6 +1794,9 @@ def register_chat_routes(
         context.pop("skill_load_attempts_this_turn", None)
         context.pop("dashboard_mode", None)
         context.pop("frontend_slides_completed_interaction_gates", None)
+        context.pop("frontend_slides_edit_existing", None)
+        context.pop("frontend_slides_conversation_history", None)
+        context.pop("current_user_prompt", None)
         context.pop("interaction_gate_ledger", None)
         context.pop("interaction_gate_telemetry", None)
         context.pop("host_plan_approved", None)
@@ -1834,6 +1861,10 @@ def register_chat_routes(
             # workflow guards. This is a fallback for transports that omit or
             # lose optional trace hints such as frontendSlidesEditExisting.
             runtime.workspace_state.context["current_user_prompt"] = prompt_for_tagged_files
+            runtime.workspace_state.context["frontend_slides_conversation_history"] = [
+                {"role": item.get("role"), "content": _extract_text_from_content(item.get("content"))}
+                for item in (message.history or []) if isinstance(item, dict)
+            ]
         if message.internetSearchEnabled:
             internet_guidance = (
                 "Internet search is enabled for this turn. "
@@ -2667,6 +2698,14 @@ def register_chat_routes(
                 if event is sentinel:
                     break
                 yield _json_line(event)
+                if (
+                    isinstance(event, dict)
+                    and event.get("type") == "tool_error"
+                    and handler.fatal_tool_failure_message
+                    and not task.done()
+                ):
+                    stream_error_message = handler.fatal_tool_failure_message
+                    task.cancel()
             source_tracker.update_final_report(runtime.workspace_state)
             if saw_interrupt:
                 yield _json_line({"type": "done", "status": "interrupted"})
@@ -2767,7 +2806,10 @@ def register_chat_routes(
                     })
                     yield _json_line({"type": "done", "status": "completed"})
         finally:
-            await task
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat", response_model=ChatResponse)
     async def chat(agent_name: str, workspace_id: str, chat_request: ChatRequest, request: Request):

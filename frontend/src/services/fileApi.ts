@@ -147,6 +147,7 @@ export const updateFileContent = async (
   fileId: number,
   content: string,
   version?: number,
+  strictVersion = false,
 ) => {
   const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}/content`,
@@ -155,10 +156,11 @@ export const updateFileContent = async (
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ content, version }),
+      body: JSON.stringify({ content, version, strictVersion }),
     },
   );
   if (!response.ok) {
+    if (response.status === 409) throw new Error('This file has a newer revision. Refresh and preview again before applying.');
     throw new Error('Failed to update file content');
   }
   return response.json();

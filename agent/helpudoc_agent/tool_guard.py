@@ -15,6 +15,7 @@ from .document_tool_guard import (
     record_document_tool_result,
 )
 from .skills_registry import is_tool_allowed
+from .slide_style_preview import preview_tool_error
 from .state import WorkspaceState
 
 _PREFERRED_MCP_ONLY_BUILTINS = {
@@ -155,6 +156,9 @@ class GuardedTool(BaseTool):
 
     def _memory_guard(self, input: Any) -> Optional[str]:
         context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        preview_error = preview_tool_error(context, self.name, self._unwrap_runtime_input(input))
+        if preview_error:
+            return preview_error
         if bool(context.get("allow_memory_write")):
             return None
         for candidate in _extract_mutation_paths(self.name, self._unwrap_runtime_input(input)):

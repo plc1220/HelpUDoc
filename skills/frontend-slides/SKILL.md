@@ -85,7 +85,7 @@ Determine what the user wants:
 
 Use `workflow_action(action="request_user_interaction")` for every decision gate in this skill. A UI form only exists when a structured workflow/Interaction tool emits an interrupt; prose like "select from the form above" is not enough.
 
-Active HelpUDoc gates:
+Active HelpUDoc gates for **new presentations only** (Mode A):
 
 1. `presentation_context` — Ask exactly one initial question in `workflow_action(action="request_user_interaction")`: `Low density / speaker-led` or `High density / reading-first`.
 2. `style_preview_selection` — After generating the three HTML previews in `.frontend-slides/slide-previews/`, ask the user to choose a style with `workflow_action(action="request_user_interaction")` and `presentation="style_preview"`.
@@ -101,6 +101,30 @@ PowerPoint/PPTX/native deck work belongs to the `pptx` skill. Do not select or l
 Prefer direct workspace file authoring for straightforward HTML/CSS/JavaScript changes. Never use inline Python merely to list, search, filter, or read skill references; use `read_file` with offsets instead. For a genuinely programmatic multi-file transformation or validation, use `run_skill_python_script` inline mode only when its current tool schema explicitly exposes `inline_code`; keep outputs inside its private writable `/workspace` snapshot and let the host publish the validated successful diff. If `inline_code` is absent, continue with direct workspace tools. The declared `export-pptx` script remains the supported route after the user explicitly requests PowerPoint export for an HTML deck that already exists.
 
 ### Mode C: Modification Rules
+
+Loading this skill is not an instruction to restart its phases. First resolve the
+current artifact from an explicit file reference or the most recent delivered HTML
+deck in this conversation. Read that workspace file before editing; a filename in
+chat is a candidate, not proof the file still exists. If the target is ambiguous,
+ask only which deck. Do not select an unrelated workspace deck.
+
+- Treat follow-ups such as "make it more minimal", "add a summary slide", "use the
+  blue style", "shorten slide 3", and "change the visual style" as revisions when
+  an existing deck is in context, even when the user omits its filename.
+- Reuse the existing density, audience, outline, content and chosen design. Do not
+  repeat `presentation_context` or other creation setup gates.
+- Apply a specified style or preset directly to the requested slides, retaining
+  their content. If the user requests options, enter only style comparison: use
+  the current deck's content for previews, ask `style_preview_selection`, then
+  resume the same revision after selection. Do not return to Phase 1.
+- Keep the current filename unless the user requests a separate variant. For
+  targeted edits, change only the requested slides and necessary shared styles.
+- Read before writing, verify the result, and report which slides changed.
+- A request for a new/separate deck or to start from scratch explicitly begins
+  Mode A; do not carry the old edit exemption into it.
+- Browsing the style library is read-only. Show choices from the compact index
+  and shortlisted preview cards without regenerating the deck. A choice becomes
+  a restyle request only when the user asks to apply it.
 
 When enhancing existing presentations, fixed-stage fitting is the biggest risk:
 

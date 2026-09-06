@@ -6,6 +6,29 @@ type WorkspacePreviewPayload = {
   mimeType?: unknown;
 };
 
+// Generated decks often restore editor state during startup. Opaque-origin frames
+// cannot access browser storage; give each render private, non-persistent storage
+// instead of weakening the sandbox or exposing the application's credentials.
+export const withPreviewStorage = (html: string): string => {
+  const bootstrap = `<script data-preview-storage>(function(){
+    for (const name of ['localStorage','sessionStorage']) {
+      const values = new Map();
+      const storage = {
+        get length(){return values.size;},
+        key(index){return Array.from(values.keys())[index] ?? null;},
+        getItem(key){return values.get(String(key)) ?? null;},
+        setItem(key,value){values.set(String(key),String(value));},
+        removeItem(key){values.delete(String(key));},
+        clear(){values.clear();}
+      };
+      Object.defineProperty(window,name,{value:storage,configurable:true});
+    }
+  })();</script>`;
+  if (/<head\b[^>]*>/i.test(html)) return html.replace(/<head\b[^>]*>/i, match => match + bootstrap);
+  if (/<!doctype[^>]*>/i.test(html)) return html.replace(/<!doctype[^>]*>/i, match => match + bootstrap);
+  return bootstrap + html;
+};
+
 export const previewPayloadToHtml = (payload: WorkspacePreviewPayload): string => {
   if (typeof payload.content !== 'string') {
     return '';

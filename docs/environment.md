@@ -156,7 +156,7 @@ This project supports per-user Google OAuth delegation for Google-backed MCP ser
 
 Required backend env vars:
 
-- `AUTH_MODE=hybrid` (`hybrid` allows both session/OIDC and local header fallback; use `oidc` for strict OIDC-only, `headers` for local-only)
+- `AUTH_MODE=oidc` for strict Google session authentication (`hybrid` also permits local header fallback outside production; `headers` is local-only and cannot forward delegated Google MCP credentials)
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI`

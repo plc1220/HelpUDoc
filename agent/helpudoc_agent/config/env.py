@@ -79,6 +79,7 @@ class SandboxK8sEnv:
     inline_image: str
     workspace_pvc: str
     runtime_class_name: str
+    declared_runtime_class_name: str
     inline_transport: str
     inline_service_account: str
     cpu_limit: str
@@ -110,6 +111,13 @@ def load_sandbox_k8s_env() -> SandboxK8sEnv:
         # default makes every sandbox job unschedulable on clusters whose node
         # pools do not provide the matching handler.
         runtime_class_name=env_trim("HELPUDOC_SANDBOX_RUNTIME_CLASS") or "",
+        # Declared scripts are reviewed and hash-pinned, and their run directory
+        # lives on the app's ReadWriteOnce workspace PVC. Keep their RuntimeClass
+        # independent from the isolated inline-code pool so a gVisor-only node
+        # selector cannot conflict with required app-pod co-location.
+        declared_runtime_class_name=(
+            env_trim("HELPUDOC_DECLARED_SANDBOX_RUNTIME_CLASS") or ""
+        ),
         inline_transport=inline_transport,
         inline_service_account=(
             env_trim("HELPUDOC_INLINE_SANDBOX_SERVICE_ACCOUNT")

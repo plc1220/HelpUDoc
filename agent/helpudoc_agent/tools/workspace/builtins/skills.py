@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import PurePosixPath
 from typing import List, Optional
 
@@ -33,6 +34,21 @@ from ..constants import MAX_DISTINCT_SKILLS_PER_TURN, MAX_SKILL_LOAD_ATTEMPTS_PE
 
 MAX_SKILL_ASSET_MANIFEST_ITEMS = 40
 MAX_DATA_WORKSPACE_QUERIES_PER_TURN = 10
+
+
+def _frontend_slides_pptx_export_requested(context: dict) -> bool:
+    """Require an explicit user request before invoking the compatibility exporter."""
+    if str(context.get("active_skill") or "").strip() != "frontend-slides":
+        return True
+    prompt = str(context.get("current_user_prompt") or "").strip().lower()
+    if not prompt:
+        return False
+    output_term = r"(?:\.pptx?\b|\bpowerpoint\b)"
+    export_term = r"\b(?:export|convert|download|create|make|produce|provide|save)\b"
+    return bool(
+        re.search(rf"{export_term}[\s\S]{{0,100}}{output_term}", prompt)
+        or re.search(rf"{output_term}[\s\S]{{0,100}}{export_term}", prompt)
+    )
 
 
 def _skill_sandbox_error(
@@ -460,6 +476,15 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
             )
         script_name = _canonical_declared_script_name(workspace_state, str(script_name))
         effective_args = list(args or [])
+        if (
+            script_name == "export-pptx"
+            and not _frontend_slides_pptx_export_requested(workspace_state.context)
+        ):
+            return _skill_sandbox_error(
+                "FRONTEND_SLIDES_PPTX_EXPORT_NOT_REQUESTED",
+                "The active frontend-slides request does not explicitly ask for PowerPoint/PPTX export.",
+                "Keep the completed HTML deck as the final artifact. Only call export-pptx after the user explicitly requests a PowerPoint export.",
+            )
         if script_name == "build_native_dashboard_package":
             if "--help" in effective_args or "-h" in effective_args:
                 return (

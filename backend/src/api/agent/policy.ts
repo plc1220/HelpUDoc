@@ -33,7 +33,7 @@ type RuntimeConfigShape = {
   [key: string]: unknown;
 };
 
-type RuntimeMcpServerConfig = {
+export type RuntimeMcpServerConfig = {
   name: string;
   transport?: string;
   default_access?: string;
@@ -96,6 +96,44 @@ const normalizeDefaultAccess = (value: unknown): 'allow' | 'deny' => {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return normalized === 'deny' ? 'deny' : 'allow';
 };
+
+export function resolveRuntimeMcpAccess(
+  assignedServerIds: string[],
+  configuredServers: RuntimeMcpServerConfig[],
+  workspaceAllowIds: string[] = [],
+  workspaceDenyIds: string[] = [],
+): { allowIds: string[]; denyIds: string[] } {
+  const assignedIds = new Set(normalizeUniqueIds(assignedServerIds));
+  const workspaceAllows = new Set(normalizeUniqueIds(workspaceAllowIds));
+  const workspaceDenies = new Set(normalizeUniqueIds(workspaceDenyIds));
+  const allowIds = new Set<string>();
+  const denyIds = new Set<string>(workspaceDenies);
+
+  configuredServers.forEach((server) => {
+    const serverId = typeof server.name === 'string' ? server.name.trim() : '';
+    if (!serverId) {
+      return;
+    }
+    if (workspaceDenies.has(serverId)) {
+      denyIds.add(serverId);
+      return;
+    }
+    if (normalizeDefaultAccess(server.default_access ?? server.defaultAccess) === 'allow') {
+      allowIds.add(serverId);
+      return;
+    }
+    if (!assignedIds.has(serverId) || !workspaceAllows.has(serverId)) {
+      denyIds.add(serverId);
+      return;
+    }
+    allowIds.add(serverId);
+  });
+
+  return {
+    allowIds: Array.from(allowIds).sort((a, b) => a.localeCompare(b)),
+    denyIds: Array.from(denyIds).sort((a, b) => a.localeCompare(b)),
+  };
+}
 
 const mergeRuntimeMcpServers = (
   baseEntries: unknown,
@@ -298,39 +336,20 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
       throw new HttpError(401, 'User not found');
     }
     const configuredServers = await loadRuntimeMcpServers();
-    const groupAllowedServerIds = new Set(promptAccess.mcpServerIds);
-    const workspaceAllowIds = new Set(normalizeUniqueIds(workspacePolicy.mcpServerAllowIds || []));
-    const workspaceDenyIds = new Set(normalizeUniqueIds(workspacePolicy.mcpServerDenyIds || []));
-    const finalAllowIds = new Set<string>();
-    const finalDenyIds = new Set<string>(workspaceDenyIds);
-
-    configuredServers.forEach((server) => {
-      const serverId = typeof server.name === 'string' ? server.name.trim() : '';
-      if (!serverId) {
-        return;
-      }
-      if (!groupAllowedServerIds.has(serverId)) {
-        finalDenyIds.add(serverId);
-        return;
-      }
-      if (workspaceDenyIds.has(serverId)) {
-        finalDenyIds.add(serverId);
-        return;
-      }
-      if (normalizeDefaultAccess(server.default_access ?? server.defaultAccess) === 'deny' && !workspaceAllowIds.has(serverId)) {
-        finalDenyIds.add(serverId);
-        return;
-      }
-      finalAllowIds.add(serverId);
-    });
+    const mcpAccess = resolveRuntimeMcpAccess(
+      promptAccess.mcpServerIds,
+      configuredServers,
+      workspacePolicy.mcpServerAllowIds,
+      workspacePolicy.mcpServerDenyIds,
+    );
 
     return {
       // Platform administration and runtime consumption are deliberately
       // separate. Never propagate the catalog-admin flag as a runtime bypass.
       isAdmin: false,
       skillAllowIds: normalizeUniqueIds(promptAccess.skillIds),
-      mcpServerAllowIds: Array.from(finalAllowIds).sort((a, b) => a.localeCompare(b)),
-      mcpServerDenyIds: Array.from(finalDenyIds).sort((a, b) => a.localeCompare(b)),
+      mcpServerAllowIds: mcpAccess.allowIds,
+      mcpServerDenyIds: mcpAccess.denyIds,
       workspaceMode: workspacePolicy.workspaceMode,
       workspaceRole: workspacePolicy.workspaceRole,
       canWriteWorkspace: workspacePolicy.canWriteWorkspace,

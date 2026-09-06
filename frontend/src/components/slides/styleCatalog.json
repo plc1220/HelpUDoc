@@ -1,0 +1,1254 @@
+[
+  {
+    "id": "8-bit-orbit",
+    "name": "8-Bit Orbit",
+    "description": "Pixel-art neon arcade aesthetic on a deep navy void.",
+    "tags": [
+      "retro-tech",
+      "playful",
+      "cyberpunk",
+      "energetic"
+    ],
+    "group": "Bold",
+    "scheme": "dark",
+    "palette": [
+      "#0f1b3d",
+      "#0a0e27",
+      "#5edcf4",
+      "#f0a6ca",
+      "#f4d03f"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/8-bit-orbit/preview.md",
+    "designPath": "bold-template-pack/templates/8-bit-orbit/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/8-bit-orbit.jpg?v=63e3b14b7488",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "d2ae9e1071842203d644c7fc40f71aa258870ff0f463fdb36e5cbbb10c748eb9",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "63e3b14b7488dc3cef2ecc2931cf03f33ed8594e928079cf7e6d3a2942176f0c",
+      "fonts": [
+        "Tektur",
+        "Space Mono",
+        "Chakra Petch"
+      ],
+      "bytes": 70430
+    }
+  },
+  {
+    "id": "biennale-yellow",
+    "name": "Biennale Yellow",
+    "description": "Solar yellow on warm parchment with deep indigo serif and atmospheric sun-glow gradients.",
+    "tags": [
+      "editorial",
+      "atmospheric",
+      "warm",
+      "cultural-institution",
+      "poster-like"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#e9e5db",
+      "#f1ee2e",
+      "#dcd6c4",
+      "#f8f39b",
+      "#f0da7c"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/biennale-yellow/preview.md",
+    "designPath": "bold-template-pack/templates/biennale-yellow/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/biennale-yellow.jpg?v=c138022835a6",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "0583f7a10f2b3fd06e2852b9c5bb58c09a644927710c2ae6864793f4c45c5a28",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "c138022835a65b5e2423c9dbfbf36f0c58d3c6eb1e6ba9cf2bda1ed0507ef89a",
+      "fonts": [
+        "Instrument Serif",
+        "Archivo"
+      ],
+      "bytes": 43553
+    }
+  },
+  {
+    "id": "block-frame",
+    "name": "BlockFrame",
+    "description": "Neobrutalist deck with pastel-neon color blocks and chunky black borders.",
+    "tags": [
+      "bold",
+      "playful",
+      "graphic",
+      "fresh"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#000000",
+      "#ffffff",
+      "#fffdf5",
+      "#fe90e8",
+      "#c0f7fe"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/block-frame/preview.md",
+    "designPath": "bold-template-pack/templates/block-frame/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/block-frame.jpg?v=5b81692a5124",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "ed630bd6cedc973d69065b3b9710c3638da35f98d8831e24aec4ffe2db9f5819",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "5b81692a5124506407403f7353acca9761eea25e19db9bcf639f8068b4613b4c",
+      "fonts": [
+        "Inter",
+        "Space Grotesk"
+      ],
+      "bytes": 53754
+    }
+  },
+  {
+    "id": "blue-professional",
+    "name": "Blue Professional",
+    "description": "Cream paper background with electric cobalt blue accents; clean modern professional.",
+    "tags": [
+      "professional",
+      "modern",
+      "calm",
+      "trustworthy"
+    ],
+    "group": "Professional",
+    "scheme": "light",
+    "palette": [
+      "#fdfae7",
+      "#1e2bfa",
+      "#111111",
+      "#6b6b6b",
+      "#9a9a9a"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/blue-professional/preview.md",
+    "designPath": "bold-template-pack/templates/blue-professional/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/blue-professional.jpg?v=a5df3d8b0fe4",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "dcf84b533453ef213b08ec18f662e1e163a47c09bc908b40c276990737ac7e0a",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "a5df3d8b0fe4167bfbf3b04f493572e4246c67f47708819c5d01fb2d220c2c97",
+      "fonts": [
+        "Space Grotesk",
+        "Inter"
+      ],
+      "bytes": 33397
+    }
+  },
+  {
+    "id": "bold-poster",
+    "name": "Bold Poster",
+    "description": "Editorial poster aesthetic with massive Shrikhand display and a single fire-engine red accent.",
+    "tags": [
+      "bold",
+      "editorial",
+      "loud",
+      "confident"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#1c1410",
+      "#d8000f",
+      "#f5f2ef",
+      "#ffffff"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/bold-poster/preview.md",
+    "designPath": "bold-template-pack/templates/bold-poster/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/bold-poster.jpg?v=74852a703ca6",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "91006596b4da7488c9366878f2b438c8843756eb86cfe8d1a2afd4589fbc9eca",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "74852a703ca62a0d0f864a3a610cf1218dc48920daf40361f40096add65425e7",
+      "fonts": [
+        "Shrikhand",
+        "Space Grotesk",
+        "Libre Baskerville"
+      ],
+      "bytes": 48288
+    }
+  },
+  {
+    "id": "broadside",
+    "name": "Broadside",
+    "description": "Dark editorial canvas with a single fire orange accent and bilingual Latin/Chinese type stack.",
+    "tags": [
+      "editorial",
+      "dramatic",
+      "loud",
+      "newspaper"
+    ],
+    "group": "Editorial",
+    "scheme": "dark",
+    "palette": [
+      "#111111",
+      "#1a1a18",
+      "#e85d26",
+      "#f0ece5",
+      "#888880"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/broadside/preview.md",
+    "designPath": "bold-template-pack/templates/broadside/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/broadside.jpg?v=7c2672d08fe3",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "66e82436ebef04f09484cf3e9f4838a54f1a75d4a62a7eec13f5ef360005cb52",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "7c2672d08fe3c6494ab7da99f0e81384a1a08cdc16ac9077980d73a0ead5fd07",
+      "fonts": [
+        "Barlow",
+        "IBM Plex Mono"
+      ],
+      "bytes": 35667
+    }
+  },
+  {
+    "id": "capsule",
+    "name": "Capsule",
+    "description": "Modular pill-shaped cards on warm bone with a full pastel-pop palette.",
+    "tags": [
+      "playful",
+      "modern",
+      "warm",
+      "fresh",
+      "fun"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#f5f5f0",
+      "#1a1a1a",
+      "#1e1e1e",
+      "#ffffff",
+      "#e85d4e"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/capsule/preview.md",
+    "designPath": "bold-template-pack/templates/capsule/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/capsule.jpg?v=2e7e1be8a870",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "5c194c7a5828cdea19d6fb412a88e8899305ddd38baec84062ac24099be4a258",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "2e7e1be8a870ad98a20f96d81784e7b5d6bbac75d9b09fa088b24d2828fa915d",
+      "fonts": [
+        "Bodoni Moda",
+        "Space Grotesk"
+      ],
+      "bytes": 40100
+    }
+  },
+  {
+    "id": "cartesian",
+    "name": "Cartesian",
+    "description": "Quiet warm-neutral palette with classical Playfair serifs; tasteful and unhurried.",
+    "tags": [
+      "quiet",
+      "considered",
+      "elegant",
+      "warm-minimal"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#ede8e0",
+      "#e2dbd1",
+      "#1a1a1a",
+      "#5a5a5a",
+      "#8a8178"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/cartesian/preview.md",
+    "designPath": "bold-template-pack/templates/cartesian/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/cartesian.jpg?v=8a353be395e4",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "a448565aef6eca7262c5d2da9283e4d0eecd974c813337c73e5ab47841c43c2a",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "8a353be395e47a25e3e9db54154e3d427c130e7e7951b1c8eeec2d286f7f2468",
+      "fonts": [
+        "Playfair Display",
+        "Inter"
+      ],
+      "bytes": 33151
+    }
+  },
+  {
+    "id": "cobalt-grid",
+    "name": "Cobalt Grid",
+    "description": "Electric cobalt serifs on a graph-paper canvas, anchored by stair-stepped pixel-glitch decorations and slim hairline rules.",
+    "tags": [
+      "editorial",
+      "design-research",
+      "studious",
+      "modernist",
+      "tech-print",
+      "monochrome"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#f0ebde",
+      "#e6e0ce",
+      "#1f2be0",
+      "#5560e5"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/cobalt-grid/preview.md",
+    "designPath": "bold-template-pack/templates/cobalt-grid/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/cobalt-grid.jpg?v=9b9d1f0bce1e",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "36d3db053474293403bb09405a1f0fb943b4d550e4c70436314050178761f684",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "9b9d1f0bce1e364d669a91b728a1b44e544c429307a680074a484156edccac39",
+      "fonts": [
+        "Newsreader",
+        "DM Mono",
+        "Hanken Grotesk"
+      ],
+      "bytes": 44997
+    }
+  },
+  {
+    "id": "coral",
+    "name": "Coral",
+    "description": "Cream and coral on near-black, set in oversized Bebas Neue.",
+    "tags": [
+      "bold",
+      "warm",
+      "modern",
+      "confident"
+    ],
+    "group": "Bold",
+    "scheme": "mixed",
+    "palette": [
+      "#e85d5d",
+      "#d44a4a",
+      "#f5f0e8",
+      "#e8e0d4",
+      "#1a1a1a"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/coral/preview.md",
+    "designPath": "bold-template-pack/templates/coral/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/coral.jpg?v=4cd8b54549e9",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "f1922b79b8a7fab02080abb0a910567c3f35a0c1c0fd6f8c5866fc477570d7b7",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "4cd8b54549e9a9bdcb3b22a64fc82388b6bf2370538b8d347661a3a451029f8f",
+      "fonts": [
+        "Bebas Neue",
+        "Inter"
+      ],
+      "bytes": 56696
+    }
+  },
+  {
+    "id": "creative-mode",
+    "name": "Creative Mode",
+    "description": "Cream paper canvas with confident multi-color (green, pink, orange, yellow) accents and Archivo Black display.",
+    "tags": [
+      "creative",
+      "confident",
+      "playful",
+      "design-led"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#efe9d9",
+      "#e4dcc4",
+      "#0f0f0f",
+      "#2a2a2a",
+      "#1f8a4c"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/creative-mode/preview.md",
+    "designPath": "bold-template-pack/templates/creative-mode/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/creative-mode.jpg?v=af9d4c2afd71",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "7a01735d0c36ace50e7f689f4ecd54f438890b3b329770e2a261d3eabaf0fcea",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "af9d4c2afd71147060fe0de6c7a7537520bc820f5faea159b998f27d0d85cd24",
+      "fonts": [
+        "Archivo Black",
+        "JetBrains Mono",
+        "Space Grotesk"
+      ],
+      "bytes": 40414
+    }
+  },
+  {
+    "id": "daisy-days",
+    "name": "Daisy Days",
+    "description": "Cheerful pastel deck with hand-drawn daisies, stars, and rainbows. Friendly, soft, and warm.",
+    "tags": [
+      "cheerful",
+      "playful",
+      "warm",
+      "sunny",
+      "wholesome"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#f5f0e6",
+      "#7ecdc0",
+      "#f7c8d4",
+      "#fde68a",
+      "#a8e6cf"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/daisy-days/preview.md",
+    "designPath": "bold-template-pack/templates/daisy-days/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/daisy-days.jpg?v=180a07eaf8d1",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "9aaa486e961e6257837e6c32a3629b691cf0e07c8df61e44a66cd581c79be2f3",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "180a07eaf8d1189431e64f42c659afc1f6dae4f0901d810bc15b6449492954ab",
+      "fonts": [
+        "Fredoka One",
+        "Quicksand"
+      ],
+      "bytes": 36152
+    }
+  },
+  {
+    "id": "editorial-forest",
+    "name": "Editorial Forest",
+    "description": "Forest green, dusty pink, and warm cream meet Source Serif 4 in a quiet, intentional quarterly-review deck.",
+    "tags": [
+      "editorial",
+      "quiet",
+      "considered",
+      "warm",
+      "intentional"
+    ],
+    "group": "Editorial",
+    "scheme": "mixed",
+    "palette": [
+      "#2e4a2a",
+      "#e89cb1",
+      "#efe7d4",
+      "#243a21",
+      "#3a5a36"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/editorial-forest/preview.md",
+    "designPath": "bold-template-pack/templates/editorial-forest/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/editorial-forest.jpg?v=13e1c55611ca",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "2a4d085c01eff703105e1f31e75e253f9f6a14fdb4dd2f2593c7fbb343f12634",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "13e1c55611cab3f70e60ad29752ef91d109fd16f7ac80d208549b0d1e7ce73cb",
+      "fonts": [
+        "Source Serif 4",
+        "JetBrains Mono"
+      ],
+      "bytes": 36658
+    }
+  },
+  {
+    "id": "editorial-tri-tone",
+    "name": "Editorial Tri-Tone",
+    "description": "Three-color editorial system: dusty pink, mustard cream, and deep burgundy, set in Bricolage + Instrument Serif.",
+    "tags": [
+      "editorial",
+      "warm",
+      "intentional",
+      "moody"
+    ],
+    "group": "Editorial",
+    "scheme": "mixed",
+    "palette": [
+      "#f2b6c6",
+      "#f2d86a",
+      "#7a1f35"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/editorial-tri-tone/preview.md",
+    "designPath": "bold-template-pack/templates/editorial-tri-tone/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/editorial-tri-tone.jpg?v=a53064833712",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "858d6db6aaac3fb3a12bc412e21cb8a0442cc21ead02696226b86974f836ae84",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "a53064833712c195e96b336745b0db697ee3994cc437f0f860d98cb159315dd4",
+      "fonts": [
+        "Bricolage Grotesque",
+        "JetBrains Mono",
+        "Instrument Serif"
+      ],
+      "bytes": 33118
+    }
+  },
+  {
+    "id": "emerald-editorial",
+    "name": "Emerald Editorial",
+    "description": "A magazine-cover business deck: emerald + navy + paper, double-rule masthead ornaments, and a bold Bodoni-style display serif.",
+    "tags": [
+      "editorial",
+      "considered",
+      "confident",
+      "magazine-cover"
+    ],
+    "group": "Editorial",
+    "scheme": "mixed",
+    "palette": [
+      "#3cd896",
+      "#2dc684",
+      "#25b377",
+      "#0f1a5c",
+      "#1b2774"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/emerald-editorial/preview.md",
+    "designPath": "bold-template-pack/templates/emerald-editorial/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/emerald-editorial.jpg?v=73e2aad25c35",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "2c9ca36081366a362f63a46f01f5e14c749e5f02dd5cd7f0960a550211bfb303",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "73e2aad25c3590d8fdb3e53bf8b06cf41d0db68b64a7dc4cf321bc991d1742f6",
+      "fonts": [
+        "Bodoni Moda",
+        "Manrope"
+      ],
+      "bytes": 42808
+    }
+  },
+  {
+    "id": "grove",
+    "name": "Grove",
+    "description": "Forest-green canvas with cream type, classical Playfair serifs, and a single rust accent.",
+    "tags": [
+      "organic",
+      "considered",
+      "warm",
+      "literary",
+      "natural"
+    ],
+    "group": "Editorial",
+    "scheme": "mixed",
+    "palette": [
+      "#192b1b",
+      "#d4cfbf",
+      "#c8524a",
+      "#1e3221",
+      "#e8e4d6"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/grove/preview.md",
+    "designPath": "bold-template-pack/templates/grove/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/grove.jpg?v=838a5c65081b",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "b340598c36eed473efa89d35c2d156faa2447c0929e742e70f83c445f1e54661",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "838a5c65081b1d25aadb2a2a29379aba37e310835e8bd52280a9ab249cd5a902",
+      "fonts": [
+        "Playfair Display",
+        "JetBrains Mono",
+        "Jost"
+      ],
+      "bytes": 32152
+    }
+  },
+  {
+    "id": "long-table",
+    "name": "Long Table",
+    "description": "Warm cream and rust-red supper-club aesthetic with bold uppercase grotesk headlines, Fraunces serifs, and pill-shaped outlined buttons.",
+    "tags": [
+      "warm",
+      "intimate",
+      "modern",
+      "friendly",
+      "small-batch",
+      "social",
+      "hospitality"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#b53d2a",
+      "#faf1e2",
+      "#f2e5cf",
+      "#e8d7b6",
+      "#8e2d1f"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/long-table/preview.md",
+    "designPath": "bold-template-pack/templates/long-table/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/long-table.jpg?v=3fbe52e231bf",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "f84418b0fff771d85de71e0ee473d8f37837e92108acf1cc23345e56f3046245",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "3fbe52e231bf5d927efbeed82bc93809a91cee224a862e215cfb26741e4420fb",
+      "fonts": [
+        "Bricolage Grotesque",
+        "Fraunces"
+      ],
+      "bytes": 41048
+    }
+  },
+  {
+    "id": "mat",
+    "name": "Mat",
+    "description": "Dark sage canvas with bone paper and burnt-orange accent; mid-century modern with wood undertones.",
+    "tags": [
+      "warm-modern",
+      "considered",
+      "tactile",
+      "mid-century"
+    ],
+    "group": "Bold",
+    "scheme": "mixed",
+    "palette": [
+      "#232e26",
+      "#2e3d30",
+      "#ede6d0",
+      "#e4dac4",
+      "#f0e8d2"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/mat/preview.md",
+    "designPath": "bold-template-pack/templates/mat/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/mat.jpg?v=b2c540700ea1",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "8b5955c9f5bfc6a73cab4139635b5878ac97c2d9aa27d69e6a45efe57a0840a4",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "b2c540700ea1f1717f3c78badfbdf2cedba6ff5ebb1ceecfdfd0b67f463f8189",
+      "fonts": [
+        "Bricolage Grotesque",
+        "DM Mono",
+        "DM Sans"
+      ],
+      "bytes": 36393
+    }
+  },
+  {
+    "id": "monochrome",
+    "name": "Monochrome",
+    "description": "Ivory ledger paper with all-black type; Lora serif headlines, Jost body, no color at all.",
+    "tags": [
+      "restrained",
+      "literary",
+      "archival",
+      "ledger"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#fafadf",
+      "#f2f2d2",
+      "#f0f0d4",
+      "#f5f0e4",
+      "#1a1a16"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/monochrome/preview.md",
+    "designPath": "bold-template-pack/templates/monochrome/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/monochrome.jpg?v=9b2ea6173923",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "5052c1c556b1f6e2b0e5185d7850ceefaa188bb59779ccce05e95f3e175abdc8",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "9b2ea6173923ada52e4f876bf9cd8282d7294cc1f3d6466c2168ddd1a8a80274",
+      "fonts": [
+        "Jost",
+        "JetBrains Mono"
+      ],
+      "bytes": 27762
+    }
+  },
+  {
+    "id": "neo-grid-bold",
+    "name": "Neo-Grid Bold",
+    "description": "Editorial neo-brutalism with a single neon yellow accent on off-white paper.",
+    "tags": [
+      "confident",
+      "punchy",
+      "editorial",
+      "modern"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#f5f4ef",
+      "#ecece8",
+      "#0a0a0a",
+      "#e6ff3d",
+      "#8a8a85"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/neo-grid-bold/preview.md",
+    "designPath": "bold-template-pack/templates/neo-grid-bold/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/neo-grid-bold.jpg?v=579464fbee09",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "015d57413f51746d08ca1b0a99e083648b0d3e335d03a8f3b3d1c715515e4a65",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "579464fbee09b2217c96be5e2163cbbba5595c13df9ab8b785aa1a7b2b2517b4",
+      "fonts": [
+        "Space Grotesk",
+        "JetBrains Mono"
+      ],
+      "bytes": 37170
+    }
+  },
+  {
+    "id": "peoples-platform",
+    "name": "People's Platform (Block & Bold)",
+    "description": "Activist poster energy: blue, orange, red on cream, with Alfa Slab + Caveat Brush.",
+    "tags": [
+      "activist",
+      "loud",
+      "graphic",
+      "honest"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#f5f2ea",
+      "#2c2cdc",
+      "#1b1bb0",
+      "#f2a03a",
+      "#e89321"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/peoples-platform/preview.md",
+    "designPath": "bold-template-pack/templates/peoples-platform/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/peoples-platform.jpg?v=30dc06e9fbaf",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "ade8961155029dc0c276aaeee5167ee5df451a4156c20580f961dbf5b743cc38",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "30dc06e9fbaf8d8e77369dcd980e7d5a5625971e254d26f758211075c3f2bdbe",
+      "fonts": [
+        "Alfa Slab One",
+        "DM Mono",
+        "Archivo Narrow",
+        "Caveat Brush"
+      ],
+      "bytes": 56934
+    }
+  },
+  {
+    "id": "pin-and-paper",
+    "name": "Pin & Paper",
+    "description": "Yellow paper with safety-pin illustrations, ink-blue handwritten Caveat, paper-grain texture.",
+    "tags": [
+      "crafted",
+      "handmade",
+      "warm",
+      "thoughtful",
+      "literary"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#efe56a",
+      "#f5eca0",
+      "#e8d85a",
+      "#fbe6a4",
+      "#f8f1d6"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/pin-and-paper/preview.md",
+    "designPath": "bold-template-pack/templates/pin-and-paper/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/pin-and-paper.jpg?v=e61e55500771",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "a20dea5f380ab7ca6c0c1b63af091bb7ad928f1a532f6d30696be43d35d9575d",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "e61e55500771c88fa110112ccf46d71a985ab6c995f91f8d30420b88dc8b2277",
+      "fonts": [
+        "Space Grotesk",
+        "DM Mono",
+        "Caveat"
+      ],
+      "bytes": 47647
+    }
+  },
+  {
+    "id": "pink-script",
+    "name": "Pink Script — After Hours",
+    "description": "Black canvas, hot pink accent, pearl-cream paper, Instrument Serif headlines: late-night editorial luxury.",
+    "tags": [
+      "nocturnal",
+      "moody",
+      "intentional",
+      "luxe",
+      "expressive"
+    ],
+    "group": "Editorial",
+    "scheme": "dark",
+    "palette": [
+      "#1a1218",
+      "#060507",
+      "#0f0d11",
+      "#f5edf1",
+      "#ed3d8c"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/pink-script/preview.md",
+    "designPath": "bold-template-pack/templates/pink-script/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/pink-script.jpg?v=6294eab25d36",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "c9ba53095049c55b37b9d20903d43e90d19b927e716fa65406b05cc9b55c8225",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "6294eab25d3655a9be739d99beda331d3147e12a2c8c5c02d617caf803aa231f",
+      "fonts": [
+        "DM Serif Display",
+        "JetBrains Mono",
+        "Inter"
+      ],
+      "bytes": 56451
+    }
+  },
+  {
+    "id": "playful",
+    "name": "Playful",
+    "description": "Sun-warm peach background with Syne display: a friendly indie launch deck.",
+    "tags": [
+      "warm",
+      "approachable",
+      "indie",
+      "friendly"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#f0c8a0",
+      "#1a1a1a",
+      "#e8b88e",
+      "#f7dec6"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/playful/preview.md",
+    "designPath": "bold-template-pack/templates/playful/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/playful.jpg?v=967b8ea1f788",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "b64e58c7e31257a2ffad72f56a22bfd88f30af7d66c9884f5da02910c9019d45",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "967b8ea1f7887a05f188a3040a7a8d5750154434896d4996eddae87688dfa06e",
+      "fonts": [
+        "Syne",
+        "Space Grotesk"
+      ],
+      "bytes": 49628
+    }
+  },
+  {
+    "id": "raw-grid",
+    "name": "Raw Grid",
+    "description": "Neo-brutalist deck with thick borders, offset shadows, and a pink/sage/ink palette.",
+    "tags": [
+      "raw",
+      "punchy",
+      "energetic",
+      "confident"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#f2d4cf",
+      "#e5edd6",
+      "#0a0a0a",
+      "#ffffff",
+      "#f5f5f5"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/raw-grid/preview.md",
+    "designPath": "bold-template-pack/templates/raw-grid/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/raw-grid.jpg?v=44491286f48a",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "b2504c312b5546f88cb329f906a3cd1f8b30e27de9c1d01010ba992c9f6fd861",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "44491286f48a4afaed2ea8a7ce6d700ac7ed972cfeb5aac55426ac5e730cee4a",
+      "fonts": [
+        "Segoe UI"
+      ],
+      "bytes": 42989
+    }
+  },
+  {
+    "id": "retro-windows",
+    "name": "Retro Windows",
+    "description": "Windows 95 chrome: gray title bars, MS Sans Serif, pixel typography, full nostalgia.",
+    "tags": [
+      "nostalgic",
+      "retro",
+      "geeky",
+      "playful"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#c0c0c0",
+      "#d4d0c8",
+      "#808080",
+      "#ffffff",
+      "#000000"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/retro-windows/preview.md",
+    "designPath": "bold-template-pack/templates/retro-windows/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/retro-windows.jpg?v=8de02d3aaf05",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "fec57ffa702998f50dcbe4a5fb2c65c8a63cade49ca7a0abc57cd2012092455d",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "8de02d3aaf052c1f582a17c4f5be8498608e59da2f03b1216b8decce9b1e906e",
+      "fonts": [
+        "MS Sans Serif"
+      ],
+      "bytes": 38381
+    }
+  },
+  {
+    "id": "retro-zine",
+    "name": "Retro Zine",
+    "description": "Beige paper with green accent and Bebas Neue + Caveat: a riso-printed zine in HTML form.",
+    "tags": [
+      "crafted",
+      "lo-fi",
+      "underground",
+      "warm-retro"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#c8b99a",
+      "#008f4d",
+      "#1a1a1a",
+      "#b8a98a",
+      "#00a85d"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/retro-zine/preview.md",
+    "designPath": "bold-template-pack/templates/retro-zine/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/retro-zine.jpg?v=624356315c45",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "ad468df8f43b9b4fd800da932bf5d01a93eaee16ac985c7e0b36ea370e890192",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "624356315c4577f5fd3980be783489c3f2a4d160a0d0d74980778b8e22d32eb2",
+      "fonts": [
+        "Bebas Neue",
+        "Space Grotesk",
+        "Caveat"
+      ],
+      "bytes": 40162
+    }
+  },
+  {
+    "id": "sakura-chroma",
+    "name": "Sakura Chroma",
+    "description": "Vintage Japanese cassette-package aesthetic: cream paper, diagonal rainbow ribbons, condensed bold type, JIS-style spec checkboxes.",
+    "tags": [
+      "retro",
+      "playful",
+      "kawaii-tech",
+      "warm",
+      "tactile",
+      "product-catalogue"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#f1e6cb",
+      "#e5d6b0",
+      "#3a2516",
+      "#e5392a",
+      "#e54489"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/sakura-chroma/preview.md",
+    "designPath": "bold-template-pack/templates/sakura-chroma/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/sakura-chroma.jpg?v=075d8223621e",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "0e6a8b02a82b198f32c88acef772b1951c58979858f41f5c794a73538e1f425c",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "075d8223621efe2c009e7f2597c53158ecb318a76b11138b6db7cf3fcce72afa",
+      "fonts": [
+        "Big Shoulders Display",
+        "JetBrains Mono",
+        "Albert Sans"
+      ],
+      "bytes": 41563
+    }
+  },
+  {
+    "id": "scatterbrain",
+    "name": "Scatterbrain",
+    "description": "Post-it inspired: pastel sticky notes, Caveat handwriting, Shrikhand and Zilla Slab type stack.",
+    "tags": [
+      "playful",
+      "creative",
+      "warm",
+      "messy-on-purpose",
+      "workshop"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#ffe066",
+      "#ffd43b",
+      "#a5d8ff",
+      "#74c0fc",
+      "#ffc9c9"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/scatterbrain/preview.md",
+    "designPath": "bold-template-pack/templates/scatterbrain/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/scatterbrain.jpg?v=94442f03b849",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "e9c18fb1994996f7dfdc98fc20211af1220fa2810a31e2887673d8f5f2cb87f5",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "94442f03b8498fb042a7df2956ef54789a742f304d0d0e3a6de93970cd06451b",
+      "fonts": [
+        "Shrikhand",
+        "Caveat",
+        "Zilla Slab"
+      ],
+      "bytes": 42389
+    }
+  },
+  {
+    "id": "signal",
+    "name": "Signal",
+    "description": "Deep navy canvas with bone paper and a single muted-gold accent; institutional with quiet weight.",
+    "tags": [
+      "institutional",
+      "trustworthy",
+      "considered",
+      "weighty"
+    ],
+    "group": "Minimal",
+    "scheme": "mixed",
+    "palette": [
+      "#f0ece3",
+      "#1c2644",
+      "#c8a870",
+      "#232f55",
+      "#e6e0d4"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/signal/preview.md",
+    "designPath": "bold-template-pack/templates/signal/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/signal.jpg?v=a98bb747e7f1",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "ea454630e95f04c9e363b27c1ea9e8e42c55db6f30964a6fa16e16ccb2c49997",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "a98bb747e7f122140b307843425998fc6b5802c0c32c2b0c6a42891bdd094f43",
+      "fonts": [
+        "Source Serif 4",
+        "IBM Plex Mono",
+        "DM Sans"
+      ],
+      "bytes": 34224
+    }
+  },
+  {
+    "id": "soft-editorial",
+    "name": "Soft Editorial",
+    "description": "Cormorant Garamond serif on warm paper with sage, blush, and lemon accents.",
+    "tags": [
+      "literary",
+      "elegant",
+      "quiet",
+      "warm-classical"
+    ],
+    "group": "Editorial",
+    "scheme": "light",
+    "palette": [
+      "#f2eedf",
+      "#ece6d2",
+      "#2a241b",
+      "#5c5345",
+      "#e1a4c2"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/soft-editorial/preview.md",
+    "designPath": "bold-template-pack/templates/soft-editorial/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/soft-editorial.jpg?v=d2d23bfc2239",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "343004a999eab3b2d69a980ad355a7dc9a1da4b01ffc38f11c8c37a0c3b341fd",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "d2d23bfc2239346b9656394ba2ea088b99edc8251a0e6ecd84330c00c804ed6b",
+      "fonts": [
+        "Cormorant Garamond",
+        "Work Sans"
+      ],
+      "bytes": 33372
+    }
+  },
+  {
+    "id": "stencil-tablet",
+    "name": "Stencil & Tablet",
+    "description": "Bone paper with stencil-cut headlines and a six-color earth palette: archaeology meets brand.",
+    "tags": [
+      "archival",
+      "earthy",
+      "tactile",
+      "considered",
+      "graphic"
+    ],
+    "group": "Bold",
+    "scheme": "light",
+    "palette": [
+      "#e2dcc9",
+      "#000000",
+      "#0a0a0a",
+      "#f4efe0",
+      "#a06a3c"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/stencil-tablet/preview.md",
+    "designPath": "bold-template-pack/templates/stencil-tablet/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/stencil-tablet.jpg?v=e0d1d09b2f29",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "26948edf6165ac4d601eed61e51061c27a8e7f8615833a30a37547f5cdabb8e8",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "e0d1d09b2f296bca43f2abdabb4d14d61bc93d79687d2252d6e7de2ce5701baa",
+      "fonts": [
+        "Stardos Stencil",
+        "Barlow Condensed",
+        "Inter"
+      ],
+      "bytes": 51250
+    }
+  },
+  {
+    "id": "studio",
+    "name": "Studio",
+    "description": "Black canvas with electric-yellow type; high-voltage design studio aesthetic.",
+    "tags": [
+      "electric",
+      "bold",
+      "graphic",
+      "design-led",
+      "high-contrast"
+    ],
+    "group": "Bold",
+    "scheme": "dark",
+    "palette": [
+      "#1c1c1c",
+      "#f5d200",
+      "#242422",
+      "#f0cc00",
+      "#2e2e2c"
+    ],
+    "editorial": false,
+    "previewPath": "bold-template-pack/templates/studio/preview.md",
+    "designPath": "bold-template-pack/templates/studio/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/studio.jpg?v=975e4511e2a2",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "1d9f06554b85897b893c4988092ae219a123e61afc8cfd44e9b267d650ff38ee",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "975e4511e2a25fd191396475bff7e02bd2bf1d0a2789c68da52194f094147afb",
+      "fonts": [
+        "Barlow",
+        "IBM Plex Mono"
+      ],
+      "bytes": 42042
+    }
+  },
+  {
+    "id": "vellum",
+    "name": "Vellum",
+    "description": "Deep navy canvas with warm-yellow Cormorant serifs and a single dusty teal accent. A quiet, scholarly aesthetic.",
+    "tags": [
+      "scholarly",
+      "literary",
+      "considered",
+      "quiet",
+      "intellectual"
+    ],
+    "group": "Editorial",
+    "scheme": "dark",
+    "palette": [
+      "#2a3870",
+      "#e8d85c",
+      "#343f80",
+      "#1f2858",
+      "#34407a"
+    ],
+    "editorial": true,
+    "previewPath": "bold-template-pack/templates/vellum/preview.md",
+    "designPath": "bold-template-pack/templates/vellum/design.md",
+    "thumbnail": {
+      "src": "/slide-styles/vellum.jpg?v=58236cfb94d2",
+      "width": 960,
+      "height": 540,
+      "sourceHash": "7bb43002d7948285151e9be30a251f9f6d7f824ab15c0026afcd3a475b10c86b",
+      "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+      "imageHash": "58236cfb94d21eb93610630554a7b3bfe7c94cc5dd76f95300ac9d0f7187229c",
+      "fonts": [
+        "Cormorant Garamond",
+        "Courier Prime",
+        "DM Sans"
+      ],
+      "bytes": 30601
+    }
+  }
+]

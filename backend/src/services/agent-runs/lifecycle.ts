@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { isFrontendSlidesEditExistingRun, slideEditArtifactCandidates } from './slideEditIntent';
 import type { IncomingMessage } from 'http';
 import { redisClient } from '../redisService';
 import { RunTelemetryService } from '../runTelemetryService';
@@ -44,6 +45,8 @@ export type AgentRunStatus =
   | 'cancelled';
 
 type StartRunParams = {
+  // Internal continuation hint; never inferred from old requests after a fresh turn.
+  frontendSlidesEditExisting?: boolean;
   workspaceId: string;
   conversationId?: string;
   persona: string;
@@ -613,12 +616,15 @@ export const buildSyntheticResumeParams = (
   nextGateState: InteractionGateState,
 ): StartRunParams => ({
   ...baseParams,
-  prompt: buildSyntheticClarificationFollowupPrompt(
+  prompt: (baseParams.prompt.match(/^SLIDE_STYLE_PREVIEW .*$/m)?.[0] || '') + '\n' + buildSyntheticClarificationFollowupPrompt(
     baseParams.prompt,
     response,
     previousInterrupt,
     nextGateState,
-  ),
+  ) + (isFrontendSlidesEditExistingRun(baseParams)
+    ? `\n\nContinue revising the existing deck, without restarting setup. Candidate artifact paths from the conversation (verify by reading the workspace): ${JSON.stringify(slideEditArtifactCandidates(baseParams))}. Preserve the filename and existing content except for the requested changes.`
+    : ''),
+  frontendSlidesEditExisting: isFrontendSlidesEditExistingRun(baseParams),
   // Synthetic gates do not have LangGraph checkpoints. The continuation
   // prompt must be the sole conversational input for the fresh stream.
   history: undefined,
@@ -1779,28 +1785,6 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
     displayPayload,
     interactionRequest,
   };
-};
-
-const isFrontendSlidesEditExistingRun = (params: StartRunParams): boolean => {
-  const messageText = (params.messageContent || [])
-    .map((block) => JSON.stringify(block))
-    .join(' ');
-  const historyText = (params.history || [])
-    .map((entry) => `${entry.role}: ${entry.content}`)
-    .join(' ');
-  const currentText = `${params.prompt || ''} ${messageText}`.toLowerCase();
-  const contextualText = `${currentText} ${historyText}`.toLowerCase();
-  const mentionsExistingArtifact = (
-    contextualText.includes('.html') ||
-    contextualText.includes('.ppt') ||
-    contextualText.includes('.pptx') ||
-    contextualText.includes('existing deck') ||
-    contextualText.includes('existing slides') ||
-    contextualText.includes('current deck') ||
-    contextualText.includes('presentation deck')
-  );
-  const asksForEdit = /\b(?:edit|revise|update|modify|fix|polish|adjust|change|improve|enhance|iterate)\b/.test(currentText);
-  return mentionsExistingArtifact && asksForEdit;
 };
 
 const isFrontendSlidesRun = (skillId: string | null | undefined, params: StartRunParams): boolean => (
@@ -4543,7 +4527,10 @@ const reconcileActiveRunMetaFromStream = async (
         gateState: interactionGateState,
       })
     : null;
-  if (terminalEvent?.status === 'completed' && missingCompletionGate) {
+  // A committed final deck is authoritative. Reopening a missing gate after
+  // artifact completion resumes an old graph checkpoint and can send the agent
+  // back into generation/export work after the user already has the result.
+  if (terminalEvent?.status === 'completed' && missingCompletionGate && !canCompleteFromDeckArtifact) {
     const recoveredInterrupt = normalizeInterruptPayloadRecord(
       buildFrontendSlidesGatePendingInterrupt({
         runId,
