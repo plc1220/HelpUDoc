@@ -35,6 +35,30 @@ When activation returns `SKILL_MATERIALIZATION_UNAVAILABLE`:
 
 The immutable cache is reconstructable. It may be evicted while the backend is stopped; the source blobs and database records must be retained.
 
+## Private draft execution
+
+A user runs their own private draft in a Private Workspace they own, without Team review. The
+spec bounds this to testing: a Team Workspace or published workspace never inherits or invokes
+a private proposal.
+
+- `private_workspace_skill_draft_pins` records which draft a workspace uses and at which exact
+  revision. `PUT` and `DELETE /api/workspaces/:workspaceId/skill-draft-pins/:draftId` maintain it.
+- Pinning materializes the draft revision under `skills/.governed-versions/packages/` beside the
+  approved versions. The revision id is a UUID and `skill_draft_revisions.manifestHash` uses the
+  same canonical hash as an approved version, so the agent loads a draft through the existing
+  exact-pin path and recomputes the manifest before trusting it.
+- `buildAgentAuthToken` merges draft pins into `skillAllowIds` and `skillVersionPins` only when
+  `workspaceMode` is `private`. The pin query matches on `private_skill_drafts.ownerUserId`, so a
+  workspace that changes hands does not carry the previous owner's draft with it.
+- A new-skill draft cannot claim a `skillKey` that is already governed. An improvement draft
+  deliberately shadows its source skill, and the proposer must already be entitled to that skill.
+- Editing a pinned draft advances every pin to the new revision and prunes the superseded
+  package. Draft packages are reconstructable from `content_blobs` and
+  `skill_draft_revision_files`, exactly as approved versions are, so the cache may be evicted
+  while the backend is stopped.
+- Set `ENABLE_PRIVATE_SKILL_RUNTIME=false` to stop private drafts reaching the runtime. Pin rows
+  survive, so the switch disables execution without destroying user work.
+
 ## Suspension and rollback
 
 - Suspend an unsafe exact version with `POST /api/skills/:skillId/versions/:versionId/suspend`.
