@@ -47,65 +47,77 @@ type MarkdownComponentOptions = {
 
 const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'blockquote', 'ul', 'ol', 'hr'];
 
+/**
+ * Mermaid's theme is a plain object of hex values, not CSS. Mermaid derives
+ * further colours from these in JS at render time, so they cannot be
+ * var(--color-*) — these are the SKP palette written out. Keep them in step
+ * with src/themes/skp.ts.
+ *
+ * cScale0-2 are the categorical slots. Blue, teal and green are the three SKP
+ * hues that stay apart from each other at diagram scale.
+ */
 const buildMermaidTheme = (mode: MermaidColorMode) => (
   mode === 'dark'
     ? {
         background: 'transparent',
-        primaryColor: '#818cf8',
-        primaryBorderColor: '#6366f1',
-        primaryTextColor: '#e2e8f0',
-        secondaryColor: '#1e293b',
-        secondaryBorderColor: '#334155',
-        secondaryTextColor: '#cbd5e1',
-        tertiaryColor: '#111827',
-        tertiaryBorderColor: '#374151',
-        tertiaryTextColor: '#cbd5e1',
-        lineColor: '#94a3b8',
-        textColor: '#e2e8f0',
-        mainBkg: '#0b1220',
-        edgeLabelBackground: '#0b1220',
-        actorBorder: '#6366f1',
-        actorBkg: '#1e293b',
-        actorTextColor: '#e2e8f0',
-        labelBoxBkgColor: '#1e293b',
-        labelBoxBorderColor: '#334155',
-        gridColor: '#334155',
-        section0: '#1e293b',
-        section1: '#1f2937',
+        primaryColor: '#1e2b45',
+        primaryBorderColor: '#3b82f6',
+        primaryTextColor: '#f1f5f9',
+        secondaryColor: '#18212f',
+        secondaryBorderColor: '#26324a',
+        secondaryTextColor: '#b6c2d4',
+        tertiaryColor: '#0f172a',
+        tertiaryBorderColor: '#3a4859',
+        tertiaryTextColor: '#b6c2d4',
+        lineColor: '#8b9bb3',
+        textColor: '#f1f5f9',
+        mainBkg: '#0f172a',
+        edgeLabelBackground: '#0f172a',
+        actorBorder: '#3b82f6',
+        actorBkg: '#1e2b45',
+        actorTextColor: '#f1f5f9',
+        labelBoxBkgColor: '#1e2b45',
+        labelBoxBorderColor: '#26324a',
+        gridColor: '#26324a',
+        section0: '#1e2b45',
+        section1: '#18212f',
         section2: '#0f172a',
-        sectionBkgColor: '#111827',
-        cScale0: '#818cf8',
-        cScale1: '#60a5fa',
-        cScale2: '#34d399',
+        sectionBkgColor: '#18212f',
+        cScale0: '#3b82f6',
+        cScale1: '#22c1b6',
+        cScale2: '#4bb87f',
       }
     : {
         background: 'transparent',
-        primaryColor: '#4f46e5',
-        primaryBorderColor: '#3730a3',
-        primaryTextColor: '#0f172a',
-        secondaryColor: '#dbeafe',
-        secondaryBorderColor: '#93c5fd',
-        secondaryTextColor: '#0f172a',
-        tertiaryColor: '#eef2ff',
-        tertiaryBorderColor: '#a5b4fc',
-        tertiaryTextColor: '#0f172a',
-        lineColor: '#334155',
-        textColor: '#0f172a',
+        // A tinted fill with an accent border, rather than a saturated fill:
+        // the label sits on this, and dark text on a saturated blue does not
+        // clear AA.
+        primaryColor: '#eaf1fb',
+        primaryBorderColor: '#0b5fd4',
+        primaryTextColor: '#14263b',
+        secondaryColor: '#e5f5f4',
+        secondaryBorderColor: '#00968f',
+        secondaryTextColor: '#14263b',
+        tertiaryColor: '#eef2f7',
+        tertiaryBorderColor: '#d5dfeb',
+        tertiaryTextColor: '#14263b',
+        lineColor: '#5b6b7f',
+        textColor: '#14263b',
         mainBkg: '#ffffff',
-        edgeLabelBackground: '#f8fafc',
-        actorBorder: '#3730a3',
-        actorBkg: '#c7d2fe',
-        actorTextColor: '#0f172a',
-        labelBoxBkgColor: '#f8fafc',
-        labelBoxBorderColor: '#94a3b8',
-        gridColor: '#cbd5e1',
-        section0: '#e0e7ff',
-        section1: '#f1f5f9',
-        section2: '#e2e8f0',
-        sectionBkgColor: '#f8fafc',
-        cScale0: '#3730a3',
-        cScale1: '#1d4ed8',
-        cScale2: '#0f766e',
+        edgeLabelBackground: '#f7f9fc',
+        actorBorder: '#0b5fd4',
+        actorBkg: '#eaf1fb',
+        actorTextColor: '#14263b',
+        labelBoxBkgColor: '#f7f9fc',
+        labelBoxBorderColor: '#d5dfeb',
+        gridColor: '#d5dfeb',
+        section0: '#eaf1fb',
+        section1: '#f7f9fc',
+        section2: '#e4e9f0',
+        sectionBkgColor: '#f7f9fc',
+        cScale0: '#0b5fd4',
+        cScale1: '#00968f',
+        cScale2: '#3a9e6b',
       }
 );
 
@@ -149,7 +161,7 @@ export const configureMermaid = async (mode: MermaidColorMode) => {
     securityLevel: 'loose',
     theme: 'base',
     themeVariables: buildMermaidTheme(mode),
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    fontFamily: '"Public Sans Variable", "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
   return mermaid;
 };

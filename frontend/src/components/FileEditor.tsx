@@ -13,15 +13,21 @@ import { getLanguage } from '../utils/editorLanguage';
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 const MarkdownRichEditor = lazy(() => import('./MarkdownRichEditor'));
 
+/**
+ * Collaborator cursor colours — a categorical set, not brand colour. Two people
+ * editing at once must be told apart, so these keep their hue separation rather
+ * than collapsing onto the accent. They are retinted toward the SKP families
+ * and chosen to stay legible against both the light and the dark editor ground.
+ */
 const COLLAB_COLORS = [
-  '#0ea5e9',
-  '#f97316',
-  '#10b981',
-  '#e11d48',
-  '#a855f7',
-  '#14b8a6',
-  '#f59e0b',
-  '#6366f1',
+  '#0b5fd4', // blue
+  '#00968f', // teal
+  '#3a9e6b', // green
+  '#c9911f', // amber
+  '#c0563f', // red
+  '#6b4bd4', // violet
+  '#c97a2b', // orange
+  '#5b6b7f', // slate
 ];
 
 const hashToColor = (seed: string) => {
@@ -133,16 +139,19 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
             { token: 'attribute.name', foreground: '88c0d0' },
             { token: 'attribute.value', foreground: 'a3be8c' },
           ],
+          // Monaco takes hex, not CSS variables. These are the SKP dark
+          // surfaces, so the editor sits in the same colour world as the pane
+          // around it rather than being an unrelated Nord panel.
           colors: {
-            'editor.background': '#2e3440',
-            'editor.foreground': '#d8dee9',
-            'editorLineNumber.foreground': '#4c566a',
-            'editorLineNumber.activeForeground': '#eceff4',
-            'editorCursor.foreground': '#d8dee9',
-            'editor.selectionBackground': '#434c5e',
-            'editor.inactiveSelectionBackground': '#3b4252',
-            'editorIndentGuide.background': '#3b4252',
-            'editorIndentGuide.activeBackground': '#4c566a',
+            'editor.background': '#18212f',
+            'editor.foreground': '#f1f5f9',
+            'editorLineNumber.foreground': '#5f6e88',
+            'editorLineNumber.activeForeground': '#f1f5f9',
+            'editorCursor.foreground': '#3b82f6',
+            'editor.selectionBackground': '#26324a',
+            'editor.inactiveSelectionBackground': '#1e2b45',
+            'editorIndentGuide.background': '#1e2b45',
+            'editorIndentGuide.activeBackground': '#26324a',
           },
         });
         editor.setTheme('helpudoc-nord');

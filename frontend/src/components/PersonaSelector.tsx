@@ -1,5 +1,6 @@
 import React from 'react';
 import { Select, MenuItem, FormControl, InputLabel, useTheme } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import type { AgentPersona } from '../types';
 
 interface PersonaSelectorProps {
@@ -15,15 +16,18 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
   onPersonaChange,
   variant = 'full',
 }) => {
+  // Read the palette rather than branch on the mode. The menu is portalled to
+  // document.body, outside the Astryx <Theme> wrapper, so var(--color-*) would
+  // resolve to the library defaults there — but MUI resolves theme.palette in
+  // JS, so it is correct wherever the node lands.
   const theme = useTheme();
-  const isDarkMode = theme.palette.mode === 'dark';
   const menuProps = {
     PaperProps: {
       sx: {
-        bgcolor: isDarkMode ? '#1e1e1e' : '#ffffff',
-        color: isDarkMode ? '#e5e7eb' : '#111827',
-        border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #e5e7eb',
-        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.25)',
+        bgcolor: theme.palette.background.paper,
+        color: theme.palette.text.primary,
+        border: `1px solid ${theme.palette.divider}`,
+        boxShadow: theme.shadows[8],
       },
     },
     MenuListProps: {
@@ -32,12 +36,14 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
         '& .MuiMenuItem-root': {
           fontSize: '0.8rem',
           '&:hover': {
-            bgcolor: isDarkMode ? '#333333' : '#f3f4f6',
+            bgcolor: theme.palette.action.hover,
           },
+          // Selected reads as the accent tint, the way a selected row does
+          // everywhere else in the app.
           '&.Mui-selected': {
-            bgcolor: isDarkMode ? '#2a2a2a' : '#e5e7eb',
+            bgcolor: alpha(theme.palette.primary.main, 0.12),
             '&:hover': {
-              bgcolor: isDarkMode ? '#333333' : '#e0e7ff',
+              bgcolor: alpha(theme.palette.primary.main, 0.18),
             },
           },
         },
@@ -54,8 +60,8 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
         sx={{
           borderRadius: '9999px',
           border: '1px solid',
-          borderColor: isDarkMode ? '#2a2a2a' : '#e5e7eb',
-          bgcolor: isDarkMode ? '#111827' : '#f9fafb',
+          borderColor: theme.palette.divider,
+          bgcolor: theme.palette.background.default,
           paddingLeft: 1,
           paddingRight: 1,
           paddingY: 0.25,
@@ -68,7 +74,7 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
             fontSize: '0.65rem',
             textTransform: 'uppercase',
             letterSpacing: '0.08em',
-            color: isDarkMode ? '#9ca3af' : '#6b7280',
+            color: theme.palette.text.secondary,
             position: 'static',
             transform: 'none',
             marginRight: 1,
@@ -85,7 +91,7 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
           sx={{
             fontSize: '0.8rem',
             fontWeight: 600,
-            color: isDarkMode ? '#e5e7eb' : '#374151',
+            color: theme.palette.text.primary,
             '& .MuiSelect-select': {
               paddingY: 0,
               paddingX: 0.5,

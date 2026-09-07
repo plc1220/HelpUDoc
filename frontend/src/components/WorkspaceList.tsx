@@ -14,6 +14,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import {
   Delete,
   DeleteOutline,
@@ -265,14 +266,14 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
           overflow: 'hidden',
           mb: 1,
           border: (theme) => isSelected ? `1px solid ${theme.palette.divider}` : '1px solid transparent',
-          backgroundColor: (theme) => isSelected
-            ? theme.palette.mode === 'light' ? 'rgba(37, 99, 235, 0.09)' : 'rgba(96, 165, 250, 0.14)'
-            : 'transparent',
+          // The selected workspace reads as the accent tint. Derived from the
+          // palette so it follows a theme change instead of drifting.
+          backgroundColor: (theme) => (isSelected
+            ? alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.1 : 0.16)
+            : 'transparent'),
           '&:hover': {
             borderColor: (theme) => theme.palette.divider,
-            backgroundColor: (theme) => isSelected
-              ? undefined
-              : theme.palette.mode === 'light' ? 'rgba(15, 23, 42, 0.04)' : 'rgba(148, 163, 184, 0.08)',
+            backgroundColor: (theme) => (isSelected ? undefined : theme.palette.action.hover),
           },
           '&:hover .workspace-list-more, &:focus-within .workspace-list-more': {
             opacity: 1,
@@ -466,13 +467,11 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
                 sx={{
                   width: 32,
                   height: 32,
-                  backgroundColor: (theme) => theme.palette.mode === 'light'
-                    ? 'rgba(248, 250, 252, 0.94)'
-                    : 'rgba(15, 23, 42, 0.94)',
+                  // Nearly opaque so the row text does not read through the
+                  // overlay button, but still tinted by the surface beneath it.
+                  backgroundColor: (theme) => alpha(theme.palette.background.paper, 0.94),
                   '&:hover': {
-                    backgroundColor: (theme) => theme.palette.mode === 'light'
-                      ? 'rgba(241, 245, 249, 1)'
-                      : 'rgba(30, 41, 59, 1)',
+                    backgroundColor: (theme) => theme.palette.background.paper,
                   },
                 }}
               >
