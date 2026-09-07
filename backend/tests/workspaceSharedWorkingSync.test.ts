@@ -25,6 +25,7 @@ type HarnessOptions = {
   sharedVisibility?: 'team' | 'private';
   sharedExists?: boolean;
   sharedAccess?: boolean;
+  rejectLinkUpdates?: boolean;
 };
 
 function hash(value: string): string {
@@ -121,6 +122,8 @@ function syncHarness(options: HarnessOptions = {}) {
 
   const updateLink = async (payload: Record<string, unknown>) => {
     linkUpdates.push(payload);
+    // A guard that matches no row, as a concurrent sync would produce.
+    if (options.rejectLinkUpdates) return 0;
     Object.assign(link, payload);
     return 1;
   };
@@ -151,6 +154,7 @@ function syncHarness(options: HarnessOptions = {}) {
     throw new Error(`Unexpected transaction table ${table}`);
   }) as any;
   fakeTx.fn = { now: () => 'NOW()' };
+  db.transaction = async (work: (tx: any) => Promise<unknown>) => work(fakeTx);
 
   const service = Object.create(WorkspacePublicationService.prototype) as any;
   Object.assign(service, {
@@ -283,13 +287,46 @@ test('exact hashes detect Shared changes even when contentRevision does not move
   assert.equal(harness.replaceCalls(), 1);
 });
 
-test('a revision bump with byte-identical Working content is a no-op', async () => {
+test('a revision bump with byte-identical Working content rewrites no file but rebases', async () => {
   const harness = syncHarness({ sharedRevision: 9 });
 
   const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
 
   assert.equal(result.status, 'up_to_date');
   assert.equal(harness.replaceCalls(), 0);
+  // The workspace list derives `Shared changed` from this counter, not from hashes, so
+  // leaving it behind makes `Sync latest` look like it does nothing.
+  assert.equal(harness.link.baseSharedContentRevision, 9);
+  assert.equal(harness.link.baseWorkingManifest.files[0].objectKey, 'objects/notes.txt/hash:base');
+  assert.equal(harness.link.updatedAt, 'NOW()');
+});
+
+test('rebasing on identical Shared content leaves the private side of the base alone', async () => {
+  const harness = syncHarness({
+    privateFiles: { 'notes.txt': 'base', 'draft.txt': 'private-only' },
+    privateRevision: 4,
+    sharedRevision: 9,
+  });
+
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
+
+  assert.equal(result.status, 'up_to_date');
+  assert.equal(harness.replaceCalls(), 0);
+  assert.equal(harness.link.baseSharedContentRevision, 9);
+  // `basePrivateContentRevision` and `hasUnpublishedChanges` are the publish gate. Matching
+  // hashes do not prove the draft is clean, so this path must not touch them.
+  assert.equal(harness.link.basePrivateContentRevision, 3);
+  assert.equal(harness.link.hasUnpublishedChanges, false);
+});
+
+test('a lost rebase race still reports up_to_date instead of failing the sync', async () => {
+  const harness = syncHarness({ sharedRevision: 9, rejectLinkUpdates: true });
+
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
+
+  assert.equal(result.status, 'up_to_date');
+  assert.equal(harness.replaceCalls(), 0);
+  assert.equal(harness.link.baseSharedContentRevision, 5);
 });
 
 test('detached links never read or mutate workspace content', async () => {

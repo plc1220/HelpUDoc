@@ -834,6 +834,13 @@ export class WorkspacePublicationService {
       // Content matches, but an approval or publication in the Shared workspace
       // moves no bytes, so the status still has to be brought across.
       await this.reconcileInheritedStatus(privateWorkspaceId, sharedContent, userId);
+      await this.rebaseOnMatchingSharedWorking(
+        privateWorkspaceId,
+        teamWorkspace,
+        link,
+        sharedContent,
+        currentSharedRevision,
+      );
       return {
         workspaceId: privateWorkspaceId,
         teamWorkspaceId: teamWorkspace.id,
@@ -959,6 +966,47 @@ export class WorkspacePublicationService {
       status: 'synced' as const,
       conflicts: [],
     };
+  }
+
+  /**
+   * A sync that finds identical bytes still has to move the base forward. The draft status
+   * in the workspace list comes from counters and timestamps
+   * (`WorkspaceService.listWorkspacesForUser`), not from hashes, so a Shared workspace that
+   * bumped `contentRevision` or `updatedAt` without moving bytes - an approval, a
+   * publication - keeps reporting `Shared changed` forever if this row is left alone. The
+   * user then clicks `Sync latest` and nothing appears to happen.
+   *
+   * Only the Shared side of the base is written. `basePrivateContentRevision` and
+   * `hasUnpublishedChanges` are the publish gate in `createPublishedVersion`, and
+   * `workspaceContentsMatch` compares hashes and folders only, so matching hashes are not
+   * proof that the draft holds nothing to publish.
+   */
+  private async rebaseOnMatchingSharedWorking(
+    privateWorkspaceId: string,
+    teamWorkspace: WorkspaceRecord,
+    link: PublicationLinkRecord,
+    sharedContent: WorkspaceContent,
+    currentSharedRevision: number,
+  ): Promise<void> {
+    const baseWorkingManifest = this.manifestFromContent(sharedContent);
+    await this.db.transaction(async (tx) => {
+      await this.assertSharedWorkingRevision(tx, teamWorkspace.id, currentSharedRevision);
+      // A lost race writes nothing, so it is not worth failing the sync over: `reconnect`
+      // turns any throw from here into a detached link. The next sync retries.
+      await tx('workspace_publication_links')
+        .where({
+          privateWorkspaceId,
+          userId: link.userId,
+          status: 'active',
+          baseSharedContentRevision: Number(link.baseSharedContentRevision || 0),
+        })
+        .update({
+          basePublishedVersionId: teamWorkspace.currentPublishedVersionId || null,
+          baseSharedContentRevision: currentSharedRevision,
+          baseWorkingManifest,
+          updatedAt: tx.fn.now(),
+        });
+    });
   }
 
   private async assertSharedWorkingRevision(
