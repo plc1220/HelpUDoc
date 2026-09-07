@@ -47,12 +47,14 @@ import {
   fetchSkillVersions,
   fetchTeamReviews,
   fetchTeamSkillAccess,
+  pinWorkspaceSkillDraft,
   pinWorkspaceSkillVersion,
   setTeamSkillDisabled,
   updateSkillStatus,
   retrySkillActivation,
   submitSkillDraft,
   setDefaultSkillVersion,
+  unpinWorkspaceSkillDraft,
   updateSkillDraft,
   updateSkillVersionStatus,
   validateSkillDraft,
@@ -242,8 +244,22 @@ const DraftEditor = ({
   const [validation, setValidation] = useState<SkillValidation | null>(
     initialDraft.validationSummary?.checkedAt ? initialDraft.validationSummary as SkillValidation : null,
   );
-  const [busy, setBusy] = useState<'save' | 'validate' | 'submit' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'validate' | 'submit' | 'pin' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [privateWorkspaces, setPrivateWorkspaces] = useState<Workspace[]>([]);
+  const [pinWorkspaceId, setPinWorkspaceId] = useState('');
+
+  useEffect(() => {
+    // Only a Private Workspace the user owns can run an unreviewed draft.
+    void getWorkspaces()
+      .then((rows: Workspace[]) => {
+        const eligible = (rows || []).filter((workspace) =>
+          workspace.visibility !== 'team' && workspace.workspaceType !== 'team' && workspace.role === 'owner');
+        setPrivateWorkspaces(eligible);
+        setPinWorkspaceId((current) => current || eligible[0]?.id || '');
+      })
+      .catch(() => setPrivateWorkspaces([]));
+  }, []);
 
   const fileEntries = useMemo(
     () => Object.entries(files)
@@ -366,6 +382,36 @@ const DraftEditor = ({
     }
   };
 
+  const addToWorkspace = async () => {
+    if (!pinWorkspaceId) return;
+    setBusy('pin');
+    setError(null);
+    try {
+      // Save first: the pin freezes the current revision, so unsaved edits
+      // would not be the ones that run.
+      const saved = await persist();
+      await pinWorkspaceSkillDraft(pinWorkspaceId, draft.id);
+      setDraft(await fetchSkillDraft(saved?.id || draft.id));
+    } catch (pinError) {
+      setError(pinError instanceof Error ? pinError.message : 'Failed to use this draft in the workspace');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeFromWorkspace = async (workspaceId: string) => {
+    setBusy('pin');
+    setError(null);
+    try {
+      await unpinWorkspaceSkillDraft(workspaceId, draft.id);
+      setDraft(await fetchSkillDraft(draft.id));
+    } catch (unpinError) {
+      setError(unpinError instanceof Error ? unpinError.message : 'Failed to stop using this draft');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const submit = async () => {
     setBusy('submit');
     setError(null);
@@ -477,9 +523,61 @@ const DraftEditor = ({
               </label>
               {!draft.eligibleTeams.length ? (
                 <SettingsNotice variant="warning">
-                  You may keep editing privately, but Team membership is required before submission.
+                  Team membership is required before submission. You can still use this draft in your own
+                  private workspaces without a Team.
                 </SettingsNotice>
               ) : null}
+              <div className="border-t border-slate-200 pt-4">
+                <p className="text-sm font-medium text-slate-700">Use in my workspaces</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {draft.proposalType === 'improvement'
+                    ? `While this draft is in use, the workspace runs it instead of the published ${skillKey}.`
+                    : 'Runs the saved draft in a private workspace you own. Nobody else can see or use it.'}
+                </p>
+                {privateWorkspaces.length ? (
+                  <div className="mt-2 flex gap-2">
+                    <select
+                      value={pinWorkspaceId}
+                      onChange={(event) => setPinWorkspaceId(event.target.value)}
+                      className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm"
+                      aria-label="Private workspace"
+                    >
+                      {privateWorkspaces.map((workspace) => (
+                        <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void addToWorkspace()}
+                      disabled={Boolean(busy) || !pinWorkspaceId}
+                      className="settings-portal-button-secondary inline-flex items-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-semibold disabled:opacity-50"
+                    >
+                      {busy === 'pin' ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+                      Add
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">You own no private workspace to use this in yet.</p>
+                )}
+                {draft.workspacePins?.length ? (
+                  <ul className="mt-3 space-y-1.5">
+                    {draft.workspacePins.map((pin) => (
+                      <li key={pin.workspaceId} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="min-w-0 truncate text-slate-700">{pin.workspaceName}</span>
+                        <button
+                          type="button"
+                          onClick={() => void removeFromWorkspace(pin.workspaceId)}
+                          disabled={Boolean(busy)}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                        >
+                          <X size={13} />
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
               <label className="block text-sm font-medium text-slate-700">
                 Proposed version
                 <input
@@ -1296,6 +1394,11 @@ const SkillGovernancePage = () => {
                           <div className={`${draftView === 'card' ? 'mt-4' : ''} flex flex-wrap items-center gap-2`}>
                             <StatusBadge status={draft.status} />
                             <span className="text-xs text-slate-500">rev {draft.draftRevision}</span>
+                            {draft.workspaceUseCount ? (
+                              <span className="text-xs font-semibold text-blue-700">
+                                In {draft.workspaceUseCount} workspace{draft.workspaceUseCount === 1 ? '' : 's'}
+                              </span>
+                            ) : null}
                             {draftView !== 'compact' ? <span className="text-xs text-slate-500">{draft.proposedOwnerTeamName || 'Team not selected'}</span> : null}
                             {actionBusy === draft.id ? <Loader2 size={16} className="animate-spin" /> : <ChevronRight size={16} />}
                           </div>

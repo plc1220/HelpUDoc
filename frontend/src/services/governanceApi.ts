@@ -18,7 +18,19 @@ export type SkillDraftSummary = {
   draftRevision: number;
   status: 'private' | 'submitted' | 'archived';
   hasReviewHistory?: boolean;
+  workspaceUseCount?: number;
   updatedAt: string;
+};
+
+export type WorkspaceSkillDraftPin = {
+  workspaceId: string;
+  draftId: string;
+  draftRevisionId: string;
+  pinnedAt: string;
+  skillKey: string;
+  displayName: string;
+  proposalType: 'new' | 'improvement';
+  draftStatus: 'private' | 'submitted' | 'archived';
 };
 
 export type SkillDraftFile = {
@@ -59,6 +71,12 @@ export type SkillDraft = SkillDraftSummary & {
   files: SkillDraftFile[];
   validationSummary?: Partial<SkillValidation>;
   eligibleTeams: GovernanceTeam[];
+  workspacePins: Array<{
+    workspaceId: string;
+    workspaceName: string;
+    draftRevisionId: string;
+    pinnedAt: string;
+  }>;
 };
 
 export type MySkillsResponse = {
@@ -486,6 +504,27 @@ export const pinWorkspaceSkillVersion = (
   },
   'Failed to pin the exact skill version to the workspace',
 );
+
+export const listWorkspaceSkillDraftPins = (workspaceId: string) =>
+  jsonRequest<{ pins: WorkspaceSkillDraftPin[] }>(
+    `${API_URL}/workspaces/${encodeURIComponent(workspaceId)}/skill-draft-pins`,
+    { method: 'GET' },
+    'Failed to load the private drafts used in this workspace',
+  );
+
+export const pinWorkspaceSkillDraft = (workspaceId: string, draftId: string) =>
+  jsonRequest<Record<string, unknown>>(
+    `${API_URL}/workspaces/${encodeURIComponent(workspaceId)}/skill-draft-pins/${encodeURIComponent(draftId)}`,
+    { method: 'PUT' },
+    'Failed to use this draft in the workspace',
+  );
+
+export const unpinWorkspaceSkillDraft = (workspaceId: string, draftId: string) =>
+  jsonRequest<Record<string, unknown>>(
+    `${API_URL}/workspaces/${encodeURIComponent(workspaceId)}/skill-draft-pins/${encodeURIComponent(draftId)}`,
+    { method: 'DELETE' },
+    'Failed to stop using this draft in the workspace',
+  );
 
 export const createImprovementDraft = (skillId: string, sourceVersionId?: string) =>
   createSkillDraft({ proposalType: 'improvement', sourceSkillId: skillId, sourceVersionId });
