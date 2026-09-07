@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -17,6 +17,7 @@ from ....sandbox_runner import (
     run_skill_python_script as run_declared_skill_python_script,
 )
 from ....skills_registry import (
+    SkillMetadata,
     activate_skill_context,
     build_loaded_skill_text,
     find_skill_for_context,
@@ -198,6 +199,38 @@ class RunSkillPythonScriptInput(BaseModel):
     )
 
 
+def _pinned_only_skills(
+    skills_root: Path,
+    listed: List[SkillMetadata],
+    context: Optional[dict],
+) -> List[SkillMetadata]:
+    """Allowed skills that exist only as an exact pin.
+
+    ``load_skills`` walks the mutable catalogue and skips dot-directories, so it
+    never sees ``.governed-versions``. A private skill draft has no folder under
+    ``skills/`` at all, and a pinned governed version may outlive its default
+    package. Both are reachable through ``find_skill_for_context``; without this
+    they would be invocable but undiscoverable.
+    """
+    if not isinstance(context, dict):
+        return []
+    allowed = context.get("skill_allow_ids")
+    if not isinstance(allowed, list):
+        return []
+    known = {skill.skill_id for skill in listed}
+    resolved: List[SkillMetadata] = []
+    for raw_id in allowed:
+        skill_id = str(raw_id).strip()
+        if not skill_id or skill_id in known:
+            continue
+        skill = find_skill_for_context(skills_root, skill_id, context)
+        if skill is None:
+            continue
+        known.add(skill.skill_id)
+        resolved.append(skill)
+    return resolved
+
+
 def build_list_skills_tool(settings: Settings, workspace_state: WorkspaceState) -> Tool:
     skills_root = settings.backend.skills_root
 
@@ -210,6 +243,7 @@ def build_list_skills_tool(settings: Settings, workspace_state: WorkspaceState) 
         if skills_root is None or not skills_root.exists():
             return "No skills directory configured."
         skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
+        skills.extend(_pinned_only_skills(skills_root, skills, workspace_state.context))
         if not skills:
             return "No skills found."
         lines = []
@@ -242,6 +276,7 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
         if skills_root is None or not skills_root.exists():
             return "No skills directory configured."
         skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
+        skills.extend(_pinned_only_skills(skills_root, skills, workspace_state.context))
         if not skills:
             return "No skills found."
         normalized = skill_id.strip()
