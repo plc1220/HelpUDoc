@@ -6,7 +6,18 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'build', 'coverage', '**/*.min.js']),
+  // src/themes/skp.{js,css,d.ts} are written by `astryx theme build` from
+  // skp.ts. They carry a "do not edit manually" banner, so linting them only
+  // reports style the generator chose.
+  globalIgnores([
+    'dist',
+    'build',
+    'coverage',
+    '**/*.min.js',
+    'src/themes/skp.js',
+    'src/themes/skp.d.ts',
+    'src/themes/skp.variants.d.ts',
+  ]),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

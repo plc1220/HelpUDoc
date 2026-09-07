@@ -2,7 +2,6 @@
 
 @import "@astryxdesign/core/reset.css" layer(reset);
 @import "@astryxdesign/core/astryx.css";
-@import "@astryxdesign/theme-neutral/theme.css";
 
 @layer tw-preflight {
   @tailwind base;
@@ -11,7 +10,21 @@
 @tailwind components;
 @tailwind utilities;
 
-html[data-astryx-theme="neutral"] {
+/* Bridge from Astryx tokens to the legacy variable names the older CSS below
+   still uses.
+
+   Two things about this selector. It keys on the attribute alone rather than a
+   theme name, because Astryx stamps data-astryx-theme with the ACTIVE theme's
+   name — pinning it to one name silently drops every variable here the moment
+   the theme is swapped.
+
+   And it is not `html[...]`. Astryx scopes its token block to the <Theme>
+   wrapper div, so --color-* on the html element still hold the library
+   defaults, not the theme's. Declared on html, every alias below quietly
+   resolved against stock Astryx instead of the theme. Matching the attribute
+   anywhere lets the wrapper re-declare them in scope, where the tokens are
+   real. */
+[data-astryx-theme] {
   --app-bg: var(--color-background-body);
   --surface: var(--color-background-surface);
   --surface-subtle: var(--color-background-muted);
@@ -48,9 +61,17 @@ html[data-astryx-theme="neutral"] {
   --admin-icon-muted-bg: var(--color-background-muted);
 }
 
+/* body is outside the <Theme> wrapper's scope and so cannot read a theme
+   token. These are the SKP canvas and ink, written out. Keep them in step with
+   --color-background-body / --color-text-primary in src/themes/skp.ts. */
 body {
-  background-color: var(--app-bg, #f1f1f1);
-  color: var(--text-primary, #171717);
+  background-color: #eef2f7;
+  color: #14263b;
+}
+
+:root[data-theme='dark'] body {
+  background-color: #0f172a;
+  color: #f1f5f9;
 }
 
 .settings-portal {

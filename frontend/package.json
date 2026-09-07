@@ -18,6 +18,7 @@
     "@astryxdesign/theme-neutral": "^0.1.7",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@fontsource-variable/public-sans": "^5.3.0",
     "@helpudoc/contracts": "file:../packages/contracts",
     "@helpudoc/dashboard-runtime": "file:../packages/dashboard-runtime",
     "@hocuspocus/provider": "^3.4.3",

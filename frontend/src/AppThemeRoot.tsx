@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Theme } from '@astryxdesign/core/theme';
-import { neutralTheme } from '@astryxdesign/theme-neutral/built';
+import { skpTheme } from './themes/skp';
+import './themes/skp.css';
 import {
   APP_COLOR_MODE_CHANGE_EVENT,
   APP_COLOR_MODE_STORAGE_KEY,
@@ -31,7 +32,7 @@ export const AppThemeRoot = ({ children }: { children: ReactNode }) => {
   }, []);
 
   return (
-    <Theme theme={neutralTheme} mode={mode}>
+    <Theme theme={skpTheme} mode={mode}>
       {children}
     </Theme>
   );
