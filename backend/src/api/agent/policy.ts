@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { HttpError } from '../../errors';
 import { signAgentContextToken } from '../../services/agentToken';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../../services/googleOAuthService';
+import { privateSkillRuntimeEnabled } from '../../services/skills/constants';
 import type { UserService, WorkspaceSkillRuntimePin } from '../../services/userService';
 
 const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
@@ -201,6 +202,14 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
       workspacePins,
       input.policy.workspaceMode,
     );
+    // A user's own private skill draft runs only in their own private
+    // workspace. Merged after `resolveRuntimeSkillAccess` so the
+    // `published_read_only` collapse it performs still holds.
+    const draftPins = input.policy.workspaceMode === 'private'
+      && privateSkillRuntimeEnabled()
+      && typeof (userService as any).getWorkspaceSkillDraftRuntimePins === 'function'
+      ? await userService.getWorkspaceSkillDraftRuntimePins(input.workspaceId, input.userId)
+      : [];
     const payload: Record<string, unknown> = {
       sub: input.userId,
       userId: input.userId,
@@ -210,16 +219,32 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
       // Team workspaces execute only the exact, signed version pins that were
       // frozen into the published workspace version. Private workspaces retain
       // their entitlement set and use exact versions wherever they have pins.
-      skillAllowIds: runtimeSkillAllowIds,
-      skillVersionPins: Object.fromEntries(authorizedPins.map((pin) => [
-        pin.skillKey,
-        {
-          skillId: pin.skillId,
-          versionId: pin.versionId,
-          semanticVersion: pin.semanticVersion,
-          manifestHash: pin.manifestHash,
-        },
-      ])),
+      skillAllowIds: normalizeUniqueIds([
+        ...runtimeSkillAllowIds,
+        ...draftPins.map((pin) => pin.skillKey),
+      ]),
+      skillVersionPins: {
+        ...Object.fromEntries(authorizedPins.map((pin) => [
+          pin.skillKey,
+          {
+            skillId: pin.skillId,
+            versionId: pin.versionId,
+            semanticVersion: pin.semanticVersion,
+            manifestHash: pin.manifestHash,
+          },
+        ])),
+        // An improvement draft deliberately shadows the approved skill of the
+        // same key, so draft pins are applied last.
+        ...Object.fromEntries(draftPins.map((pin) => [
+          pin.skillKey,
+          {
+            skillId: pin.draftId,
+            versionId: pin.versionId,
+            semanticVersion: '0.0.0-draft',
+            manifestHash: pin.manifestHash,
+          },
+        ])),
+      },
     };
     if (isSkillSandboxRunnerEnabled()) {
       payload.allowSkillSandbox = true;

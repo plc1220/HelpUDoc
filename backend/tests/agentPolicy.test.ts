@@ -200,3 +200,86 @@ test('slash discovery and runtime share the same exact-pin fail-closed selection
     ['data/dashboard'],
   );
 });
+
+const draftPinUserService = (workspaceMode: EffectiveAgentPolicy['workspaceMode']) => ({
+  getWorkspaceSkillRuntimePins: async () => [],
+  getWorkspaceSkillDraftRuntimePins: async (workspaceId: string, userId: string) => {
+    assert.equal(workspaceId, 'workspace-1');
+    assert.equal(userId, 'user-1');
+    return [{
+      skillKey: 'my-private-skill',
+      draftId: 'draft-1',
+      versionId: '11111111-2222-3333-4444-555555555555',
+      manifestHash: 'a'.repeat(64),
+      displayName: 'My private skill',
+      description: null,
+    }];
+  },
+  workspaceMode,
+});
+
+test('a private workspace runs the owner\'s own skill draft as an exact pin', async () => {
+  const api = createAgentPolicyApi({} as any, draftPinUserService('private') as any);
+  const token = await api.buildAgentAuthToken({
+    userId: 'user-1',
+    workspaceId: 'workspace-1',
+    policy,
+    skipPlanApprovals: false,
+  });
+
+  assert.ok(token);
+  const payload = decodePayload(token) as {
+    skillAllowIds: string[];
+    skillVersionPins: Record<string, { versionId: string; manifestHash: string }>;
+  };
+  assert.deepEqual(payload.skillAllowIds, ['data/dashboard', 'my-private-skill']);
+  assert.deepEqual(payload.skillVersionPins['my-private-skill'], {
+    skillId: 'draft-1',
+    versionId: '11111111-2222-3333-4444-555555555555',
+    semanticVersion: '0.0.0-draft',
+    manifestHash: 'a'.repeat(64),
+  });
+});
+
+test('a shared workspace never inherits a private skill draft', async () => {
+  const api = createAgentPolicyApi({} as any, draftPinUserService('shared_live') as any);
+  const token = await api.buildAgentAuthToken({
+    userId: 'user-1',
+    workspaceId: 'workspace-1',
+    policy: { ...policy, workspaceMode: 'shared_live' },
+    skipPlanApprovals: false,
+  });
+
+  assert.ok(token);
+  const payload = decodePayload(token) as {
+    skillAllowIds: string[];
+    skillVersionPins: Record<string, unknown>;
+  };
+  assert.deepEqual(payload.skillAllowIds, ['data/dashboard']);
+  assert.deepEqual(payload.skillVersionPins, {});
+});
+
+test('the private skill runtime kill switch withholds draft pins from the token', async () => {
+  const previous = process.env.ENABLE_PRIVATE_SKILL_RUNTIME;
+  process.env.ENABLE_PRIVATE_SKILL_RUNTIME = 'false';
+  try {
+    const api = createAgentPolicyApi({} as any, draftPinUserService('private') as any);
+    const token = await api.buildAgentAuthToken({
+      userId: 'user-1',
+      workspaceId: 'workspace-1',
+      policy,
+      skipPlanApprovals: false,
+    });
+
+    assert.ok(token);
+    const payload = decodePayload(token) as {
+      skillAllowIds: string[];
+      skillVersionPins: Record<string, unknown>;
+    };
+    assert.deepEqual(payload.skillAllowIds, ['data/dashboard']);
+    assert.deepEqual(payload.skillVersionPins, {});
+  } finally {
+    if (previous === undefined) delete process.env.ENABLE_PRIVATE_SKILL_RUNTIME;
+    else process.env.ENABLE_PRIVATE_SKILL_RUNTIME = previous;
+  }
+});
