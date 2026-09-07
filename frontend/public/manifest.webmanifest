@@ -1,19 +1,19 @@
 {
-  "name": "Lumo Studio",
-  "short_name": "Lumo",
-  "description": "A workspace for knowledge, memory, skills, and workflows.",
+  "name": "ARIA — Artificial Regulatory Intelligence Assistant",
+  "short_name": "ARIA",
+  "description": "The Suruhanjaya Kredit Pengguna workspace for regulatory knowledge, drafting, and review.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F1F4F7",
-  "theme_color": "#F1F4F7",
+  "background_color": "#eef2f7",
+  "theme_color": "#eef2f7",
   "icons": [
     {
-      "src": "/lumo-icon-192.png",
+      "src": "/skp-icon-192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/lumo-icon-512.png",
+      "src": "/skp-icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }

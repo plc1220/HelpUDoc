@@ -166,7 +166,7 @@ export const invokeLumoForWorkspaceTeamMessage = async (
     { method: 'POST' },
   );
   if (!response.ok) {
-    return parseError(response, 'Failed to invoke Lumo');
+    return parseError(response, 'Failed to invoke ARIA');
   }
   return response.json();
 };

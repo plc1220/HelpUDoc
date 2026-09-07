@@ -12,12 +12,12 @@ export const SLASH_COMMANDS = [
   {
     id: 'pet-on',
     command: '/pet on',
-    description: 'Show Lumo again',
+    description: 'Show the desk pet again',
   },
   {
       id: 'pet-off',
       command: '/pet off',
-      description: 'Hide Lumo until /pet on',
+      description: 'Hide the desk pet until /pet on',
   },
 ] as const;
 

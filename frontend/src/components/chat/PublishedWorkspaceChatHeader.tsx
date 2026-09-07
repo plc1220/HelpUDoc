@@ -122,7 +122,7 @@ export default function PublishedWorkspaceChatHeader({
         }`}>
           <Eye size={13} className="shrink-0 text-blue-500" />
           <span className="text-[11px] leading-snug">
-            Visible to workspace members. Lumo reads the Shared Working version.
+            Visible to workspace members. ARIA reads the Shared Working version.
           </span>
         </div>
       ) : null}

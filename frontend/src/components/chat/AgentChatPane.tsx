@@ -345,11 +345,11 @@ export default function AgentChatPane({
               }`}>
                 <span className="min-w-0">
                   Visible only to you. {sharedLumoCanWrite
-                    ? 'Lumo edits the Shared Working version directly.'
+                    ? 'ARIA edits the Shared Working version directly.'
                     : hasPrivateWorkingCopy
-                      ? 'Lumo edits My draft, not the Shared workspace.'
+                      ? 'ARIA edits My draft, not the Shared workspace.'
                       : canReceivePrivateWorkingCopy
-                        ? 'Preparing My draft for Lumo changes…'
+                        ? 'Preparing My draft for ARIA changes…'
                         : 'Viewer access is read-only.'}
                 </span>
                 {canOpenPrivateWorkingCopy ? (
@@ -373,8 +373,8 @@ export default function AgentChatPane({
                   chatAttachments={chatAttachments}
                   placeholder={isSharedWorkspace
                     ? sharedLumoCanWrite
-                      ? 'Ask Lumo to work on this shared workspace…'
-                      : 'Ask Lumo about this shared workspace…'
+                      ? 'Ask ARIA to work on this shared workspace…'
+                      : 'Ask ARIA about this shared workspace…'
                     : undefined}
                   chatInputRef={chatInputRef}
                   attachmentInputRef={attachmentInputRef}
@@ -419,8 +419,8 @@ export default function AgentChatPane({
                 personaDisplayName={personaDisplayName}
                 emptyStateDescription={isSharedWorkspace
                   ? sharedLumoCanWrite
-                    ? 'Ask Lumo to explain, summarize, or update the shared working files.'
-                    : 'Ask Lumo to explain or analyze the shared workspace without changing it.'
+                    ? 'Ask ARIA to explain, summarize, or update the shared working files.'
+                    : 'Ask ARIA to explain or analyze the shared workspace without changing it.'
                   : undefined}
                 messageBubbleMaxWidth={messageBubbleMaxWidth}
                 markdownComponents={markdownComponents}

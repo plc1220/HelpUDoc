@@ -3071,7 +3071,7 @@ export default function WorkspacePage() {
   const handlePetDirective = useCallback((directive: Extract<ParsedSlashDirective, { kind: 'pet' }>) => {
     const nextVisible = directive.action === 'on';
     setLumoVisibility(nextVisible);
-    addLocalSystemMessage(nextVisible ? 'Lumo is back.' : 'Lumo is hidden until you use /pet on.');
+    addLocalSystemMessage(nextVisible ? 'The desk pet is back.' : 'The desk pet is hidden until you use /pet on.');
   }, [addLocalSystemMessage, setLumoVisibility]);
 
   const loadSchedulesForWorkspace = useCallback(async (workspaceId: string | null) => {
@@ -8003,7 +8003,7 @@ export default function WorkspacePage() {
             }}
             className={`min-w-0 flex-1 text-left text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}
           >
-            Ask Lumo about this artifact
+            Ask ARIA about this artifact
           </button>
           <button
             type="button"
@@ -8035,7 +8035,7 @@ export default function WorkspacePage() {
             <MobileLumoAvatar size={42} busy={isStreaming} notify={hasPendingInterruptMessage} />
             <span className="min-w-0">
               <span className={`block text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
-                Lumo Studio
+                ARIA
               </span>
               <span className={`block truncate text-xs font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
                 {selectedWorkspace?.name || 'New Workspace'}
@@ -8154,7 +8154,7 @@ export default function WorkspacePage() {
             messages={messages}
             isStreaming={isStreaming}
             personaDisplayName={personaDisplayName}
-            emptyStateDescription="Ask Lumo to inspect files, generate artifacts, or revise the canvas."
+            emptyStateDescription="Ask ARIA to inspect files, generate artifacts, or revise the canvas."
             messageBubbleMaxWidth="min(100%, 40rem)"
             markdownComponents={markdownComponents}
             expandedToolMessages={expandedToolMessages}
@@ -8550,7 +8550,7 @@ export default function WorkspacePage() {
                       isDarkMode ? 'border-slate-700/80 bg-slate-950/80' : 'border-slate-200 bg-white'
                     }`}>
                       <textarea
-                        placeholder="Ask Lumo anything…"
+                        placeholder="Ask ARIA anything…"
                         value={chatMessage}
                         ref={chatInputRef}
                         onChange={handleChatInputChange}

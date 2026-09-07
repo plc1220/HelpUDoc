@@ -101,21 +101,26 @@ const LoginPage = () => {
 
       <section className="lumo-login-intro" aria-labelledby="lumo-login-heading">
         <div className="lumo-login-brand">
-          <img src="/lumo-icon-512.png" alt="" className="lumo-login-mark" />
-          <span>Lumo</span>
-          <span className="lumo-login-product">Studio</span>
+          {/* The lockup already reads "Suruhanjaya Kredit Pengguna", so it carries
+              the alt text and the adjacent spans are the product name alone. */}
+          <img
+            src="/skp-logo.png"
+            alt="Suruhanjaya Kredit Pengguna — Consumer Credit Commission"
+            className="lumo-login-mark"
+          />
+          <span>ARIA</span>
         </div>
-        <p className="lumo-login-eyebrow">Trusted knowledge, ready for work</p>
-        <h1 id="lumo-login-heading">Welcome to Lumo Studio</h1>
+        <p className="lumo-login-eyebrow">Artificial Regulatory Intelligence Assistant</p>
+        <h1 id="lumo-login-heading">Welcome to ARIA</h1>
         <p className="lumo-login-description">
-          Your workspace for knowledge, memory, skills, and workflows.
+          Your workspace for regulatory knowledge, drafting, and review.
         </p>
-        <p className="lumo-login-promise">Lumo turns trusted knowledge into useful work.</p>
+        <p className="lumo-login-promise">Everything stays within the SKP environment.</p>
       </section>
 
       <Card className="lumo-login-card" width="100%" maxWidth={440} padding={8}>
         <div className="lumo-login-card-heading">
-          <p className="lumo-login-card-kicker">Lumo Studio</p>
+          <p className="lumo-login-card-kicker">ARIA</p>
           <h2>{authMode === 'headers' ? 'Development sign-in' : 'Continue to your workspace'}</h2>
           <p>{authMode === 'headers'
             ? 'Use a local identity for this development environment.'

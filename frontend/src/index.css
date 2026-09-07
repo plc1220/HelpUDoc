@@ -1279,7 +1279,7 @@ body {
   color: var(--color-text-primary);
 }
 
-/* Lumo Studio — Astryx-first chat and authentication surfaces */
+/* ARIA — Astryx-first chat and authentication surfaces */
 .lumo-agent-pane {
   display: flex;
   min-height: 0;
@@ -1907,9 +1907,12 @@ body {
   letter-spacing: -0.02em;
 }
 
+/* The SKP lockup is a wide horizontal image, not a square icon: fix the height
+   and let the width follow, or the wordmark inside it distorts. */
 .lumo-login-mark {
-  width: 40px;
-  height: 40px;
+  height: 34px;
+  width: auto;
+  object-fit: contain;
 }
 
 .lumo-login-product {

@@ -14,6 +14,14 @@ import {
   type WorkspaceCollaborationVisibility,
 } from './workspaceCollaborationPolicy';
 
+/**
+ * How a person asks the agent for a reply in Workspace Chat.
+ *
+ * Deliberately not a global regex: `lastIndex` would carry between calls and
+ * make the result depend on the message tested before it.
+ */
+const AGENT_MENTION = /(^|\s)@(aria|lumo)\b/i;
+
 export type WorkspaceCollaborationStatus =
   | 'open'
   | 'discussing'
@@ -174,7 +182,11 @@ export class WorkspaceCollaborationService {
         body,
         replyToMessageId: replyTo?.id || null,
         threadRootId: replyTo ? (replyTo.threadRootId || replyTo.id) : null,
-        mentionsLumo: /(^|\s)@lumo\b/i.test(body),
+        // Both spellings are accepted. The product is now ARIA, but @lumo is
+        // what every message written before the rename used, and a client can
+        // lag a deploy. The column keeps its old name so stored rows stay
+        // readable; only the text a person types has changed.
+        mentionsLumo: AGENT_MENTION.test(body),
       });
       if (mentionedUserIds.length) {
         await tx('workspace_team_message_mentions').insert(
@@ -200,10 +212,10 @@ export class WorkspaceCollaborationService {
     }
     const message = await this.getTeamMessage(workspaceId, messageId, userId);
     if (message.authorType !== 'user' || message.authorId !== userId) {
-      throw new AccessDeniedError('Lumo can only be invoked from your own Workspace Chat message');
+      throw new AccessDeniedError('ARIA can only be invoked from your own Workspace Chat message');
     }
     if (!message.mentionsLumo) {
-      throw new ConflictError('Tag @Lumo in the message to request a response');
+      throw new ConflictError('Tag @ARIA in the message to request a response');
     }
     return message;
   }

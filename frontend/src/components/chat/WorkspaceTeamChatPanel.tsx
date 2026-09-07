@@ -182,7 +182,7 @@ export default function WorkspaceTeamChatPanel({
   const mentionSuggestions = useMemo(() => {
     if (mentionQuery === null) return [];
     const options = [
-      { id: 'lumo', displayName: 'Lumo', role: canLumoWrite ? 'AI · can edit shared' : 'AI · read-only' },
+      { id: 'lumo', displayName: 'ARIA', role: canLumoWrite ? 'AI · can edit shared' : 'AI · read-only' },
       ...collaborators.map((collaborator) => ({
         id: collaborator.userId,
         displayName: collaborator.displayName,
@@ -207,7 +207,7 @@ export default function WorkspaceTeamChatPanel({
       setError('');
     } catch (invokeError) {
       setLumoRetryMessageId(sourceMessageId);
-      setError(invokeError instanceof Error ? invokeError.message : 'Lumo could not respond');
+      setError(invokeError instanceof Error ? invokeError.message : 'ARIA could not respond');
     } finally {
       setLumoBusyMessageId(null);
     }
@@ -405,7 +405,7 @@ export default function WorkspaceTeamChatPanel({
               <span># team-chat</span>
             </div>
             <p className={`mt-0.5 text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              Visible to workspace members. Message normally, or tag <strong>@Lumo</strong> for {canLumoWrite
+              Visible to workspace members. Message normally, or tag <strong>@ARIA</strong> for {canLumoWrite
                 ? 'help that can update shared files directly.'
                 : canPropose
                   ? 'read-only guidance. Work privately to make edits.'
@@ -429,7 +429,7 @@ export default function WorkspaceTeamChatPanel({
             <span>{error || notice}</span>
             {lumoRetryMessageId ? (
               <Button
-                label="Retry Lumo"
+                label="Retry ARIA"
                 size="sm"
                 variant="secondary"
                 onClick={() => void invokeLumo(lumoRetryMessageId)}
@@ -456,7 +456,7 @@ export default function WorkspaceTeamChatPanel({
                 Start the workspace conversation
               </p>
               <p className={`mt-1 text-xs leading-5 ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                Share context, tag teammates, or ask @Lumo about the Shared Working version.
+                Share context, tag teammates, or ask @ARIA about the Shared Working version.
               </p>
             </div>
           </div>
@@ -475,7 +475,7 @@ export default function WorkspaceTeamChatPanel({
               }`}>
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-violet-500">
                   <Bot size={16} />
-                  Lumo is checking the shared workspace
+                  ARIA is checking the shared workspace
                 </div>
                 <ChatToolCalls
                   calls={[{
@@ -510,7 +510,7 @@ export default function WorkspaceTeamChatPanel({
             rows={3}
             width="100%"
             placeholder={canComment
-              ? `Message the team… Use @Lumo for ${canLumoWrite ? 'shared file help' : 'read-only guidance'}`
+              ? `Message the team… Use @ARIA for ${canLumoWrite ? 'shared file help' : 'read-only guidance'}`
               : 'Viewer access is read-only'}
             isDisabled={!canComment || sending}
             disabledMessage="Commenter access is required to post in Workspace Chat."

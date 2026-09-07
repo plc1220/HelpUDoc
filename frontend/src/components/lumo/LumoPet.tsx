@@ -353,8 +353,8 @@ function LumoPetContent({
         type="button"
         className="lumo-close-button"
         onClick={onClose}
-        aria-label="Close Lumo pet"
-        title="Close Lumo"
+        aria-label="Close the desk pet"
+        title="Close the desk pet"
       >
         <X size={15} strokeWidth={2.25} aria-hidden />
       </button>
@@ -371,11 +371,11 @@ function LumoPetContent({
             suppressClickRef.current = false;
           }
         }}
-        aria-label="Lumo. Double click to wave, drag to move."
+        aria-label="Desk pet. Double click to wave, drag to move."
         title="Double click to wave. Drag to move."
       >
         <span className="lumo-sprite" aria-hidden style={bg} />
-        <span className="sr-only">Lumo</span>
+        <span className="sr-only">Desk pet</span>
       </button>
     </div>
   );

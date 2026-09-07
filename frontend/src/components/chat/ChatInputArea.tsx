@@ -216,7 +216,7 @@ export default function ChatInputArea({
               onKeyUp={onChatInputKeyUp}
               onSelect={onChatInputSelectionChange}
               onPaste={onChatInputPaste}
-              aria-label="Message Lumo"
+              aria-label="Message ARIA"
             />
           )}
           footerActions={(

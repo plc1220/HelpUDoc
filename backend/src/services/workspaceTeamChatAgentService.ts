@@ -120,11 +120,13 @@ export class WorkspaceTeamChatAgentService {
       sharedTeamChannel: true,
     });
     if (!authToken) {
-      throw new HttpError(503, 'Lumo shared-channel policy signing is not configured');
+      throw new HttpError(503, 'ARIA shared-channel policy signing is not configured');
     }
 
     const question = sourceMessage.body
-      .replace(/(^|\s)@lumo\b[:,]?/ig, '$1')
+      // Strip the address so the agent reads the question, not the mention.
+      // Both spellings, for the same reason the parser accepts both.
+      .replace(/(^|\s)@(aria|lumo)\b[:,]?/ig, '$1')
       .trim();
     const workingVersionLabel = 'the current Shared working version';
     const writeInstruction = canWriteSharedWorkspace

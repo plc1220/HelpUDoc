@@ -27,7 +27,7 @@ export default function ChatMessageList({
   messages,
   isStreaming,
   personaDisplayName,
-  emptyStateDescription = 'Ask Lumo to inspect files, create an artifact, or run a workflow.',
+  emptyStateDescription = 'Ask ARIA to inspect files, create an artifact, or run a workflow.',
   messageBubbleMaxWidth,
   markdownComponents,
   expandedToolMessages,
