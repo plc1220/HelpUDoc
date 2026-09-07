@@ -84,6 +84,15 @@ export interface WorkspaceSkillRuntimePin {
   available: boolean;
 }
 
+export interface WorkspaceSkillDraftRuntimePin {
+  skillKey: string;
+  draftId: string;
+  versionId: string;
+  manifestHash: string;
+  displayName: string;
+  description: string | null;
+}
+
 export interface DirectoryUser {
   id: string;
   displayName: string;
@@ -1185,6 +1194,46 @@ export class UserService {
         && row.pinnedSemanticVersion === row.semanticVersion
         && row.pinnedManifestHash === row.manifestHash,
     }));
+  }
+
+  /**
+   * Private skill drafts this user runs inside this workspace. The caller is
+   * matched on `ownerUserId` here rather than only when the pin is created: a
+   * workspace can change hands, and a pin row on its own must never authorise
+   * somebody else's draft.
+   *
+   * The returned `versionId` is the draft revision id, which is a uuid, and
+   * `manifestHash` comes from the same `computePackageManifestHash` the agent
+   * recomputes from disk. That is what lets a draft ride the existing exact
+   * version pin path with no change to the agent's resolver.
+   */
+  async getWorkspaceSkillDraftRuntimePins(
+    workspaceId: string,
+    userId: string,
+  ): Promise<WorkspaceSkillDraftRuntimePin[]> {
+    const rows = await this.db('private_workspace_skill_draft_pins as pin')
+      .join('private_skill_drafts as draft', 'draft.id', 'pin.draftId')
+      .join('skill_draft_revisions as revision', 'revision.id', 'pin.draftRevisionId')
+      .select(
+        'draft.proposedSkillKey as skillKey',
+        'pin.draftId',
+        'pin.draftRevisionId as versionId',
+        'revision.manifestHash',
+        'draft.displayName',
+        'draft.description',
+      )
+      .where({ 'pin.workspaceId': workspaceId, 'draft.ownerUserId': userId })
+      .orderBy('draft.proposedSkillKey', 'asc');
+    return rows
+      .filter((row: any) => row.skillKey && row.manifestHash)
+      .map((row: any) => ({
+        skillKey: String(row.skillKey),
+        draftId: String(row.draftId),
+        versionId: String(row.versionId),
+        manifestHash: String(row.manifestHash),
+        displayName: String(row.displayName || row.skillKey),
+        description: row.description ? String(row.description) : null,
+      }));
   }
 
   /**

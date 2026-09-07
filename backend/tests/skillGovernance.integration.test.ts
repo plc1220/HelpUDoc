@@ -530,3 +530,141 @@ test('a draft keeps subfolder files across partial saves', { skip: !enabled }, a
     await db.destroy();
   }
 });
+
+test('a private draft runs only in a private workspace its author owns', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const authorId = uuidv4();
+  const otherId = uuidv4();
+  const privateWorkspaceId = uuidv4();
+  const teamWorkspaceId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `private-run-${suffix}`;
+  let draftId: string | null = null;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+    const users = new UserService(database);
+
+    await db('users').insert([
+      {
+        id: authorId,
+        externalId: `private-run-author-${suffix}`,
+        email: `private-run-author-${suffix}@example.test`,
+        displayName: 'Private run author',
+        isAdmin: false,
+      },
+      {
+        id: otherId,
+        externalId: `private-run-other-${suffix}`,
+        email: `private-run-other-${suffix}@example.test`,
+        displayName: 'Private run bystander',
+        isAdmin: false,
+      },
+    ]);
+    await db('workspaces').insert([
+      {
+        id: privateWorkspaceId,
+        name: `Private run ${suffix}`,
+        slug: `private-run-${suffix}`,
+        ownerId: authorId,
+        visibility: 'private',
+        workspaceType: 'private',
+      },
+      {
+        id: teamWorkspaceId,
+        name: `Team run ${suffix}`,
+        slug: `team-run-${suffix}`,
+        ownerId: authorId,
+        visibility: 'team',
+        workspaceType: 'team',
+      },
+    ]);
+
+    const created = await governance.createDraft(authorId, { proposalType: 'new' });
+    draftId = String(created.id);
+    const named = await governance.updateDraft(authorId, draftId, Number(created.draftRevision), {
+      proposedSkillKey: skillKey,
+      displayName: 'Private run skill',
+      description: 'Runs without Team review.',
+      files: [{
+        path: 'SKILL.md',
+        content: `---\nname: ${skillKey}\ndescription: Runs without Team review.\n---\n\n# ${skillKey}\n`,
+      }],
+    });
+
+    // No Team is involved anywhere in this test: a user with no Team membership
+    // must still be able to run their own skill.
+    assert.deepEqual(named.eligibleTeams, []);
+
+    await governance.pinWorkspaceSkillDraft(authorId, privateWorkspaceId, draftId);
+    const runtimePins = await users.getWorkspaceSkillDraftRuntimePins(privateWorkspaceId, authorId);
+    assert.equal(runtimePins.length, 1);
+    assert.equal(runtimePins[0].skillKey, skillKey);
+    assert.match(runtimePins[0].manifestHash, /^[a-f0-9]{64}$/);
+
+    // The package the agent will load has to exist on disk under the exact
+    // revision id, and its recomputed manifest must match the signed pin.
+    const packagePath = path.join(
+      skillsRoot,
+      '.governed-versions',
+      'packages',
+      skillKey,
+      runtimePins[0].versionId,
+    );
+    assert.ok(await fs.stat(path.join(packagePath, 'SKILL.md')).then(() => true, () => false));
+
+    // A workspace the author owns but shares with a Team must never inherit it.
+    await assert.rejects(
+      () => governance.pinWorkspaceSkillDraft(authorId, teamWorkspaceId, draftId!),
+      (error: any) => error?.code === 'SKILL_ACTION_FORBIDDEN',
+    );
+    // Nor may anybody else reach the draft or the pin.
+    await assert.rejects(
+      () => governance.pinWorkspaceSkillDraft(otherId, privateWorkspaceId, draftId!),
+      (error: any) => error?.code === 'SKILL_RESOURCE_NOT_FOUND',
+    );
+    assert.deepEqual(await users.getWorkspaceSkillDraftRuntimePins(privateWorkspaceId, otherId), []);
+
+    // Editing a pinned draft moves the pin onto the new revision, so the
+    // workspace runs the edit rather than the revision that was pinned.
+    const edited = await governance.updateDraft(authorId, draftId, Number(named.draftRevision), {
+      files: [{
+        path: 'SKILL.md',
+        content: `---\nname: ${skillKey}\ndescription: Runs without Team review.\n---\n\n# ${skillKey}\n\nEdited.\n`,
+      }],
+    });
+    const afterEdit = await users.getWorkspaceSkillDraftRuntimePins(privateWorkspaceId, authorId);
+    assert.equal(afterEdit.length, 1);
+    assert.notEqual(afterEdit[0].versionId, runtimePins[0].versionId);
+    assert.equal(afterEdit[0].versionId, String(edited.currentDraftRevisionId));
+    assert.ok(await fs.stat(path.join(
+      skillsRoot, '.governed-versions', 'packages', skillKey, afterEdit[0].versionId, 'SKILL.md',
+    )).then(() => true, () => false));
+    // The superseded package is pruned; the database keeps every revision row.
+    assert.equal(await fs.stat(packagePath).then(() => true, () => false), false);
+
+    await governance.unpinWorkspaceSkillDraft(authorId, privateWorkspaceId, draftId);
+    assert.deepEqual(await users.getWorkspaceSkillDraftRuntimePins(privateWorkspaceId, authorId), []);
+  } finally {
+    await fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', skillKey), {
+      recursive: true,
+      force: true,
+    }).catch(() => undefined);
+    if (draftId) {
+      await db('private_workspace_skill_draft_pins').where({ draftId }).del().catch(() => undefined);
+      await db('skill_draft_revision_files')
+        .whereIn('draftRevisionId', db('skill_draft_revisions').select('id').where({ draftId }))
+        .del().catch(() => undefined);
+      await db('private_skill_drafts').where({ id: draftId }).update({ currentDraftRevisionId: null }).catch(() => undefined);
+      await db('skill_draft_revisions').where({ draftId }).del().catch(() => undefined);
+      await db('private_skill_drafts').where({ id: draftId }).del().catch(() => undefined);
+    }
+    await db('audit_events').whereIn('actorUserId', [authorId, otherId]).del().catch(() => undefined);
+    await db('workspaces').whereIn('id', [privateWorkspaceId, teamWorkspaceId]).del().catch(() => undefined);
+    await db('users').whereIn('id', [authorId, otherId]).del().catch(() => undefined);
+    await db.destroy();
+  }
+});

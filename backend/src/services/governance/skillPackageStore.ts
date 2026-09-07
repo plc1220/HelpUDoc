@@ -144,6 +144,15 @@ export class SkillPackageStore {
     }));
   }
 
+  /**
+   * Where `materializeVersion` places a package. Exposed so a caller can test
+   * for an already-materialized package before paying to rebuild it, and can
+   * remove one it no longer needs.
+   */
+  versionPackagePath(skillKey: string, versionId: string): string {
+    return path.join(this.versionsRoot, skillKey, versionId);
+  }
+
   async materializeVersion(
     skillKey: string,
     versionId: string,
@@ -153,7 +162,7 @@ export class SkillPackageStore {
     if (computePackageManifestHash(files) !== manifestHash) {
       governanceError(503, 'SKILL_MATERIALIZATION_UNAVAILABLE', 'Frozen candidate manifest failed its integrity check');
     }
-    const target = path.join(this.versionsRoot, skillKey, versionId);
+    const target = this.versionPackagePath(skillKey, versionId);
     const temporary = `${target}.${uuidv4()}.tmp`;
     await fs.mkdir(temporary, { recursive: true });
     try {

@@ -4,7 +4,7 @@ import type { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import type { DatabaseService } from '../databaseService';
 import { skillsRoot } from '../skills/constants';
-import { collectSkillIds } from '../skills/registry';
+import { collectSkillIds, pathExists } from '../skills/registry';
 import { GovernanceIdempotency } from './governanceIdempotency';
 import { withGovernanceLock } from './governanceLocks';
 import { SkillPackageValidator } from './skillPackageValidator';
@@ -104,6 +104,10 @@ export class SkillGovernanceService {
         )
         .select(this.db.raw(
           'EXISTS (SELECT 1 FROM skill_review_requests review WHERE review."draftId" = d.id) AS "hasReviewHistory"',
+        ))
+        .select(this.db.raw(
+          '(SELECT COUNT(*) FROM private_workspace_skill_draft_pins pin WHERE pin."draftId" = d.id)'
+          + '::int AS "workspaceUseCount"',
         ))
         .where('d.ownerUserId', userId)
         .orderBy('d.updatedAt', 'desc'),
@@ -252,8 +256,14 @@ export class SkillGovernanceService {
     const hasReviewHistory = Boolean(
       await this.db('skill_review_requests').where({ draftId }).first(),
     );
+    const workspacePins = await this.db('private_workspace_skill_draft_pins as pin')
+      .join('workspaces as w', 'w.id', 'pin.workspaceId')
+      .select('pin.workspaceId', 'w.name as workspaceName', 'pin.draftRevisionId', 'pin.pinnedAt')
+      .where('pin.draftId', draftId)
+      .orderBy('w.name', 'asc');
     return {
       ...draft,
+      workspacePins,
       draftRevision: Number(draft.draftRevision),
       etag: `"${draft.draftRevision}"`,
       files: await Promise.all(files.map(async (file) => ({
@@ -317,12 +327,13 @@ export class SkillGovernanceService {
     }
 
     const nextRevision = expectedRevision + 1;
-    await this.createDraftRevision({
+    const nextFileList = [...nextFiles.values()];
+    const revision = await this.createDraftRevision({
       draftId,
       userId,
       revisionNumber: nextRevision,
       parentRevisionId: draft.currentDraftRevisionId,
-      files: [...nextFiles.values()],
+      files: nextFileList,
       validationSummary: {},
       updateDraft: {
         expectedRevision,
@@ -332,6 +343,10 @@ export class SkillGovernanceService {
         description: mutation.description === undefined ? draft.description : mutation.description.trim(),
       },
     });
+    // A workspace that uses this draft follows the edit. Re-materializing here
+    // keeps the token-building read path free of writes, and the old package is
+    // pruned only after the pins point at the new revision.
+    await this.advanceDraftPins(draftId, nextSkillKey, revision.id, nextFileList, draft.proposedSkillKey);
     const auditEventId = await this.audit({
       actorUserId: userId,
       actorRole: 'skill_proposer',
@@ -366,6 +381,11 @@ export class SkillGovernanceService {
         return 'archived' as const;
       }
 
+      // Drop the workspace pins first. They cascade from the draft, but their
+      // `draftRevisionId` foreign key is RESTRICT, so leaving them to the same
+      // cascade as the revisions they point at can abort the delete.
+      await this.db('private_workspace_skill_draft_pins').where({ draftId }).del();
+      await this.pruneUnpinnedDraftPackages(draftId, draft.proposedSkillKey);
       await this.db('private_skill_drafts').where({ id: draftId }).del();
       return 'deleted' as const;
     });
@@ -1881,6 +1901,201 @@ export class SkillGovernanceService {
         accessReasons: effective.reasons[pin.skillId] || [],
       })),
     };
+  }
+
+  /**
+   * Make a private draft runnable inside one of the owner's own private
+   * workspaces. This is the only way a skill reaches the runtime without Team
+   * review, and the spec bounds it tightly: "A Private Workspace may use a
+   * private skill proposal for testing, but a Team Workspace or published
+   * workspace cannot inherit or invoke that private proposal."
+   */
+  async pinWorkspaceSkillDraft(userId: string, workspaceId: string, draftId: string): Promise<JsonRecord> {
+    const draft = await this.ownedDraft(userId, draftId);
+    const workspace = await this.requirePrivateWorkspaceOwner(userId, workspaceId);
+    const skillKey = normalizeGovernedSkillKey(draft.proposedSkillKey || '');
+    if (!skillKey) {
+      governanceError(422, 'SKILL_VALIDATION_FAILED', 'Give the draft a skill ID before using it in a workspace', {
+        field: 'proposedSkillKey',
+      });
+    }
+
+    // An exact pin outranks the mutable default in `find_skill_for_context`, so
+    // the key decides what this workspace ends up shadowing.
+    const existingSkill = await this.db('skills').where({ skillKey }).first();
+    if (draft.proposalType === 'improvement') {
+      // Shadowing the source skill is the point of an improvement draft: the
+      // proposer needs to run the change before submitting it. Requiring the
+      // entitlement keeps the draft from granting access the user did not have.
+      const sourceSkill = await this.resolveSkill(draft.sourceSkillId || '');
+      if (!sourceSkill) {
+        governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'The skill this improvement is based on no longer exists');
+      }
+      const effective = await this.effectiveSkillAccess(userId);
+      if (!effective.skillIds.includes(sourceSkill.id)) {
+        governanceError(403, 'SKILL_ACTION_FORBIDDEN', 'You are not entitled to the skill this improvement replaces');
+      }
+    } else if (existingSkill) {
+      governanceError(409, 'SKILL_REVISION_CONFLICT', 'This skill ID is already governed');
+    }
+
+    const files = await this.packageStore.draftFiles(draft.currentDraftRevisionId);
+    const validation = await this.validateSnapshot(draft, files);
+    if (!validation.valid) {
+      // A malformed SKILL.md raises inside the agent's frontmatter parser, so
+      // refuse to publish one into the package cache at all.
+      governanceError(422, 'SKILL_VALIDATION_FAILED', 'Fix the draft before using it in a workspace', {
+        issues: validation.issues,
+        validation,
+      });
+    }
+
+    await this.materializeDraftRevision(skillKey, draft.currentDraftRevisionId, files);
+    await this.db('private_workspace_skill_draft_pins').insert({
+      workspaceId,
+      draftId,
+      draftRevisionId: draft.currentDraftRevisionId,
+    }).onConflict(['workspaceId', 'draftId']).merge({
+      draftRevisionId: draft.currentDraftRevisionId,
+      pinnedAt: this.db.fn.now(),
+    });
+
+    const auditEventId = await this.audit({
+      actorUserId: userId,
+      actorRole: 'skill_proposer',
+      action: 'skill_draft.private_pin_added',
+      resourceType: 'private_skill_draft',
+      resourceId: draftId,
+      metadata: {
+        workspaceId,
+        skillKey,
+        draftRevisionId: draft.currentDraftRevisionId,
+        shadowsSkillId: existingSkill?.id || null,
+      },
+    });
+    return {
+      workspaceId,
+      draftId,
+      skillKey,
+      draftRevisionId: draft.currentDraftRevisionId,
+      workspaceName: workspace.name,
+      auditEventId,
+    };
+  }
+
+  async unpinWorkspaceSkillDraft(userId: string, workspaceId: string, draftId: string): Promise<JsonRecord> {
+    await this.ownedDraft(userId, draftId);
+    await this.requirePrivateWorkspaceOwner(userId, workspaceId);
+    const removed = await this.db('private_workspace_skill_draft_pins').where({ workspaceId, draftId }).del();
+    if (!removed) {
+      governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'This draft is not used in that workspace');
+    }
+    await this.pruneUnpinnedDraftPackages(draftId);
+    const auditEventId = await this.audit({
+      actorUserId: userId,
+      actorRole: 'skill_proposer',
+      action: 'skill_draft.private_pin_removed',
+      resourceType: 'private_skill_draft',
+      resourceId: draftId,
+      metadata: { workspaceId },
+    });
+    return { workspaceId, draftId, auditEventId };
+  }
+
+  async listWorkspaceSkillDraftPins(userId: string, workspaceId: string): Promise<JsonRecord> {
+    await this.requirePrivateWorkspaceOwner(userId, workspaceId);
+    const pins = await this.db('private_workspace_skill_draft_pins as pin')
+      .join('private_skill_drafts as d', 'd.id', 'pin.draftId')
+      .select(
+        'pin.workspaceId',
+        'pin.draftId',
+        'pin.draftRevisionId',
+        'pin.pinnedAt',
+        'd.proposedSkillKey as skillKey',
+        'd.displayName',
+        'd.proposalType',
+        'd.status as draftStatus',
+      )
+      .where({ 'pin.workspaceId': workspaceId, 'd.ownerUserId': userId })
+      .orderBy('d.displayName', 'asc');
+    return { pins };
+  }
+
+  private async requirePrivateWorkspaceOwner(userId: string, workspaceId: string): Promise<any> {
+    const workspace = await this.db('workspaces').where({ id: workspaceId }).first();
+    if (!workspace || workspace.ownerId !== userId) {
+      governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Workspace not found');
+    }
+    if (workspace.workspaceType === 'team' || workspace.visibility === 'team') {
+      governanceError(
+        403,
+        'SKILL_ACTION_FORBIDDEN',
+        'A private draft runs only in a Private Workspace. Submit it for Team review to use it in a Team Workspace.',
+      );
+    }
+    return workspace;
+  }
+
+  /**
+   * Move every pin on *draftId* onto *revisionId*. A no-op for the common case
+   * of a draft nobody uses in a workspace yet.
+   */
+  private async advanceDraftPins(
+    draftId: string,
+    skillKey: string,
+    revisionId: string,
+    files: FileSnapshot[],
+    previousSkillKey?: string,
+  ): Promise<void> {
+    const pinned = await this.db('private_workspace_skill_draft_pins').where({ draftId }).first();
+    if (!pinned) return;
+    await this.materializeDraftRevision(skillKey, revisionId, files);
+    await this.db('private_workspace_skill_draft_pins')
+      .where({ draftId })
+      .update({ draftRevisionId: revisionId, pinnedAt: this.db.fn.now() });
+    await this.pruneUnpinnedDraftPackages(draftId, skillKey);
+    // Renaming the skill ID leaves packages behind under the old key.
+    if (previousSkillKey && normalizeGovernedSkillKey(previousSkillKey) !== skillKey) {
+      await this.pruneUnpinnedDraftPackages(draftId, previousSkillKey);
+    }
+  }
+
+  private async materializeDraftRevision(
+    skillKey: string,
+    draftRevisionId: string,
+    files: FileSnapshot[],
+  ): Promise<string> {
+    const target = this.packageStore.versionPackagePath(skillKey, draftRevisionId);
+    // A revision is immutable, so an existing package is already correct and
+    // `materializeVersion` would fail renaming over it.
+    if (await pathExists(target)) return target;
+    return this.packageStore.materializeVersion(
+      skillKey,
+      draftRevisionId,
+      computePackageManifestHash(files),
+      files,
+    );
+  }
+
+  /**
+   * Drop package directories for revisions of *draftId* that no pin references.
+   * The database keeps every revision row; only the filesystem cache shrinks.
+   */
+  private async pruneUnpinnedDraftPackages(draftId: string, skillKeyHint?: string): Promise<void> {
+    const [draft, pinned] = await Promise.all([
+      this.db('private_skill_drafts').select('proposedSkillKey').where({ id: draftId }).first(),
+      this.db('private_workspace_skill_draft_pins').select('draftRevisionId').where({ draftId }),
+    ]);
+    const skillKey = normalizeGovernedSkillKey(skillKeyHint || draft?.proposedSkillKey || '');
+    if (!skillKey) return;
+    const keep = new Set(pinned.map((row: any) => String(row.draftRevisionId)));
+    const revisions = await this.db('skill_draft_revisions').select('id').where({ draftId });
+    await Promise.all(revisions
+      .filter((revision: any) => !keep.has(String(revision.id)))
+      .map((revision: any) => fs.rm(
+        this.packageStore.versionPackagePath(skillKey, String(revision.id)),
+        { recursive: true, force: true },
+      )));
   }
 
   async authorizeInvocation(userId: string, workspaceId: string, skillKey: string): Promise<JsonRecord> {

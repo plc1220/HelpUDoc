@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { SkillGovernanceService } from '../services/governance/skillGovernanceService';
 import { SkillGovernanceError } from '../services/governance/skillGovernanceService';
 import { HttpError } from '../errors';
+import { privateSkillRuntimeEnabled } from '../services/skills/constants';
 import { getContextFilesForUser } from './settings/skillBuilder';
 import {
   builderActionsToDraftMutation,
@@ -535,6 +536,36 @@ export default function governanceRoutes(service: SkillGovernanceService) {
       const user = requireUser(req);
       const payload = workspacePinSchema.parse({ ...req.body, skillId: req.params.skillId });
       return res.json(await service.pinWorkspaceSkill(user.userId, req.params.workspaceId, payload.skillId, payload.versionId));
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  router.get('/workspaces/:workspaceId/skill-draft-pins', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      return res.json(await service.listWorkspaceSkillDraftPins(user.userId, req.params.workspaceId));
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  router.put('/workspaces/:workspaceId/skill-draft-pins/:draftId', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      if (!privateSkillRuntimeEnabled()) {
+        throw new HttpError(403, 'Private skill execution is disabled on this platform');
+      }
+      return res.json(await service.pinWorkspaceSkillDraft(user.userId, req.params.workspaceId, req.params.draftId));
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  router.delete('/workspaces/:workspaceId/skill-draft-pins/:draftId', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      return res.json(await service.unpinWorkspaceSkillDraft(user.userId, req.params.workspaceId, req.params.draftId));
     } catch (error) {
       return handleError(res, error);
     }
