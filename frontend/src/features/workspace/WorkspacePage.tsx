@@ -7878,9 +7878,9 @@ export default function WorkspacePage() {
   };
 
   const mobileCanvasView = (
-    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0e1728]' : 'bg-slate-50'}`}>
+    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}>
       <div className={`flex shrink-0 items-center justify-between border-b px-4 py-3 ${
-        isDarkMode ? 'border-slate-800 bg-[#08111f]' : 'border-slate-200 bg-white'
+        isDarkMode ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-white'
       }`}>
         <div className="min-w-0">
           <p className={`text-[10px] font-semibold uppercase tracking-normal ${
@@ -7979,7 +7979,7 @@ export default function WorkspacePage() {
           </div>
         ) : (
           <div className={`flex h-full flex-col items-center justify-center px-6 text-center ${
-            isDarkMode ? 'bg-[#0e1728] text-slate-400' : 'bg-slate-50 text-slate-500'
+            isDarkMode ? 'bg-slate-900 text-slate-400' : 'bg-slate-50 text-slate-500'
           }`}>
             <MobileLumoAvatar size={52} notify={hasPendingInterruptMessage} busy={isStreaming} />
             <p className={`mt-4 text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
@@ -7991,7 +7991,7 @@ export default function WorkspacePage() {
           </div>
         )}
       </div>
-      <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
+      <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'}`}>
         <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
           isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-slate-50'
         }`}>
@@ -8022,10 +8022,10 @@ export default function WorkspacePage() {
 
   const mobileWorkspaceShell = (
     <div className={`flex h-[100dvh] w-screen flex-col overflow-hidden font-sans ${
-      isDarkMode ? 'bg-[#020817]' : 'bg-slate-100'
+      isDarkMode ? 'bg-slate-950' : 'bg-slate-100'
     }`}>
       <header className={`shrink-0 border-b px-4 py-3 ${
-        isDarkMode ? 'border-slate-800 bg-[#08111f]' : 'border-slate-200 bg-white'
+        isDarkMode ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-white'
       }`}>
         <div className="flex items-center justify-between gap-3">
           <button
@@ -8136,7 +8136,7 @@ export default function WorkspacePage() {
       </header>
 
       {mobileSurface === 'chat' ? (
-        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0d1524]' : 'bg-white'}`}>
+        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}>
           {selectedWorkspace?.visibility === 'team' ? (
             <div className={`border-b px-4 py-2 text-xs ${
               isDarkMode
@@ -8546,13 +8546,13 @@ export default function WorkspacePage() {
         >
           <div
             className={`flex font-sans h-full min-h-0 overflow-hidden ${
-              isDarkMode ? 'bg-[#020817]' : 'bg-gray-100'
+              isDarkMode ? 'bg-slate-950' : 'bg-gray-100'
             }`}
             style={{ height: layoutHeight }}
           >
             {isLandingPageVisible ? (
               <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
-                isDarkMode ? 'bg-[#020817]' : 'bg-slate-50'
+                isDarkMode ? 'bg-slate-950' : 'bg-slate-50'
               }`}>
                 <div className="flex flex-1 items-center justify-center px-6 py-8">
                   <div className="w-full max-w-4xl">
@@ -8926,7 +8926,7 @@ export default function WorkspacePage() {
             >
               {/* Workspace Header */}
               <div className={`px-4 py-3 flex items-center gap-3 ${
-                isDarkMode ? 'border-b border-[#223047] bg-[#08111f]' : 'border-b border-gray-200'
+                isDarkMode ? 'border-b border-slate-800 bg-slate-950' : 'border-b border-gray-200'
               }`}>
                 <AriaBrandLockup />
                 <span
@@ -9044,7 +9044,7 @@ export default function WorkspacePage() {
                   role="status"
                   className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs ${
                     isDarkMode
-                      ? 'border-b border-[#223047] bg-slate-900/70 text-slate-300'
+                      ? 'border-b border-slate-800 bg-slate-900/70 text-slate-300'
                       : 'border-b border-gray-200 bg-slate-50 text-slate-600'
                   }`}
                 >
@@ -9070,13 +9070,13 @@ export default function WorkspacePage() {
                 {/* File Explorer */}
                 <div
                   className={`flex flex-col overflow-hidden min-h-0 ${
-                    isDarkMode ? 'bg-[#08111f] border-r border-[#223047]' : 'bg-white border-r border-gray-200'
+                    isDarkMode ? 'bg-slate-950 border-r border-slate-800' : 'bg-white border-r border-gray-200'
                   }`}
                   style={filePaneStyles}
                 >
                   <div
                     className={`px-3 py-3 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
-                      } ${isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
+                      } ${isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
                       }`}
                   >
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
@@ -9324,10 +9324,10 @@ export default function WorkspacePage() {
 
                 {/* Content Editor */}
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
-                  isDarkMode ? 'bg-[#0e1728]' : 'bg-gray-50'
+                  isDarkMode ? 'bg-slate-900' : 'bg-gray-50'
                 }`}>
                   <div className={`px-4 py-3 flex justify-between items-center ${
-                    isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
+                    isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
                   }`}>
                     <div className="flex items-center gap-3">
                       <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>

@@ -25,7 +25,7 @@ export default function ChatHeader({
   const isDarkMode = colorMode === 'dark';
   return (
     <div className={`sticky top-0 z-30 border-b px-3 py-2.5 backdrop-blur-md ${
-      isDarkMode ? 'border-[#223047]/70 bg-[#0d1524]/92' : 'border-slate-200/70 bg-white/80'
+      isDarkMode ? 'border-slate-800/70 bg-slate-900/92' : 'border-slate-200/70 bg-white/80'
     }`}>
       <div className="flex min-w-0 items-center justify-between gap-1">
         <div className="flex min-w-0 items-center gap-1 sm:gap-2">

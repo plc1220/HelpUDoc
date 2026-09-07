@@ -34,10 +34,10 @@ export default function PaneResizeHandle({
             ? '-left-px w-[3px] bg-sky-500'
             : disabled
               ? isDarkMode
-                ? 'left-0 w-px bg-[#223047]'
+                ? 'left-0 w-px bg-slate-800'
                 : 'left-0 w-px bg-gray-200'
               : isDarkMode
-                ? 'left-0 w-px bg-[#223047] group-hover:-left-px group-hover:w-[3px] group-hover:bg-sky-500/70 group-focus-visible:-left-px group-focus-visible:w-[3px] group-focus-visible:bg-sky-500/70'
+                ? 'left-0 w-px bg-slate-800 group-hover:-left-px group-hover:w-[3px] group-hover:bg-sky-500/70 group-focus-visible:-left-px group-focus-visible:w-[3px] group-focus-visible:bg-sky-500/70'
                 : 'left-0 w-px bg-gray-200 group-hover:-left-px group-hover:w-[3px] group-hover:bg-sky-400 group-focus-visible:-left-px group-focus-visible:w-[3px] group-focus-visible:bg-sky-400'
         }`}
       />

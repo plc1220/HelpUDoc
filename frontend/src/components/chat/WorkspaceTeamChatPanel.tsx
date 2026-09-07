@@ -392,7 +392,7 @@ export default function WorkspaceTeamChatPanel({
   };
 
   return (
-    <div className={`flex min-h-0 flex-1 flex-col ${isDarkMode ? 'bg-[#0d1524]' : 'bg-slate-50'}`}>
+    <div className={`flex min-h-0 flex-1 flex-col ${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}>
       <div className={`border-b px-4 py-2.5 ${
         isDarkMode ? 'border-slate-800 bg-slate-950/30' : 'border-slate-200 bg-white'
       }`}>
@@ -493,7 +493,7 @@ export default function WorkspaceTeamChatPanel({
         )}
       </div>
 
-      <div className={`border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
+      <div className={`border-t p-3 ${isDarkMode ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'}`}>
         {replyTo ? (
           <div className={`mb-2 flex items-center justify-between rounded-xl px-3 py-2 text-xs ${
             isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'

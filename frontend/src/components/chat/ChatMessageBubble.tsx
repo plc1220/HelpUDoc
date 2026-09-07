@@ -1664,8 +1664,8 @@ export default function ChatMessageBubble({
           );
           const standardChoiceSelectionClass = !numberedChoice && isSelectedChoice
             ? tone === 'dark'
-              ? 'ring-2 ring-[#94c5f8]/65 ring-offset-0'
-              : 'border-[#94c5f8] bg-blue-50 text-blue-800 shadow-[0_0_0_1px_rgba(148,197,248,0.35)]'
+              ? 'ring-2 ring-blue-300/65 ring-offset-0'
+              : 'border-blue-300 bg-blue-50 text-blue-800 shadow-[0_0_0_1px_rgba(148,197,248,0.35)]'
             : '';
 
           return (
@@ -1690,9 +1690,9 @@ export default function ChatMessageBubble({
                     numberedChoice
                       ? `flex w-full items-start justify-between rounded-[1.35rem] border px-5 py-4 text-left transition-all duration-200 ${
                           isSelectedChoice
-                            ? 'border-[#94c5f8] bg-[#94c5f8]/18 text-white shadow-[0_0_0_1px_rgba(148,197,248,0.35)]'
+                            ? 'border-blue-300 bg-blue-300/18 text-white shadow-[0_0_0_1px_rgba(148,197,248,0.35)]'
                             : action.style === 'primary'
-                              ? 'border-[#94c5f8]/55 bg-[#94c5f8]/10 text-white hover:bg-[#94c5f8]/15'
+                              ? 'border-blue-300/55 bg-blue-300/10 text-white hover:bg-blue-300/15'
                               : action.style === 'danger'
                                 ? 'border-rose-400/25 bg-rose-500/10 text-rose-100 hover:bg-rose-500/15'
                                 : 'border-white/10 bg-white/[0.03] text-white/92 hover:border-white/25 hover:bg-white/[0.07]'
@@ -1819,7 +1819,7 @@ export default function ChatMessageBubble({
 
   const agentContainerClassName = 'lumo-assistant-content';
   const toolPanelClassName = isDarkMode
-    ? 'mt-3 border-t border-[#26354d] pt-3'
+    ? 'mt-3 border-t border-slate-800 pt-3'
     : 'mt-3 border-t border-slate-200/80 pt-3';
   const toolButtonClassName = isDarkMode
     ? 'text-xs font-medium text-slate-400 transition-all duration-200 hover:text-slate-200'
