@@ -159,6 +159,7 @@ import AgentChatPane from '../../components/chat/AgentChatPane';
 import ChatInputArea, { type ChatMentionSuggestion } from '../../components/chat/ChatInputArea';
 import ChatMessageList from '../../components/chat/ChatMessageList';
 import LumoPet from '../../components/lumo/LumoPet';
+import { AriaBrandLockup, GovernmentStrip } from '../../components/SkpChrome';
 import lumoSpriteSheet from '../../assets/lumo/lumo-spritesheet.webp';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 import { buildApprovalDraftContent, buildApprovalReview } from '../chat/interrupts/approvalReview';
@@ -8453,9 +8454,13 @@ export default function WorkspacePage() {
 
   return (
     <ThemeProvider theme={theme}>
+      {/* The shell is a column so the government strip spans the full width above
+          every pane, including the drawer and the collapsed rail. The panes keep
+          their own row layout in the inner Box. */}
       <Box
         sx={{
           display: 'flex',
+          flexDirection: 'column',
           height: '100vh',
           maxHeight: '100vh',
           width: '100vw',
@@ -8464,6 +8469,16 @@ export default function WorkspacePage() {
         }}
       >
         <CssBaseline />
+        <GovernmentStrip />
+        <Box
+          sx={{
+            display: 'flex',
+            flex: 1,
+            minHeight: 0,
+            width: '100%',
+            overflow: 'hidden',
+          }}
+        >
         {isMobileViewport ? (
           mobileWorkspaceShell
         ) : (
@@ -8913,6 +8928,11 @@ export default function WorkspacePage() {
               <div className={`px-4 py-3 flex items-center gap-3 ${
                 isDarkMode ? 'border-b border-[#223047] bg-[#08111f]' : 'border-b border-gray-200'
               }`}>
+                <AriaBrandLockup />
+                <span
+                  className={`h-[30px] w-px shrink-0 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`}
+                  aria-hidden="true"
+                />
                 <button
                   type="button"
                   onClick={handleOpenLandingPage}
@@ -9599,6 +9619,7 @@ export default function WorkspacePage() {
         </Box>
           </>
         )}
+        </Box>
       </Box>
       <WorkspaceSchedulesPanel
         open={isSchedulesPanelOpen}

@@ -16,6 +16,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { fetchCapabilities } from '../../../services/activityApi';
+import { GovernmentStrip } from '../../../components/SkpChrome';
 
 type NavItem = {
   label: string;
@@ -104,7 +105,11 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
   );
 
   return (
-    <div className="settings-portal">
+    // A column wrapper so the government strip spans the sidebar as well as the
+    // content. `.settings-portal` keeps its own row layout underneath.
+    <div className="settings-portal-shell">
+      <GovernmentStrip />
+      <div className="settings-portal">
       <aside
         className={`settings-portal-sidebar${isNavigationCollapsed ? ' settings-portal-sidebar-collapsed' : ''}`}
       >
@@ -167,6 +172,7 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
           </div>
         </div>
       </main>
+      </div>
     </div>
   );
 };

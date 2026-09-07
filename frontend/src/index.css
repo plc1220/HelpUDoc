@@ -74,9 +74,19 @@ body {
   color: #f1f5f9;
 }
 
-.settings-portal {
+/* The strip sits above the portal, so the viewport height belongs to the
+   wrapper and the portal fills what is left. */
+.settings-portal-shell {
   display: flex;
   min-height: 100vh;
+  flex-direction: column;
+  background: var(--admin-shell-bg);
+}
+
+.settings-portal {
+  display: flex;
+  flex: 1;
+  min-height: 0;
   background: var(--admin-shell-bg);
   color: var(--text-primary);
 }
