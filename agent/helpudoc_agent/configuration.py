@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -40,6 +41,25 @@ class ModelConfig(BaseModel):
     location: Optional[str] = None
     api_key: Optional[str] = Field(default_factory=lambda: get_agent_runtime_env().gemini_api_key)
     use_vertex_ai: bool = Field(default=False)
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _reject_unexpanded_placeholder(cls, value: object) -> object:
+        """Treat an unresolved `${VAR}` as absent rather than as a key.
+
+        `_expand_env_vars` uses `os.path.expandvars`, which leaves the literal
+        text in place when the variable is unset. That literal is truthy, so a
+        `runtime.yaml` carrying `api_key: ${GEMINI_API_KEY}` on a host without
+        that variable would authenticate with the string `"${GEMINI_API_KEY}"`.
+        Fall back to the environment, which is where the key belongs.
+
+        Scoped to this field on purpose: `runtime.yaml` also holds
+        `url: ${GOOGLE_WORKSPACE_MCP_URL}`, and blanking that trips the
+        "Missing url for http/sse MCP server" guard in `mcp_manager`.
+        """
+        if isinstance(value, str) and re.fullmatch(r"\$\{[^}]*\}", value.strip()):
+            return get_agent_runtime_env().gemini_api_key
+        return value
 
     @property
     def chat_model_name(self) -> str:
@@ -464,6 +484,21 @@ def load_settings(config_path: Path | None = None) -> Settings:
             if parsed_limit >= 1:
                 backend_cfg["recursion_limit"] = parsed_limit
                 config_dict["backend"] = backend_cfg
+
+    # Let the environment override the Vertex routing in the model block. In GKE
+    # `runtime.yaml` is served from `agent-config-pvc`, and the seed init container
+    # skips a PVC that is already populated, so the file on disk is of unknown
+    # vintage. This lets a ConfigMap key flip Vertex — and flip it back — without
+    # re-seeding the volume, which is also the rollback lever.
+    model_cfg = config_dict.get("model") or {}
+    if isinstance(model_cfg, dict):
+        if runtime.google_genai_use_vertexai is not None:
+            model_cfg["use_vertex_ai"] = runtime.google_genai_use_vertexai
+        if runtime.google_cloud_project:
+            model_cfg["project"] = runtime.google_cloud_project
+        if runtime.google_cloud_location:
+            model_cfg["location"] = runtime.google_cloud_location
+        config_dict["model"] = model_cfg
 
     payload = {
         "model": config_dict.get("model", {}),

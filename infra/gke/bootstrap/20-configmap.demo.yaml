@@ -45,3 +45,8 @@ data:
   SANDBOX_INLINE_ENABLED: "false"
   SANDBOX_INLINE_MAX_GLOBAL_JOBS: "4"
   HELPUDOC_SANDBOX_IMAGE: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+  # Route Gemini through Vertex AI (ADC) instead of the AI Studio key.
+  # Overrides use_vertex_ai in runtime.yaml, so it works even when the
+  # agent-config PVC copy is stale. Set to "false" to roll back.
+  GOOGLE_GENAI_USE_VERTEXAI: "true"
+  GOOGLE_CLOUD_LOCATION: asia-southeast1

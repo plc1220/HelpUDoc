@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 
+from helpudoc_agent.config.env import reset_agent_env_caches_for_tests  # noqa: E402
 from helpudoc_agent.configuration import load_settings  # noqa: E402
 from helpudoc_agent.skills_registry import (  # noqa: E402
     collect_tool_names,
@@ -89,3 +90,71 @@ def test_document_skills_bind_and_authorize_direct_office_tool() -> None:
     assert by_id["docx"].allow_unlisted_tools is True
     assert by_id["pptx"].allow_unlisted_tools is True
     assert by_id["xlsx"].allow_unlisted_tools is False
+
+
+def _clear_vertex_env(monkeypatch) -> None:
+    for name in ("GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_vertex_env_vars_override_model_block(monkeypatch) -> None:
+    """A ConfigMap must outrank runtime.yaml.
+
+    On GKE runtime.yaml is served from agent-config-pvc and its seed init
+    container skips a populated volume, so the file on disk is of unknown
+    vintage. The env override is what makes the setting reachable at all.
+    """
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "override-proj")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "asia-southeast1")
+    reset_agent_env_caches_for_tests()
+    try:
+        settings = load_settings()
+        assert settings.model.use_vertex_ai is True
+        assert settings.model.project == "override-proj"
+        assert settings.model.location == "asia-southeast1"
+    finally:
+        reset_agent_env_caches_for_tests()
+
+
+def test_explicit_false_overrides_vertex_in_runtime_yaml(monkeypatch) -> None:
+    """The rollback lever: an explicit false must beat use_vertex_ai: true."""
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    _clear_vertex_env(monkeypatch)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
+    reset_agent_env_caches_for_tests()
+    try:
+        assert load_settings().model.use_vertex_ai is False
+    finally:
+        reset_agent_env_caches_for_tests()
+
+
+def test_absent_vertex_env_keeps_runtime_yaml_value(monkeypatch) -> None:
+    """Unset must mean "do not override", not "false"."""
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    _clear_vertex_env(monkeypatch)
+    reset_agent_env_caches_for_tests()
+    try:
+        settings = load_settings()
+        assert settings.model.use_vertex_ai is True
+        assert settings.model.location == "asia-southeast1"
+    finally:
+        reset_agent_env_caches_for_tests()
+
+
+def test_unexpanded_api_key_placeholder_is_not_used_as_a_key(monkeypatch) -> None:
+    """os.path.expandvars leaves an unset ${VAR} literal, which is truthy."""
+    from helpudoc_agent.configuration import ModelConfig
+
+    for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    reset_agent_env_caches_for_tests()
+    try:
+        assert ModelConfig(name="m", api_key="${GEMINI_API_KEY}").api_key is None
+        monkeypatch.setenv("GEMINI_API_KEY", "real-key")
+        reset_agent_env_caches_for_tests()
+        assert ModelConfig(name="m", api_key="${GEMINI_API_KEY}").api_key == "real-key"
+        assert ModelConfig(name="m", api_key="sk-real").api_key == "sk-real"
+    finally:
+        reset_agent_env_caches_for_tests()

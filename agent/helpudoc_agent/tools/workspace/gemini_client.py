@@ -13,6 +13,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
 
+from ...config.env import resolve_google_auth_mode
 from ...configuration import Settings
 from .timeouts import DEFAULT_HTTP_TIMEOUT, DEFAULT_SEARCH_HTTP_TIMEOUT, seconds_to_ms
 
@@ -28,23 +29,17 @@ class GeminiClientManager:
         self._lite_chat_model: ChatGoogleGenerativeAI | None = None
         self._ingestion_chat_model: ChatGoogleGenerativeAI | None = None
         self._reduce_chat_model: ChatGoogleGenerativeAI | None = None
-        self._api_key = (
-            model_cfg.api_key
-            or os.getenv("GOOGLE_CLOUD_API_KEY")
-            or os.getenv("GEMINI_API_KEY")
-            or os.getenv("GOOGLE_API_KEY")
-        )
-
+        # Check the provider before the credential so a bad provider reports as a
+        # provider error rather than a confusing auth one.
         if model_cfg.provider != "gemini":
             raise ValueError(f"Unsupported model provider {model_cfg.provider}")
 
-        # GEMINI_API_KEY is the credential provisioned by the GKE manifests.
-        # Only use Vertex ADC when no API key is available.
-        use_vertex = model_cfg.use_vertex_ai and not self._api_key
+        self._auth = resolve_google_auth_mode(model_cfg)
+        self._api_key = self._auth.api_key
 
         client_kwargs: dict = {}
 
-        if use_vertex:
+        if self._auth.use_vertex:
             if not model_cfg.project or not model_cfg.location:
                 raise ValueError("Vertex AI mode requires both project and location")
             vertexai.init(project=model_cfg.project, location=model_cfg.location)
@@ -57,15 +52,15 @@ class GeminiClientManager:
             )
         else:
             client_kwargs["vertexai"] = False
-            if self._api_key:
-                client_kwargs["api_key"] = self._api_key
+            if self._auth.api_key:
+                client_kwargs["api_key"] = self._auth.api_key
 
         self.client = self._build_client(client_kwargs)
         self.model_name = model_cfg.chat_model_name
         self.image_model_name = model_cfg.image_model_name
 
     def _build_client(self, client_kwargs: dict[str, Any]) -> Any | None:
-        if not self._api_key and not self._model_cfg.use_vertex_ai:
+        if not self._auth.configured:
             return None
         return genai.Client(
             **client_kwargs,
@@ -73,8 +68,12 @@ class GeminiClientManager:
         )
 
     def _require_configured_client(self) -> None:
-        if not self._api_key and not self._model_cfg.use_vertex_ai:
-            raise RuntimeError("Gemini API key is not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY before using Gemini-backed tools.")
+        if not self._auth.configured:
+            raise RuntimeError(
+                "No Gemini credential is configured. Either set GEMINI_API_KEY, or enable "
+                "use_vertex_ai with a project and location so Vertex can authenticate "
+                "through Application Default Credentials."
+            )
 
     def get_web_tool_chat_model(self) -> ChatGoogleGenerativeAI:
         """Chat model used internally by the public google_search and url_context tools."""

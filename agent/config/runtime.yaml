@@ -11,9 +11,15 @@ model:
   lite_max_output_tokens: 4096
   pro_max_output_tokens: 32768
   image_name: gemini-3.1-flash-image
-  project: my-rd-coe-demo-gen-ai
-  location: global
-  use_vertex_ai: false
+  project: ccob-my-ai-engine-dev
+  # Validated by vertexai.init at startup, so an unsupported value crash-loops the
+  # agent rather than failing at first inference. Regional, not "global": Vertex
+  # embedding models are regional-only.
+  location: asia-southeast1
+  # No api_key here on purpose. os.path.expandvars leaves an unset ${VAR} as the
+  # literal text, which is truthy and would be sent as the key. ModelConfig.api_key
+  # already reads the environment itself.
+  use_vertex_ai: true
 backend:
   workspace_root: backend/workspaces
   virtual_mode: true

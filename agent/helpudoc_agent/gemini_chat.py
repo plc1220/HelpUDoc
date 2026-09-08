@@ -1,11 +1,12 @@
 """Create ChatGoogleGenerativeAI instances with HelpUDoc model settings."""
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 import vertexai
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+from .config.env import resolve_google_auth_mode
 
 if TYPE_CHECKING:
     from .configuration import ModelConfig
@@ -28,12 +29,7 @@ def create_chat_google_generative_ai(
     Prefer ``request_timeout`` (validated alias); ``timeout`` is kept as an ergonomic
     synonym for call sites passing a deadline in seconds.
     """
-    api_key = (
-        cfg.api_key
-        or os.getenv("GOOGLE_CLOUD_API_KEY")
-        or os.getenv("GEMINI_API_KEY")
-        or os.getenv("GOOGLE_API_KEY")
-    )
+    auth = resolve_google_auth_mode(cfg)
     kwargs: dict = {"model": model_name}
     if thinking_level:
         kwargs["thinking_level"] = thinking_level
@@ -43,11 +39,7 @@ def create_chat_google_generative_ai(
     if deadline is not None:
         kwargs["request_timeout"] = float(deadline)
 
-    # A provisioned API key is an explicit credential for the Gemini Developer
-    # API. Prefer it over Vertex ADC so Kubernetes deployments do not silently
-    # depend on an unbound workload identity.
-    use_vertex = cfg.use_vertex_ai and not api_key
-    if use_vertex:
+    if auth.use_vertex:
         if not cfg.project or not cfg.location:
             raise ValueError("Vertex AI mode requires both project and location")
         vertexai.init(project=cfg.project, location=cfg.location)
@@ -56,7 +48,7 @@ def create_chat_google_generative_ai(
         kwargs["location"] = cfg.location
     else:
         kwargs["vertexai"] = False
-        if api_key:
-            kwargs["api_key"] = api_key
+        if auth.api_key:
+            kwargs["api_key"] = auth.api_key
 
     return ChatGoogleGenerativeAI(**kwargs)

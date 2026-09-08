@@ -20,7 +20,7 @@ spec:
         # Copy image-bundled skills/config into PVCs only when the mount is empty,
         # so admin edits on the PVC are preserved across restarts.
         - name: seed-skills
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-agent:latest
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -41,7 +41,7 @@ spec:
             - name: skills-data
               mountPath: /pvc-skills
         - name: seed-plugins
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-agent:latest
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -62,7 +62,7 @@ spec:
             - name: plugins-data
               mountPath: /pvc-plugins
         - name: seed-agent-config
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-agent:latest
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -84,7 +84,7 @@ spec:
               mountPath: /pvc-agent-config
       containers:
         - name: backend
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-backend:latest
           ports:
             - containerPort: 3000
           startupProbe:
@@ -308,7 +308,7 @@ spec:
             - name: agent-config-data
               mountPath: /agent/config
         - name: knowledge-worker
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-backend:latest
           command: ["npm"]
           args: ["run", "worker:knowledge"]
           resources:
@@ -392,7 +392,7 @@ spec:
             - name: workspace-data
               mountPath: /app/workspaces
         - name: agent
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-agent:latest
           ports:
             - containerPort: 8001
           startupProbe:
@@ -440,7 +440,26 @@ spec:
             - name: GCP_TRACE_ENABLED
               value: "false"
             - name: GOOGLE_CLOUD_PROJECT
-              value: my-rd-coe-demo-gen-ai
+              value: ccob-my-ai-engine-dev
+            # Vertex routing. Kept in the ConfigMap rather than baked into
+            # runtime.yaml so it can be flipped without re-seeding
+            # agent-config-pvc, whose seed init container skips a populated
+            # volume. Setting GOOGLE_GENAI_USE_VERTEXAI=false is the rollback.
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_GENAI_USE_VERTEXAI
+                  optional: true
+            - name: GOOGLE_CLOUD_LOCATION
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_CLOUD_LOCATION
+                  optional: true
+            # ADC reads the projected Vertex service-account key from this path.
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /var/secrets/vertex/key.json
             - name: GCP_TRACE_SAMPLE_RATIO
               value: "1.0"
             # Prompt/completion bodies exceed the 256 KiB Cloud Logging entry
@@ -478,11 +497,15 @@ spec:
                 secretKeyRef:
                   name: helpudoc-secrets
                   key: POSTGRES_PASSWORD
+            # Optional because Vertex mode authenticates through ADC and never
+            # reads this. It stays wired so setting GOOGLE_GENAI_USE_VERTEXAI=false
+            # restores key mode without touching the Secret.
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: helpudoc-secrets
                   key: GEMINI_API_KEY
+                  optional: true
             - name: GEMINI_SEARCH_HTTP_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
@@ -692,6 +715,9 @@ spec:
               mountPath: /plugins
             - name: agent-config-data
               mountPath: /agent/config
+            - name: vertex-sa-key
+              mountPath: /var/secrets/vertex
+              readOnly: true
         - name: google-workspace-mcp
           image: python:3.13-slim
           ports:
@@ -747,6 +773,16 @@ spec:
         - name: agent-config-data
           persistentVolumeClaim:
             claimName: agent-config-pvc
+        # optional: the pod still starts without the key, and only the agent's
+        # model calls fail. The post-deploy Gemini smoke test is what catches a
+        # missing or wrong key.
+        - name: vertex-sa-key
+          secret:
+            secretName: helpudoc-secrets
+            optional: true
+            items:
+              - key: VERTEX_SA_JSON
+                path: key.json
 ---
 apiVersion: v1
 kind: Service
