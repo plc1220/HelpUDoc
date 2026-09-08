@@ -23,6 +23,18 @@ import typography from "@tailwindcss/typography";
  * `var(--color-*)`; see frontend/.claude/CLAUDE.md.
  */
 
+// Matches the fallbacks in src/themes/skp.ts so `font-brand` and the theme's own
+// body font degrade to the same stack when Public Sans is unavailable.
+const defaultSans = [
+  '-apple-system',
+  'BlinkMacSystemFont',
+  '"Segoe UI"',
+  'Roboto',
+  'Helvetica',
+  'Arial',
+  'sans-serif',
+];
+
 // Navy-tinted neutrals. 50-300 are the design's surfaces and borders; 800-950
 // are the design's dark-mode surfaces, which double as light-mode ink.
 const neutral = {
@@ -155,6 +167,17 @@ export default {
   ],
   theme: {
     extend: {
+      // The workspace root carries Tailwind's `font-sans`, which resolves to the
+      // platform stack and so overrides the Public Sans that `body` inherits from
+      // the theme. `font-brand` restates the design family for the places that
+      // are measured against the design's own metrics, such as the ARIA lockup,
+      // where the platform font is wide enough to force an extra line.
+      //
+      // This deliberately does not redefine `font-sans`: that would restyle every
+      // element under the workspace root at once.
+      fontFamily: {
+        brand: ['"Public Sans Variable"', '"Public Sans"', ...defaultSans],
+      },
       colors: {
         // Every neutral name collapses onto one ramp. The codebase reaches for
         // slate 1,521 times and gray 101; they were never meant to differ.

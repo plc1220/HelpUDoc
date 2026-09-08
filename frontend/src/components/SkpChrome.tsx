@@ -57,12 +57,28 @@ export const GovernmentStrip: FC<{ context?: string | null }> = ({ context }) =>
 );
 
 /**
- * The SKP lockup, a hairline rule, then the product name over its expansion.
+ * The SKP lockup: logo, then the product name stacked over its expansion.
+ *
+ * This is Option B from the header study. The expansion stays permanently
+ * visible rather than being revealed on hover, and wraps to two short lines
+ * inside a fixed 116px column. Pinning that column is the whole point of the
+ * option: the expansion is the widest thing in the lockup, so bounding it stops
+ * it pushing the workspace breadcrumb across the bar and recovers roughly 100px
+ * for the workspace name, which is the primary object on the screen.
+ *
+ * The break is explicit and `whitespace-nowrap` stops the browser adding its
+ * own. `font-brand` matters here: the workspace root sets Tailwind's `font-sans`,
+ * which resolves to the platform stack, and in that font "Intelligence Assistant"
+ * measures 117px against a 116px column and silently becomes a third line.
+ *
+ * There is no rule inside the lockup — the header draws one after it, which is
+ * what separates the product identity from the breadcrumb.
  *
  * The logo image already reads "Suruhanjaya Kredit Pengguna", so it carries the
  * alt text and the text beside it is the product name alone. The expansion is
- * hidden below `md` because at 8.5px it is unreadable on a phone and the
- * initialism carries the identity on its own.
+ * hidden below `md`, where 8px type is unreadable and the initialism carries the
+ * identity on its own; the fixed column is scoped to the same breakpoint so it
+ * does not leave a gap on a phone.
  */
 export const AriaBrandLockup: FC = () => (
   <span className="flex shrink-0 items-center gap-[11px]">
@@ -71,13 +87,14 @@ export const AriaBrandLockup: FC = () => (
       alt="Suruhanjaya Kredit Pengguna — Consumer Credit Commission"
       className="block h-[30px] w-auto object-contain"
     />
-    <span className="h-[26px] w-px shrink-0 bg-slate-200" aria-hidden="true" />
-    <span className="leading-none">
-      <span className="block text-[15px] font-extrabold tracking-[-0.01em] text-slate-950 dark:text-slate-50">
+    <span className="flex flex-col gap-[3px] font-brand md:w-[116px]">
+      <span className="text-[15px] font-extrabold leading-none tracking-[-0.01em] text-slate-950 dark:text-slate-50">
         ARIA
       </span>
-      <span className="mt-[3px] hidden text-[8.5px] font-semibold uppercase leading-[1.2] tracking-[0.05em] text-teal-600 md:block">
-        Artificial Regulatory Intelligence Assistant
+      <span className="hidden whitespace-nowrap text-[8px] font-semibold uppercase leading-[1.35] tracking-[0.04em] text-teal-600 dark:text-teal-400 md:block">
+        Artificial Regulatory
+        <br />
+        Intelligence Assistant
       </span>
     </span>
   </span>
