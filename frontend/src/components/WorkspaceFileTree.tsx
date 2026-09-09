@@ -16,6 +16,8 @@ import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 
 import type { DashboardArtifactInfo, File as WorkspaceFile, FileStatus } from '../types';
 import { getFileDisplayName, getFileTypeIcon } from '../utils/files';
+import { getFileOwnerLabel } from '../utils/fileOwners';
+import { formatRelativeTime } from '../utils/relativeTime';
 import {
   buildWorkspaceFileTree,
   getWorkspaceAncestorFolderPaths,
@@ -93,6 +95,8 @@ interface WorkspaceFileTreeProps {
   copiedPublicUrlFileId: string | null;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
   fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
+  /** Resolves a file's createdBy id to a name. See utils/fileOwners. */
+  ownerNameById?: Record<string, string>;
   workspaceId?: string;
   onStatusChanged?: () => void;
   readOnly?: boolean;
@@ -211,6 +215,7 @@ const TreeFileRow: React.FC<{
   selectedFiles: Set<string>;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
   fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
+  ownerNameById?: Record<string, string>;
   workspaceId?: string;
   onStatusChanged?: () => void;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
@@ -233,6 +238,7 @@ const TreeFileRow: React.FC<{
   selectedFiles,
   dashboardArtifactsByPath,
   fileStatusById,
+  ownerNameById,
   workspaceId,
   onStatusChanged,
   isDraftWorkspaceFile,
@@ -271,6 +277,16 @@ const TreeFileRow: React.FC<{
   const actionButtonClassName = isDarkMode
     ? 'pointer-events-auto rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100'
     : 'pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700';
+  const fileStatus = fileStatusById?.[fileId];
+  // Narrowed once, as a value rather than a boolean, so the second line can use
+  // it without re-guarding both halves.
+  const statusChip = workspaceId && fileStatus ? { workspaceId, ...fileStatus } : null;
+  const ownerLabel = getFileOwnerLabel(file, ownerNameById ?? {});
+  const editedAt = file.updatedAt ? formatRelativeTime(file.updatedAt) : '';
+  // Joined here rather than in the markup so the separator does not survive a
+  // missing half — an unattributed file should read "3d ago", not "· 3d ago".
+  const metaLabel = [ownerLabel, editedAt].filter(Boolean).join(' · ');
+  const mutedTextClassName = isDarkMode ? 'text-slate-400' : 'text-slate-600';
   const dashboardPath = (file.path || file.name || '').replace(/\\/g, '/');
   const dashboardArtifact = dashboardPath ? dashboardArtifactsByPath?.[dashboardPath] : undefined;
   const dashboardBadge = dashboardArtifact?.status;
@@ -338,21 +354,15 @@ const TreeFileRow: React.FC<{
         }}
         className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
-        <div className="flex min-w-0 flex-col gap-1">
+        <span className="mt-0.5 shrink-0" aria-hidden="true">
+          {fileIcon}
+        </span>
+        {/* Two lines. The name gets the full width on the first; status, owner
+            and age move to the second, where they no longer compete with it for
+            room and no longer sit under the hover actions. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0" aria-hidden="true">
-              {fileIcon}
-            </span>
             <SlidingFileName name={displayName} colorMode={colorMode} />
-            {workspaceId && fileStatusById?.[String(file.id)] && (
-              <FileStatusChip
-                workspaceId={workspaceId}
-                fileId={file.id}
-                status={fileStatusById[String(file.id)].status}
-                drift={fileStatusById[String(file.id)].drift}
-                onChanged={onStatusChanged}
-              />
-            )}
             {dashboardBadge && (
               <span
                 className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
@@ -369,6 +379,42 @@ const TreeFileRow: React.FC<{
               </span>
             )}
           </div>
+          {(statusChip || metaLabel) && (
+            <div className="flex min-w-0 items-center gap-1">
+              {/* -my-1 pulls the 28px control back to the 20px the metadata line
+                  can afford. The button keeps its full hit target; it just stops
+                  charging the row for the part that overhangs. */}
+              {statusChip && (
+                <span className="-my-1 flex shrink-0 items-center">
+                  <FileStatusChip
+                    workspaceId={statusChip.workspaceId}
+                    fileId={file.id}
+                    status={statusChip.status}
+                    drift={statusChip.drift}
+                    compact
+                    onChanged={onStatusChanged}
+                  />
+                </span>
+              )}
+              {/* Drift is a sibling of the chip, not part of it, so it can be
+                  the first thing dropped when the line runs out of room. */}
+              {statusChip?.drift && (
+                <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-700 dark:text-amber-300">
+                  edited since
+                </span>
+              )}
+              {statusChip && metaLabel && (
+                <span className={`shrink-0 text-[10.5px] leading-none ${mutedTextClassName}`} aria-hidden="true">
+                  ·
+                </span>
+              )}
+              {metaLabel && (
+                <span className={`min-w-0 flex-1 truncate text-[10.5px] font-medium leading-none ${mutedTextClassName}`}>
+                  {metaLabel}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       <div className={`pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border pl-2 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${actionsClassName}`}>
@@ -657,6 +703,7 @@ const renderTreeNodes = (
     selectedFiles: Set<string>;
     dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
     fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
+    ownerNameById?: Record<string, string>;
     workspaceId?: string;
     onStatusChanged?: () => void;
     isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
@@ -723,6 +770,7 @@ const renderTreeNodes = (
         selectedFiles={options.selectedFiles}
         dashboardArtifactsByPath={options.dashboardArtifactsByPath}
         fileStatusById={options.fileStatusById}
+        ownerNameById={options.ownerNameById}
         workspaceId={options.workspaceId}
         onStatusChanged={options.onStatusChanged}
         isDraftWorkspaceFile={options.isDraftWorkspaceFile}
@@ -753,6 +801,7 @@ export default function WorkspaceFileTree({
   selectedFiles,
   dashboardArtifactsByPath,
   fileStatusById,
+  ownerNameById,
   workspaceId,
   onStatusChanged,
   readOnly = false,
@@ -947,6 +996,7 @@ export default function WorkspaceFileTree({
               selectedFiles,
               dashboardArtifactsByPath,
               fileStatusById,
+              ownerNameById,
               workspaceId,
               onStatusChanged,
               isDraftWorkspaceFile,

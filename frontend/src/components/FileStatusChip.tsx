@@ -26,7 +26,29 @@ import {
  * at them. Statuses that are not reachable stay visible but disabled, which
  * tells a reader where a file sits in the lifecycle even when they cannot move
  * it.
+ *
+ * `compact` is the file-list form: a tinted label and no chevron. It also drops
+ * drift from the visible text — inline, "Draft · edited since" was the widest
+ * state a row could reach, and it was what pushed filenames into an ellipsis.
+ * The drift pill is drawn by the row instead, as a sibling on the second line,
+ * so it wraps and truncates with the rest of that line rather than inside a
+ * button. The label prop still carries drift for screen readers.
  */
+
+/**
+ * Label tones. The dot keeps the vivid colour; the text takes a step of the same
+ * hue with enough contrast at 10.5px, because the dot colours are tuned to read
+ * as a 6px mark and do not survive being set as small text.
+ *
+ * Which direction that step goes depends on the ground: darker than the dot on
+ * white, lighter than it on the dark navy surface.
+ */
+const FILE_STATUS_TEXT_TONE: Record<FileStatus, string> = {
+  draft: 'text-slate-600 dark:text-slate-400',
+  in_review: 'text-amber-700 dark:text-amber-300',
+  approved: 'text-emerald-600 dark:text-emerald-400',
+  published: 'text-blue-600 dark:text-blue-400',
+};
 
 const PUBLISH_NOTICE =
   'Publishing exports this file and its full history, including any prompts and '
@@ -38,8 +60,10 @@ export const FileStatusChip: React.FC<{
   status: FileStatus;
   drift?: boolean;
   size?: 'sm' | 'md';
+  /** File-list form: tinted label, drift as a separate pill. */
+  compact?: boolean;
   onChanged?: (state: FileStatusState) => void;
-}> = ({ workspaceId, fileId, status, drift, size = 'sm', onChanged }) => {
+}> = ({ workspaceId, fileId, status, drift, size = 'sm', compact = false, onChanged }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [state, setState] = useState<FileStatusState | null>(null);
   const [pending, setPending] = useState<FileStatusTransition | null>(null);
@@ -117,11 +141,26 @@ export const FileStatusChip: React.FC<{
         onClick={() => { setIsOpen(true); void loadStatus(); }}
         menuWidth={220}
         items={items}
+        // The trigger is a status, not a "more" affordance, and in a two-line
+        // row the chevron costs width the filename needs.
+        hasChevron={!compact}
         button={{
           size,
           variant: 'ghost',
+          // The label is the accessible name either way. In compact form the
+          // visible text is tinted and drift is a separate element, so the label
+          // still has to carry drift for a screen reader.
           label: showDrift ? `${FILE_STATUS_LABELS[shown]} · edited since` : FILE_STATUS_LABELS[shown],
           icon: <StatusDot variant={FILE_STATUS_DOT[shown]} label={FILE_STATUS_LABELS[shown]} />,
+          ...(compact
+            ? {
+                children: (
+                  <span className={`text-[10.5px] font-bold leading-none ${FILE_STATUS_TEXT_TONE[shown]}`}>
+                    {FILE_STATUS_LABELS[shown]}
+                  </span>
+                ),
+              }
+            : {}),
         }}
       />
 

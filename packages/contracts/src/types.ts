@@ -66,6 +66,17 @@ export interface File {
   statusUpdatedBy?: string | null;
   approvedAtVersion?: number | null;
   publishedAtVersion?: number | null;
+  /**
+   * Who created the file and when it last changed.
+   *
+   * The list endpoint selects the whole row, so these have always been on the
+   * wire; they were simply never declared. `createdBy` is a user id — resolve it
+   * against the workspace collaborators for a name.
+   */
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /** Stable reference to a workspace file used by chat and agent-run payloads. */

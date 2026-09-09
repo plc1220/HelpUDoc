@@ -37,6 +37,7 @@ import {
   restoreWorkspace,
   leaveWorkspace,
   reconnectWorkspace,
+  listWorkspaceCollaborators,
   WorkspaceApiError,
   type PublicationConflict,
   type PublishedWorkspaceVersion,
@@ -154,6 +155,13 @@ import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import FileProvenanceDialog from '../../components/FileProvenanceDialog';
 import FileStatusChip from '../../components/FileStatusChip';
 import FileStatusFilterBar, { type FileStatusFilter } from '../../components/FileStatusFilterBar';
+import FileOwnerFilter from '../../components/FileOwnerFilter';
+import {
+  ALL_OWNERS,
+  buildFileOwnerOptions,
+  matchesOwnerFilter,
+  type FileOwnerFilter as FileOwnerFilterValue,
+} from '../../utils/fileOwners';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import AgentChatPane from '../../components/chat/AgentChatPane';
 import ChatInputArea, { type ChatMentionSuggestion } from '../../components/chat/ChatInputArea';
@@ -949,6 +957,8 @@ export default function WorkspacePage() {
   // whenever the listing does.
   const [provenanceFileId, setProvenanceFileId] = useState<string | number | null>(null);
   const [fileStatusFilter, setFileStatusFilter] = useState<FileStatusFilter>('all');
+  const [fileOwnerFilter, setFileOwnerFilter] = useState<FileOwnerFilterValue>(ALL_OWNERS);
+  const [ownerNameById, setOwnerNameById] = useState<Record<string, string>>({});
   const [workspaceKnowledge, setWorkspaceKnowledge] = useState<WorkspaceKnowledgeSource[]>([]);
   const [knowledgeBaseCatalog, setKnowledgeBaseCatalog] = useState<KnowledgeBaseSummary[]>([]);
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
@@ -1282,14 +1292,6 @@ export default function WorkspacePage() {
     return byId;
   }, [files]);
 
-  const fileStatusCounts = useMemo(() => {
-    const counts: Record<FileStatus, number> = {
-      draft: 0, in_review: 0, approved: 0, published: 0,
-    };
-    for (const entry of Object.values(fileStatusById)) counts[entry.status] += 1;
-    return counts;
-  }, [fileStatusById]);
-
   const visibleFiles = useMemo(
     () => (showSystemFiles ? files : files.filter((file) => !isSystemFile(file))),
     [files, showSystemFiles],
@@ -1311,11 +1313,45 @@ export default function WorkspacePage() {
     }
   }, []);
 
+  // Status and owner are two facets over the same list, and each one's counts
+  // exclude its own filter. So "Approved 2" means two approved files among what
+  // the owner filter already allows, and picking it really does leave two. Each
+  // facet therefore needs the list narrowed by the OTHER one.
   const statusFilteredFiles = useMemo(() => (
     fileStatusFilter === 'all'
       ? visibleFiles
       : visibleFiles.filter((file) => (file.status || 'draft') === fileStatusFilter)
   ), [visibleFiles, fileStatusFilter]);
+
+  const ownerFilteredFiles = useMemo(() => (
+    visibleFiles.filter((file) => matchesOwnerFilter(file, fileOwnerFilter))
+  ), [visibleFiles, fileOwnerFilter]);
+
+  const fileStatusCounts = useMemo(() => {
+    const counts: Record<FileStatus, number> = {
+      draft: 0, in_review: 0, approved: 0, published: 0,
+    };
+    for (const file of ownerFilteredFiles) counts[(file.status || 'draft') as FileStatus] += 1;
+    return counts;
+  }, [ownerFilteredFiles]);
+
+  const fileOwnerOptions = useMemo(
+    () => buildFileOwnerOptions(statusFilteredFiles, ownerNameById),
+    [statusFilteredFiles, ownerNameById],
+  );
+
+  const filteredFiles = useMemo(() => (
+    statusFilteredFiles.filter((file) => matchesOwnerFilter(file, fileOwnerFilter))
+  ), [statusFilteredFiles, fileOwnerFilter]);
+
+  // A filter pinned to someone with nothing left in view hides every row with no
+  // way back, so drop it when its owner leaves the set.
+  useEffect(() => {
+    if (fileOwnerFilter === ALL_OWNERS) return;
+    if (!fileOwnerOptions.some((option) => option.id === fileOwnerFilter)) {
+      setFileOwnerFilter(ALL_OWNERS);
+    }
+  }, [fileOwnerOptions, fileOwnerFilter]);
 
 
   const setConversationAttention = useCallback((
@@ -2460,6 +2496,41 @@ export default function WorkspacePage() {
       cancelled = true;
     };
   }, [selectedWorkspace?.id]);
+
+  // Owner names for the file list. Files carry createdBy as a user id, and the
+  // collaborator list is the only place a name for it exists. Seeded with the
+  // signed-in user so a private workspace, where there is no one else to fetch,
+  // still names its own files.
+  useEffect(() => {
+    const workspaceId = selectedWorkspace?.id;
+    const self: Record<string, string> = authUser?.id && authUser.name
+      ? { [authUser.id]: authUser.name }
+      : {};
+    if (!workspaceId) {
+      setOwnerNameById(self);
+      return;
+    }
+
+    let cancelled = false;
+    setOwnerNameById(self);
+    void listWorkspaceCollaborators(workspaceId)
+      .then((access) => {
+        if (cancelled) return;
+        const byId = { ...self };
+        for (const collaborator of access.collaborators ?? []) {
+          if (collaborator.displayName) byId[collaborator.userId] = collaborator.displayName;
+        }
+        setOwnerNameById(byId);
+      })
+      // A name is decoration on a row. If the list cannot be read — no access to
+      // the collaborator route, say — the rows fall back to "Former member"
+      // rather than the pane failing.
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspace?.id, authUser?.id, authUser?.name]);
 
   const isFileEditable = (fileName: string): boolean => {
     const editableExtensions = [
@@ -9276,17 +9347,26 @@ export default function WorkspacePage() {
                     <div className="h-full min-h-0 px-3 py-2">
                       <FileStatusFilterBar
                         counts={fileStatusCounts}
-                        total={visibleFiles.length}
+                        total={ownerFilteredFiles.length}
                         value={fileStatusFilter}
                         onChange={setFileStatusFilter}
                       />
+                      <div className="px-2 pb-1">
+                        <FileOwnerFilter
+                          options={fileOwnerOptions}
+                          total={statusFilteredFiles.length}
+                          value={fileOwnerFilter}
+                          onChange={setFileOwnerFilter}
+                        />
+                      </div>
                       <WorkspaceFileTree
                         fileStatusById={fileStatusById}
+                        ownerNameById={ownerNameById}
                         workspaceId={selectedWorkspace?.id}
                         onStatusChanged={() => {
                           if (selectedWorkspace) void loadFilesForWorkspace(selectedWorkspace.id);
                         }}
-                        files={statusFilteredFiles}
+                        files={filteredFiles}
                         folderPaths={visibleFolderPaths}
                         colorMode={colorMode}
                         selectedFileId={selectedFile?.id || null}
