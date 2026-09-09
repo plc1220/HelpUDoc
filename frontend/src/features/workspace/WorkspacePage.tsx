@@ -154,11 +154,11 @@ import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import FileProvenanceDialog from '../../components/FileProvenanceDialog';
 import FileStatusChip from '../../components/FileStatusChip';
-import FileStatusFilterBar, { type FileStatusFilter } from '../../components/FileStatusFilterBar';
-import FileOwnerFilter from '../../components/FileOwnerFilter';
+import FileListFilters, { type FileStatusFilter } from '../../components/FileListFilters';
 import {
   ALL_OWNERS,
   buildFileOwnerOptions,
+  getFileOwnerId,
   matchesOwnerFilter,
   type FileOwnerFilter as FileOwnerFilterValue,
 } from '../../utils/fileOwners';
@@ -1338,6 +1338,20 @@ export default function WorkspacePage() {
   const fileOwnerOptions = useMemo(
     () => buildFileOwnerOptions(statusFilteredFiles, ownerNameById),
     [statusFilteredFiles, ownerNameById],
+  );
+
+  // Whether each facet is worth offering, judged on the whole list. This is
+  // deliberately not derived from the narrowed sets above: a control that
+  // disappears because of what the other control was just set to takes the way
+  // back with it.
+  const hasStatusChoices = useMemo(() => {
+    const seen = new Set(visibleFiles.map((file) => file.status || 'draft'));
+    return seen.size > 1;
+  }, [visibleFiles]);
+
+  const hasOwnerChoices = useMemo(
+    () => new Set(visibleFiles.map(getFileOwnerId)).size > 1,
+    [visibleFiles],
   );
 
   const filteredFiles = useMemo(() => (
@@ -9345,20 +9359,18 @@ export default function WorkspacePage() {
                     aria-hidden={!isFilePaneVisible}
                   >
                     <div className="h-full min-h-0 px-3 py-2">
-                      <FileStatusFilterBar
-                        counts={fileStatusCounts}
-                        total={ownerFilteredFiles.length}
-                        value={fileStatusFilter}
-                        onChange={setFileStatusFilter}
+                      <FileListFilters
+                        statusCounts={fileStatusCounts}
+                        statusTotal={ownerFilteredFiles.length}
+                        statusValue={fileStatusFilter}
+                        onStatusChange={setFileStatusFilter}
+                        ownerOptions={fileOwnerOptions}
+                        ownerTotal={statusFilteredFiles.length}
+                        ownerValue={fileOwnerFilter}
+                        onOwnerChange={setFileOwnerFilter}
+                        hasStatusChoices={hasStatusChoices}
+                        hasOwnerChoices={hasOwnerChoices}
                       />
-                      <div className="px-2 pb-1">
-                        <FileOwnerFilter
-                          options={fileOwnerOptions}
-                          total={statusFilteredFiles.length}
-                          value={fileOwnerFilter}
-                          onChange={setFileOwnerFilter}
-                        />
-                      </div>
                       <WorkspaceFileTree
                         fileStatusById={fileStatusById}
                         ownerNameById={ownerNameById}

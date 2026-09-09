@@ -154,6 +154,13 @@ export const FileStatusChip: React.FC<{
           icon: <StatusDot variant={FILE_STATUS_DOT[shown]} label={FILE_STATUS_LABELS[shown]} />,
           ...(compact
             ? {
+                // Astryx's `sm` button is 28px tall with 12px of side padding —
+                // right for a control standing alone, but on a metadata line it
+                // both towers over the 10.5px text and pushes the owner name
+                // away from it. className is the sanctioned override surface
+                // (see `astryx docs styling`); min-h-0 is needed because the
+                // size style sets a min-height that height alone cannot beat.
+                className: 'min-h-0 h-4 gap-1 px-0 leading-none',
                 children: (
                   <span className={`text-[10.5px] font-bold leading-none ${FILE_STATUS_TEXT_TONE[shown]}`}>
                     {FILE_STATUS_LABELS[shown]}

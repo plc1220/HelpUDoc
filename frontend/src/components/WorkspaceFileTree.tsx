@@ -380,12 +380,9 @@ const TreeFileRow: React.FC<{
             )}
           </div>
           {(statusChip || metaLabel) && (
-            <div className="flex min-w-0 items-center gap-1">
-              {/* -my-1 pulls the 28px control back to the 20px the metadata line
-                  can afford. The button keeps its full hit target; it just stops
-                  charging the row for the part that overhangs. */}
+            <div className="flex min-w-0 items-center gap-1.5 text-[10.5px] leading-none">
               {statusChip && (
-                <span className="-my-1 flex shrink-0 items-center">
+                <span className="flex shrink-0 items-center">
                   <FileStatusChip
                     workspaceId={statusChip.workspaceId}
                     fileId={file.id}
@@ -399,17 +396,15 @@ const TreeFileRow: React.FC<{
               {/* Drift is a sibling of the chip, not part of it, so it can be
                   the first thing dropped when the line runs out of room. */}
               {statusChip?.drift && (
-                <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-700 dark:text-amber-300">
+                <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
                   edited since
                 </span>
               )}
               {statusChip && metaLabel && (
-                <span className={`shrink-0 text-[10.5px] leading-none ${mutedTextClassName}`} aria-hidden="true">
-                  ·
-                </span>
+                <span className={`shrink-0 ${mutedTextClassName}`} aria-hidden="true">·</span>
               )}
               {metaLabel && (
-                <span className={`min-w-0 flex-1 truncate text-[10.5px] font-medium leading-none ${mutedTextClassName}`}>
+                <span className={`min-w-0 flex-1 truncate font-medium ${mutedTextClassName}`}>
                   {metaLabel}
                 </span>
               )}
