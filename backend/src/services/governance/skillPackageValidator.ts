@@ -211,7 +211,7 @@ export class SkillPackageValidator {
     };
   }
 
-  private async configuredRuntimeCapabilities(): Promise<{ tools: Set<string>; mcpServers: Set<string> }> {
+  async configuredRuntimeCapabilities(): Promise<{ tools: Set<string>; mcpServers: Set<string> }> {
     const repoRoot = path.resolve(__dirname, '../../../../');
     const resolveConfigPath = (value?: string): string | null => {
       const trimmed = String(value || '').trim();

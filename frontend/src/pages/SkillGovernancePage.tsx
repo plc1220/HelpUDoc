@@ -1,3 +1,4 @@
+import SkillExecutionControlsPanel from '../features/governance/SkillExecutionControlsPanel';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import YAML from 'yaml';
 import {
@@ -155,7 +156,7 @@ const DraftEditor = ({
   const [skillMarkdown, setSkillMarkdown] = useState(
     initialDraft.files.find((file) => file.path === 'SKILL.md')?.content || '',
   );
-  const [semanticVersion, setSemanticVersion] = useState(initialDraft.proposalType === 'new' ? '1.0.0' : '1.0.1');
+  const [semanticVersion, setSemanticVersion] = useState(initialDraft.nextSemanticVersion || (initialDraft.proposalType === 'new' ? '1.0.0' : '1.0.1'));
   const [submissionNote, setSubmissionNote] = useState('');
   const [validation, setValidation] = useState<SkillValidation | null>(
     initialDraft.validationSummary?.checkedAt ? initialDraft.validationSummary as SkillValidation : null,
@@ -175,7 +176,7 @@ const DraftEditor = ({
         files: [{ path: 'SKILL.md', content: skillMarkdown }],
       });
       setDraft(next);
-      setValidation(null);
+      setValidation(next.validationSummary?.checkedAt ? next.validationSummary as SkillValidation : null);
       return next;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save draft');
@@ -218,6 +219,7 @@ const DraftEditor = ({
       }
       await submitSkillDraft(saved.id, {
         owningTeamId: teamId || undefined,
+        publishToTeam: saved.eligibleTeams.some(team => team.id === teamId && team.isLead),
         semanticVersion,
         submissionNote,
         expectedDraftRevision: saved.draftRevision,
@@ -246,10 +248,10 @@ const DraftEditor = ({
               <span className="text-xs text-slate-500">Revision {draft.draftRevision}</span>
             </div>
             <h2 id="skill-draft-title" className="mt-2 text-xl font-semibold text-slate-900">
-              {draft.proposalType === 'new' ? 'Private new-skill draft' : 'Private improvement draft'}
+              Personal skill
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Only you can read this editable draft. When submitted, the Team Lead reviews a copy of this version.
+              Valid saves are available in your chat. Sharing includes all {draft.files.length} package files, including scripts and supporting files. You can keep editing your personal copy.
             </p>
           </div>
           <button
@@ -343,7 +345,7 @@ const DraftEditor = ({
               <div className={`mt-5 rounded-2xl p-4 ring-1 ${validation.valid ? 'bg-emerald-50 ring-emerald-200' : 'bg-rose-50 ring-rose-200'}`}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                   {validation.valid ? <CheckCircle2 size={17} className="text-emerald-600" /> : <CircleAlert size={17} className="text-rose-600" />}
-                  {validation.valid ? 'Ready for Team review' : `${validation.issues.length} issue${validation.issues.length === 1 ? '' : 's'}`}
+                  {validation.valid ? 'Valid for personal use and team sharing' : `${validation.issues.length} issue${validation.issues.length === 1 ? '' : 's'}`}
                 </div>
                 <p className="mt-1 text-xs text-slate-600">Risk class: {validation.riskClass}</p>
                 {validation.issues.length ? (
@@ -381,6 +383,11 @@ const DraftEditor = ({
           </section>
         </div>
 
+        <div role="status" className="border-t border-slate-200 px-6 py-3 text-sm text-slate-600">
+          {draft.executionBlocks?.length ? `Blocked: ${draft.executionBlocks[0].reason}` : draft.activationError || (draft.activeRevisionId
+            ? draft.activeRevisionId === draft.currentDraftRevisionId ? 'Saved skill is available in your chat.' : 'Chat is using your previous valid version. Resolve validation issues to use these changes.'
+            : 'Save a valid skill to make it available in chat.')}
+        </div>
         {error ? <div className="border-t border-rose-200 bg-rose-50 px-6 py-3 text-sm text-rose-700">{error}</div> : null}
         <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 px-5 py-4 sm:px-6">
           <button type="button" onClick={onClose} className="settings-portal-button-secondary rounded-xl px-4 py-2.5 text-sm font-semibold">
@@ -393,7 +400,7 @@ const DraftEditor = ({
             className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
           >
             {busy === 'save' ? <Loader2 size={16} className="animate-spin" /> : <Code2 size={16} />}
-            Save draft
+            Save skill
           </button>
           <button
             type="button"
@@ -411,7 +418,7 @@ const DraftEditor = ({
             className="settings-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
           >
             {busy === 'submit' ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            Submit to Team Lead
+            {draft.eligibleTeams.some(team => team.id === teamId && team.isLead) ? 'Publish to team' : 'Share with team'}
           </button>
         </div>
       </div>
@@ -539,7 +546,7 @@ const ReviewDialog = ({
             </label>
             {!review.permissions.canReview ? (
               <SettingsNotice variant="warning">
-                You cannot review this version. Authors cannot approve their own submissions.
+                Only a lead of the owning team can review this version.
               </SettingsNotice>
             ) : null}
             {review.activationStatus === 'failed' ? (
@@ -945,7 +952,7 @@ const SkillGovernancePage = () => {
     <SettingsShell
       eyebrow="Unified governance"
       title="Skill governance"
-      description="Create privately, send a version to your Team Lead for review, and use approved skills shared with you or your Team."
+      description="Create skills for your own chat. Share a version with your team through lead approval."
       actions={(
         <button
           type="button"
@@ -968,6 +975,7 @@ const SkillGovernancePage = () => {
         onChange={setTab}
       />
 
+      {mine?.canManageBlocks ? <SkillExecutionControlsPanel /> : null}
       {error ? <SettingsNotice variant="error">{error}</SettingsNotice> : null}
       {loading || !mine ? <SettingsLoadingState label="Loading skill governance..." /> : null}
 
@@ -976,8 +984,8 @@ const SkillGovernancePage = () => {
           <SettingsSurface>
             <SettingsSectionHeader
               eyebrow="Private by default"
-              title="Private drafts"
-              description="Your drafts stay private until you send a version for Team review."
+              title="Personal skills"
+              description="Valid saves are available to you in chat. Team sharing is optional."
               actions={(
                 <button
                   type="button"
@@ -992,7 +1000,7 @@ const SkillGovernancePage = () => {
             />
             {!mine.drafts.filter((draft) => draft.status === 'private').length ? (
               <SettingsEmptyState
-                title="No private drafts"
+                title="No personal skills yet"
                 description="Create a skill or start an improvement from the Team catalog."
                 icon={FileCode2}
               />
@@ -1019,6 +1027,7 @@ const SkillGovernancePage = () => {
                           </div>
                           <div className={`${draftView === 'card' ? 'mt-4' : ''} flex flex-wrap items-center gap-2`}>
                             <StatusBadge status={draft.status} />
+                            <span className="text-xs text-slate-500">{draft.executionBlockedReason ? `Blocked: ${draft.executionBlockedReason}` : draft.activeRevisionId ? (draft.activeRevisionId === draft.currentDraftRevisionId ? 'Available in chat' : 'Chat uses previous valid save') : 'Not yet available in chat'}</span>
                             <span className="text-xs text-slate-500">rev {draft.draftRevision}</span>
                             {draftView !== 'compact' ? <span className="text-xs text-slate-500">{draft.proposedOwnerTeamName || 'Team not selected'}</span> : null}
                             {actionBusy === draft.id ? <Loader2 size={16} className="animate-spin" /> : <ChevronRight size={16} />}

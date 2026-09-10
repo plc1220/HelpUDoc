@@ -575,6 +575,24 @@ def find_skill(skills_root: Path | None, skill_id_or_name: str) -> SkillMetadata
     return None
 
 
+def skill_block_paths(skills_root: Path, skill_key: str, manifest_hash: str | None = None) -> list[str]:
+    identities = [f"skill:{skill_key}"]
+    if manifest_hash:
+        identities.append(f"package:{manifest_hash}")
+    identities.append(f"removed:{skill_key}")
+    return [str(skills_root / ".governed-blocks" / hashlib.sha256(identity.encode()).hexdigest())
+            for identity in identities]
+
+
+def load_context_skills(skills_root: Path, context: dict[str, Any]) -> List[SkillMetadata]:
+    """Only signed personal packages are discoverable; never scan private storage."""
+    pins = context.get("skill_version_pins") or {}
+    keys = {skill.skill_id for skill in load_skills(skills_root)} | set(pins)
+    return [skill for key in sorted(keys)
+            if (skill := find_skill_for_context(skills_root, key, context)) is not None
+            and is_skill_allowed(skill, context)]
+
+
 def find_skill_for_context(
     skills_root: Path | None,
     skill_id_or_name: str,
@@ -583,6 +601,8 @@ def find_skill_for_context(
     """Resolve an exact governed workspace pin before the mutable default."""
     normalized = str(skill_id_or_name or "").strip()
     if skills_root is None or not normalized:
+        return None
+    if any(Path(marker).exists() for marker in skill_block_paths(skills_root, normalized)):
         return None
     pins = context.get("skill_version_pins") if isinstance(context, dict) else None
     if not isinstance(pins, dict):
@@ -622,6 +642,10 @@ def _load_governed_pin(
     skill_key: str,
     raw_pin: dict[str, Any],
 ) -> SkillMetadata | None:
+    if not re.fullmatch(r"[a-z0-9_-]+(?:/[a-z0-9_-]+)*", skill_key):
+        return None
+    if any(Path(marker).exists() for marker in skill_block_paths(skills_root, skill_key, str(raw_pin.get("manifestHash") or ""))):
+        return None
     version_id = str(raw_pin.get("versionId") or "").strip()
     manifest_hash = str(raw_pin.get("manifestHash") or "").strip().lower()
     if (
@@ -697,6 +721,15 @@ def activate_skill_context(
     preferred_mcp_server = str(context.get("preferred_mcp_server") or "").strip()
     if preferred_mcp_server and preferred_mcp_server not in allowed_mcp_servers:
         allowed_mcp_servers.append(preferred_mcp_server)
+    package_root = skill.path.parent
+    governed_parent = next((parent for parent in package_root.parents if parent.name == ".governed-versions"), None)
+    root = governed_parent.parent if governed_parent else package_root
+    if governed_parent is None:
+        for _ in skill.skill_id.split("/"):
+            root = root.parent
+    pin_map = context.get("skill_version_pins") or {}
+    pin = pin_map.get(skill.skill_id) or {}
+    context["active_skill_block_paths"] = skill_block_paths(root, skill.skill_id, pin.get("manifestHash"))
     context["active_skill"] = skill.skill_id
     version_pins = context.get("skill_version_pins")
     active_version = version_pins.get(skill.skill_id) if isinstance(version_pins, dict) else None
@@ -964,6 +997,11 @@ def sync_skills_to_workspace(skills_root: Path, workspace_root: Path) -> None:
         return
     dest = workspace_root / "skills"
     try:
-        shutil.copytree(skills_root, dest, dirs_exist_ok=True)
+        # Never expose immutable storage (including every user's private packages)
+        # through a shared workspace filesystem. Personal assets are materialized
+        # only by an explicitly authorized load_skill invocation.
+        shutil.rmtree(dest / ".governed-versions", ignore_errors=True)
+        shutil.copytree(skills_root, dest, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns(".*", "personal"))
     except Exception:
         return

@@ -1,3 +1,4 @@
+import { validateBuilderMutation } from '../services/governance/skillBuilderValidation';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import type { SkillGovernanceService } from '../services/governance/skillGovernanceService';
@@ -68,6 +69,7 @@ const builderDraftActionsSchema = z.object({
 });
 
 const submitDraftSchema = z.object({
+  publishToTeam: z.boolean().optional(),
   owningTeamId: z.string().uuid().optional(),
   semanticVersion: z.string().min(5).max(64),
   submissionNote: z.string().max(10_000).optional(),
@@ -156,6 +158,18 @@ const handleError = (res: Response, error: unknown) => {
 export default function governanceRoutes(service: SkillGovernanceService) {
   const router = Router();
 
+  router.get('/skills/execution-controls', async (req, res) => {
+    try { return res.json(await service.listExecutionControls(requireUser(req).userId)); }
+    catch (error) { return handleError(res, error); }
+  });
+  router.put('/skills/execution-controls', async (req, res) => {
+    try {
+      const input = z.object({ skillKey: z.string().min(1).max(128), versionId: z.string().uuid().optional(),
+        blocked: z.boolean(), reason: z.string().trim().min(1).max(2000) }).parse(req.body);
+      return res.json(await service.setExecutionBlock(requireUser(req).userId, input));
+    } catch (error) { return handleError(res, error); }
+  });
+
   router.get('/skills/mine', async (req, res) => {
     try {
       const user = requireUser(req);
@@ -216,6 +230,15 @@ export default function governanceRoutes(service: SkillGovernanceService) {
     }
   });
 
+  router.post('/skill-builder/validate-proposal', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      const payload = builderDraftActionsSchema.omit({ expectedDraftRevision: true }).parse(req.body);
+      const mutation = await builderActionsToDraftMutation(payload.actions as GovernedBuilderAction[], getContextFilesForUser(user.userId));
+      return res.json(await validateBuilderMutation(mutation));
+    } catch (error) { return handleError(res, error); }
+  });
+
   router.post('/skills/drafts/:draftId/builder-actions', async (req, res) => {
     try {
       const user = requireUser(req);
@@ -224,6 +247,8 @@ export default function governanceRoutes(service: SkillGovernanceService) {
         payload.actions as GovernedBuilderAction[],
         getContextFilesForUser(user.userId),
       );
+      const validation = await validateBuilderMutation(mutation);
+      if (!validation.valid) return res.status(422).json({ error: validation.issues.map(issue => issue.message).join('; '), validation });
       return sendResource(res, await service.updateDraft(
         user.userId,
         req.params.draftId,

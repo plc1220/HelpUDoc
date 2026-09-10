@@ -234,9 +234,19 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     const workspacePins = typeof (userService as any).getWorkspaceSkillRuntimePins === 'function'
       ? await userService.getWorkspaceSkillRuntimePins(input.workspaceId)
       : [];
+    const [personalPins, defaultPins] = await Promise.all([
+      userService.getPersonalSkillRuntimePins(input.userId),
+      userService.getDefaultSkillRuntimePins(input.policy.skillAllowIds),
+    ]);
+    const workspaceKeys = new Set(workspacePins.map(pin => pin.skillKey));
+    const turnPins = input.policy.workspaceMode === 'published_read_only' ? workspacePins : [
+      ...workspacePins,
+      ...defaultPins.filter(pin => !workspaceKeys.has(pin.skillKey)),
+      ...personalPins,
+    ];
     const { skillAllowIds: runtimeSkillAllowIds, authorizedPins } = resolveRuntimeSkillAccess(
       input.policy.skillAllowIds,
-      workspacePins,
+      turnPins,
       input.policy.workspaceMode,
     );
     const payload: Record<string, unknown> = {

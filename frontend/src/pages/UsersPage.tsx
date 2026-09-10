@@ -834,7 +834,7 @@ const UsersPage = () => {
                           />
                           <MultiSelector
                             label="Skills"
-                            description="Skills exposed in prompting and slash commands."
+                            description="Skills exposed in prompting and slash commands. Approved skills owned by this team stay available to every member; use execution controls to block anomalies."
                             options={skillOptions}
                             value={groupAccess.skillIds}
                             onChange={(values) => setGroupAccess((previous) => ({

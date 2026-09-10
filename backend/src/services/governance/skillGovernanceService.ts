@@ -1,3 +1,4 @@
+import { filterExecutablePins, skillBlockId, versionBlockId, writeExecutionBlock, executionBlockPath } from './skillExecutionPolicy';
 import path from 'path';
 import { promises as fs } from 'fs';
 import type { Knex } from 'knex';
@@ -31,6 +32,7 @@ import {
   normalizeGovernedFilePath,
   normalizeGovernedSkillKey,
   stateHash,
+  sha256,
 } from './skillGovernanceModel';
 
 export {
@@ -67,9 +69,14 @@ export class SkillGovernanceService {
 
   async initialize(): Promise<void> {
     await this.packageStore.initialize();
+    for (const block of await this.db('skill_execution_blocks')) await writeExecutionBlock(block.id, block.reason);
     await this.backfillLegacyRegistry();
     await this.backfillLegacyGrants();
     await this.archiveLegacySkillEvolution();
+    const unpublished = await this.db('private_skill_drafts').where({ status: 'private' }).whereNull('activeRevisionId');
+    for (const draft of unpublished) {
+      if (draft.currentDraftRevisionId) await this.publishPersonalRevision(draft.ownerUserId, draft.id, draft.currentDraftRevisionId);
+    }
     const migration = await this.validateMigrationParity();
     const log = migration.ready ? console.info : console.warn;
     log('Governed skill migration parity', migration);
@@ -99,6 +106,9 @@ export class SkillGovernanceService {
           'g.name as proposedOwnerTeamName',
           'd.draftRevision',
           'd.status',
+          'd.activeRevisionId',
+          'd.currentDraftRevisionId',
+          'd.activationError',
           'd.createdAt',
           'd.updatedAt',
         )
@@ -149,7 +159,14 @@ export class SkillGovernanceService {
         .orderBy('v.createdAt', 'desc'),
       this.listEligibleTeams(userId),
     ]);
-    return { drafts, reviews, versions, eligibleTeams: teams };
+    const blocks = await this.db('skill_execution_blocks');
+    const activeRevisions = await this.db('skill_draft_revisions').select('id', 'manifestHash')
+      .whereIn('id', drafts.map((draft: any) => draft.activeRevisionId).filter(Boolean));
+    return { drafts: drafts.map((draft: any) => ({ ...draft,
+      executionBlockedReason: blocks.find((block: any) => block.manifestHash
+        ? block.manifestHash === activeRevisions.find((revision: any) => revision.id === draft.activeRevisionId)?.manifestHash
+        : block.skillKey === `personal/${draft.id}`)?.reason || null,
+    })), reviews, versions, eligibleTeams: teams, canManageBlocks: await this.isPlatformAdmin(userId) };
   }
 
   async createDraft(
@@ -228,6 +245,7 @@ export class SkillGovernanceService {
       resourceId: draftId,
       metadata: { proposalType, sourceSkillId: sourceSkill?.id || null },
     });
+    await this.publishPersonalRevision(userId, draftId, revision.id);
     return { ...await this.getDraft(userId, draftId, revision.id), auditEventId };
   }
 
@@ -252,8 +270,18 @@ export class SkillGovernanceService {
     const hasReviewHistory = Boolean(
       await this.db('skill_review_requests').where({ draftId }).first(),
     );
+    const activeRevision = draft.activeRevisionId ? await this.db('skill_draft_revisions').where({ id: draft.activeRevisionId }).first() : null;
+    const executionBlocks = (await this.db('skill_execution_blocks')).filter((block: any) => block.manifestHash ? block.manifestHash === activeRevision?.manifestHash : block.skillKey === `personal/${draft.id}`);
+    const publishedVersions = draft.sourceSkillId
+      ? await this.db('skill_versions').select('semanticVersion').where({ skillId: draft.sourceSkillId }) : [];
+    const latest = publishedVersions.map((row: any) => String(row.semanticVersion)).sort(compareSemanticVersions).pop();
+    const nextSemanticVersion = latest ? latest.split('.').map((part: string, index: number) => index === 2 ? Number(part) + 1 : part).join('.') : '1.0.0';
+
     return {
       ...draft,
+      runtimeSkillKey: `personal/${draft.id}`,
+      nextSemanticVersion,
+      executionBlocks,
       draftRevision: Number(draft.draftRevision),
       etag: `"${draft.draftRevision}"`,
       files: await Promise.all(files.map(async (file) => ({
@@ -317,7 +345,7 @@ export class SkillGovernanceService {
     }
 
     const nextRevision = expectedRevision + 1;
-    await this.createDraftRevision({
+    const revision = await this.createDraftRevision({
       draftId,
       userId,
       revisionNumber: nextRevision,
@@ -326,6 +354,7 @@ export class SkillGovernanceService {
       validationSummary: {},
       updateDraft: {
         expectedRevision,
+        activationError: null,
         proposedSkillKey: nextSkillKey,
         proposedOwnerTeamId: nextOwnerTeamId,
         displayName: mutation.displayName === undefined ? draft.displayName : mutation.displayName.trim(),
@@ -340,6 +369,7 @@ export class SkillGovernanceService {
       resourceId: draftId,
       metadata: { draftRevision: nextRevision },
     });
+    await this.publishPersonalRevision(userId, draftId, revision.id);
     return { ...await this.getDraft(userId, draftId), auditEventId };
   }
 
@@ -357,6 +387,7 @@ export class SkillGovernanceService {
         });
       }
 
+      await writeExecutionBlock(sha256(`removed:personal/${draftId}`), 'Personal skill was removed by its owner.');
       const review = await this.db('skill_review_requests').where({ draftId }).first();
       if (review) {
         await this.db('private_skill_drafts').where({ id: draftId }).update({
@@ -405,6 +436,7 @@ export class SkillGovernanceService {
     draftId: string,
     input: {
       owningTeamId?: string;
+      publishToTeam?: boolean;
       semanticVersion: string;
       submissionNote?: string;
       expectedDraftRevision: number;
@@ -414,7 +446,8 @@ export class SkillGovernanceService {
     if (Number(draft.draftRevision) !== input.expectedDraftRevision) {
       governanceError(409, 'SKILL_REVISION_CONFLICT', 'The draft revision is stale');
     }
-    const skillKey = normalizeGovernedSkillKey(draft.proposedSkillKey || '');
+    let skillKey = normalizeGovernedSkillKey(draft.proposedSkillKey || '');
+    if (skillKey.startsWith('personal/')) governanceError(422, 'INVALID_SKILL_MANIFEST', 'The personal namespace is reserved');
     compareSemanticVersions(input.semanticVersion, '0.0.0');
     const ownerTeamId = draft.proposalType === 'improvement'
       ? draft.proposedOwnerTeamId
@@ -425,6 +458,7 @@ export class SkillGovernanceService {
       });
     }
     await this.requireTeamMembership(userId, ownerTeamId);
+    if (input.publishToTeam) await this.requireTeamLead(userId, ownerTeamId);
 
     let targetSkill: any = null;
     if (draft.proposalType === 'improvement') {
@@ -432,6 +466,7 @@ export class SkillGovernanceService {
       if (!targetSkill || targetSkill.ownerTeamId !== ownerTeamId) {
         governanceError(409, 'SKILL_REVISION_CONFLICT', 'The improvement ownership no longer matches its skill');
       }
+      skillKey = targetSkill.skillKey;
       const versions = await this.db('skill_versions').select('semanticVersion').where({ skillId: targetSkill.id });
       if (versions.some((version) => compareSemanticVersions(input.semanticVersion, version.semanticVersion) <= 0)) {
         governanceError(409, 'SKILL_REVISION_CONFLICT', 'Improvement version must be greater than every existing version');
@@ -469,6 +504,11 @@ export class SkillGovernanceService {
       `${skillKey}@${input.semanticVersion}`,
       () => this.db.transaction(async (tx) => {
       const locked = await tx('private_skill_drafts').where({ id: draftId, ownerUserId: userId }).forUpdate().first();
+      const pending = await tx('skill_review_requests').where({ draftId }).andWhere(builder => builder.where('status', 'submitted').orWhere({ status: 'approved', activationStatus: 'failed' })).first();
+      if (pending && (pending.status === 'submitted' || pending.activationStatus === 'failed')) {
+        governanceError(409, 'SKILL_REVISION_CONFLICT', 'A submitted version is already awaiting review or activation');
+      }
+
       if (!locked || Number(locked.draftRevision) !== input.expectedDraftRevision || locked.status !== 'private') {
         governanceError(409, 'SKILL_REVISION_CONFLICT', 'The draft changed before submission committed');
       }
@@ -549,7 +589,7 @@ export class SkillGovernanceService {
       });
       await tx('private_skill_drafts').where({ id: draftId }).update({
         proposedOwnerTeamId: ownerTeamId,
-        status: 'submitted',
+        status: 'private',
         updatedAt: tx.fn.now(),
       });
       return {
@@ -579,6 +619,10 @@ export class SkillGovernanceService {
       skillKey,
       semanticVersion: input.semanticVersion,
     });
+    if (input.publishToTeam) {
+      return { ...await this.decideReview(userId, requestId, { decision: 'approve',
+        expectedRequestRevision: Number(result.requestRevision), comment: input.submissionNote }), id: requestId };
+    }
     return { ...result, auditEventId };
   }
 
@@ -646,9 +690,7 @@ export class SkillGovernanceService {
     const request = await this.reviewRequest(requestId);
     const isProposer = request.proposerUserId === userId;
     const isLead = await this.isTeamLead(userId, request.ownerTeamId);
-    const selfApprovalAllowed = isProposer
-      ? await this.selfApprovalAllowed(userId, request.ownerTeamId)
-      : false;
+    const selfApprovalAllowed = isLead;
     if (!isProposer && !isLead) {
       governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Skill review not found');
     }
@@ -733,11 +775,6 @@ export class SkillGovernanceService {
     )) {
       governanceError(409, 'SKILL_REVISION_CONFLICT', 'Only a failed approved activation can be retried');
     }
-    if (!retryingActivation
-      && request.proposerUserId === userId
-      && !await this.selfApprovalAllowed(userId, request.ownerTeamId)) {
-      governanceError(403, 'SKILL_ACTION_FORBIDDEN', 'A proposer cannot approve or decide their own candidate');
-    }
     if ((!retryingActivation && request.status !== 'submitted')
       || Number(request.requestRevision) !== input.expectedRequestRevision) {
       governanceError(409, 'SKILL_REVISION_CONFLICT', 'The review request changed before the decision committed');
@@ -754,6 +791,10 @@ export class SkillGovernanceService {
       governanceError(422, 'SKILL_VALIDATION_FAILED', 'Automated platform policy must pass before approval');
     }
 
+    if (decision === 'approve' && (await filterExecutablePins(this.db, [
+      { skillKey: candidate.skillKey, manifestHash: candidate.manifestHash },
+      { skillKey: `personal/${request.draftId}`, manifestHash: candidate.manifestHash },
+    ])).length !== 2) governanceError(403, 'SKILL_EXECUTION_BLOCKED', 'This skill or package is blocked');
     const candidateFiles = await this.db('skill_review_candidate_files')
       .where({ candidateId: candidate.id })
       .orderBy('path', 'asc') as FileSnapshot[];
@@ -833,8 +874,8 @@ export class SkillGovernanceService {
             policyVersion: GOVERNANCE_POLICY_VERSION,
             selfApproved: request.proposerUserId === userId,
           });
-          await tx('private_skill_drafts').where({ id: request.draftId }).update({
-            status: 'archived',
+          await tx('private_skill_drafts').where({ id: request.draftId }).whereNot('status', 'archived').update({
+            status: 'private',
             updatedAt: tx.fn.now(),
           });
         }
@@ -939,7 +980,7 @@ export class SkillGovernanceService {
             requestRevision: nextRevision,
             updatedAt: tx.fn.now(),
           });
-          await tx('private_skill_drafts').where({ id: request.draftId }).update({
+          await tx('private_skill_drafts').where({ id: request.draftId }).whereNot('status', 'archived').update({
             status: 'private',
             updatedAt: tx.fn.now(),
           });
@@ -951,8 +992,8 @@ export class SkillGovernanceService {
             requestRevision: nextRevision,
             updatedAt: tx.fn.now(),
           });
-          await tx('private_skill_drafts').where({ id: request.draftId }).update({
-            status: 'archived',
+          await tx('private_skill_drafts').where({ id: request.draftId }).whereNot('status', 'archived').update({
+            status: 'private',
             updatedAt: tx.fn.now(),
           });
           return { status: 'rejected', requestRevision: nextRevision, decisionId };
@@ -1021,8 +1062,12 @@ export class SkillGovernanceService {
           requestRevision: nextRevision,
           updatedAt: tx.fn.now(),
         });
-        await tx('private_skill_drafts').where({ id: request.draftId }).update({
-          status: 'archived',
+        await tx('team_skill_grants').insert({
+          teamId: request.ownerTeamId, skillId, effect: 'allow', grantedByUserId: userId,
+        }).onConflict(['teamId', 'skillId']).merge({ effect: 'allow', grantedByUserId: userId });
+        await tx('private_skill_drafts').where({ id: request.draftId }).whereNot('status', 'archived').update({
+          status: 'private', proposalType: 'improvement', sourceSkillId: skillId,
+          sourceVersionId: versionId, proposedOwnerTeamId: request.ownerTeamId,
           updatedAt: tx.fn.now(),
         });
         if (shouldSetDefault) {
@@ -1086,6 +1131,7 @@ export class SkillGovernanceService {
       metadata: result,
     });
     if (decision === 'approve') {
+      await this.notifyTeamMembers(request.ownerTeamId, 'skill.team_published', 'skill', String(result.skillId), { skillKey: candidate.skillKey, semanticVersion: candidate.semanticVersion });
       await this.audit({
         actorUserId: userId,
         actorRole: 'team_lead',
@@ -1193,9 +1239,12 @@ export class SkillGovernanceService {
       });
     }
     const skills = await query;
+    const blocks = await this.db('skill_execution_blocks');
     return {
       skills: skills.map((skill: any) => ({
         ...skill,
+        executionBlockedReason: blocks.find((block: any) => block.manifestHash
+          ? block.manifestHash === skill.defaultManifestHash : block.skillKey === skill.skillKey)?.reason || null,
         entitled: effective.skillIds.includes(skill.id),
         accessReasons: effective.reasons[skill.id] || [],
         canAdminister: isPlatformAdmin || leadTeamIds.has(skill.ownerTeamId),
@@ -1267,9 +1316,12 @@ export class SkillGovernanceService {
       scripts: Array.from(new Set([...(declaredCapabilities?.scripts || []), ...metadata.scripts])),
       pluginId: declaredCapabilities?.pluginId || null,
     };
+    const blocks = await this.db('skill_execution_blocks');
     return {
       skill: {
         ...visibleSkill,
+        executionBlockedReason: blocks.find((block: any) => block.manifestHash
+          ? block.manifestHash === defaultVersion?.manifestHash : block.skillKey === visibleSkill.skillKey)?.reason || null,
         ownerTeamName: ownerTeam?.name || 'Unknown Team',
         defaultSemanticVersion: defaultVersion?.semanticVersion || null,
         defaultManifestHash: defaultVersion?.manifestHash || null,
@@ -1660,6 +1712,7 @@ export class SkillGovernanceService {
     if (!version || version.status !== 'active' || skill.status !== 'active') {
       governanceError(409, 'SKILL_REVISION_CONFLICT', 'Only an approved active version may be pinned');
     }
+    if (!(await filterExecutablePins(this.db, [{ skillKey: skill.skillKey, manifestHash: version.manifestHash }])).length) governanceError(403, 'SKILL_EXECUTION_BLOCKED', 'This package is blocked');
     await this.db('workspace_skill_pins').insert({
       workspaceId,
       skillId: skill.id,
@@ -1765,6 +1818,9 @@ export class SkillGovernanceService {
         reason: 'The workspace pin no longer matches the immutable version manifest.',
       };
     }
+    if (!(await filterExecutablePins(this.db, [{ skillKey: skill.skillKey, manifestHash: version.manifestHash }])).length) {
+      return { allowed: false, code: 'SKILL_EXECUTION_BLOCKED', reason: 'An administrator has blocked this skill or package.' };
+    }
     const effective = await this.effectiveSkillAccess(userId);
     if (!effective.skillIds.includes(skill.id)) {
       return {
@@ -1783,6 +1839,66 @@ export class SkillGovernanceService {
       materializedPath: version.materializedPath,
       accessReasons: effective.reasons[skill.id] || [],
     };
+  }
+
+  async listExecutionControls(userId: string): Promise<JsonRecord> {
+    await this.requirePlatformAdmin(userId);
+    const [personal, team, blocks] = await Promise.all([
+      this.db('private_skill_drafts as d').join('users as u', 'u.id', 'd.ownerUserId')
+        .select('d.id', 'd.displayName', 'd.activeRevisionId', 'u.displayName as ownerName').where('d.status', 'private'),
+      this.db('skills as s').join('groups as g', 'g.id', 's.ownerTeamId')
+        .select('s.id', 's.skillKey', 's.displayName', 'g.name as ownerName'),
+      this.db('skill_execution_blocks'),
+    ]);
+    return { skills: [...personal.map((row: any) => ({ ...row, scope: 'personal', skillKey: `personal/${row.id}` })),
+      ...team.map((row: any) => ({ ...row, scope: 'team' }))], blocks };
+  }
+
+  async setExecutionBlock(userId: string, input: { skillKey: string; versionId?: string; blocked: boolean; reason: string }): Promise<JsonRecord> {
+    await this.requirePlatformAdmin(userId);
+    const skillKey = normalizeGovernedSkillKey(input.skillKey);
+    if (!input.reason.trim()) governanceError(422, 'INVALID_SKILL_MANIFEST', 'A reason is required');
+    let manifestHash: string | null = null;
+    if (!input.blocked) {
+      const existing = await this.db('skill_execution_blocks').where({ skillKey, versionId: input.versionId || null }).first();
+      if (!existing) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Execution block not found');
+      manifestHash = existing.manifestHash;
+    } else if (skillKey.startsWith('personal/')) {
+      if (!/^[0-9a-f-]{36}$/i.test(skillKey.slice(9))) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Personal skill not found');
+      const draft = await this.db('private_skill_drafts').where({ id: skillKey.slice(9) }).first();
+      if (!draft) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Personal skill not found');
+      if (input.versionId) {
+        const revision = await this.db('skill_draft_revisions').where({ id: input.versionId, draftId: draft.id }).first();
+        if (!revision) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Personal revision not found');
+        manifestHash = revision.manifestHash;
+      }
+    } else {
+      const skill = await this.resolveSkill(skillKey);
+      if (!skill) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Skill not found');
+      if (input.versionId) {
+        const version = await this.db('skill_versions').where({ id: input.versionId, skillId: skill.id }).first();
+        if (!version) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Version not found');
+        manifestHash = version.manifestHash;
+      }
+    }
+    const id = manifestHash ? versionBlockId(manifestHash) : skillBlockId(skillKey);
+    return withGovernanceLock(this.db, 'skill-execution-block', id, async () => {
+      if (input.blocked) {
+        // Write the runtime marker first so in-flight turns fail closed.
+        await writeExecutionBlock(id, input.reason.trim());
+        await this.db('skill_execution_blocks').insert({ id, skillKey, versionId: input.versionId || null,
+          manifestHash, reason: input.reason.trim(), blockedByUserId: userId })
+          .onConflict('id').merge({ reason: input.reason.trim(), blockedByUserId: userId });
+      } else {
+        await this.db('skill_execution_blocks').where({ id }).del();
+        await fs.rm(executionBlockPath(id), { force: true });
+      }
+      const auditEventId = await this.audit({ actorUserId: userId, actorRole: 'platform_admin',
+        action: input.blocked ? 'skill.execution_blocked' : 'skill.execution_unblocked',
+        resourceType: 'skill_execution_block', resourceId: id, reason: input.reason,
+        metadata: { skillKey, versionId: input.versionId || null, manifestHash } });
+      return { id, blocked: input.blocked, auditEventId };
+    });
   }
 
   async listNotifications(userId: string, unreadOnly = false): Promise<JsonRecord> {
@@ -1895,21 +2011,44 @@ export class SkillGovernanceService {
           .whereIn('tg.teamId', teamIds)
         : Promise.resolve([]),
     ]);
+    const owned = await this.db('skills as s').join('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .join('groups as g', 'g.id', 's.ownerTeamId').select('s.id', 's.skillKey', 'g.name as teamName')
+      .whereIn('s.ownerTeamId', teamIds).where({ 's.status': 'active', 'v.status': 'active' });
     const byId = new Map<string, { skillKey: string; reasons: string[] }>();
     for (const row of direct as any[]) {
       byId.set(row.id, { skillKey: row.skillKey, reasons: ['Direct access'] });
     }
-    for (const row of team as any[]) {
+    for (const row of [...team, ...owned] as any[]) {
       const current: { skillKey: string; reasons: string[] } = byId.get(row.id)
         || { skillKey: row.skillKey, reasons: [] };
       current.reasons.push(`via ${row.teamName} Team`);
       byId.set(row.id, current);
     }
+    const defaults = await this.db('skills as s').join('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .select('s.id', 's.skillKey', 'v.manifestHash').whereIn('s.id', [...byId.keys()]);
+    const executable = new Set((await filterExecutablePins(this.db, defaults)).map((row: any) => row.id));
+    for (const id of byId.keys()) if (!executable.has(id)) byId.delete(id);
     return {
       skillIds: [...byId.keys()].sort(),
       skillKeys: [...byId.values()].map((item) => item.skillKey).sort(),
       reasons: Object.fromEntries([...byId].map(([id, value]) => [id, Array.from(new Set(value.reasons))])),
     };
+  }
+
+  private async publishPersonalRevision(userId: string, draftId: string, revisionId: string): Promise<void> {
+    const draft = await this.ownedDraft(userId, draftId);
+    const files = await this.packageStore.draftFiles(revisionId);
+    const validation = await this.validateSnapshot(draft, files);
+    await this.db('skill_draft_revisions').where({ id: revisionId }).update({ validationSummary: JSON.stringify(validation) });
+    if (!validation.valid) return;
+    try {
+      await this.packageStore.materializeVersion(`personal/${draftId}`, revisionId, computePackageManifestHash(files), files);
+      await this.db('private_skill_drafts').where({ id: draftId, currentDraftRevisionId: revisionId, status: 'private' })
+        .update({ activeRevisionId: revisionId, activationError: null });
+    } catch (error) {
+      await this.db('private_skill_drafts').where({ id: draftId, currentDraftRevisionId: revisionId })
+        .update({ activationError: 'Changes saved, but chat publication failed. Save again to retry.' });
+    }
   }
 
   private async createDraftRevision(input: {
@@ -2316,20 +2455,6 @@ export class SkillGovernanceService {
       if (teamGrant) return workspace;
     }
     governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Workspace not found');
-  }
-
-  private async selfApprovalAllowed(userId: string, teamId: string): Promise<boolean> {
-    if (String(process.env.ALLOW_SINGLE_LEAD_SKILL_SELF_APPROVAL || '').toLowerCase() !== 'true') {
-      return false;
-    }
-    const activeLeads = await this.db('team_role_bindings as role')
-      .join('group_members as membership', function joinMembership() {
-        this.on('membership.groupId', '=', 'role.teamId')
-          .andOn('membership.userId', '=', 'role.userId');
-      })
-      .select('role.userId')
-      .where({ 'role.teamId': teamId, 'role.role': 'lead' });
-    return activeLeads.length === 1 && activeLeads[0].userId === userId;
   }
 
   private async notifyTeamLeads(

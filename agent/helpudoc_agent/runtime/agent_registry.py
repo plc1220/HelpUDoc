@@ -36,10 +36,15 @@ from ..skills_registry import (
     collect_tool_names,
     get_candidate_mcp_servers,
     load_skills,
+    load_context_skills,
+    find_skill_for_context,
+    is_skill_allowed,
+    activate_skill_context,
     sync_skills_to_workspace,
 )
 from ..mcp_manager import MCPServerManager
 from ..tool_guard import GuardedTool
+from ..skill_builder import SKILL_BUILDER_SYSTEM_PROMPT, SKILL_BUILDER_TOOL_GROUPS
 from ..slide_style_preview import preview_tool_error
 from ..memory_store import UserScopedStoreBackend
 
@@ -417,6 +422,7 @@ class AgentRegistry:
         max_output_tokens = self.settings.model.resolve_max_output_tokens(mode)
         resolved_name = f"{self._default_agent_name}:{mode}"
         context_payload = initial_context or {}
+        builder_mode = context_payload.get("skill_builder") is True
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
         internet_search_key = "search:on" if context_payload.get("internet_search_enabled") else "search:off"
@@ -432,10 +438,12 @@ class AgentRegistry:
         )
         user_key = str(context_payload.get("user_id") or "")
         cache_scope_prefix = f"{user_key}:{policy_key}:"
+        skill_versions_key = json.dumps({"allow": context_payload.get("skill_allow_ids", []),
+                                         "pins": context_payload.get("skill_version_pins", {}), "builder": builder_mode}, sort_keys=True)
         key = (
             resolved_name,
             workspace_id,
-            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}:{skill_sandbox_key}",
+            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}:{skill_sandbox_key}:{skill_versions_key}",
         )
         preserved_context: Dict[str, Any] = {}
         if key in self._cache:
@@ -501,11 +509,19 @@ class AgentRegistry:
                 "or review the proposed change."
             )
         skills_root = self.settings.backend.skills_root
+        active_key = workspace_state.context.get("active_skill")
+        if active_key and skills_root is not None:
+            active = find_skill_for_context(skills_root, active_key, workspace_state.context)
+            if active is not None and is_skill_allowed(active, workspace_state.context):
+                activate_skill_context(workspace_state.context, active, plugins_root=self.settings.backend.plugins_root)
+            else:
+                for field in ("active_skill", "active_skill_scope", "active_skill_version", "active_skill_policy", "active_skill_block_paths"):
+                    workspace_state.context.pop(field, None)
         if skills_root is not None:
             skills_root.mkdir(parents=True, exist_ok=True)
-            if self.settings.backend.sync_skills_to_workspace:
+            if self.settings.backend.sync_skills_to_workspace and not builder_mode:
                 sync_skills_to_workspace(skills_root, workspace_state.root_path)
-        skills = load_skills(skills_root) if skills_root is not None else []
+        skills = load_context_skills(skills_root, workspace_state.context) if skills_root is not None else []
         tool_names = collect_tool_names(skills, plugins_root=self.settings.backend.plugins_root)
         if tool_names:
             tool_names = [name for name in tool_names if name in self.settings.tools]
@@ -522,6 +538,9 @@ class AgentRegistry:
                 tool_names.append("google_search")
             if "url_context" in self.settings.tools and "url_context" not in tool_names:
                 tool_names.append("url_context")
+
+        if builder_mode:
+            tool_names = [name for name in self.settings.tools if name in SKILL_BUILDER_TOOL_GROUPS]
 
         builtin_tools = [
             GuardedTool.from_tool(tool, workspace_state=workspace_state)
@@ -543,10 +562,11 @@ class AgentRegistry:
             candidate_mcp_servers,
             preferred_mcp_server,
         )
-        await mcp_manager.initialize(
-            candidate_server_names=candidate_mcp_servers,
-            preflight_gemini=self.settings.model.provider == "gemini",
-        )
+        if not builder_mode:
+            await mcp_manager.initialize(
+                candidate_server_names=candidate_mcp_servers,
+                preflight_gemini=self.settings.model.provider == "gemini",
+            )
         preferred_server = workspace_state.context.get("preferred_mcp_server")
         normalized_preferred = str(preferred_server).strip() if isinstance(preferred_server, str) else ""
         bound_servers = list(mcp_manager.get_tools_by_server().keys())
@@ -581,7 +601,9 @@ class AgentRegistry:
                     store=self._memory_store.store if self._memory_store is not None else None,
                 ),
             }
-            if skills_root is not None:
+            if builder_mode:
+                routes = {}
+            if skills_root is not None and not builder_mode:
                 routes["/skills/"] = FilesystemBackend(
                     root_dir=str(skills_root),
                     virtual_mode=True,
@@ -617,7 +639,7 @@ class AgentRegistry:
             PatchToolCallsMiddleware(),
         ]
         code_interpreter = self.settings.backend.code_interpreter
-        if code_interpreter.enabled:
+        if code_interpreter.enabled and not builder_mode:
             middleware.append(
                 CodeInterpreterMiddleware(
                     tool_name=code_interpreter.tool_name,
@@ -642,7 +664,7 @@ class AgentRegistry:
         if self.settings.backend.implicit_input_guard:
             middleware.append(ImplicitInputGuardMiddleware(enabled=True))
 
-        full_prompt = system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT
+        full_prompt = SKILL_BUILDER_SYSTEM_PROMPT if builder_mode else (system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT)
         agent = create_agent(
             model=model,
             tools=tools,

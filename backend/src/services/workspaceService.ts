@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Knex } from 'knex';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 import { DatabaseService } from './databaseService';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
@@ -423,6 +423,23 @@ export class WorkspaceService {
         'g.name',
       )
       .orderBy('g.name', 'asc');
+  }
+
+  async ensureSkillBuilderWorkspace(user: Pick<UserContext, 'userId' | 'displayName'>): Promise<string> {
+    const workspaceId = uuidv5(`helpudoc:skill-builder:${user.userId}`, uuidv5.URL);
+    await this.db.transaction(async tx => {
+      await tx('workspaces').insert({ id: workspaceId, name: 'Skill Creator', slug: `skill-builder-${user.userId}`,
+        ownerId: user.userId, lastModifiedBy: user.userId, visibility: 'private', workspaceType: 'private',
+        isSystem: true, contentRevision: 0 }).onConflict('id').ignore();
+      const workspace = await tx('workspaces').where({ id: workspaceId }).first();
+      if (workspace.ownerId !== user.userId || !workspace.isSystem || workspace.visibility !== 'private') {
+        throw new AccessDeniedError('Skill Creator workspace is not available');
+      }
+      await tx('workspace_members').insert({ workspaceId, userId: user.userId, role: 'owner', canEdit: true })
+        .onConflict(['workspaceId', 'userId']).ignore();
+    });
+    await this.createWorkspaceDirectory(workspaceId);
+    return workspaceId;
   }
 
   async createWorkspace(user: UserContext, name?: string): Promise<WorkspaceRecord> {

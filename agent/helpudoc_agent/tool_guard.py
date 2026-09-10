@@ -14,7 +14,8 @@ from .document_tool_guard import (
     check_document_tool_call,
     record_document_tool_result,
 )
-from .skills_registry import is_tool_allowed
+from .skill_builder import SKILL_BUILDER_TOOL_NAMES
+from .skills_registry import is_tool_allowed, is_skill_allowed
 from .slide_style_preview import preview_tool_error
 from .state import WorkspaceState
 
@@ -115,6 +116,13 @@ class GuardedTool(BaseTool):
 
     def _guard(self) -> Optional[str]:
         context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        if self.name not in {"load_skill", "list_skills"} and context.get("active_skill") and not is_skill_allowed(context["active_skill"], context):
+            return "You no longer have access to this skill. Load an available skill before continuing."
+        from pathlib import Path
+        if self.name not in {"load_skill", "list_skills"} and any(Path(marker).exists() for marker in context.get("active_skill_block_paths", [])):
+            return "This skill has been blocked by an administrator. Further execution is disabled."
+        if context.get("skill_builder") is True and self.name not in SKILL_BUILDER_TOOL_NAMES:
+            return "Skill Creator can inspect references but cannot execute the proposed workflow."
         preferred_server = context.get("preferred_mcp_server")
         preferred_bound = bool(context.get("preferred_mcp_server_bound"))
         if (

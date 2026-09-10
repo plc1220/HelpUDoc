@@ -23,6 +23,7 @@ def extract_agent_request_context(request: Request, *, agent_jwt_secret: str) ->
     if not payload:
         return {}
     context: Dict[str, Any] = {}
+    context["skill_builder"] = payload.get("skillBuilder") is True
     user_id = payload.get("userId") or payload.get("sub")
     if isinstance(user_id, str) and user_id.strip():
         context["user_id"] = user_id.strip()
@@ -66,8 +67,7 @@ def extract_agent_request_context(request: Request, *, agent_jwt_secret: str) ->
                 "semanticVersion": semantic_version,
                 "manifestHash": manifest_hash,
             }
-        if normalized_pins:
-            context["skill_version_pins"] = normalized_pins
+        context["skill_version_pins"] = normalized_pins
     allow_ids = payload.get("mcpServerAllowIds") or []
     deny_ids = payload.get("mcpServerDenyIds") or []
     # Platform administration never grants runtime-capability consumption.

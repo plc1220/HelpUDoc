@@ -209,7 +209,7 @@ services:
       DEFAULT_USER_ID: ${DEFAULT_USER_ID:-local-admin@local.com}
       DEFAULT_USER_NAME: ${DEFAULT_USER_NAME:-admin}
       DEFAULT_USER_EMAIL: ${DEFAULT_USER_EMAIL:-admin@local.com}
-      AGENT_URL: ${AGENT_URL:-http://agent:8001}
+      AGENT_URL: ${DOCKER_AGENT_URL:-http://agent:8001}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-helpudoc}

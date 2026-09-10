@@ -24,6 +24,7 @@ from ....skills_registry import (
     find_skill_for_context,
     is_skill_allowed,
     load_skills,
+    load_context_skills,
     read_helpudoc_learnings,
     read_skill_content,
     routing_hint_from_learnings,
@@ -231,7 +232,7 @@ def build_list_skills_tool(settings: Settings, workspace_state: WorkspaceState) 
             return blocked
         if skills_root is None or not skills_root.exists():
             return "No skills directory configured."
-        skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
+        skills = load_context_skills(skills_root, workspace_state.context)
         if not skills:
             return "No skills found."
         lines = []
@@ -263,7 +264,7 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
             return blocked
         if skills_root is None or not skills_root.exists():
             return "No skills directory configured."
-        skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
+        skills = load_context_skills(skills_root, workspace_state.context)
         if not skills:
             return "No skills found."
         normalized = skill_id.strip()

@@ -85,6 +85,13 @@ export type ApplyActionsResult = {
   error?: string;
 };
 
+export type SkillBuilderReference = { kind: 'knowledge' | 'knowledge_base' | 'skill' | 'mcp'; id: string; name: string; description: string };
+export const listSkillBuilderReferences = async (): Promise<SkillBuilderReference[]> => {
+  const response = await apiFetch(`${API_URL}/skill-builder/references`);
+  if (!response.ok) await unwrapError(response, 'Failed to load references');
+  return (await response.json()).references || [];
+};
+
 export type SkillBuilderSession = {
   workspaceId: string;
   limits: {
@@ -101,6 +108,7 @@ export type SkillBuilderContextFile = {
   size: number;
   mimeType: string;
   uploadedAt?: string;
+  source?: { url: string; repository: string; commit: string; folder: string; importedAt: string };
 };
 
 export type SkillBuilderRun = {
@@ -383,6 +391,7 @@ export const deleteSkillBuilderContextFile = async (fileId: string) => {
 };
 
 export const startSkillBuilderRun = async (payload: {
+  references?: Array<Pick<SkillBuilderReference, 'kind' | 'id'>>;
   prompt: string;
   history?: Array<{ role: string; content: string }>;
   contextFileIds?: string[];
@@ -734,4 +743,16 @@ export const generateSkillEvolutionSuggestions = async (
     await unwrapError(response, 'Failed to generate suggestions');
   }
   return response.json() as Promise<{ processed: number; inserted: number }>;
+};
+
+export const importSkillBuilderGithub = async (url: string): Promise<{ file: SkillBuilderContextFile; source: { url: string; commit: string }; fileCount: number }> => {
+  const response = await apiFetch(`${API_URL}/skill-builder/import-github`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+  if (!response.ok) await unwrapError(response, 'Failed to import GitHub skill');
+  return response.json();
+};
+
+export const validateSkillBuilderProposal = async (actions: SkillBuilderAction[]): Promise<{ valid: boolean; issues: Array<{ message: string }> }> => {
+  const response = await apiFetch(`${API_URL}/skill-builder/validate-proposal`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actions }) });
+  if (!response.ok) await unwrapError(response, 'Unable to validate proposal');
+  return response.json();
 };

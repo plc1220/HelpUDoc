@@ -66,6 +66,13 @@ export function registerSlashRoutes(
         workspaceMcpDenyIds = workspacePolicy.mcpServerDenyIds;
       }
       const allowedSkillIds = new Set(runtimeSkillIds);
+      const personal = await userService.getPersonalSkillRuntimePins(user.userId);
+      for (const pin of personal) {
+        if (allowedSkillIds.has(pin.skillKey)) skills.push({
+          id: pin.skillKey, name: pin.name, description: pin.description, valid: true,
+        });
+      }
+
       for (const skillId of skillIds) {
         if (!allowedSkillIds.has(skillId)) {
           continue;

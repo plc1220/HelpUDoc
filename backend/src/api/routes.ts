@@ -69,7 +69,7 @@ export default function(
   );
   router.use('/auth', authRoutes(userService, googleOAuthService));
   router.use('/', governanceRoutes(skillGovernanceService));
-  registerSkillBuilderRoutes(router, workspaceService);
+  registerSkillBuilderRoutes(router, workspaceService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService });
   router.use('/agent', agentRoutes(
     workspaceService,
     fileService,
@@ -78,7 +78,7 @@ export default function(
     conversationService,
     knowledgeService,
   ));
-  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
+  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService }));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));

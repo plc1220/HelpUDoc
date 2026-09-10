@@ -1,3 +1,5 @@
+import { Card } from '@astryxdesign/core/Card';
+import { Item } from '@astryxdesign/core/Item';
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
   Bot,
@@ -12,9 +14,13 @@ import {
 } from 'lucide-react';
 import {
   cancelSkillBuilderRun,
+  importSkillBuilderGithub,
+  validateSkillBuilderProposal,
   createSkillBuilderSession,
   deleteSkillBuilderContextFile,
   listSkillBuilderContextFiles,
+  listSkillBuilderReferences,
+  type SkillBuilderReference,
   startSkillBuilderRun,
   streamSkillBuilderRun,
   submitSkillBuilderDecision,
@@ -80,8 +86,22 @@ export default function SkillCreatorDialog({
   const [actions, setActions] = useState<SkillBuilderAction[]>([]);
   const [contextFiles, setContextFiles] = useState<SkillBuilderContextFile[]>([]);
   const [selectedContextIds, setSelectedContextIds] = useState<string[]>([]);
+  const [allowedExtensions, setAllowedExtensions] = useState<string[]>([]);
+  const [referenceOptions, setReferenceOptions] = useState<SkillBuilderReference[]>([]);
+  const [selectedReferences, setSelectedReferences] = useState<SkillBuilderReference[]>([]);
+  const [referenceQuery, setReferenceQuery] = useState('');
+  const [referencesOpen, setReferencesOpen] = useState(false);
+  const [referenceTrigger, setReferenceTrigger] = useState('@');
+  const [referenceIndex, setReferenceIndex] = useState(0);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const referenceRange = useRef<{ start: number; end: number } | null>(null);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [proposalValid, setProposalValid] = useState(false);
+  const [githubUrl, setGithubUrl] = useState('');
+  const [importNotice, setImportNotice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -91,11 +111,14 @@ export default function SkillCreatorDialog({
     let active = true;
     const setup = async () => {
       try {
-        await createSkillBuilderSession();
+        const session = await createSkillBuilderSession();
         const files = await listSkillBuilderContextFiles();
         if (!active) return;
+        setAllowedExtensions(session.allowedExtensions);
         setContextFiles(files);
         setReady(true);
+        try { const options = await listSkillBuilderReferences(); if (active) setReferenceOptions(options); }
+        catch (e) { if (active) setReferenceError(e instanceof Error ? e.message : 'References unavailable'); }
       } catch (setupError) {
         if (active) setError(setupError instanceof Error ? setupError.message : 'Skill Creator is unavailable');
       }
@@ -111,12 +134,14 @@ export default function SkillCreatorDialog({
     const controller = new AbortController();
     abortRef.current = controller;
     let assistantText = '';
+    let failed = false;
+    let proposedActions: SkillBuilderAction[] = [];
     const assistantId = makeId();
     setMessages((current) => [...current, { id: assistantId, role: 'assistant', text: '' }]);
     await streamSkillBuilderRun(activeRunId, (chunk) => {
       const eventId = (chunk as { id?: string }).id;
       if (eventId) lastEventIdRef.current = eventId;
-      if (['token', 'chunk', 'thought', 'tool_start', 'tool_end', 'tool_error'].includes(chunk.type)) {
+      if (['token', 'chunk'].includes(chunk.type)) {
         const content = (chunk as { content?: string }).content || '';
         if (!content) return;
         assistantText += content;
@@ -126,37 +151,62 @@ export default function SkillCreatorDialog({
       } else if (chunk.type === 'interrupt') {
         setAwaitingApproval(true);
       } else if (chunk.type === 'error') {
+        failed = true;
         setError(chunk.message || 'Skill Creator failed');
       } else if (chunk.type === 'done') {
         const proposed = parseActions(assistantText);
-        if (proposed.length) setActions(proposed);
+        if (proposed.length) { setActions(proposed); proposedActions = proposed; }
+        else if (/```json/i.test(assistantText)) setError('The creator returned an invalid draft format. Ask it to regenerate the draft as valid JSON.');
       }
     }, controller.signal, lastEventIdRef.current);
+    if (proposedActions.length && !failed) {
+      setValidating(true);
+      try {
+        const validation = await validateSkillBuilderProposal(proposedActions);
+        setProposalValid(validation.valid);
+        if (!validation.valid) {
+          const feedback = validation.issues.map(issue => issue.message).join('\n');
+          setError(`Draft needs correction: ${feedback}`);
+          setPrompt(`Correct the proposed draft and return the complete JSON actions. Validation found:\n${feedback}\nFor MCP workflows declare tools: [] and use only the registered mcp_servers; do not invent operation names.`);
+        }
+      } catch (e) { setProposalValid(false); setError(e instanceof Error ? e.message : 'Unable to validate draft'); }
+      finally { setValidating(false); }
+    }
+    if (failed) setMessages(current => current.filter(message => message.id !== assistantId || message.text));
+    else setMessages(current => current.map(message => message.id === assistantId && !message.text
+      ? { ...message, text: 'No response was produced. You can retry your message.' } : message));
   };
 
   const sendPrompt = async () => {
     const text = prompt.trim();
     if (!text || running || !ready) return;
-    const nextMessages = [...messages, { id: makeId(), role: 'user' as const, text }];
+    const userMessageId = makeId();
+    const nextMessages = [...messages, { id: userMessageId, role: 'user' as const, text }];
+    let started = false;
     setMessages(nextMessages);
     setPrompt('');
     setError(null);
     setActions([]);
+    setProposalValid(false);
     setRunning(true);
     try {
       const run = await startSkillBuilderRun({
         prompt: text,
         contextFileIds: selectedContextIds,
+        forceReset: messages.length === 0,
+        references: selectedReferences.map(({ kind, id }) => ({ kind, id })),
         history: messages
-          .filter((message) => message.role !== 'system')
+          .filter((message) => message.role !== 'system' && message.text.trim())
           .map((message) => ({ role: message.role, content: message.text })),
       });
+      started = true;
       setRunId(run.runId);
       lastEventIdRef.current = undefined;
       await consumeRun(run.runId);
     } catch (runError) {
       if ((runError as { name?: string })?.name !== 'AbortError') {
         setError(runError instanceof Error ? runError.message : 'Skill Creator failed');
+        if (!started) { setPrompt(text); setMessages(current => current.filter(message => message.id !== userMessageId)); }
       }
     } finally {
       setRunning(false);
@@ -195,6 +245,7 @@ export default function SkillCreatorDialog({
     setError(null);
     try {
       const uploaded = await uploadSkillBuilderContextFile(file);
+      setActions([]); setProposalValid(false);
       setContextFiles((current) => [...current, uploaded]);
       setSelectedContextIds((current) => [...current, uploaded.fileId]);
     } catch (uploadError) {
@@ -205,20 +256,77 @@ export default function SkillCreatorDialog({
     }
   };
 
-  const removeContext = async (fileId: string) => {
-    await deleteSkillBuilderContextFile(fileId);
-    setContextFiles((current) => current.filter((file) => file.fileId !== fileId));
-    setSelectedContextIds((current) => current.filter((id) => id !== fileId));
+  const importGithub = async () => {
+    if (!githubUrl.trim() || uploading || running) return;
+    setUploading(true); setError(null); setImportNotice(''); setActions([]); setProposalValid(false);
+    try {
+      const imported = await importSkillBuilderGithub(githubUrl.trim());
+      setContextFiles(current => [...current, imported.file]);
+      setSelectedContextIds(current => [...current, imported.file.fileId]);
+      setImportNotice(`Imported ${imported.fileCount} source files at commit ${imported.source.commit.slice(0, 8)}. Ready to adapt.`);
+      setGithubUrl('');
+      setPrompt(current => current || 'Adapt the imported GitHub skill into a personal HelpUDoc skill. Preserve source attribution and required supporting files; explain any unsupported dependencies.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'GitHub import failed'); }
+    finally { setUploading(false); }
   };
 
+  const removeContext = async (fileId: string) => {
+    try {
+      await deleteSkillBuilderContextFile(fileId);
+      setActions([]); setProposalValid(false);
+      setContextFiles((current) => current.filter((file) => file.fileId !== fileId));
+      setSelectedContextIds((current) => current.filter((id) => id !== fileId));
+    } catch (e) { setError(e instanceof Error ? e.message : 'Unable to remove attachment'); }
+  };
+
+  const referenceKey = (ref: SkillBuilderReference) => `${ref.kind}:${ref.id}`;
+  const toggleReference = (ref: SkillBuilderReference) => {
+    const selected = selectedReferences.some(item => referenceKey(item) === referenceKey(ref));
+    if (!selected && selectedReferences.length >= 20) { setReferenceError('You can tag up to 20 references.'); return; }
+    setActions([]);
+    setProposalValid(false);
+    setSelectedReferences(current => selected ? current.filter(item => referenceKey(item) !== referenceKey(ref)) : [...current, ref]);
+    const range = referenceRange.current;
+    if (!selected && range) {
+      setPrompt(current => current.slice(0, range.start) + current.slice(range.end));
+      requestAnimationFrame(() => { promptRef.current?.focus(); promptRef.current?.setSelectionRange(range.start, range.start); });
+    }
+    setReferencesOpen(false);
+    referenceRange.current = null;
+    setReferenceError(null);
+  };
+  const updateReferencePicker = (input: HTMLTextAreaElement) => {
+    const cursor = input.selectionStart;
+    const match = /(^|[\s([{])([@/])([^\s@/]*)$/.exec(input.value.slice(0, cursor));
+    setReferencesOpen(Boolean(match));
+    referenceRange.current = match ? { start: cursor - match[3].length - 1, end: cursor } : null;
+    if (match) { setReferenceTrigger(match[2]); setReferenceQuery(match[3]); setReferenceIndex(0); }
+  };
+  const visibleReferences = referenceOptions.filter(ref => (referenceTrigger === '/' ? ['skill', 'mcp'].includes(ref.kind) : ['knowledge', 'knowledge_base'].includes(ref.kind)) && !selectedReferences.some(item => referenceKey(item) === referenceKey(ref))).filter(ref => `${ref.name} ${ref.id} ${ref.kind} ${ref.description}`.toLowerCase().includes(referenceQuery.toLowerCase()));
+
+
   const saveProposal = async () => {
-    if (!actions.length) return;
+    if (!actions.length || !proposalValid) return;
     setSaving(true);
     setError(null);
     let created: SkillDraft | null = null;
     try {
+      const validation = await validateSkillBuilderProposal(actions);
+      if (!validation.valid) { setProposalValid(false); throw new Error(validation.issues.map(issue => issue.message).join('; ')); }
       created = await createSkillDraft({ proposalType: 'new' });
-      const updated = await applySkillBuilderDraftActions(created.id, created.draftRevision, actions);
+      const skillId = actions[0]?.skillId;
+      const proposalActions: SkillBuilderAction[] = selectedReferences.length && skillId ? [
+        ...actions.filter(action => !(action.type === 'upsert_text' && action.path === 'references/registered-resources.json')),
+        { type: 'upsert_text', skillId, path: 'references/registered-resources.json', encoding: 'utf-8',
+          content: JSON.stringify(selectedReferences.map(({ kind, id, name }) => ({ kind, id, name })), null, 2) },
+      ] : [...actions];
+      const sources = contextFiles.filter(file => selectedContextIds.includes(file.fileId) && file.source).map(file => file.source);
+      if (sources.length && skillId) {
+        const prior = proposalActions.findIndex(action => action.type === 'upsert_text' && action.path === 'references/source-provenance.json');
+        if (prior >= 0) proposalActions.splice(prior, 1);
+        proposalActions.push({ type: 'upsert_text', skillId, path: 'references/source-provenance.json', encoding: 'utf-8', content: JSON.stringify({ sources }, null, 2) });
+      }
+      const updated = await applySkillBuilderDraftActions(created.id, created.draftRevision, proposalActions);
       await onSaved(updated);
     } catch (saveError) {
       if (created) await deleteSkillDraft(created.id, created.draftRevision).catch(() => undefined);
@@ -271,9 +379,21 @@ export default function SkillCreatorDialog({
                 </div>
               </div>
             ) : null}
-            <div className="border-t border-slate-200 p-4">
+            <div className="relative border-t border-slate-200 p-4">
+              {referencesOpen && <Card padding={1} className="lumo-composer-suggestions lumo-composer-command-suggestions" role="listbox" aria-label="Skill Creator references">
+                {visibleReferences.length ? visibleReferences.map((ref, index) => <Item key={referenceKey(ref)} density="compact" label={ref.name} description={`${ref.kind.replace('_', ' ')} · ${ref.description || ref.id}`} isHighlighted={index === referenceIndex} onClick={() => toggleReference(ref)} />) : <div className="lumo-composer-empty-suggestion">No matching references</div>}
+              </Card>}
+              {referenceError && <p role="alert" className="mb-2 text-xs text-rose-600">{referenceError}</p>}
+              {selectedReferences.length > 0 && <div className="mb-3 flex flex-wrap gap-2" aria-label="Tagged references">
+                {selectedReferences.map(ref => <button key={referenceKey(ref)} type="button" disabled={running} onClick={() => toggleReference(ref)} title={`Remove ${ref.name}`} className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-800">@{ref.name}<X size={12} /></button>)}
+              </div>}
               <div className="flex gap-2">
-                <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} disabled={!ready || running} placeholder="Describe your workflow or answer the creator’s question…" className="settings-control min-h-[84px] flex-1 resize-none rounded-xl px-3 py-2.5 text-sm" />
+                <textarea ref={promptRef} value={prompt} onChange={event => { setPrompt(event.target.value); updateReferencePicker(event.currentTarget); }} onClick={event => updateReferencePicker(event.currentTarget)} onKeyDown={event => {
+                  if (!referencesOpen || event.nativeEvent.isComposing) return;
+                  if (event.key === 'Escape') { event.preventDefault(); setReferencesOpen(false); referenceRange.current = null; }
+                  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setReferenceIndex(current => visibleReferences.length ? (current + (event.key === 'ArrowDown' ? 1 : -1) + visibleReferences.length) % visibleReferences.length : 0); }
+                  else if ((event.key === 'Enter' || event.key === 'Tab') && visibleReferences[referenceIndex]) { event.preventDefault(); toggleReference(visibleReferences[referenceIndex]); }
+                }} rows={3} disabled={!ready || running} placeholder="Describe your workflow… / for skills and MCP servers, @ for knowledge." aria-label="Skill Creator message" aria-expanded={referencesOpen} className="settings-control min-h-[84px] flex-1 resize-none rounded-xl px-3 py-2.5 text-sm" />
                 <button type="button" onClick={() => void sendPrompt()} disabled={!prompt.trim() || running || !ready} className="settings-button-primary self-end rounded-xl p-3 disabled:opacity-50" aria-label="Send to Skill Creator">
                   {running ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                 </button>
@@ -285,16 +405,24 @@ export default function SkillCreatorDialog({
           <aside className="min-h-0 overflow-y-auto p-5">
             <h3 className="text-sm font-semibold text-slate-900">Supporting context</h3>
             <p className="mt-1 text-xs leading-5 text-slate-500">Attach examples, policies, templates, or screenshots the creator should consider.</p>
-            <input ref={uploadRef} type="file" className="hidden" onChange={(event) => void uploadContext(event)} />
-            <button type="button" onClick={() => uploadRef.current?.click()} disabled={uploading} className="settings-portal-button-secondary mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
+            <input ref={uploadRef} type="file" accept={allowedExtensions.join(',')} className="hidden" onChange={(event) => void uploadContext(event)} />
+            <button type="button" onClick={() => uploadRef.current?.click()} disabled={uploading || running || !ready} className="settings-portal-button-secondary mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
               {uploading ? <Loader2 size={16} className="animate-spin" /> : <FileUp size={16} />} Add context
             </button>
+            <p className="mt-2 text-xs text-slate-500">Office documents, PDFs, text, data and images · 20 MB per file</p>
+            <div className="mt-4 border-t border-slate-200 pt-4">
+              <label htmlFor="skill-github-url" className="text-sm font-semibold text-slate-900">Import from GitHub</label>
+              <input id="skill-github-url" type="url" value={githubUrl} onChange={event => setGithubUrl(event.target.value)} disabled={uploading || running} placeholder="https://github.com/owner/repo/tree/main/skill" className="settings-control mt-2 w-full rounded-lg px-3 py-2 text-xs" />
+              <button type="button" onClick={() => void importGithub()} disabled={!githubUrl.trim() || uploading || running} className="settings-portal-button-secondary mt-2 w-full rounded-lg px-3 py-2 text-xs">{uploading ? 'Importing…' : 'Import skill source'}</button>
+              <p className="mt-2 text-xs text-slate-500">Public skill folders with SKILL.md · text files only · 30 files / 2 MB. Source code is read, never executed.</p>
+              {importNotice && <p role="status" className="mt-2 text-xs text-emerald-700">{importNotice}</p>}
+            </div>
             <div className="mt-3 space-y-2">
               {contextFiles.map((file) => (
                 <div key={file.fileId} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2 text-xs">
-                  <input type="checkbox" checked={selectedContextIds.includes(file.fileId)} onChange={() => setSelectedContextIds((current) => current.includes(file.fileId) ? current.filter((id) => id !== file.fileId) : [...current, file.fileId])} />
+                  <input type="checkbox" disabled={running} aria-label={`Include ${file.name}`} checked={selectedContextIds.includes(file.fileId)} onChange={() => setSelectedContextIds((current) => current.includes(file.fileId) ? current.filter((id) => id !== file.fileId) : [...current, file.fileId])} />
                   <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                  <button type="button" onClick={() => void removeContext(file.fileId)} className="text-rose-600" aria-label={`Remove ${file.name}`}><Trash2 size={14} /></button>
+                  <button type="button" disabled={running || saving} onClick={() => void removeContext(file.fileId)} className="text-rose-600" aria-label={`Remove ${file.name}`}><Trash2 size={14} /></button>
                 </div>
               ))}
             </div>
@@ -302,8 +430,9 @@ export default function SkillCreatorDialog({
             <div className="mt-6 border-t border-slate-200 pt-5">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-900">Proposed draft</h3>
-                {actions.length ? <CheckCircle2 size={17} className="text-emerald-600" /> : null}
+                {proposalValid ? <CheckCircle2 size={17} className="text-emerald-600" /> : null}
               </div>
+              {proposalValid && <p className="mt-2 text-xs text-emerald-700">Validation passed. Save to create your personal skill; it has not been saved yet.</p>}
               {!actions.length ? <p className="mt-2 text-xs leading-5 text-slate-500">The proposed files will appear here when the creator has enough information.</p> : null}
               <div className="mt-3 space-y-2">
                 {actions.map((action, index) => (
@@ -318,8 +447,8 @@ export default function SkillCreatorDialog({
           <button type="button" onClick={() => void onManual()} disabled={saving} className="settings-portal-button-secondary rounded-xl px-4 py-2.5 text-sm font-semibold">Create manually</button>
           <div className="flex gap-3">
             <button type="button" onClick={onClose} className="settings-portal-button-secondary rounded-xl px-4 py-2.5 text-sm font-semibold">Cancel</button>
-            <button type="button" onClick={() => void saveProposal()} disabled={!actions.length || saving} className="settings-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
-              {saving ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} Save private draft
+            <button type="button" onClick={() => void saveProposal()} disabled={!actions.length || !proposalValid || validating || saving || running} className="settings-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} {validating ? 'Checking draft…' : 'Save personal skill'}
             </button>
           </div>
         </footer>
