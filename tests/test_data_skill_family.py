@@ -1769,7 +1769,8 @@ class TestBigQueryMaterialization:
         assert metadata_path.exists()
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         assert metadata["sourceSql"] == "SELECT 1 AS order_id, 10.5 AS revenue"
-        assert metadata["connector"] == "toolbox-bq-demo"
+        # Tracks _DEFAULT_SERVER_NAME, which now names the managed endpoint.
+        assert metadata["connector"] == "bigquery-managed"
         assert metadata["rowCount"] == 2
         schema_text = tools["get_table_schema"].invoke({"table_names": [payload["duckdb_table_name"]]})
         assert payload["duckdb_table_name"] in schema_text

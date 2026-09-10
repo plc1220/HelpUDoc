@@ -131,6 +131,14 @@ tools:
     kind: builtin
     description: Run an active skill's declared Python script in a Kubernetes sandbox
 mcp_servers:
+  - name: bigquery-managed
+    transport: http
+    url: https://bigquery.googleapis.com/mcp
+    delegated_auth_provider: google
+    default_access: allow
+    headers_from_env:
+      X-goog-user-project: GOOGLE_CLOUD_PROJECT
+    description: Google managed BigQuery MCP endpoint
   - name: toolbox-bq-demo
     transport: http
     url: https://toolbox-452883396851.asia-southeast1.run.app/mcp
