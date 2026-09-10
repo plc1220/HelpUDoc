@@ -194,8 +194,20 @@ spec:
                   key: S3_BUCKET_NAME
             - name: S3_ENDPOINT
               value: http://minio:9000
+            # The host the BROWSER uploads knowledge files to, via the presigned
+            # PUT URL. Caddy routes /helpudoc* to minio:9000, and the bucket is
+            # named `helpudoc`, so path-style URLs land on the right backend.
+            # This must be this deployment's own ingress host. It was hardcoded
+            # to another environment's domain from 8c27541 until 2026-09-09, so
+            # every knowledge upload was signed for a host that is not this
+            # cluster and finalize then failed with NotFound. Not optional: a
+            # missing key falls back to the in-cluster http://minio:9000, which
+            # no browser can reach, and the failure looks identical.
             - name: S3_PUBLIC_ENDPOINT
-              value: https://www.lc-demo.com
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_PUBLIC_ENDPOINT
             - name: S3_FORCE_PATH_STYLE
               valueFrom:
                 configMapKeyRef:
