@@ -310,6 +310,44 @@ spec:
                   name: helpudoc-config
                   key: ENABLE_SKILL_SANDBOX_RUNNER
                   optional: true
+            # Published file artifacts. Without these the backend silently falls
+            # back to the workspace store under a published/ prefix, so a release
+            # test passes against the wrong bucket. Compose was fixed in 3eb6561;
+            # this is the same wiring for GKE.
+            - name: PUBLICATION_PROVIDER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: PUBLICATION_PROVIDER
+                  optional: true
+            - name: PUBLICATION_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: PUBLICATION_BUCKET_NAME
+                  optional: true
+            - name: PUBLICATION_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: PUBLICATION_PREFIX
+                  optional: true
+            - name: PUBLICATION_GCS_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: PUBLICATION_GCS_PROJECT_ID
+                  optional: true
+            - name: PUBLICATION_GCS_API_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: PUBLICATION_GCS_API_ENDPOINT
+                  optional: true
+            # Fixed path, not a ConfigMap value: it must match the mountPath of
+            # the publication-sa-key volume below, so the two cannot drift apart.
+            - name: PUBLICATION_GCS_KEY_FILENAME
+              value: /var/secrets/publication/key.json
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
@@ -319,6 +357,9 @@ spec:
               mountPath: /app/plugins
             - name: agent-config-data
               mountPath: /agent/config
+            - name: publication-sa-key
+              mountPath: /var/secrets/publication
+              readOnly: true
         - name: knowledge-worker
           image: gcr.io/ccob-my-ai-engine-dev/helpudoc-backend:latest
           command: ["npm"]
@@ -794,6 +835,17 @@ spec:
             optional: true
             items:
               - key: VERTEX_SA_JSON
+                path: key.json
+        # Writes released artifacts into the publication bucket. Optional for the
+        # same reason as the Vertex key: the pod must still start without it, and
+        # only publishing fails. Leave it unset when PUBLICATION_BUCKET_NAME is
+        # empty and releases stay in the workspace store.
+        - name: publication-sa-key
+          secret:
+            secretName: helpudoc-secrets
+            optional: true
+            items:
+              - key: PUBLICATION_SA_JSON
                 path: key.json
 ---
 apiVersion: v1
