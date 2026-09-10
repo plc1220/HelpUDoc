@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
+import { MoreMenu } from '@astryxdesign/core/MoreMenu';
 import { MultiSelector } from '@astryxdesign/core/MultiSelector';
 import { Pagination } from '@astryxdesign/core/Pagination';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
@@ -10,19 +13,14 @@ import { Table, pixel, proportional, type TableColumn } from '@astryxdesign/core
 import {
   ArrowDownAZ,
   ArrowUpAZ,
-  BookOpen,
-  KeyRound,
-  Loader2,
   Plus,
   Search,
-  ShieldCheck,
-  ShieldOff,
   Trash2,
   UserRound,
   Users2,
-  Wrench,
   X,
 } from 'lucide-react';
+import './UsersPage.css';
 import SettingsShell from '../components/settings/SettingsShell';
 import {
   SettingsEmptyState,
@@ -77,6 +75,17 @@ const formatDate = (value: string) => {
 
 const UsersPage = () => {
   const currentUser = getAuthUser();
+  const navigate = useNavigate();
+  const [confirmation, setConfirmation] = useState<{
+    title: string; description: string; actionLabel: string; resolve: (accepted: boolean) => void;
+  } | null>(null);
+  const confirmAction = useCallback((title: string, description: string, actionLabel: string) => (
+    new Promise<boolean>((resolve) => setConfirmation({ title, description, actionLabel, resolve }))
+  ), []);
+  const resolveConfirmation = (accepted: boolean) => {
+    confirmation?.resolve(accepted);
+    setConfirmation(null);
+  };
   const [activeView, setActiveView] = useState<ManagementView>('users');
 
   const [users, setUsers] = useState<UserTableRow[]>([]);
@@ -94,6 +103,13 @@ const UsersPage = () => {
   const [groupMembers, setGroupMembers] = useState<ManagedUser[]>([]);
   const [groupAccess, setGroupAccess] = useState<GroupPromptAccess>(emptyAccess);
   const [savedGroupAccess, setSavedGroupAccess] = useState<GroupPromptAccess>(emptyAccess);
+  const [teamSearch, setTeamSearch] = useState('');
+  const [isCreatingTeam, setIsCreatingTeam] = useState(false);
+  const [isAddingMember, setIsAddingMember] = useState(false);
+  const [groupCreating, setGroupCreating] = useState(false);
+  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
+  const [memberUpdating, setMemberUpdating] = useState(false);
+  const detailRequest = useRef(0);
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
 
@@ -257,10 +273,12 @@ const UsersPage = () => {
   }, []);
 
   const loadGroupDetails = useCallback(async (groupId: string) => {
+    const request = ++detailRequest.current;
+    setGroupMembers([]);
+    setGroupAccess(emptyAccess());
+    setSavedGroupAccess(emptyAccess());
     if (!groupId) {
-      setGroupMembers([]);
-      setGroupAccess(emptyAccess());
-      setSavedGroupAccess(emptyAccess());
+      setAccessLoading(false);
       return;
     }
     setAccessLoading(true);
@@ -269,6 +287,7 @@ const UsersPage = () => {
         fetchGroupMembers(groupId),
         fetchGroupPromptAccess(groupId),
       ]);
+      if (request !== detailRequest.current) return;
       const normalized: GroupPromptAccess = {
         skillIds: sortStrings(access.skillIds),
         mcpServerIds: sortStrings(access.mcpServerIds),
@@ -279,11 +298,51 @@ const UsersPage = () => {
       setSavedGroupAccess(normalized);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load team details');
+      if (request === detailRequest.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load team details');
+      }
     } finally {
-      setAccessLoading(false);
+      if (request === detailRequest.current) setAccessLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!isAccessDirty) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    const confirmLinkNavigation = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;
+      if (!anchor || anchor.getAttribute('href') === window.location.pathname || event.defaultPrevented
+        || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || anchor.target === '_blank'
+        || anchor.origin !== window.location.origin) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void confirmAction('Discard unsaved changes?', 'Your team access changes have not been saved.', 'Discard changes').then((accepted) => {
+        if (accepted) navigate(`${anchor.pathname}${anchor.search}${anchor.hash}`);
+      });
+    };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    document.addEventListener('click', confirmLinkNavigation, true);
+    return () => {
+      window.removeEventListener('beforeunload', warnBeforeUnload);
+      document.removeEventListener('click', confirmLinkNavigation, true);
+    };
+  }, [confirmAction, isAccessDirty, navigate]);
+
+  const canLeaveTeam = async () => !accessSaving && !memberUpdating && !groupCreating && !deletingGroupId
+    && (!isAccessDirty || await confirmAction('Discard unsaved changes?', 'Your team access changes have not been saved.', 'Discard changes'));
+
+  const selectTeam = async (groupId: string) => {
+    if (groupId === selectedGroupId || !(await canLeaveTeam())) return;
+    setSelectedGroupId(groupId);
+    setSelectedUserId('');
+    setIsAddingMember(false);
+  };
+
+  const changeView = async (value: string) => {
+    if (value === activeView || !(await canLeaveTeam())) return;
+    setGroupAccess(savedGroupAccess);
+    setActiveView(value as ManagementView);
+  };
 
   useEffect(() => {
     void loadUsers();
@@ -310,67 +369,94 @@ const UsersPage = () => {
   };
 
   const handleCreateGroup = async () => {
-    if (!newGroupName.trim()) return;
+    if (!newGroupName.trim() || groupCreating || !(await canLeaveTeam())) return;
+    setGroupCreating(true);
     try {
       const created = await createGroup(newGroupName.trim());
       setGroups((previous) => [...previous, created].sort((a, b) => a.name.localeCompare(b.name)));
       setSelectedGroupId(created.id);
       setNewGroupName('');
+      setTeamSearch('');
+      setIsCreatingTeam(false);
+      setIsAddingMember(false);
+      setSelectedUserId('');
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create team');
+    } finally {
+      setGroupCreating(false);
     }
   };
 
   const handleDeleteGroup = async (groupId: string) => {
-    if (!window.confirm(`Delete team "${selectedGroup?.name || 'this team'}"?`)) return;
+    const group = groups.find((entry) => entry.id === groupId);
+    if (!group || deletingGroupId || accessSaving || memberUpdating || groupCreating) return;
+    const unsaved = groupId === selectedGroupId && isAccessDirty ? ' Unsaved access changes will be discarded.' : '';
+    if (!(await confirmAction(`Delete team “${group.name}”?`, `This removes the team and its membership and access assignments.${unsaved}`, 'Delete team'))) return;
+    setDeletingGroupId(groupId);
     try {
       await deleteGroup(groupId);
       const remaining = groups.filter((group) => group.id !== groupId);
       setGroups(remaining);
-      setSelectedGroupId(remaining[0]?.id || '');
+      if (selectedGroupId === groupId) {
+        setSelectedGroupId(remaining[0]?.id || '');
+        setSelectedUserId('');
+        setIsAddingMember(false);
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete team');
+    } finally {
+      setDeletingGroupId(null);
     }
   };
 
   const handleAddMember = async () => {
-    if (!selectedGroupId || !selectedUserId) return;
+    if (!selectedGroupId || !selectedUserId || memberUpdating || accessLoading || deletingGroupId || groupCreating) return;
+    setMemberUpdating(true);
     try {
       await addGroupMember(selectedGroupId, selectedUserId);
       setSelectedUserId('');
-      await loadGroupDetails(selectedGroupId);
+      setIsAddingMember(false);
+      setGroupMembers(await fetchGroupMembers(selectedGroupId));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add member');
+    } finally {
+      setMemberUpdating(false);
     }
   };
 
   const handleRemoveMember = async (userId: string) => {
-    if (!selectedGroupId) return;
+    if (!selectedGroupId || memberUpdating || accessLoading || deletingGroupId || groupCreating) return;
+    setMemberUpdating(true);
     try {
       await removeGroupMember(selectedGroupId, userId);
-      await loadGroupDetails(selectedGroupId);
+      setGroupMembers(await fetchGroupMembers(selectedGroupId));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to remove member');
+    } finally {
+      setMemberUpdating(false);
     }
   };
 
   const handleToggleTeamLead = async (member: ManagedUser) => {
-    if (!selectedGroupId) return;
+    if (!selectedGroupId || memberUpdating || accessLoading || deletingGroupId || groupCreating) return;
+    setMemberUpdating(true);
     try {
       await setTeamLead(selectedGroupId, member.id, !member.isTeamLead);
-      await loadGroupDetails(selectedGroupId);
+      setGroupMembers(await fetchGroupMembers(selectedGroupId));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update Team Lead');
+    } finally {
+      setMemberUpdating(false);
     }
   };
 
   const handleSaveGroupAccess = async () => {
-    if (!selectedGroupId) return;
+    if (!selectedGroupId || accessSaving || accessLoading || !isAccessDirty || deletingGroupId || groupCreating) return;
     setAccessSaving(true);
     try {
       const saved = await saveGroupPromptAccess(selectedGroupId, {
@@ -425,7 +511,7 @@ const UsersPage = () => {
   };
 
   const togglePluginBundle = (plugin: PluginDefinition) => {
-    if (!pluginBundleAvailability.get(plugin.id)?.assignable) return;
+    if (accessSaving || !pluginBundleAvailability.get(plugin.id)?.assignable) return;
     setGroupAccess((previous) => {
       const selected = plugin.skillIds.every((id) => previous.skillIds.includes(id))
         && plugin.mcpServers.every((id) => previous.mcpServerIds.includes(id));
@@ -443,38 +529,61 @@ const UsersPage = () => {
     });
   };
 
-  const userColumns = useMemo<TableColumn<UserTableRow>[]>(() => [
+  const sortHeader = (label: string, field: UserSortField) => (
+    <button
+      type="button"
+      className="users-sort-header"
+      aria-label={`Sort by ${label}${userSortBy === field ? `, currently ${userSortOrder === 'asc' ? 'ascending' : 'descending'}` : ''}`}
+      onClick={() => {
+        setUserSortBy(field);
+        setUserSortOrder(userSortBy === field && userSortOrder === 'asc' ? 'desc' : 'asc');
+        setUserPage(1);
+      }}
+    >
+      {label}
+      {userSortBy === field ? (userSortOrder === 'asc' ? <ArrowDownAZ size={14} /> : <ArrowUpAZ size={14} />) : null}
+    </button>
+  );
+
+  const userColumns: TableColumn<UserTableRow>[] = [
     {
       key: 'displayName',
-      header: 'User',
+      header: sortHeader('Name', 'displayName'),
       width: proportional(2),
       renderCell: (user) => (
         <div className="flex min-w-0 items-center gap-3">
           <Avatar name={user.displayName} size="small" />
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-slate-900">{user.displayName}</p>
-            <p className="truncate text-xs text-slate-500">{user.email || user.externalId}</p>
           </div>
         </div>
       ),
     },
     {
+      key: 'email',
+      header: sortHeader('Email', 'email'),
+      width: proportional(2),
+      renderCell: (user) => <span className="text-sm text-slate-500">{user.email || '—'}</span>,
+    },
+    {
       key: 'isAdmin',
-      header: 'Role',
+      header: sortHeader('Role', 'role'),
       width: pixel(150),
       renderCell: (user) => (
-        <Button
-          label={user.isAdmin ? 'Admin' : 'Member'}
-          variant={user.isAdmin ? 'primary' : 'secondary'}
-          size="sm"
-          icon={user.isAdmin ? <ShieldCheck size={14} /> : <ShieldOff size={14} />}
-          onClick={() => void handleToggleAdmin(user)}
-        />
+        <select
+          aria-label={`Role for ${user.displayName}`}
+          className="settings-control users-role-select"
+          value={user.isAdmin ? 'admin' : 'member'}
+          onChange={() => void handleToggleAdmin(user)}
+        >
+          <option value="member">Member</option>
+          <option value="admin">Admin</option>
+        </select>
       ),
     },
     {
       key: 'createdAt',
-      header: 'Joined',
+      header: sortHeader('Joined', 'createdAt'),
       width: pixel(150),
       renderCell: (user) => <span className="text-sm text-slate-600">{formatDate(user.createdAt)}</span>,
     },
@@ -488,84 +597,48 @@ const UsersPage = () => {
         const isCurrentUser = currentUser?.id === user.id;
         const isDeleting = deletingUserId === user.id;
         return (
-          <Button
-            label="Delete"
-            variant="destructive"
+          <MoreMenu
+            label={`Actions for ${user.displayName}`}
             size="sm"
-            icon={<Trash2 size={14} />}
             isDisabled={isCurrentUser || isDeleting}
-            isLoading={isDeleting}
-            onClick={() => void handleOpenDeleteModal(user)}
-            tooltip={isCurrentUser ? 'Self-delete is blocked in the admin portal' : 'Delete user'}
+            items={[{ label: 'Delete user', icon: <Trash2 size={14} />, onClick: () => void handleOpenDeleteModal(user) }]}
           />
         );
       },
     },
-  ], [currentUser?.id, deletingUserId]);
+  ];
 
   return (
     <SettingsShell
       eyebrow="Identity & access"
-      title="User & Team Management"
-      description="Manage people, organize teams, and control access to shared knowledge, skills, and connected tools."
-      actions={(
-        <SegmentedControl
-          value={activeView}
-          onChange={(value) => setActiveView(value as ManagementView)}
-          label="Management view"
-          size="sm"
-        >
-          <SegmentedControlItem value="users" label="Users" icon={<UserRound size={15} />} />
-          <SegmentedControlItem value="groups" label="Teams" icon={<Users2 size={15} />} />
-        </SegmentedControl>
-      )}
+      title="Users & teams"
+      description="Manage people, team membership, and access."
     >
-      <div className="space-y-6">
+      <div className="users-management space-y-6">
+        <div className="users-view-tabs">
+          <SegmentedControl value={activeView} onChange={changeView} label="Management view" size="md">
+            <SegmentedControlItem value="users" label="Users" icon={<UserRound size={15} />} />
+            <SegmentedControlItem value="groups" label="Teams" icon={<Users2 size={15} />} />
+          </SegmentedControl>
+        </div>
         {error ? <SettingsNotice variant="error">{error}</SettingsNotice> : null}
 
         {activeView === 'users' ? (
           <SettingsSurface>
             <SettingsSectionHeader
-              eyebrow="Directory"
               title="Users"
-              description="Search the directory, sort user records, manage administrator roles, and remove accounts."
               actions={<span className="text-sm font-medium text-slate-500">{userTotal} total</span>}
             />
 
-            <div className="settings-soft-panel mt-6 flex flex-col gap-3 rounded-2xl p-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="mt-5 flex items-center gap-3">
               <div className="relative min-w-0 flex-1 lg:max-w-md">
                 <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
+                  aria-label="Search users"
                   value={userSearchInput}
                   onChange={(event) => setUserSearchInput(event.target.value)}
                   placeholder="Search name, email, or external ID"
                   className="settings-control w-full rounded-xl py-2.5 pl-10 pr-3 text-sm"
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Sort by</span>
-                <select
-                  value={userSortBy}
-                  onChange={(event) => {
-                    setUserSortBy(event.target.value as UserSortField);
-                    setUserPage(1);
-                  }}
-                  className="settings-control rounded-xl px-3 py-2.5 text-sm"
-                >
-                  <option value="displayName">Name</option>
-                  <option value="email">Email</option>
-                  <option value="role">Role</option>
-                  <option value="createdAt">Date joined</option>
-                </select>
-                <Button
-                  label={userSortOrder === 'asc' ? 'Ascending' : 'Descending'}
-                  variant="secondary"
-                  size="sm"
-                  icon={userSortOrder === 'asc' ? <ArrowDownAZ size={16} /> : <ArrowUpAZ size={16} />}
-                  onClick={() => {
-                    setUserSortOrder((order) => (order === 'asc' ? 'desc' : 'asc'));
-                    setUserPage(1);
-                  }}
                 />
               </div>
             </div>
@@ -613,33 +686,34 @@ const UsersPage = () => {
             ) : null}
           </SettingsSurface>
         ) : (
-          <div className="grid gap-6 md:grid-cols-[280px_minmax(0,1fr)]">
+          <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
             <SettingsSurface className="h-fit">
               <SettingsSectionHeader
-                eyebrow="Teams"
                 title="Teams"
-                description="Select a team to manage membership and access."
                 actions={<Badge variant="neutral" label={String(groups.length)} />}
               />
 
-              <div className="mt-5 flex gap-2">
-                <input
-                  value={newGroupName}
-                  onChange={(event) => setNewGroupName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') void handleCreateGroup();
-                  }}
-                  placeholder="New team name"
-                  className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm"
-                />
-                <IconButton
-                  label="Create team"
-                  variant="primary"
-                  size="md"
-                  icon={<Plus size={16} />}
-                  onClick={() => void handleCreateGroup()}
-                  tooltip="Create team"
-                />
+              <div className="relative mt-5">
+                <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input aria-label="Search teams" placeholder="Search teams…" value={teamSearch}
+                  onChange={(event) => setTeamSearch(event.target.value)}
+                  className="settings-control w-full rounded-xl py-2.5 pl-10 pr-3 text-sm" />
+              </div>
+              <div className="mt-3">
+                {isCreatingTeam ? (
+                  <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); void handleCreateGroup(); }}>
+                    <input autoFocus aria-label="New team name" value={newGroupName}
+                      onChange={(event) => setNewGroupName(event.target.value)} placeholder="New team name"
+                      className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm" />
+                    <IconButton label="Create team" icon={<Plus size={16} />} variant="primary"
+                      isDisabled={!newGroupName.trim() || groupCreating} onClick={() => void handleCreateGroup()} />
+                    <IconButton label="Cancel new team" icon={<X size={16} />} variant="ghost"
+                      isDisabled={groupCreating} onClick={() => setIsCreatingTeam(false)} />
+                  </form>
+                ) : (
+                  <Button label="New team" icon={<Plus size={15} />} variant="secondary" size="sm"
+                    onClick={() => setIsCreatingTeam(true)} />
+                )}
               </div>
 
               <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1 md:max-h-[calc(100vh-22rem)]">
@@ -652,20 +726,24 @@ const UsersPage = () => {
                     align="left"
                   />
                 ) : null}
-                {!groupsLoading && groups.map((group) => (
-                  <button
-                    key={group.id}
-                    type="button"
-                    onClick={() => setSelectedGroupId(group.id)}
-                    className={cx(
-                      'settings-selection-card flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left transition',
-                      selectedGroupId === group.id && 'settings-selection-card-active',
-                    )}
-                  >
-                    <span className="truncate text-sm font-semibold text-slate-900">{group.name}</span>
-                    {selectedGroupId === group.id ? <span className="text-xs font-medium text-blue-600">Selected</span> : null}
-                  </button>
+                {!groupsLoading && groups.filter((group) => group.name.toLowerCase().includes(teamSearch.trim().toLowerCase())).map((group) => (
+                  <div key={group.id} className={cx('users-team-pill settings-selection-card',
+                    selectedGroupId === group.id && 'settings-selection-card-active')}>
+                    <button type="button" onClick={() => selectTeam(group.id)}
+                      aria-pressed={selectedGroupId === group.id} title={group.name}
+                      className="users-team-select" disabled={accessSaving || memberUpdating || groupCreating || !!deletingGroupId}>
+                      <span className="truncate text-sm font-medium text-slate-900">{group.name}</span>
+                    </button>
+                    <button type="button" className="users-team-delete" aria-label={`Delete ${group.name}`}
+                      title={`Delete ${group.name}`} disabled={!!deletingGroupId || accessSaving || memberUpdating || groupCreating}
+                      onClick={() => void handleDeleteGroup(group.id)}>
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 ))}
+                {!groupsLoading && groups.length > 0 && !groups.some((group) => group.name.toLowerCase().includes(teamSearch.trim().toLowerCase())) ? (
+                  <p className="py-4 text-sm text-slate-500">No matching teams.</p>
+                ) : null}
               </div>
             </SettingsSurface>
 
@@ -682,47 +760,31 @@ const UsersPage = () => {
                 <>
                   <SettingsSurface>
                     <SettingsSectionHeader
-                      eyebrow="Selected team"
                       title={selectedGroup.name}
-                      description={`${groupMembers.length} member${groupMembers.length === 1 ? '' : 's'} · access is inherited by every team member`}
-                      actions={(
-                        <Button
-                          label="Delete team"
-                          variant="destructive"
-                          size="sm"
-                          icon={<Trash2 size={14} />}
-                          onClick={() => void handleDeleteGroup(selectedGroup.id)}
-                        />
-                      )}
+                      description="Members inherit access from every team they belong to."
                     />
 
-                    <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">Add member</p>
-                        <p className="mt-1 text-xs text-slate-500">Members inherit the union of access from every team they belong to.</p>
-                        <div className="mt-3 flex gap-2">
-                          <select
-                            value={selectedUserId}
-                            onChange={(event) => setSelectedUserId(event.target.value)}
-                            className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm"
-                          >
-                            <option value="">Select user</option>
-                            {selectableUsers.map((user) => (
-                              <option key={user.id} value={user.id}>{user.displayName}</option>
-                            ))}
-                          </select>
-                          <Button
-                            label="Add"
-                            variant="primary"
-                            size="sm"
-                            onClick={() => void handleAddMember()}
-                            isDisabled={!selectedUserId}
-                          />
-                        </div>
+                    <div className="mt-6">
+                      <div className="flex items-center justify-between gap-3">
+                        <h3 className="text-sm font-semibold text-slate-900">Members{!accessLoading ? ` · ${groupMembers.length}` : ''}</h3>
+                        <Button label="Add member" icon={<Plus size={14} />} variant="secondary" size="sm"
+                          isDisabled={accessLoading || memberUpdating} onClick={() => setIsAddingMember((value) => !value)} />
                       </div>
-
+                      {isAddingMember ? (
+                        <div className="mt-3 flex gap-2">
+                          <select autoFocus aria-label="Select user to add" value={selectedUserId}
+                            onChange={(event) => setSelectedUserId(event.target.value)}
+                            className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm">
+                            <option value="">{selectableUsers.length ? 'Select user' : 'All users are already members'}</option>
+                            {selectableUsers.map((user) => <option key={user.id} value={user.id}>{user.displayName}{user.email ? ` · ${user.email}` : ''}</option>)}
+                          </select>
+                          <Button label="Add" variant="primary" size="sm" onClick={() => void handleAddMember()}
+                            isDisabled={!selectedUserId || memberUpdating} isLoading={memberUpdating} />
+                          <IconButton label="Cancel add member" icon={<X size={16} />} variant="ghost"
+                            onClick={() => { setIsAddingMember(false); setSelectedUserId(''); }} />
+                        </div>
+                      ) : null}
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">Current members</p>
                         <div className="mt-3 max-h-60 space-y-2 overflow-y-auto">
                           {accessLoading ? <SettingsLoadingState label="Loading members..." /> : null}
                           {!accessLoading && groupMembers.length === 0 ? (
@@ -733,7 +795,7 @@ const UsersPage = () => {
                             />
                           ) : null}
                           {!accessLoading && groupMembers.map((member) => (
-                            <div key={member.id} className="settings-selection-card flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5">
+                            <div key={member.id} className="users-member-row flex items-center justify-between gap-3 py-3">
                               <div className="flex min-w-0 items-center gap-3">
                                 <Avatar name={member.displayName} size="xsmall" />
                                 <div className="min-w-0">
@@ -742,19 +804,14 @@ const UsersPage = () => {
                                 </div>
                               </div>
                               <div className="flex shrink-0 items-center gap-2">
-                                <Button
-                                  label={member.isTeamLead ? 'Team Lead' : 'Make lead'}
-                                  variant={member.isTeamLead ? 'primary' : 'secondary'}
-                                  size="sm"
-                                  icon={<ShieldCheck size={13} />}
-                                  onClick={() => void handleToggleTeamLead(member)}
-                                />
-                                <Button
-                                  label="Remove"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => void handleRemoveMember(member.id)}
-                                />
+                                <select aria-label={`Team role for ${member.displayName}`}
+                                  className="settings-control users-role-select" value={member.isTeamLead ? 'lead' : 'member'}
+                                  disabled={memberUpdating} onChange={() => void handleToggleTeamLead(member)}>
+                                  <option value="member">Member</option>
+                                  <option value="lead">Team lead</option>
+                                </select>
+                                <MoreMenu label={`Actions for ${member.displayName}`} size="sm" isDisabled={memberUpdating}
+                                  items={[{ label: 'Remove from team', onClick: () => void handleRemoveMember(member.id) }]} />
                               </div>
                             </div>
                           ))}
@@ -765,29 +822,8 @@ const UsersPage = () => {
 
                   <SettingsSurface>
                     <SettingsSectionHeader
-                      eyebrow="Access control"
-                      title="Knowledge, skills & tools"
-                      description="Choose what members of this Team can use. Administrators can manage assignments, but also need access themselves to use a skill."
-                      actions={(
-                        <div className="flex items-center gap-2">
-                          <Button
-                            label="Reset"
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => setGroupAccess(savedGroupAccess)}
-                            isDisabled={!isAccessDirty || accessSaving}
-                          />
-                          <Button
-                            label="Save access"
-                            variant="primary"
-                            size="sm"
-                            icon={accessSaving ? <Loader2 size={14} /> : <KeyRound size={14} />}
-                            onClick={() => void handleSaveGroupAccess()}
-                            isDisabled={!isAccessDirty || accessSaving}
-                            isLoading={accessSaving}
-                          />
-                        </div>
-                      )}
+                      title="Team access"
+                      description="Choose the knowledge, skills, and connected tools this team can use."
                     />
 
                     {catalogLoading || accessLoading ? (
@@ -796,25 +832,7 @@ const UsersPage = () => {
                       </div>
                     ) : (
                       <div className="mt-6 space-y-6">
-                        <div className="grid gap-4 md:grid-cols-3">
-                          <div className="settings-soft-panel rounded-2xl p-4">
-                            <BookOpen size={18} className="text-blue-600" />
-                            <p className="mt-3 text-2xl font-semibold text-slate-950">{groupAccess.knowledgeBaseIds.length}</p>
-                            <p className="text-xs text-slate-500">Knowledge bases</p>
-                          </div>
-                          <div className="settings-soft-panel rounded-2xl p-4">
-                            <Wrench size={18} className="settings-icon-purple" />
-                            <p className="mt-3 text-2xl font-semibold text-slate-950">{groupAccess.skillIds.length}</p>
-                            <p className="text-xs text-slate-500">Skills</p>
-                          </div>
-                          <div className="settings-soft-panel rounded-2xl p-4">
-                            <KeyRound size={18} className="text-emerald-600" />
-                            <p className="mt-3 text-2xl font-semibold text-slate-950">{groupAccess.mcpServerIds.length}</p>
-                            <p className="text-xs text-slate-500">MCP servers</p>
-                          </div>
-                        </div>
-
-                        <div className="grid gap-5 lg:grid-cols-3">
+                        <div className="users-access-fields">
                           <MultiSelector
                             label="Knowledge bases"
                             description="Published knowledge bases this team can reference from any workspace."
@@ -829,10 +847,11 @@ const UsersPage = () => {
                             hasSearch
                             hasSelectAll
                             searchPlaceholder="Search knowledge bases"
-                            isDisabled={!knowledgeOptions.length}
+                            isDisabled={!knowledgeOptions.length || accessSaving}
                             disabledMessage="Publish a knowledge base from the Knowledge page first."
                           />
                           <MultiSelector
+                            isDisabled={accessSaving}
                             label="Skills"
                             description="Skills exposed in prompting and slash commands. Approved skills owned by this team stay available to every member; use execution controls to block anomalies."
                             options={skillOptions}
@@ -848,8 +867,9 @@ const UsersPage = () => {
                             searchPlaceholder="Search skills"
                           />
                           <MultiSelector
-                            label="MCP servers"
-                            description="Connected tools the team may target."
+                            isDisabled={accessSaving}
+                            label="Connected tools"
+                            description="MCP servers available to team members."
                             options={mcpOptions}
                             value={groupAccess.mcpServerIds}
                             onChange={(values) => setGroupAccess((previous) => ({
@@ -864,15 +884,17 @@ const UsersPage = () => {
                           />
                         </div>
 
+                        <p className="text-xs text-slate-500">Administrators also need team access to use assigned skills.</p>
+
                         {visiblePlugins.length > 0 ? (
                           <div>
                             <div className="flex items-end justify-between gap-3">
                               <div>
                                 <p className="text-sm font-semibold text-slate-900">Plugin bundles</p>
-                                <p className="mt-1 text-xs text-slate-500">Apply related skill and MCP grants together.</p>
+                                <p className="mt-1 text-xs text-slate-500">Select a bundle to apply its skills and connected tools together.</p>
                               </div>
                             </div>
-                            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                            <div className="mt-3 grid gap-3">
                               {visiblePlugins.map((plugin) => {
                                 const availability = pluginBundleAvailability.get(plugin.id);
                                 const assignable = availability?.assignable === true;
@@ -886,7 +908,7 @@ const UsersPage = () => {
                                     key={plugin.id}
                                     type="button"
                                     onClick={() => togglePluginBundle(plugin)}
-                                    disabled={!assignable}
+                                    disabled={!assignable || accessSaving}
                                     className={cx(
                                       'settings-selection-card rounded-2xl px-4 py-3 text-left transition',
                                       selected && 'settings-selection-card-active',
@@ -921,6 +943,17 @@ const UsersPage = () => {
                         ) : null}
                       </div>
                     )}
+                    {isAccessDirty || accessSaving ? (
+                      <div className="users-access-footer">
+                        <span className="text-sm text-slate-500" role="status">{accessSaving ? 'Saving changes…' : 'Unsaved changes'}</span>
+                        <div className="flex items-center gap-2">
+                          <Button label="Discard changes" variant="ghost" size="sm" isDisabled={accessSaving}
+                            onClick={() => setGroupAccess(savedGroupAccess)} />
+                          <Button label="Save access" variant="primary" size="sm" isDisabled={accessSaving || !!deletingGroupId || groupCreating}
+                            isLoading={accessSaving} onClick={() => void handleSaveGroupAccess()} />
+                        </div>
+                      </div>
+                    ) : null}
                   </SettingsSurface>
                 </>
               )}
@@ -928,6 +961,13 @@ const UsersPage = () => {
           </div>
         )}
       </div>
+
+      {confirmation ? (
+        <AlertDialog isOpen title={confirmation.title} description={confirmation.description}
+          actionLabel={confirmation.actionLabel} cancelLabel={confirmation.actionLabel === 'Delete team' ? 'Cancel' : 'Keep editing'}
+          onOpenChange={(open) => { if (!open) resolveConfirmation(false); }}
+          onAction={() => resolveConfirmation(true)} />
+      ) : null}
 
       {pendingDeleteUser ? (
         <div className="settings-modal-overlay fixed inset-0 z-50 flex items-center justify-center px-4">
