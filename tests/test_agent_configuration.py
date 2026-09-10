@@ -138,7 +138,9 @@ def test_absent_vertex_env_keeps_runtime_yaml_value(monkeypatch) -> None:
     try:
         settings = load_settings()
         assert settings.model.use_vertex_ai is True
-        assert settings.model.location == "asia-southeast1"
+        # "global", not a region: no region serves every model runtime.yaml
+        # names, gemini-embedding-2 included. See the comment there.
+        assert settings.model.location == "global"
     finally:
         reset_agent_env_caches_for_tests()
 

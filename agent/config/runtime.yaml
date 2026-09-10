@@ -13,9 +13,20 @@ model:
   image_name: gemini-3.1-flash-image
   project: ccob-my-ai-engine-dev
   # Validated by vertexai.init at startup, so an unsupported value crash-loops the
-  # agent rather than failing at first inference. Regional, not "global": Vertex
-  # embedding models are regional-only.
-  location: asia-southeast1
+  # agent rather than failing at first inference.
+  #
+  # "global", not a region. asia-southeast1 serves no model this file names: on
+  # 2026-09-09 it published only gemini-2.5-flash plus the older embedding
+  # models. gemini-3.5-flash happened to answer there, so chat looked healthy
+  # while gemini-3.1-flash-lite and gemini-embedding-2 both 404'd and every
+  # knowledge ingestion failed.
+  #
+  # An earlier comment here claimed embedding models are regional-only and used
+  # that to justify pinning a region. The opposite is true for the model this
+  # deployment uses: gemini-embedding-2 is published on "global" and is absent
+  # from asia-southeast1. Verify with publishers/google/models before moving
+  # this to a region; all four names below must be served there.
+  location: global
   # No api_key here on purpose. os.path.expandvars leaves an unset ${VAR} as the
   # literal text, which is truthy and would be sent as the key. ModelConfig.api_key
   # already reads the environment itself.
