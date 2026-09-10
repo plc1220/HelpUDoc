@@ -39,16 +39,27 @@ spec:
             - containerPort: 3000
           resources:
             requests:
-              cpu: "50m"
-              memory: "512Mi"
+              # 50m starved the container during Next.js boot and during GC, so
+              # the readiness probe timed out on every restart. Boot pegs a full
+              # core for ~45s.
+              cpu: "250m"
+              memory: "1Gi"
             limits:
-              cpu: "1000m"
-              memory: "1536Mi"
+              cpu: "1500m"
+              memory: "3Gi"
           env:
             - name: HOSTNAME
               value: "0.0.0.0"
             - name: PORT
               value: "3000"
+            # V8 sizes its heap from the cgroup limit, which gave ~768MB under
+            # the old 1536Mi limit. The process reached that ceiling after about
+            # 17 hours and aborted with exit 134 (heap OOM, not an OOMKill), so
+            # the pod restarted roughly twice a day. Set the ceiling explicitly
+            # rather than inheriting it, and leave ~1Gi for non-heap RSS.
+            # If it still dies on a fixed cycle at this size, it is a real leak.
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=2048"
             - name: NEXTAUTH_URL
               valueFrom:
                 configMapKeyRef:
