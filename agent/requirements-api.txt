@@ -10,6 +10,12 @@ google-genai==1.70.0
 langchain-google-vertexai==3.2.3
 deepagents[quickjs]==0.6.7
 langchain-mcp-adapters==0.2.2
+# langchain-mcp-adapters 0.2.2 declares only `mcp>=1.9.2`, so mcp floated to 2.2.0,
+# which dropped `mcp.shared.context.RequestContext`. The adapter then failed to import
+# and MCPServerManager logged "langchain-mcp-adapters not installed" and bound zero
+# servers — every MCP server silently unavailable. 0.3.2 caps at <2.0.0 upstream;
+# pin it here until this moves to that release.
+mcp>=1.24.0,<2.0.0
 langgraph-checkpoint-postgres>=3.0.5
 psycopg[binary]>=3.3.0
 python-dotenv
