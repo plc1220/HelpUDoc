@@ -24,3 +24,6 @@ data:
   # agent-config PVC copy is stale. Set to "false" to roll back.
   GOOGLE_GENAI_USE_VERTEXAI: "true"
   GOOGLE_CLOUD_LOCATION: asia-southeast1
+  # BigQuery job location. Must match the region of the datasets being queried,
+  # and of any `region-<name>.INFORMATION_SCHEMA` pseudo-dataset.
+  BIGQUERY_LOCATION: asia-southeast1

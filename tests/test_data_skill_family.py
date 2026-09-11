@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import yaml
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -1887,17 +1888,20 @@ class TestCompatibility:
         assert "data_agent_tools" in shim.tools
         assert "materialize_bigquery_to_parquet" in shim.tools
 
-    def test_toolbox_bq_demo_still_works_unchanged(self) -> None:
-        """toolbox/tools.yaml configures the BQ toolset without modification."""
-        tools_yaml = (
-            Path(__file__).parent.parent / "toolbox" / "tools.yaml"
-        )
-        if not tools_yaml.exists():
-            pytest.skip("toolbox/tools.yaml not found")
-        content = tools_yaml.read_text(encoding="utf-8")
-        # Key tool names that must remain
-        for tool_name in ("bq_execute_sql", "bq_list_datasets", "bq_list_tables", "bq_get_table_info"):
-            assert tool_name in content, f"{tool_name} missing from tools.yaml"
+    def test_data_plugin_binds_the_managed_bigquery_mcp(self) -> None:
+        """The plugin must name the server, or none of its tools ever reach an agent.
+
+        `get_candidate_mcp_servers` binds only servers a skill or its plugin declares.
+        `bigquery-managed` sat in runtime.yaml unnamed by either, so the agent
+        truthfully reported having no list_dataset_ids tool.
+        """
+        manifest = Path(__file__).parent.parent / "plugins" / "data-analytics" / "plugin.yaml"
+        servers = (yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}).get(
+            "default_mcp_servers"
+        ) or []
+
+        assert "bigquery-managed" in servers
+        assert "toolbox-bq-demo" not in servers, "the Toolbox BigQuery source was removed"
 
 
 class TestStableArtifactOutputs:

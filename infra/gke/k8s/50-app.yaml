@@ -494,6 +494,15 @@ spec:
               value: "false"
             - name: GOOGLE_CLOUD_PROJECT
               value: ccob-my-ai-engine-dev
+            # BigQuery job location. Without this the export tool falls back to its
+            # built-in default; a mismatch with the dataset region fails the query
+            # with "was not found in location <X>".
+            - name: BIGQUERY_LOCATION
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: BIGQUERY_LOCATION
+                  optional: true
             # Vertex routing. Kept in the ConfigMap rather than baked into
             # runtime.yaml so it can be flipped without re-seeding
             # agent-config-pvc, whose seed init container skips a populated

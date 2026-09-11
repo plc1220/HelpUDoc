@@ -40,7 +40,7 @@ Spreadsheet routing:
 Choose the right data connector for the source:
 
 - **Warehouse (managed datasets, large tables)** — use the BigQuery MCP server
-  (`toolbox-bq-demo`) for discovery and scoped SQL. Treat BigQuery as the source of
+  (`bigquery-managed`) for discovery and scoped SQL. Treat BigQuery as the source of
   truth. When repeated local slicing is needed, create or use a workspace snapshot
   first, then continue through plugin scripts.
 - **Local files (CSV / Parquet / JSON in the workspace)** — use

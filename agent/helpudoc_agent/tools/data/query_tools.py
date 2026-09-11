@@ -18,7 +18,7 @@ from pydantic import Field
 
 from ...bigquery_export_tools import (
     extract_bearer_header,
-    load_bigquery_toolbox_config,
+    load_bigquery_defaults,
     resolve_output_path,
     validate_read_only_sql,
     write_export_dataframe,
@@ -256,7 +256,7 @@ def create_query_tools(db_manager: DuckDBManager, workspace_state: WorkspaceStat
         )
         refresh = _coerce_bool_arg(force_refresh, False)
         publish_csv = _coerce_bool_arg(emit_csv, False)
-        toolbox_defaults = load_bigquery_toolbox_config()
+        toolbox_defaults = load_bigquery_defaults()
         preferred_server = str(toolbox_defaults.get("server_name") or "toolbox-bq-demo")
         project = _coerce_text_arg(
             workspace_state.context.get("bigquery_project")

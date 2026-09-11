@@ -14,11 +14,9 @@ from uuid import uuid4
 import duckdb
 import pandas as pd
 import requests
-import yaml
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import Tool, tool
 
-from .configuration import REPO_ROOT
 from .state import WorkspaceState
 from .tagged_file_policy import tagged_files_mode_guard
 
@@ -47,35 +45,23 @@ _CSV_MIME = "text/csv"
 _PARQUET_MIME = "application/octet-stream"
 
 
-def _toolbox_config_path() -> Path:
-    return REPO_ROOT / "toolbox" / "tools.yaml"
-
-
 @lru_cache(maxsize=1)
-def load_bigquery_toolbox_config() -> Dict[str, str]:
-    """Load project/location defaults from Toolbox config when available."""
-    payload = {
+def load_bigquery_defaults() -> Dict[str, str]:
+    """Resolve the BigQuery server, project, and job location for this deployment.
+
+    Environment is the only source. This previously read `toolbox/tools.yaml` and let
+    its `location:` overwrite the value, which silently beat both BIGQUERY_LOCATION and
+    the regional default: every job ran in `us`, so `region-asia-southeast1` metadata
+    queries failed with "not found in location US". The Toolbox source is gone, and a
+    server config file has no business outranking explicit deployment environment.
+
+    Cached for the process lifetime, so changing the environment needs a restart.
+    """
+    return {
         "server_name": _DEFAULT_SERVER_NAME,
         "project": os.getenv("GOOGLE_CLOUD_PROJECT") or _DEFAULT_PROJECT,
         "location": os.getenv("BIGQUERY_LOCATION") or _DEFAULT_LOCATION,
     }
-    path = _toolbox_config_path()
-    if not path.exists():
-        return payload
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        logger.warning("Failed to load toolbox/tools.yaml for BigQuery export defaults", exc_info=True)
-        return payload
-
-    source = ((raw.get("sources") or {}).get("bq") or {}) if isinstance(raw, dict) else {}
-    project = source.get("project")
-    location = source.get("location")
-    if isinstance(project, str) and project.strip():
-        payload["project"] = project.strip()
-    if isinstance(location, str) and location.strip():
-        payload["location"] = location.strip()
-    return payload
 
 
 def _strip_sql_comments(sql: str) -> str:
@@ -343,7 +329,7 @@ def write_export_dataframe(df: pd.DataFrame, destination: Path, export_format: s
 
 def build_export_bigquery_query_tool(workspace_state: WorkspaceState) -> Tool:
     """Create a workspace-aware BigQuery export tool."""
-    config = load_bigquery_toolbox_config()
+    config = load_bigquery_defaults()
     preferred_server = str(config.get("server_name") or _DEFAULT_SERVER_NAME)
     default_project = str(config.get("project") or _DEFAULT_PROJECT)
     default_location = str(config.get("location") or _DEFAULT_LOCATION)
