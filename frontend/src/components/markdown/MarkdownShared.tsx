@@ -457,6 +457,52 @@ export const createMarkdownComponents = ({
     pre({ children }) {
       return <>{children}</>;
     },
+    // A GFM table is as wide as its widest row, and query output runs to 15+
+    // columns. Unstyled it inherits the prose width, so cells collapse until
+    // headers break mid-word ("produ ct_ca tegor y"). Give the table its own
+    // horizontal scroll container, the same treatment the code block gets.
+    table({ children }) {
+      return (
+        <div
+          className={`my-4 overflow-x-auto rounded-2xl border ${
+            colorMode === 'dark' ? 'border-slate-700/70' : 'border-slate-200'
+          }`}
+        >
+          {/* w-max lets the table exceed the container so the wrapper scrolls;
+              min-w-full keeps a narrow table filling the width. */}
+          <table className="w-max min-w-full border-collapse text-sm">{children}</table>
+        </div>
+      );
+    },
+    // `style` carries the column alignment remark-gfm derives from `:---:`.
+    th({ children, style }) {
+      return (
+        <th
+          style={style}
+          className={`whitespace-nowrap px-3 py-2 text-left font-semibold ${
+            colorMode === 'dark'
+              ? 'border-b border-slate-700/70 bg-slate-900/60 text-slate-100'
+              : 'border-b border-slate-200 bg-slate-50 text-slate-900'
+          }`}
+        >
+          {children}
+        </th>
+      );
+    },
+    td({ children, style }) {
+      return (
+        <td
+          style={style}
+          className={`whitespace-nowrap px-3 py-2 align-top ${
+            colorMode === 'dark'
+              ? 'border-b border-slate-800/70 text-slate-200'
+              : 'border-b border-slate-100 text-slate-700'
+          }`}
+        >
+          {children}
+        </td>
+      );
+    },
     p({ children }) {
     const childArray = Children.toArray(children);
     const containsBlockChild = childArray.some((child) => {
