@@ -16,7 +16,7 @@ discover the schema, write the query, and offer to execute it.
 
 | Condition | Connector |
 |---|---|
-| Request targets warehouse datasets or large managed tables | BigQuery MCP (`toolbox-bq-demo`) |
+| Request targets warehouse datasets or large managed tables | BigQuery MCP (`bigquery-managed`) |
 | Request targets local CSV / Parquet / JSON files in the workspace | `run_skill_python_script` with `data_workspace` |
 
 Default to DuckDB for workspace files unless the user names a warehouse table.

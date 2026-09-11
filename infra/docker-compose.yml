@@ -332,7 +332,8 @@ services:
       GOOGLE_GENAI_USE_VERTEXAI: ${GOOGLE_GENAI_USE_VERTEXAI:-}
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-}
-      # Demo: MCP auth for toolbox-bq-demo.
+      BIGQUERY_LOCATION: ${BIGQUERY_LOCATION:-}
+      # Fallback bearer token for the BigQuery tools when no delegated token is present.
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       GOOGLE_WORKSPACE_MCP_URL: ${GOOGLE_WORKSPACE_MCP_URL:-http://google-workspace-mcp:8000/mcp}
       AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}

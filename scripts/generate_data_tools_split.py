@@ -295,7 +295,7 @@ def main() -> None:
 
             from ..bigquery_export_tools import (
                 extract_bearer_header,
-                load_bigquery_toolbox_config,
+                load_bigquery_defaults,
                 resolve_output_path,
                 run_bigquery_query,
                 validate_read_only_sql,

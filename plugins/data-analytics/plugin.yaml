@@ -14,7 +14,10 @@ skills:
 default_tools:
   - run_skill_python_script
 default_mcp_servers:
-  - toolbox-bq-demo
+  # MCP servers bind only for skills that name them here (see
+  # get_candidate_mcp_servers). `bigquery-managed` was registered in runtime.yaml but
+  # listed by no skill or plugin, so its tools never reached an agent.
+  - bigquery-managed
   - data-artifacts
 default_sandbox_scripts:
   - name: data_workspace
