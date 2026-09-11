@@ -12,7 +12,7 @@ from langchain_core.tools import Tool, tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ...state import WorkspaceState
-from ...utils import SourceTracker, extract_web_url
+from ...utils import SourceTracker, extract_web_url, resolve_vertex_redirects
 from .policy import apply_search_policy_guard
 from .schemas import StructuredWebAnswer
 from .timeouts import (
@@ -89,6 +89,7 @@ def _search_error_envelope(
 
 
 def sources_from_grounding_dict(grounding: dict) -> List[Dict[str, str]]:
+    """Collect citation sources with raw URLs. Redirects are resolved by the caller."""
     sources: List[Dict[str, str]] = []
     seen: set[str] = set()
     for chunk in grounding.get("groundingChunks") or grounding.get("grounding_chunks") or []:
@@ -97,13 +98,15 @@ def sources_from_grounding_dict(grounding: dict) -> List[Dict[str, str]]:
         web = chunk.get("web")
         if not isinstance(web, dict):
             continue
-        actual_url = extract_web_url(web)
-        if not actual_url or actual_url in seen:
+        raw_url = extract_web_url(web)
+        # Deduplicate on the raw URL. Deduplicating after resolution meant every
+        # repeated citation chunk paid for its own round trip before being dropped.
+        if not raw_url or raw_url in seen:
             continue
         title_raw = web.get("title")
         title = str(title_raw).strip() if title_raw else "Untitled"
-        sources.append({"title": title or "Untitled", "url": actual_url})
-        seen.add(actual_url)
+        sources.append({"title": title or "Untitled", "url": raw_url})
+        seen.add(raw_url)
     return sources
 
 
@@ -129,8 +132,6 @@ def sources_from_citation_annotations(ai_message: Any) -> List[Dict[str, str]]:
                 continue
             url_raw = ann.get("url") or ann.get("uri")
             url: str | None = url_raw.strip() if isinstance(url_raw, str) and url_raw.strip() else None
-            if url:
-                url = extract_web_url({"uri": url, "resolvedUri": None, "displayUri": None}) or url
             if not url:
                 extras = ann.get("extras")
                 if isinstance(extras, dict):
@@ -138,8 +139,7 @@ def sources_from_citation_annotations(ai_message: Any) -> List[Dict[str, str]]:
                     if isinstance(meta, dict):
                         nested = meta.get("web_url") or meta.get("url")
                         if isinstance(nested, str) and nested.strip():
-                            cand = nested.strip()
-                            url = extract_web_url({"uri": cand, "resolvedUri": None, "displayUri": None}) or cand
+                            url = nested.strip()
             if not url:
                 continue
             if url in seen:
@@ -152,15 +152,29 @@ def sources_from_citation_annotations(ai_message: Any) -> List[Dict[str, str]]:
 
 
 def verified_google_search_sources(ai_message: Any) -> List[Dict[str, str]]:
-    """Return only URLs emitted by Gemini's grounding/citation metadata."""
+    """Return only URLs emitted by Gemini's grounding/citation metadata.
+
+    Citation URLs arrive as Vertex redirect links. They are gathered raw, deduplicated,
+    then resolved in one bounded concurrent batch — resolving them one at a time as they
+    were extracted accounted for ~90% of this tool's wall clock.
+    """
     metadata = getattr(ai_message, "response_metadata", None) or {}
     grounding = (metadata.get("grounding_metadata") or {}) if isinstance(metadata, dict) else {}
     candidates = sources_from_grounding_dict(grounding) + sources_from_citation_annotations(ai_message)
+
+    resolved_map = resolve_vertex_redirects(
+        str(item.get("url") or "").strip() for item in candidates
+    )
+
     sources: List[Dict[str, str]] = []
     seen: set[str] = set()
     for item in candidates:
-        url = str(item.get("url") or "").strip()
-        if not url or url in seen:
+        raw_url = str(item.get("url") or "").strip()
+        if not raw_url:
+            continue
+        # Unresolved redirects map to themselves and are still usable links.
+        url = resolved_map.get(raw_url, raw_url)
+        if url in seen:
             continue
         seen.add(url)
         sources.append({"title": item.get("title") or "Untitled", "url": url})
@@ -290,7 +304,19 @@ def build_google_search_tool(
                 summary, _ = parse_structured_web_answer(response)
                 # Model-authored JSON URLs are not evidence. Only accept sources
                 # carried by Gemini's native grounding/citation metadata.
+                #
+                # Timed separately from the upstream call: this phase runs outside
+                # invoke_lc_with_timeout, so a single "completed in Ns" line used to
+                # hide the majority of the tool's wall clock.
+                parse_started = time.monotonic()
                 sources = verified_google_search_sources(response)
+                logger.info(
+                    "%s attempt=%s citation resolution took %.2fs for %s source(s)",
+                    search_label,
+                    attempt,
+                    time.monotonic() - parse_started,
+                    len(sources),
+                )
                 if sources:
                     workspace_state.context["google_search_consecutive_failures"] = 0
                     workspace_state.context["google_search_success_count"] = (
