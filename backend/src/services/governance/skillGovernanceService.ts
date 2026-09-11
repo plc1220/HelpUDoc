@@ -2038,10 +2038,10 @@ export class SkillGovernanceService {
   private async publishPersonalRevision(userId: string, draftId: string, revisionId: string): Promise<void> {
     const draft = await this.ownedDraft(userId, draftId);
     const files = await this.packageStore.draftFiles(revisionId);
-    const validation = await this.validateSnapshot(draft, files);
-    await this.db('skill_draft_revisions').where({ id: revisionId }).update({ validationSummary: JSON.stringify(validation) });
-    if (!validation.valid) return;
     try {
+      const validation = await this.validateSnapshot(draft, files);
+      await this.db('skill_draft_revisions').where({ id: revisionId }).update({ validationSummary: JSON.stringify(validation) });
+      if (!validation.valid) return;
       await this.packageStore.materializeVersion(`personal/${draftId}`, revisionId, computePackageManifestHash(files), files);
       await this.db('private_skill_drafts').where({ id: draftId, currentDraftRevisionId: revisionId, status: 'private' })
         .update({ activeRevisionId: revisionId, activationError: null });
