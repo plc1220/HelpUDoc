@@ -232,9 +232,36 @@ steps:
         tar -C agent/config -cf - runtime.yaml | kubectl -n helpudoc exec -i "$${APP_POD}" -c backend -- sh -lc "tar -xf - -C /agent/config"
         kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "test -f /agent/config/runtime.yaml"
 
+  # 6c. Sync repo plugins/ into the plugins PVC.
+  #
+  # Why:
+  # - plugins-pvc is seeded only when empty (see seed-plugins in 50-app.yaml), so a
+  #   populated volume keeps whatever it was first seeded with, image rebuilds included.
+  # - A plugin manifest names the MCP servers its skills may bind (default_mcp_servers).
+  #   Stale contents mean an MCP server registered in runtime.yaml is never bound and its
+  #   tools silently never reach the agent.
+  - id: sync-plugins-pvc
+    name: 'gcr.io/cloud-builders/kubectl'
+    waitFor: ['deploy']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        APP_POD="$$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
+        test -n "$${APP_POD}"
+        echo "Syncing repo plugins/ to /app/plugins in pod: $${APP_POD}"
+
+        kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/plugins; find /app/plugins -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+        tar -C plugins -cf - . | kubectl -n helpudoc exec -i "$${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/plugins"
+        kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "test -f /app/plugins/data-analytics/plugin.yaml"
+
   - id: restart-app-after-runtime-sync
     name: 'gcr.io/cloud-builders/kubectl'
-    waitFor: ['sync-agent-config-pvc']
+    waitFor: ['sync-agent-config-pvc', 'sync-plugins-pvc']
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
       - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
@@ -299,7 +326,7 @@ steps:
   # 8. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
   - id: post-deploy-drift-guard
     name: 'gcr.io/cloud-builders/kubectl'
-    waitFor: ['sync-skills-pvc', 'restart-app-after-runtime-sync', 'bootstrap-admin', 'bootstrap-langfuse-db']
+    waitFor: ['sync-skills-pvc', 'sync-plugins-pvc', 'restart-app-after-runtime-sync', 'bootstrap-admin', 'bootstrap-langfuse-db']
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
       - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
@@ -323,6 +350,15 @@ steps:
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "test -x /usr/local/bin/gcp-cost-mcp-server"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- python -c "import requests; data=requests.get('http://localhost:8001/agents', timeout=10).json(); tools=data['agents'][0]['tools']; assert 'request_plan_approval' in tools, tools; print('request_plan_approval available in /agents')"
+
+        # A plugin manifest must name every MCP server its skills bind, or the server is
+        # registered in runtime.yaml and still never reaches an agent.
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'bigquery-managed' /app/plugins/data-analytics/plugin.yaml"
+
+        # langchain-mcp-adapters must import. When its `mcp` dependency drifts out of
+        # range the import fails, MCPServerManager logs "not installed", and every MCP
+        # server binds zero tools without raising.
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- python -c "from langchain_mcp_adapters.client import MultiServerMCPClient; print('langchain-mcp-adapters import ok')"
 
   # 9. E2E check (fails build on mixed-content / localhost assets)
   - name: 'node:20-bookworm'
