@@ -88,11 +88,6 @@ steps:
     waitFor: ['build-frontend']
     args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
 
-  - id: push-agent
-    name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['smoke-agent-officecli']
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
-
   - id: smoke-agent-officecli
     name: 'gcr.io/cloud-builders/docker'
     waitFor: ['build-agent']
@@ -104,6 +99,11 @@ steps:
         docker run --rm gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID officecli --version
         docker run --rm gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID \
           python /app/agent/scripts/smoke_officecli.py
+
+  - id: push-agent
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['smoke-agent-officecli']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
 
   # Tag :latest without pushing the same bytes twice.
   - id: tag-backend-latest
@@ -372,12 +372,12 @@ images:
 substitutions:
   _GKE_CLUSTER: helpudoc-cluster
   _GKE_LOCATION: asia-southeast1-a
-  _VITE_GOOGLE_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
+  _VITE_GOOGLE_CLIENT_ID: 226444861736-3505ntl2r4mer19skev2fb17hvg0l74v.apps.googleusercontent.com
   _BOOTSTRAP_ADMIN_EXTERNAL_ID: ""
   _BOOTSTRAP_ADMIN_EMAIL: ""
   _BOOTSTRAP_ADMIN_NAME: ""
   _RUN_E2E: "true"
-  _E2E_BASE_URL: "https://lc-demo.com"
+  _E2E_BASE_URL: "https://aiengine-dev.skp.gov.my"
 
 options:
   logging: CLOUD_LOGGING_ONLY
