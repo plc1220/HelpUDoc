@@ -15,6 +15,7 @@ import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/go
 import { GoogleDriveService } from '../services/googleDriveService';
 import { GoogleCloudStorageService } from '../services/googleCloudStorageService';
 import { GcsBucketRegistryService } from '../services/gcsBucketRegistryService';
+import { FILE_STATUS_EVENTS_CHANNEL, redisClient } from '../services/redisService';
 
 export default function(
   fileService: FileService,
@@ -377,6 +378,74 @@ export default function(
       res.json(await fileStatusService.getWorkspaceSummary(workspaceId, user.userId));
     } catch (error) {
       handleError(res, error, 'Failed to summarize file statuses');
+    }
+  });
+
+  /**
+   * Live status changes for everyone looking at this workspace.
+   *
+   * Without this a decision made by someone else stayed invisible until the
+   * listing happened to be refetched, so two people reviewing together saw
+   * different states. Modelled on the knowledge ingestion stream: Redis fans the
+   * event out so it reaches every backend instance, and the listing remains the
+   * source of truth, so dropping a connection costs latency rather than
+   * correctness.
+   */
+  router.get('/status-events', async (req: Request, res: Response) => {
+    let subscriber: ReturnType<typeof redisClient.duplicate> | null = null;
+    let keepAlive: NodeJS.Timeout | null = null;
+    let closed = false;
+    const cleanup = () => {
+      closed = true;
+      if (keepAlive) clearInterval(keepAlive);
+      void subscriber?.unsubscribe().catch(() => undefined);
+      void subscriber?.quit().catch(() => undefined);
+    };
+
+    try {
+      const user = requireUserContext(req);
+      if (!user) return;
+      const workspaceId = String((req.params as Record<string, string>).workspaceId);
+      // Subscribing is reading the workspace, so it takes the same check the
+      // listing does rather than trusting the id in the path.
+      await workspaceService.ensureMembership(workspaceId, user.userId);
+
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+      res.write(': connected\n\n');
+
+      subscriber = redisClient.duplicate();
+      subscriber.on('error', (error) => {
+        if (!closed) console.error('File status event subscriber error', error);
+      });
+      await subscriber.connect();
+      await subscriber.subscribe(FILE_STATUS_EVENTS_CHANNEL, (message) => {
+        if (closed) return;
+        try {
+          const event = JSON.parse(message) as { workspaceId?: string };
+          if (event.workspaceId !== workspaceId) return;
+          res.write(`event: file-status\ndata: ${message}\n\n`);
+        } catch {
+          // A malformed payload is not worth closing the stream over; the next
+          // listing refetch reconciles regardless.
+        }
+      });
+
+      keepAlive = setInterval(() => {
+        if (!closed) res.write(': keep-alive\n\n');
+      }, 15_000);
+      keepAlive.unref();
+      req.on('close', cleanup);
+    } catch (error) {
+      cleanup();
+      if (!res.headersSent) {
+        handleError(res, error, 'Failed to open the file status stream');
+      } else {
+        res.end();
+      }
     }
   });
 

@@ -199,6 +199,7 @@ import {
 } from '../../constants/workspace';
 import { isSystemFile, normalizeFilePath } from '../../utils/files';
 import { applyFileStatusState, deriveFileStatusChip } from '../../utils/fileStatusDisplay';
+import { streamFileStatusEvents } from '../../services/fileProvenanceApi';
 import { getLastWorkspaceId, setLastWorkspaceId } from '../../services/preferencesApi';
 import { resolveWorkspaceToRestore, shouldPersistWorkspaceOpen } from '../../utils/workspaceRestore';
 import { isBinaryOfficeDocument } from '../../utils/officeFiles';
@@ -3877,6 +3878,40 @@ export default function WorkspacePage() {
       includePrivateData: selectedWorkspace.visibility !== 'team',
     });
   }, [selectedWorkspace, publishedVersionView, loadFilesForWorkspace]);
+
+  /**
+   * Keep the panes current while someone else reviews the same workspace.
+   *
+   * A status decision used to be visible only to whoever made it, because the
+   * listing is fetched and nothing told the other sessions it had moved. The
+   * stream carries the change to everyone here; the existing debounced refresh
+   * then reloads the rows, so an approval lands in both panes within the same
+   * second rather than at the next reload.
+   *
+   * Skipped in published mode: that view is an immutable snapshot, and refetching
+   * the working files underneath it would replace what the reader opened.
+   */
+  useEffect(() => {
+    if (!selectedWorkspace || publishedVersionView) return undefined;
+    const workspaceId = selectedWorkspace.id;
+    const controller = new AbortController();
+
+    void streamFileStatusEvents(
+      workspaceId,
+      (event) => {
+        // The listing is the source of truth, so this only says "look again".
+        if (event.workspaceId === workspaceId) scheduleWorkspaceFilesRefresh(workspaceId);
+      },
+      controller.signal,
+    ).catch(() => {
+      // An unavailable stream is a loss of immediacy, not of correctness: every
+      // other refresh path still runs. Reconnection rides on the next workspace
+      // selection rather than a retry loop that would hammer a failing server.
+    });
+
+    return () => controller.abort();
+  }, [selectedWorkspace, publishedVersionView, scheduleWorkspaceFilesRefresh]);
+
   const handleRefreshFiles = () => {
     if (!selectedWorkspace) return;
     if (isPublishedMode) {

@@ -3,6 +3,7 @@ import type { Knex } from 'knex';
 
 import type {
   FileStatus,
+  FileStatusEvent,
   FileStatusState,
   FileStatusTransition,
   WorkspaceFileStatusSummary,
@@ -16,6 +17,7 @@ import type { WorkspaceService, WorkspaceRole, WorkspaceRecord } from './workspa
 import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
 import { governanceLockKeys, withGovernanceLock } from './governance/governanceLocks';
 import { nextAuditSeq, recordFileEvent } from './fileAuditService';
+import { publishFileStatusEvent } from './redisService';
 import type { FilePublicationService, PublishedArtifact } from './filePublicationService';
 import type { FileService } from './fileService';
 
@@ -511,6 +513,20 @@ export class FileStatusService {
           }),
         });
       });
+
+      // Announced only once the transaction has committed, so nobody is told
+      // about a decision that rolled back. Deliberately not awaited into the
+      // caller's failure path: this is a live hint, and losing it must not turn
+      // a successful transition into an error.
+      void publishFileStatusEvent({
+        workspaceId: String(locked.workspaceId),
+        fileId: Number(fileId),
+        fileName: String(locked.name),
+        fromStatus: from,
+        toStatus: rule.to,
+        actorUserId: userId,
+        at: new Date().toISOString(),
+      } satisfies FileStatusEvent);
 
       return this.toState(updated, role, userId, canPublishHere);
     });

@@ -3,6 +3,7 @@ import type {
   FileAuditEvent,
   FileProvenanceDocument,
   FileStatus,
+  FileStatusEvent,
   FileStatusState,
   FileStatusTransitionRequest,
   WorkspaceFileStatusSummary,
@@ -151,6 +152,53 @@ export const fetchWorkspaceStatusSummary = (workspaceId: string) =>
     undefined,
     'Failed to load status summary',
   );
+
+/**
+ * Follow status changes other people make in this workspace.
+ *
+ * Resolves when the stream ends or `signal` aborts. Uses `apiFetch` rather than
+ * `EventSource` because the session headers have to ride along, which
+ * `EventSource` cannot send. Callers should treat an event as a prompt to
+ * refetch rather than as the new state: the listing stays authoritative, so a
+ * dropped connection delays an update instead of corrupting one.
+ */
+export const streamFileStatusEvents = async (
+  workspaceId: string,
+  onEvent: (event: FileStatusEvent) => void,
+  signal: AbortSignal,
+): Promise<void> => {
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${workspaceId}/files/status-events`,
+    { headers: { Accept: 'text/event-stream' }, signal },
+  );
+  if (!response.ok || !response.body) {
+    throw new Error('File status events are unavailable');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (!signal.aborted) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() || '';
+    for (const chunk of chunks) {
+      const data = chunk
+        .split('\n')
+        .find((line) => line.startsWith('data:'))
+        ?.slice(5)
+        .trim();
+      if (!data) continue;
+      try {
+        onEvent(JSON.parse(data) as FileStatusEvent);
+      } catch {
+        // Keep-alive comments and any malformed frame are simply not events.
+      }
+    }
+  }
+};
 
 // --- publications ----------------------------------------------------------
 

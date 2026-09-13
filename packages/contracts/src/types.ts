@@ -775,6 +775,28 @@ export interface FileStatusTransitionRequest {
   expectedVersion?: number;
 }
 
+/**
+ * Broadcast when a file's status moves, so people already looking at the
+ * workspace see it without reloading.
+ *
+ * Carries who did what to which file rather than only "something changed": the
+ * receiver needs the former to say so in a notification, and the latter alone
+ * would force a fetch just to describe the event. It is still only a hint — the
+ * file listing stays the source of truth, and a missed event costs nothing but
+ * latency.
+ */
+export interface FileStatusEvent {
+  workspaceId: string;
+  fileId: number;
+  fileName: string;
+  fromStatus: FileStatus;
+  toStatus: FileStatus;
+  actorUserId: string;
+  /** Absent for status inherited during a workspace sync. */
+  actorName?: string | null;
+  at: string;
+}
+
 export interface WorkspaceFileStatusSummary {
   counts: Record<FileStatus, number>;
   reviewQueue: Array<{
