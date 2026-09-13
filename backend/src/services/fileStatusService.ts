@@ -99,6 +99,65 @@ const EVENT_TYPES: Record<string, string> = {
   'file.status.unpublished': 'status.unpublished',
 };
 
+/**
+ * Status changes waiting for their transaction to commit, keyed by that
+ * transaction.
+ *
+ * Sync writes status from inside transactions several layers below whoever owns
+ * them, so the writer cannot know when the change becomes real. Queue there and
+ * flush at the owner, and nobody is told about a decision that rolled back. A
+ * WeakMap keeps the queues per transaction — so concurrent requests cannot see
+ * each other's — and lets them be collected with the transaction object.
+ */
+const pendingStatusEvents = new WeakMap<object, FileStatusEvent[]>();
+
+export const queueFileStatusEvent = (tx: object, event: FileStatusEvent): void => {
+  const queued = pendingStatusEvents.get(tx);
+  if (queued) queued.push(event);
+  else pendingStatusEvents.set(tx, [event]);
+};
+
+/**
+ * Announce every change queued against a committed transaction.
+ *
+ * Resolves the actor's name once per flush rather than per event, so a sync
+ * touching fifty files still costs one lookup. Safe to call on a transaction
+ * that queued nothing, and safe to call twice: the queue is taken before any
+ * await, so a second call finds it empty.
+ */
+export async function flushFileStatusEvents(db: Knex, tx: object): Promise<void> {
+  const queued = pendingStatusEvents.get(tx);
+  if (!queued?.length) return;
+  pendingStatusEvents.delete(tx);
+  await announceFileStatusEvents(db, queued);
+}
+
+/** Publish status changes, naming the actor where one can be resolved. */
+export async function announceFileStatusEvents(
+  db: Knex,
+  events: FileStatusEvent[],
+): Promise<void> {
+  if (!events.length) return;
+  try {
+    const actorIds = [...new Set(events.map((event) => event.actorUserId).filter(Boolean))];
+    const rows = actorIds.length
+      ? await db('users').whereIn('id', actorIds).select('id', 'displayName')
+      : [];
+    const nameById = new Map(rows.map((row) => [String(row.id), String(row.displayName)]));
+
+    for (const event of events) {
+      await publishFileStatusEvent({
+        ...event,
+        actorName: nameById.get(String(event.actorUserId)) ?? null,
+      } satisfies FileStatusEvent);
+    }
+  } catch (error) {
+    // The change is already durable; failing to announce it costs a live update
+    // to other sessions, never the transition.
+    console.error('Failed to announce file status events', error);
+  }
+}
+
 export const normalizeFileStatus = (value: unknown): FileStatus => {
   const candidate = String(value ?? 'draft');
   return (['draft', 'in_review', 'approved', 'published'] as const)
@@ -249,6 +308,15 @@ export async function approveFilesOnProposalAccepted(
         fileVersionId: file.currentVersionId ?? null,
         viaProposalAccept: true,
       }),
+    });
+    queueFileStatusEvent(tx, {
+      workspaceId: input.workspaceId,
+      fileId,
+      fileName: String(file.name),
+      fromStatus: 'in_review',
+      toStatus: 'approved',
+      actorUserId: input.userId,
+      at: new Date().toISOString(),
     });
     approved.push(fileId);
   }
@@ -518,7 +586,7 @@ export class FileStatusService {
       // about a decision that rolled back. Deliberately not awaited into the
       // caller's failure path: this is a live hint, and losing it must not turn
       // a successful transition into an error.
-      void publishFileStatusEvent({
+      void announceFileStatusEvents(this.db, [{
         workspaceId: String(locked.workspaceId),
         fileId: Number(fileId),
         fileName: String(locked.name),
@@ -526,7 +594,7 @@ export class FileStatusService {
         toStatus: rule.to,
         actorUserId: userId,
         at: new Date().toISOString(),
-      } satisfies FileStatusEvent);
+      }]);
 
       return this.toState(updated, role, userId, canPublishHere);
     });

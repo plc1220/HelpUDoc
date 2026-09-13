@@ -7,7 +7,12 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import { nextAuditSeq, recordFileEvent } from './fileAuditService';
-import { approveFilesOnProposalAccepted } from './fileStatusService';
+import {
+  approveFilesOnProposalAccepted,
+  flushFileStatusEvents,
+  normalizeFileStatus,
+  queueFileStatusEvent,
+} from './fileStatusService';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { DatabaseService } from './databaseService';
 import type { ObjectStore } from './objectStore';
@@ -2082,6 +2087,18 @@ export class WorkspacePublicationService {
       statusUpdatedBy: userId,
       ...(audit ? { auditSeq: audit.seq, lastAuditHash: audit.eventHash } : {}),
     });
+    // Inheriting is still a status change to anyone watching this workspace, so
+    // it is announced like any other. Queued rather than published: the owner of
+    // this transaction flushes it once the sync has actually committed.
+    queueFileStatusEvent(tx, {
+      workspaceId,
+      fileId: Number(existing.id),
+      fileName: String(existing.name),
+      fromStatus: normalizeFileStatus(existing.status),
+      toStatus: normalizeFileStatus(incomingStatus),
+      actorUserId: userId,
+      at: new Date().toISOString(),
+    });
     return true;
   }
 
@@ -2096,7 +2113,9 @@ export class WorkspacePublicationService {
   ): Promise<void> {
     const withStatus = [...sharedContent.files.values()].filter((file) => file.status);
     if (!withStatus.length) return;
+    let committed: Knex.Transaction | null = null;
     await this.db.transaction(async (tx) => {
+      committed = tx;
       const rows = await tx('files')
         .where({ workspaceId: privateWorkspaceId })
         .whereNull('deletedAt');
@@ -2107,6 +2126,7 @@ export class WorkspacePublicationService {
         await this.inheritFileStatus(tx, privateWorkspaceId, existing, file.status, userId);
       }
     });
+    if (committed) await flushFileStatusEvents(this.db, committed);
   }
 
   private async replaceWorkspaceContent(
@@ -2245,9 +2265,20 @@ export class WorkspacePublicationService {
                   status: file.status,
                   approvedAtVersion: file.status === 'approved' ? targetVersion : null,
                   publishedAtVersion: file.status === 'published' ? targetVersion : null,
+                  // Without these the row kept the timestamp of whatever decision
+                  // it held before the sync, so the trail read as though nobody
+                  // had touched the status since.
+                  statusUpdatedAt: tx.fn.now(),
+                  statusUpdatedBy: userId,
                 }
                 : {}
             );
+            // Captured before the write, because the row is about to carry the
+            // incoming status and the previous one is what makes this a change.
+            const inheritedFrom = normalizeFileStatus(existing?.status);
+            const inheritedTo = normalizeFileStatus(file.status);
+            const statusChanged = Boolean(propagateStatus && file.status)
+              && (!existing || inheritedFrom !== inheritedTo);
 
             if (contentIsUnchanged) {
               // A file published in the Shared workspace and then synced has
@@ -2328,8 +2359,27 @@ export class WorkspacePublicationService {
                 createdBySync: !existing,
                 sizeBytes: file.size,
                 mimeType: file.mimeType,
+                // The status rides in on this event rather than a chained
+                // `status.inherited` one. A second event here would have to be
+                // linked into the same hash chain as this one, and the sync is a
+                // single act: recording it here keeps the change in the trail
+                // without splitting it in two.
+                ...(statusChanged
+                  ? { fromStatus: existing ? inheritedFrom : null, toStatus: inheritedTo, inheritedBySync: true }
+                  : {}),
               },
             });
+            if (statusChanged) {
+              queueFileStatusEvent(tx, {
+                workspaceId,
+                fileId,
+                fileName: file.name,
+                fromStatus: inheritedFrom,
+                toStatus: inheritedTo,
+                actorUserId: userId,
+                at: new Date().toISOString(),
+              });
+            }
             if (syncAudit) {
               await tx('files').where({ id: fileId }).update({
                 auditSeq: syncAudit.seq,
@@ -2352,9 +2402,20 @@ export class WorkspacePublicationService {
           await afterDatabaseUpdate?.(tx, contentRevision, appliedFileIds);
           return contentRevision;
         };
-        const contentRevision = transaction
-          ? await applyDatabaseChanges(transaction)
-          : await this.db.transaction(applyDatabaseChanges);
+        // When this call owns the transaction it also owns the announcement:
+        // the changes are real once it resolves. When a caller passed one in,
+        // that caller flushes, because only it knows when its own commit lands.
+        let contentRevision: number;
+        if (transaction) {
+          contentRevision = await applyDatabaseChanges(transaction);
+        } else {
+          let committed: Knex.Transaction | null = null;
+          contentRevision = await this.db.transaction(async (tx) => {
+            committed = tx;
+            return applyDatabaseChanges(tx);
+          });
+          if (committed) await flushFileStatusEvents(this.db, committed);
+        }
         await fs.rm(backupPath, { recursive: true, force: true });
         return contentRevision;
       } catch (error) {

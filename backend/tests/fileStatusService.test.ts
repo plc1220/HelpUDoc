@@ -5,6 +5,8 @@ import { AccessDeniedError, ConflictError, NotFoundError } from '../src/errors';
 import {
   approveFilesOnProposalAccepted,
   FileStatusService,
+  flushFileStatusEvents,
+  queueFileStatusEvent,
   allowedTransitionsFor,
   hasDrifted,
   normalizeFileStatus,
@@ -511,4 +513,96 @@ test('accepting a proposal leaves files nobody submitted alone', async () => {
   assert.equal(files[0].status, 'draft');
   assert.equal(files[1].status, 'approved');
   assert.equal(h.auditEvents.length, 0);
+});
+
+// --- announcing a change to other sessions -----------------------------------
+
+/**
+ * Stand-in for the `users` lookup the announcement makes, recording what it was
+ * asked for. Redis is closed under test, so publishing is already a no-op; the
+ * lookup is what shows whether a flush had anything to say.
+ */
+const usersStub = (rows: Array<{ id: string; displayName: string }> = []) => {
+  const lookups: string[][] = [];
+  const db = (table: string) => {
+    assert.equal(table, 'users');
+    return {
+      whereIn: (_column: string, ids: string[]) => {
+        lookups.push([...ids]);
+        return { select: async () => rows };
+      },
+    };
+  };
+  return { db: db as never, lookups };
+};
+
+const statusEvent = (fileId: number) => ({
+  workspaceId: 'ws-1',
+  fileId,
+  fileName: `file-${fileId}.md`,
+  fromStatus: 'draft' as const,
+  toStatus: 'in_review' as const,
+  actorUserId: `user-${fileId}`,
+  at: '2026-01-01T00:00:00.000Z',
+});
+
+test('a change is announced only when its transaction is flushed', async () => {
+  const { db, lookups } = usersStub([{ id: 'user-1', displayName: 'Ada Reviewer' }]);
+  const tx = {};
+
+  queueFileStatusEvent(tx, statusEvent(1));
+  assert.deepEqual(lookups, [], 'queueing alone must not reach out to anything');
+
+  await flushFileStatusEvents(db, tx);
+  assert.deepEqual(lookups, [['user-1']], 'the flush resolves the actor it queued');
+});
+
+test('flushing twice does not announce the same change again', async () => {
+  const { db, lookups } = usersStub();
+  const tx = {};
+
+  queueFileStatusEvent(tx, statusEvent(1));
+  await flushFileStatusEvents(db, tx);
+  await flushFileStatusEvents(db, tx);
+
+  assert.equal(lookups.length, 1, 'the queue is taken on the first flush');
+});
+
+test('a transaction that queued nothing needs no lookup', async () => {
+  const { db, lookups } = usersStub();
+
+  await flushFileStatusEvents(db, {});
+
+  assert.deepEqual(lookups, []);
+});
+
+test('each transaction keeps its own queue', async () => {
+  const { db, lookups } = usersStub();
+  const first = {};
+  const second = {};
+
+  queueFileStatusEvent(first, statusEvent(1));
+  queueFileStatusEvent(second, statusEvent(2));
+  await flushFileStatusEvents(db, first);
+
+  // Only the flushed transaction's actor is resolved; the other queue is intact.
+  assert.deepEqual(lookups, [['user-1']]);
+
+  await flushFileStatusEvents(db, second);
+  assert.deepEqual(lookups, [['user-1'], ['user-2']]);
+});
+
+test('one lookup covers every actor in a flush', async () => {
+  const { db, lookups } = usersStub();
+  const tx = {};
+
+  queueFileStatusEvent(tx, statusEvent(1));
+  queueFileStatusEvent(tx, statusEvent(2));
+  queueFileStatusEvent(tx, { ...statusEvent(3), actorUserId: 'user-1' });
+  await flushFileStatusEvents(db, tx);
+
+  // A sync touching many files must not become one query per file, and a
+  // repeated actor is asked for once.
+  assert.equal(lookups.length, 1);
+  assert.deepEqual(lookups[0].sort(), ['user-1', 'user-2']);
 });
