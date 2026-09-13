@@ -3895,21 +3895,48 @@ export default function WorkspacePage() {
     if (!selectedWorkspace || publishedVersionView) return undefined;
     const workspaceId = selectedWorkspace.id;
     const controller = new AbortController();
+    let retryTimer: number | null = null;
+    let failures = 0;
 
-    void streamFileStatusEvents(
-      workspaceId,
-      (event) => {
-        // The listing is the source of truth, so this only says "look again".
-        if (event.workspaceId === workspaceId) scheduleWorkspaceFilesRefresh(workspaceId);
-      },
-      controller.signal,
-    ).catch(() => {
-      // An unavailable stream is a loss of immediacy, not of correctness: every
-      // other refresh path still runs. Reconnection rides on the next workspace
-      // selection rather than a retry loop that would hammer a failing server.
-    });
+    const follow = async () => {
+      while (!controller.signal.aborted) {
+        try {
+          await streamFileStatusEvents(
+            workspaceId,
+            (event) => {
+              // A delivered event proves the stream works, so the next drop
+              // starts backing off from the beginning again.
+              failures = 0;
+              // The listing is the source of truth, so this only says "look again".
+              if (event.workspaceId === workspaceId) scheduleWorkspaceFilesRefresh(workspaceId);
+            },
+            controller.signal,
+          );
+        } catch {
+          // A refused or broken stream is handled the same as a clean close:
+          // wait, then try again. Losing it costs immediacy, never correctness,
+          // because every other refresh path still runs.
+        }
+        if (controller.signal.aborted) return;
 
-    return () => controller.abort();
+        failures += 1;
+        const backoff = Math.min(30_000, 1_000 * 2 ** (failures - 1));
+        await new Promise<void>((resolve) => {
+          retryTimer = window.setTimeout(resolve, backoff);
+        });
+        if (controller.signal.aborted) return;
+        // Anything decided while the stream was down was never delivered, so
+        // reconnecting alone would leave the panes stale until the next change.
+        scheduleWorkspaceFilesRefresh(workspaceId);
+      }
+    };
+
+    void follow();
+
+    return () => {
+      controller.abort();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
   }, [selectedWorkspace, publishedVersionView, scheduleWorkspaceFilesRefresh]);
 
   const handleRefreshFiles = () => {
