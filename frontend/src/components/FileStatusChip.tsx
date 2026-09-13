@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
@@ -62,7 +62,9 @@ export const FileStatusChip: React.FC<{
   size?: 'sm' | 'md';
   /** File-list form: tinted label, drift as a separate pill. */
   compact?: boolean;
-  onChanged?: (state: FileStatusState) => void;
+  /** Required: the chip renders from props, so the caller must fold the
+   *  result back into them or the label will not move. */
+  onChanged: (state: FileStatusState) => void;
 }> = ({ workspaceId, fileId, status, drift, size = 'sm', compact = false, onChanged }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [state, setState] = useState<FileStatusState | null>(null);
@@ -72,12 +74,33 @@ export const FileStatusChip: React.FC<{
 
   // Fetched lazily: loading permitted moves for every row up front would be one
   // request per file for something most rows never open.
+  //
+  // The generation counter drops a reply that arrives after the chip has moved
+  // to another file, which the editor header's single instance does on every
+  // selection. Without it a slow response for the previous file would land as
+  // this one's permitted moves and version.
+  const requestRef = useRef(0);
   const loadStatus = useCallback(async () => {
+    const generation = requestRef.current + 1;
+    requestRef.current = generation;
     try {
-      setState(await fetchFileStatus(workspaceId, fileId));
+      const next = await fetchFileStatus(workspaceId, fileId);
+      if (requestRef.current === generation) setState(next);
     } catch {
-      setState(null);
+      if (requestRef.current === generation) setState(null);
     }
+  }, [workspaceId, fileId]);
+
+  // The editor header renders one chip for whichever file is open, so the same
+  // instance is reused as the selection moves. Without this the previous file's
+  // permitted moves stay loaded, and `apply` would send that file's version as
+  // this one's `expectedVersion`.
+  useEffect(() => {
+    requestRef.current += 1;
+    setState(null);
+    setPending(null);
+    setNote('');
+    setError('');
   }, [workspaceId, fileId]);
 
   // The menu reports open/close here, but not reliably on the trigger click
@@ -99,7 +122,7 @@ export const FileStatusChip: React.FC<{
       setPending(null);
       setNote('');
       setState(next);
-      onChanged?.(next);
+      onChanged(next);
     } catch (changeError) {
       setError(changeError instanceof Error ? changeError.message : 'Could not change the status');
     }
@@ -121,7 +144,7 @@ export const FileStatusChip: React.FC<{
   const allowed = state?.allowedTransitions ?? [];
   const items = FILE_STATUS_ORDER.map((candidate) => {
     const transition = allowed.find((entry) => entry.toStatus === candidate);
-    const isCurrent = candidate === (state?.status ?? status);
+    const isCurrent = candidate === status;
     return {
       label: FILE_STATUS_LABELS[candidate],
       icon: <StatusDot variant={FILE_STATUS_DOT[candidate]} label={FILE_STATUS_LABELS[candidate]} />,
@@ -130,8 +153,17 @@ export const FileStatusChip: React.FC<{
     };
   });
 
-  const shown = state?.status ?? status;
-  const showDrift = state ? state.drift : Boolean(drift);
+  // What is rendered comes from the props alone. `state` is the server's answer
+  // about what this user may *do*, not about what the file *is*: it is fetched
+  // only when a menu opens, so letting it win meant a chip that had been opened
+  // kept showing its own copy while the file list moved on beneath it. The list
+  // and the editor header both read one `fileStatusById` map, so sourcing the
+  // label from the prop is what keeps them from disagreeing.
+  //
+  // A transition applied here reaches the props through `onChanged`, which the
+  // caller merges into that map before its refetch lands.
+  const shown = status;
+  const showDrift = Boolean(drift);
 
   return (
     <>

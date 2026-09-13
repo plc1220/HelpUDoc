@@ -111,6 +111,7 @@ import type {
   WorkspaceScheduleDraft,
   TaggedFileRef,
   FileStatus,
+  FileStatusState,
 } from '../../types';
 import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
@@ -197,6 +198,7 @@ import {
   SLASH_COMMANDS,
 } from '../../constants/workspace';
 import { isSystemFile, normalizeFilePath } from '../../utils/files';
+import { applyFileStatusState, deriveFileStatusChip } from '../../utils/fileStatusDisplay';
 import { getLastWorkspaceId, setLastWorkspaceId } from '../../services/preferencesApi';
 import { resolveWorkspaceToRestore, shouldPersistWorkspaceOpen } from '../../utils/workspaceRestore';
 import { isBinaryOfficeDocument } from '../../utils/officeFiles';
@@ -1281,13 +1283,7 @@ export default function WorkspacePage() {
   const fileStatusById = useMemo(() => {
     const byId: Record<string, { status: FileStatus; drift: boolean }> = {};
     for (const file of files) {
-      const status = (file.status || 'draft') as FileStatus;
-      const decidedAt = status === 'published' ? file.publishedAtVersion : file.approvedAtVersion;
-      byId[String(file.id)] = {
-        status,
-        // Approval attaches to a version; if the content moved on, say so.
-        drift: Boolean(decidedAt) && Number(decidedAt) !== Number(file.version ?? 0),
-      };
+      byId[String(file.id)] = deriveFileStatusChip(file);
     }
     return byId;
   }, [files]);
@@ -2358,6 +2354,24 @@ export default function WorkspacePage() {
         void loadFilesForWorkspace(workspaceId);
       }
     }, 400);
+  }, [loadFilesForWorkspace]);
+
+  /**
+   * Fold a completed status transition back into the file rows, then reconcile.
+   *
+   * The chip renders its label from these rows, so without the merge the file it
+   * just changed would keep showing the old status until the refetch returned.
+   * The refetch still runs: publishing also writes `currentPublicationId` and
+   * `publicationVersion`, which the transition response does not carry.
+   */
+  const handleFileStatusChanged = useCallback((next: FileStatusState) => {
+    const merge = (file: WorkspaceFile) => applyFileStatusState(file, next);
+    setFiles((prev) => prev.map(merge));
+    setSelectedFile((prev) => (prev ? merge(prev) : prev));
+    setSelectedFileDetails((prev) => (prev ? merge(prev) : prev));
+
+    const workspaceId = selectedWorkspaceIdRef.current;
+    if (workspaceId) void loadFilesForWorkspace(workspaceId);
   }, [loadFilesForWorkspace]);
 
   const upsertDashboardPlaceholder = useCallback((artifact: DashboardArtifactInfo) => {
@@ -9375,9 +9389,7 @@ export default function WorkspacePage() {
                         fileStatusById={fileStatusById}
                         ownerNameById={ownerNameById}
                         workspaceId={selectedWorkspace?.id}
-                        onStatusChanged={() => {
-                          if (selectedWorkspace) void loadFilesForWorkspace(selectedWorkspace.id);
-                        }}
+                        onStatusChanged={handleFileStatusChanged}
                         files={filteredFiles}
                         folderPaths={visibleFolderPaths}
                         colorMode={colorMode}
@@ -9428,12 +9440,18 @@ export default function WorkspacePage() {
                       <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
                       {selectedFile && selectedWorkspace && fileStatusById[String(selectedFile.id)] && (
                         <FileStatusChip
+                          // The chip's identity is the file it describes. The
+                          // list gets this from its row keys; here there is one
+                          // instance for whatever is open, so say so explicitly
+                          // and let a selection change remount rather than
+                          // reconcile.
+                          key={`${selectedWorkspace.id}:${selectedFile.id}`}
                           workspaceId={selectedWorkspace.id}
                           fileId={selectedFile.id}
                           size="md"
                           status={fileStatusById[String(selectedFile.id)].status}
                           drift={fileStatusById[String(selectedFile.id)].drift}
-                          onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
+                          onChanged={handleFileStatusChanged}
                         />
                       )}
                     </div>

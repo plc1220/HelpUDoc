@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 
-import type { DashboardArtifactInfo, File as WorkspaceFile, FileStatus } from '../types';
+import type { DashboardArtifactInfo, File as WorkspaceFile, FileStatus, FileStatusState } from '../types';
 import { getFileDisplayName, getFileTypeIcon } from '../utils/files';
 import { getFileOwnerLabel } from '../utils/fileOwners';
 import { formatRelativeTime } from '../utils/relativeTime';
@@ -98,7 +98,7 @@ interface WorkspaceFileTreeProps {
   /** Resolves a file's createdBy id to a name. See utils/fileOwners. */
   ownerNameById?: Record<string, string>;
   workspaceId?: string;
-  onStatusChanged?: () => void;
+  onStatusChanged: (next: FileStatusState) => void;
   readOnly?: boolean;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
@@ -217,7 +217,7 @@ const TreeFileRow: React.FC<{
   fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
   ownerNameById?: Record<string, string>;
   workspaceId?: string;
-  onStatusChanged?: () => void;
+  onStatusChanged: (next: FileStatusState) => void;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
   onToggleFileSelection: (fileId: string) => void;
@@ -700,7 +700,7 @@ const renderTreeNodes = (
     fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
     ownerNameById?: Record<string, string>;
     workspaceId?: string;
-    onStatusChanged?: () => void;
+    onStatusChanged: (next: FileStatusState) => void;
     isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
     onSelectFile: (file: WorkspaceFile) => void;
     onSelectFolder?: (folderPath: string) => void;
