@@ -1165,6 +1165,11 @@ export class DatabaseService {
       );
       console.log('Created "workspace_team_messages" table.');
     }
+    await this.db.raw(
+      `CREATE INDEX IF NOT EXISTS workspace_team_messages_pending_run_idx
+       ON workspace_team_messages ("updatedAt", "workspaceId")
+       WHERE metadata->>'runStatus' IN ('queued', 'running', 'awaiting_approval')`,
+    );
   }
 
   private async createWorkspaceTeamMessageMentionsTable(): Promise<void> {

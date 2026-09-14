@@ -48,10 +48,18 @@ const messageSchema = z.object({
   body: z.string().trim().min(1).max(20_000),
 });
 
+const referenceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('person'), id: z.string().uuid(), label: z.string().max(255) }),
+  z.object({ kind: z.literal('agent'), id: z.literal('lumo'), label: z.string().max(255) }),
+  z.object({ kind: z.literal('skill'), id: z.string().min(1).max(255), label: z.string().max(255) }),
+  z.object({ kind: z.literal('file'), id: z.string().min(1).max(2000), label: z.string().max(2000), version: z.number().int().positive().optional(), publishedVersionId: z.string().uuid().optional() }),
+]);
+
 const teamMessageSchema = z.object({
   body: z.string().trim().min(1).max(20_000),
   replyToMessageId: z.string().uuid().optional(),
   mentionedUserIds: z.array(z.string().uuid()).max(50).optional(),
+  references: z.array(referenceSchema).max(50).refine((refs) => refs.filter((ref) => ref.kind === 'skill').length <= 1, 'Choose one skill per request').optional(),
 });
 
 export default function workspaceCollaborationRoutes(
@@ -92,6 +100,7 @@ export default function workspaceCollaborationRoutes(
       const { limit } = z.object({
         limit: z.coerce.number().int().positive().max(500).default(200),
       }).parse(req.query);
+      await teamChatAgentService.refresh(requireWorkspaceId(req), user.userId);
       const messages = await service.listTeamMessages(
         requireWorkspaceId(req),
         user.userId,
@@ -107,11 +116,20 @@ export default function workspaceCollaborationRoutes(
     try {
       const user = requireUserContext(req);
       const input = teamMessageSchema.parse(req.body);
+      const references = input.references || [];
+      await teamChatAgentService.resolveReferences(requireWorkspaceId(req), user.userId, references);
+      input.mentionedUserIds = [...new Set([...(input.mentionedUserIds || []), ...references.filter((ref) => ref.kind === 'person').map((ref) => ref.id)])];
       const message = await service.createTeamMessage(
         requireWorkspaceId(req),
         user.userId,
         input,
       );
+      if (message.mentionsLumo) {
+        // Persisted queued metadata allows recovery even if dispatch is interrupted.
+        void teamChatAgentService.enqueue(requireWorkspaceId(req), user.userId, message.id).catch(async (error) => {
+          await service.updateTeamRun(requireWorkspaceId(req), message.id, { ...(error instanceof HttpError && error.statusCode < 500 ? { runStatus: 'failed' } : {}), error: error instanceof Error ? error.message : 'Unable to start Lumo' }).catch((persistError) => console.error('Unable to record team dispatch failure', persistError));
+        });
+      }
       res.status(201).json(message);
     } catch (error) {
       handleError(res, error, 'Failed to post Workspace Chat message');
@@ -122,36 +140,20 @@ export default function workspaceCollaborationRoutes(
     try {
       const user = requireUserContext(req);
       const workspaceId = requireWorkspaceId(req);
-      const sourceMessage = await service.getLumoRequestMessage(
-        workspaceId,
-        req.params.messageId,
-        user.userId,
-      );
-      const existing = await service.findLumoReply(workspaceId, sourceMessage.id, user.userId);
-      if (existing) {
-        return res.json(existing);
-      }
-      const history = await service.listTeamAgentHistory(
-        workspaceId,
-        user.userId,
-        sourceMessage.id,
-      );
-      const body = await teamChatAgentService.respond(
-        workspaceId,
-        user.userId,
-        sourceMessage,
-        history,
-      );
-      const reply = await service.appendLumoReply(
-        workspaceId,
-        sourceMessage,
-        user.userId,
-        body,
-      );
-      res.status(201).json(reply);
+      await teamChatAgentService.enqueue(workspaceId, user.userId, req.params.messageId);
+      res.status(202).json({ status: 'queued' });
     } catch (error) {
       handleError(res, error, 'Failed to invoke Lumo in Workspace Chat');
     }
+  });
+
+  router.post('/team-chat/messages/:messageId/interaction', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const input = z.object({ decision: z.enum(['approve', 'reject']).optional(), message: z.string().max(20000).optional(), actionId: z.string().max(255).optional() }).parse(req.body);
+      await teamChatAgentService.respondToInteraction(requireWorkspaceId(req), user.userId, req.params.messageId, input);
+      res.json({ status: 'running' });
+    } catch (error) { handleError(res, error, 'Failed to respond to Lumo'); }
   });
 
   router.get('/objects', async (req, res) => {

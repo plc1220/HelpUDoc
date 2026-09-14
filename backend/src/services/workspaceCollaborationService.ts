@@ -125,6 +125,22 @@ export class WorkspaceCollaborationService {
     this.publicationService = publicationService;
   }
 
+  async withTeamMessageLock<T>(workspaceId: string, messageId: string, work: (row: WorkspaceTeamMessage, tx: Knex.Transaction) => Promise<T>): Promise<T> {
+    return this.db.transaction(async (tx) => {
+      const row = await tx('workspace_team_messages').where({ workspaceId, id: messageId }).forUpdate().first();
+      if (!row) throw new NotFoundError('Workspace Chat message not found');
+      return work(row, tx);
+    });
+  }
+
+  async updateTeamRun(workspaceId: string, messageId: string, metadata: Record<string, unknown>) {
+    await this.withTeamMessageLock(workspaceId, messageId, async (row, tx) => {
+      await tx('workspace_team_messages').where({ id: messageId }).update({
+        metadata: { ...row.metadata, ...metadata }, updatedAt: new Date(),
+      });
+    });
+  }
+
   async listTeamMessages(
     workspaceId: string,
     userId: string,
@@ -138,6 +154,15 @@ export class WorkspaceCollaborationService {
     return (rows as WorkspaceTeamMessage[]).reverse();
   }
 
+  async listPendingTeamMessages(workspaceId: string, userId: string): Promise<WorkspaceTeamMessage[]> {
+    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    return this.teamMessageQuery(userId)
+      .where('message.workspaceId', workspaceId)
+      .whereRaw(`message.metadata->>'runStatus' IN ('queued', 'running', 'awaiting_approval')`)
+      .orderBy('message.updatedAt', 'asc')
+      .limit(100);
+  }
+
   async createTeamMessage(
     workspaceId: string,
     userId: string,
@@ -145,6 +170,7 @@ export class WorkspaceCollaborationService {
       body: string;
       replyToMessageId?: string;
       mentionedUserIds?: string[];
+      references?: Array<Record<string, unknown>>;
     },
   ): Promise<WorkspaceTeamMessage> {
     const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
@@ -174,7 +200,8 @@ export class WorkspaceCollaborationService {
         body,
         replyToMessageId: replyTo?.id || null,
         threadRootId: replyTo ? (replyTo.threadRootId || replyTo.id) : null,
-        mentionsLumo: /(^|\s)@lumo\b/i.test(body),
+        mentionsLumo: /(^|\s)@lumo\b/i.test(body) || Boolean(input.references?.some((ref) => ref.kind === 'skill' || ref.kind === 'agent')),
+        metadata: { references: input.references || [], ...( /(^|\s)@lumo\b/i.test(body) || input.references?.some((ref) => ref.kind === 'skill' || ref.kind === 'agent') ? { runStatus: 'queued' } : {}) },
       });
       if (mentionedUserIds.length) {
         await tx('workspace_team_message_mentions').insert(
@@ -227,6 +254,7 @@ export class WorkspaceCollaborationService {
     sourceMessage: WorkspaceTeamMessage,
     invokingUserId: string,
     body: string,
+    metadata: Record<string, unknown> = {},
   ): Promise<WorkspaceTeamMessage> {
     const existing = await this.findLumoReply(workspaceId, sourceMessage.id, invokingUserId);
     if (existing) {
@@ -245,7 +273,7 @@ export class WorkspaceCollaborationService {
         threadRootId: sourceMessage.threadRootId || sourceMessage.id,
         mentionsLumo: false,
         metadata: {
-          readOnly: true,
+          ...metadata,
           invokedByUserId: invokingUserId,
           sourceMessageId: sourceMessage.id,
         },

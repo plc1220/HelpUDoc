@@ -45,6 +45,8 @@ export type AgentRunStatus =
   | 'cancelled';
 
 type StartRunParams = {
+  sharedTeamChannel?: boolean;
+  readOnlyWorkspace?: boolean;
   // Internal continuation hint; never inferred from old requests after a fresh turn.
   frontendSlidesEditExisting?: boolean;
   workspaceId: string;
@@ -102,6 +104,7 @@ type RunPendingInterrupt = {
 };
 
 type RunMeta = {
+  sharedTeamChannel?: boolean;
   workspaceId: string;
   userId?: string;
   persona: string;
@@ -127,6 +130,8 @@ type RunContext = {
 };
 
 type PersistedRunContext = {
+  sharedTeamChannel?: boolean;
+  readOnlyWorkspace?: boolean;
   workspaceId: string;
   conversationId?: string;
   persona: string;
@@ -2666,6 +2671,8 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
 const serializeRunContext = (params: StartRunParams): string =>
   JSON.stringify({
     workspaceId: params.workspaceId,
+    sharedTeamChannel: params.sharedTeamChannel,
+    readOnlyWorkspace: params.readOnlyWorkspace,
     conversationId: params.conversationId,
     persona: params.persona,
     prompt: params.prompt,
@@ -2697,6 +2704,8 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
     return {
       params: {
         workspaceId: parsed.workspaceId,
+        sharedTeamChannel: parsed.sharedTeamChannel === true,
+        readOnlyWorkspace: parsed.readOnlyWorkspace === true,
         conversationId: typeof parsed.conversationId === 'string' ? parsed.conversationId : undefined,
         persona: parsed.persona,
         prompt: parsed.prompt,
@@ -3097,7 +3106,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     );
     if (existingRunId) {
       const existingMeta = await getRunMeta(existingRunId);
-      if (existingMeta && !['completed', 'failed', 'cancelled'].includes(existingMeta.status)) {
+      if (existingMeta && (params.sharedTeamChannel || !['completed', 'failed', 'cancelled'].includes(existingMeta.status))) {
         return { runId: existingRunId, status: existingMeta.status };
       }
     }
@@ -3114,6 +3123,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     userId: params.userId,
     persona: params.persona,
     status: 'queued',
+    sharedTeamChannel: params.sharedTeamChannel,
     createdAt: queuedAt,
     turnId: params.turnId,
     pendingInterrupt: '',
@@ -3200,7 +3210,7 @@ async function runAgentRunWorker(
     await cleanupRunWorker(runId);
     return;
   }
-  if (fileService && params.userId) {
+  if (fileService && params.userId && !params.readOnlyWorkspace) {
     await fileService.reconcileWorkspaceMirror(
       params.workspaceId,
       params.userId,
@@ -3291,7 +3301,7 @@ async function runAgentRunWorker(
   let agentStreamEstablished = false;
 
   const commitRunArtifacts = async () => {
-    if (artifactsCommitted || !fileService || !params.userId) return;
+    if (artifactsCommitted || !fileService || !params.userId || params.readOnlyWorkspace) return;
     // A failed connection cannot have generated workspace artifacts. Skipping
     // this commit also keeps a secondary lease failure from masking the real
     // transport error during stale-run recovery.
@@ -4146,7 +4156,7 @@ async function runAgentRunWorker(
   traceContext.skillId = skillId || undefined;
 
   try {
-    if (fileService && params.userId) {
+    if (fileService && params.userId && !params.readOnlyWorkspace) {
       artifactBaseline = await fileService.captureWorkspaceArtifactBaseline(
         params.workspaceId,
         params.userId,
@@ -4622,6 +4632,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   await reconcileActiveRunMetaFromStream(runId, meta, interactionGateState);
   return {
     workspaceId: meta.workspaceId,
+    sharedTeamChannel: meta.sharedTeamChannel === 'true',
     userId: meta.userId,
     persona: meta.persona,
     status: (meta.status as AgentRunStatus) || 'queued',

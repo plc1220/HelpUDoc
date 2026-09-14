@@ -9321,6 +9321,8 @@ export default function WorkspacePage() {
               workspaceId={selectedWorkspace?.id}
               isSharedWorkspace={selectedWorkspace?.visibility === 'team'}
               sharedWorkspace={selectedWorkspace?.visibility === 'team' ? selectedWorkspace : undefined}
+              viewedVersion={publishedVersionView || undefined}
+              onTeamFilesChanged={() => { if (selectedWorkspace && !publishedVersionView) void loadFilesForWorkspace(selectedWorkspace.id); }}
               activeFilePath={selectedFile?.name || selectedDashboardPath || undefined}
               internetSearchEnabled={internetSearchEnabled}
               formatMessageTimestamp={formatMessageTimestamp}

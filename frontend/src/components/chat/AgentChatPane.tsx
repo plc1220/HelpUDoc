@@ -96,6 +96,8 @@ export default function AgentChatPane({
   workspaceId,
   isSharedWorkspace,
   sharedWorkspace,
+  viewedVersion,
+  onTeamFilesChanged,
   activeFilePath,
   internetSearchEnabled,
   formatMessageTimestamp,
@@ -182,6 +184,8 @@ export default function AgentChatPane({
   workspaceId?: string;
   isSharedWorkspace?: boolean;
   sharedWorkspace?: Workspace;
+  viewedVersion?: { versionId: string; versionNumber: number };
+  onTeamFilesChanged?: () => void;
   activeFilePath?: string;
   internetSearchEnabled: boolean;
   formatMessageTimestamp: (value?: string) => string;
@@ -318,6 +322,8 @@ export default function AgentChatPane({
         {isSharedWorkspace && sharedWorkspace && sharedMode === 'team' ? (
           <WorkspaceTeamChatPanel
             workspace={sharedWorkspace}
+            viewedVersion={viewedVersion}
+            onFilesChanged={onTeamFilesChanged}
             filePath={activeFilePath}
             colorMode={colorMode}
             markdownComponents={markdownComponents}

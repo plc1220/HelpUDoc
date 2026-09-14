@@ -2564,3 +2564,45 @@ test('non-slide skill can resume through multiple generic Interaction input gate
     }
   }
 });
+
+test('team runs commit outputs before completion, dedupe terminal retries, and skip writes for read-only runs', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'requires isolated Redis' : false,
+}, async () => {
+  if (!redisClient.isOpen) await redisClient.connect();
+  let commits = 0;
+  let reconciles = 0;
+  let baselines = 0;
+  let executions = 0;
+  const workspaceId = `team-lifecycle-${Date.now()}`;
+  const runIds: string[] = [];
+  try {
+    configureAgentRunServices({ telemetryService: null, userMemoryService: null, skillEvolutionService: null, conversationService: null,
+      fileService: {
+        reconcileWorkspaceMirror: async () => { reconciles++; },
+        captureWorkspaceArtifactBaseline: async () => { baselines++; return {}; },
+        commitWorkspaceArtifacts: async (_workspaceId: string, _userId: string, _runId: string, options: any) => {
+          await options.assertLeaseOwned(); commits++; return [{ fileId: 1, version: 1, name: 'qa.md' }];
+        },
+      } as any,
+      agentStreamClient: { runAgentStream: async () => { executions++; return makeStreamResponse([
+        { type: 'token', content: 'Created qa.md.' }, { type: 'done', status: 'completed' },
+      ]); } },
+    });
+    const params = { workspaceId, userId: 'team-owner', persona: 'fast', prompt: 'Create qa.md', turnId: `team-${Date.now()}`, sharedTeamChannel: true, readOnlyWorkspace: false };
+    const first = await startAgentRun(params); runIds.push(first.runId);
+    const completed = await waitForRunStatus(first.runId, (status) => status === 'completed');
+    assert.equal(completed?.status, 'completed');
+    assert.equal(completed?.sharedTeamChannel, true);
+    assert.equal(commits, 1); assert.equal(reconciles, 1); assert.equal(baselines, 1);
+    const retry = await startAgentRun(params);
+    assert.equal(retry.runId, first.runId); assert.equal(executions, 1);
+    const read = await startAgentRun({ ...params, turnId: params.turnId + '-read', readOnlyWorkspace: true, prompt: 'Summarize this workspace' }); runIds.push(read.runId);
+    assert.equal((await waitForRunStatus(read.runId, (status) => status === 'completed'))?.status, 'completed');
+    assert.equal(commits, 1); assert.equal(reconciles, 1); assert.equal(baselines, 1);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    configureAgentRunServices({ fileService: null, agentStreamClient: null });
+    for (const runId of runIds) { await redisClient.del(`agent:run:${runId}`); await redisClient.del(`agent:run:${runId}:meta`); }
+    if (redisClient.isOpen) await redisClient.quit();
+  }
+});

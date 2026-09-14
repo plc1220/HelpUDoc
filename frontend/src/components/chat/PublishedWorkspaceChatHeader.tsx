@@ -45,8 +45,8 @@ export default function PublishedWorkspaceChatHeader({
     <div className={`sticky top-0 z-30 border-b px-3 py-2 backdrop-blur-md ${
       isDarkMode ? 'border-[#223047]/70 bg-[#0d1524]/95' : 'border-slate-200/80 bg-white/92'
     }`}>
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <IconButton
             label={isAgentPaneVisible ? 'Collapse collaboration pane' : 'Expand collaboration pane'}
             icon={(

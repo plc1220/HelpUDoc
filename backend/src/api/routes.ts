@@ -57,6 +57,7 @@ export default function(
   const workspaceTeamChatAgentService = new WorkspaceTeamChatAgentService(
     workspaceService,
     userService,
+    workspaceCollaborationService, fileService, workspacePublicationService, dbService,
   );
   const dailyReflectionService = new DailyReflectionService(dbService);
   const userMemoryService = new UserMemoryService(dbService);

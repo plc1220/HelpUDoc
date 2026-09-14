@@ -1,26 +1,26 @@
 import { Button } from '@astryxdesign/core/Button';
 import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
-import { ChatToolCalls } from '@astryxdesign/core/Chat';
-import { TextArea } from '@astryxdesign/core/TextArea';
+import TeamChatComposer from './TeamChatComposer';
+import { getFiles, getFileDownloadUrl } from '../../services/fileApi';
+import { fetchSlashMetadata } from '../../services/agentApi';
+import { getPublishedVersionSnapshot } from '../../services/workspaceApi';
+import { respondToTeamInteraction } from '../../services/workspaceCollaborationApi';
 import {
-  AtSign,
   Bot,
   FileText,
   MessageCircle,
   MoreHorizontal,
   Reply,
-  Send,
   StickyNote,
   Users,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Components } from 'react-markdown';
 
-import type { Workspace } from '../../types';
+import type { Workspace, TeamChatReference } from '../../types';
 import {
   createWorkspaceCollaborationObject,
   convertWorkspaceCollaborationObjectToProposal,
-  invokeLumoForWorkspaceTeamMessage,
   listWorkspaceTeamMessages,
   postWorkspaceTeamMessage,
   type WorkspaceCollaborationObjectType,
@@ -101,7 +101,11 @@ export default function WorkspaceTeamChatPanel({
   colorMode,
   markdownComponents,
   onOpenPrivateWorkingCopy,
+  viewedVersion,
+  onFilesChanged,
 }: {
+  viewedVersion?: { versionId: string; versionNumber: number };
+  onFilesChanged?: () => void;
   workspace: Workspace;
   filePath?: string;
   colorMode: 'light' | 'dark';
@@ -111,14 +115,19 @@ export default function WorkspaceTeamChatPanel({
   const isDarkMode = colorMode === 'dark';
   const [messages, setMessages] = useState<WorkspaceTeamMessage[]>([]);
   const [collaborators, setCollaborators] = useState<WorkspaceCollaborator[]>([]);
-  const [draft, setDraft] = useState('');
+  const [referenceOptions, setReferenceOptions] = useState<Array<TeamChatReference & { description?: string }>>([]);
+  const [interactionText, setInteractionText] = useState<Record<string, string>>({});
+  const workspaceRef = useRef(workspace.id);
+  workspaceRef.current = workspace.id;
+  const knownArtifacts = useRef(new Set<string>());
+  const filesChangedRef = useRef(onFilesChanged);
+  filesChangedRef.current = onFilesChanged;
   const [replyTo, setReplyTo] = useState<WorkspaceTeamMessage | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [lumoBusyMessageId, setLumoBusyMessageId] = useState<string | null>(null);
-  const [lumoRetryMessageId, setLumoRetryMessageId] = useState<string | null>(null);
+
   const [actionMessageId, setActionMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -132,10 +141,17 @@ export default function WorkspaceTeamChatPanel({
     if (showLoading) setLoading(true);
     try {
       const next = await listWorkspaceTeamMessages(workspace.id);
-      setMessages(next);
+      if (workspaceRef.current !== workspace.id) return;
+      setMessages((current) => mergeMessages(current, next));
+      for (const message of next) {
+        const artifacts = message.metadata?.artifacts as unknown[] | undefined;
+        if (artifacts?.length && !knownArtifacts.current.has(message.id)) {
+          knownArtifacts.current.add(message.id); filesChangedRef.current?.();
+        }
+      }
       setError('');
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load Workspace Chat');
+      if (workspaceRef.current === workspace.id) setError(loadError instanceof Error ? loadError.message : 'Failed to load Workspace Chat');
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -143,21 +159,24 @@ export default function WorkspaceTeamChatPanel({
 
   useEffect(() => {
     setMessages([]);
-    setDraft('');
+    setCollaborators([]);
+    setSending(false);
+    setInteractionText({});
     setReplyTo(null);
     setNotice('');
     setError('');
     void loadMessages(true);
     void listWorkspaceCollaborators(workspace.id)
-      .then((access) => setCollaborators(access.collaborators ?? []))
-      .catch(() => setCollaborators([]));
+      .then((access) => { if (workspaceRef.current === workspace.id) setCollaborators(access.collaborators ?? []); })
+      .catch(() => { if (workspaceRef.current === workspace.id) setCollaborators([]); });
+    knownArtifacts.current.clear();
     const timer = window.setInterval(() => void loadMessages(false), 5000);
     return () => window.clearInterval(timer);
   }, [loadMessages, workspace.id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length, lumoBusyMessageId]);
+  }, [messages.length]);
 
   const messageThreads = useMemo(() => {
     const repliesByRoot = new Map<string, WorkspaceTeamMessage[]>();
@@ -174,71 +193,46 @@ export default function WorkspaceTeamChatPanel({
     return { roots, repliesByRoot };
   }, [messages]);
 
-  const mentionQuery = useMemo(() => {
-    const match = draft.match(/(?:^|\s)@([^@\n]*)$/);
-    return match ? match[1].trim().toLowerCase() : null;
-  }, [draft]);
+  useEffect(() => {
+    let cancelled = false;
+    setReferenceOptions([]);
+    void Promise.allSettled([
+      viewedVersion ? getPublishedVersionSnapshot(workspace.id, viewedVersion.versionId).then((value) => value.files) : getFiles(workspace.id),
+      fetchSlashMetadata(workspace.id),
+    ]).then(([fileResult, metadataResult]) => {
+      const files = fileResult.status === 'fulfilled' ? fileResult.value : [];
+      const metadata = metadataResult.status === 'fulfilled' ? metadataResult.value : { skills: [] };
+      if (cancelled) return;
+      setReferenceOptions([
+        { kind: 'agent', id: 'lumo', label: 'Lumo', description: canLumoWrite ? 'Agent · can edit Working' : 'Agent · read-only' },
+        ...collaborators.map((person): TeamChatReference & { description: string } => ({ kind: 'person', id: person.userId, label: person.displayName, description: person.role })),
+        ...(Array.isArray(files) ? files : []).map((file): TeamChatReference => ({ kind: 'file', id: String(file.id), label: file.name, version: Number(file.version) || undefined, publishedVersionId: viewedVersion?.versionId })),
+        ...metadata.skills.filter((skill) => skill.valid).map((skill): TeamChatReference & { description?: string } => ({ kind: 'skill', id: skill.id, label: skill.name, description: skill.description })),
+      ]);
+    }).catch((error) => { if (!cancelled) setError(error instanceof Error ? error.message : 'Unable to load references'); });
+    return () => { cancelled = true; };
+  }, [workspace.id, collaborators, canLumoWrite, viewedVersion?.versionId]);
 
-  const mentionSuggestions = useMemo(() => {
-    if (mentionQuery === null) return [];
-    const options = [
-      { id: 'lumo', displayName: 'Lumo', role: canLumoWrite ? 'AI · can edit shared' : 'AI · read-only' },
-      ...collaborators.map((collaborator) => ({
-        id: collaborator.userId,
-        displayName: collaborator.displayName,
-        role: collaborator.role,
-      })),
-    ];
-    return options
-      .filter((option) => option.displayName.toLowerCase().includes(mentionQuery))
-      .slice(0, 8);
-  }, [canLumoWrite, collaborators, mentionQuery]);
-
-  const selectMention = (displayName: string) => {
-    setDraft((value) => value.replace(/@[^@\n]*$/, `@${displayName} `));
-  };
-
-  const invokeLumo = async (sourceMessageId: string) => {
-    setLumoBusyMessageId(sourceMessageId);
-    setLumoRetryMessageId(null);
+  const handleSend = async (body: string, references: TeamChatReference[]) => {
+    if (!body.trim() || sending || !canComment) return;
+    const target = workspace.id;
+    setSending(true); setError('');
     try {
-      const lumoReply = await invokeLumoForWorkspaceTeamMessage(workspace.id, sourceMessageId);
-      setMessages((current) => mergeMessages(current, [lumoReply]));
-      setError('');
-    } catch (invokeError) {
-      setLumoRetryMessageId(sourceMessageId);
-      setError(invokeError instanceof Error ? invokeError.message : 'Lumo could not respond');
-    } finally {
-      setLumoBusyMessageId(null);
-    }
-  };
-
-  const handleSend = async () => {
-    const body = draft.trim();
-    if (!body || sending || !canComment) return;
-    setSending(true);
-    setError('');
-    const mentionedUserIds = collaborators
-      .filter((collaborator) =>
-        body.toLowerCase().includes(`@${collaborator.displayName}`.toLowerCase()))
-      .map((collaborator) => collaborator.userId);
-    try {
-      const message = await postWorkspaceTeamMessage(workspace.id, {
-        body,
-        replyToMessageId: replyTo?.id,
-        mentionedUserIds,
+      const message = await postWorkspaceTeamMessage(target, {
+        body, references, replyToMessageId: replyTo?.id,
+        mentionedUserIds: references.filter((ref) => ref.kind === 'person').map((ref) => ref.id),
       });
-      setMessages((current) => mergeMessages(current, [message]));
-      setDraft('');
-      setReplyTo(null);
-      if (message.mentionsLumo) {
-        await invokeLumo(message.id);
-      }
+      if (workspaceRef.current !== target) return;
+      setMessages((current) => mergeMessages(current, [message])); setReplyTo(null);
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : 'Failed to send message');
-    } finally {
-      setSending(false);
-    }
+      if (workspaceRef.current === target) setError(sendError instanceof Error ? sendError.message : 'Failed to send message');
+      throw sendError;
+    } finally { if (workspaceRef.current === target) setSending(false); }
+  };
+
+  const respond = async (messageId: string, input: { decision?: 'approve' | 'reject'; actionId?: string; message?: string }) => {
+    try { await respondToTeamInteraction(workspace.id, messageId, input); await loadMessages(); }
+    catch (error) { setError(error instanceof Error ? error.message : 'Unable to respond'); }
   };
 
   const handleConvert = async (
@@ -281,7 +275,9 @@ export default function WorkspaceTeamChatPanel({
   const renderMessage = (message: WorkspaceTeamMessage, isReply = false) => {
     const isLumo = message.authorType === 'lumo';
     const isActionsOpen = actionMessageId === message.id;
-    const lumoCapability = canLumoWrite ? 'Can edit shared' : 'Read-only';
+    const lumoCapability = message.metadata?.readOnly === false ? 'Can edit Working' : message.metadata?.readOnly === true ? 'Read-only' : 'Capability not recorded';
+    const artifacts = (message.metadata?.artifacts || []) as Array<{ fileId: number; name: string; version: number }>;
+    const events = (message.metadata?.toolEvents || []) as Array<{ type: string; name?: string; tool?: string }>;
     return (
       <article
         key={message.id}
@@ -325,24 +321,29 @@ export default function WorkspaceTeamChatPanel({
                 {formatTimestamp(message.createdAt)}
               </span>
             </div>
-            <LumoMarkdown components={markdownComponents} className={`mt-1 text-sm leading-6 ${
-              isDarkMode ? 'text-slate-200' : 'text-slate-700'
-            }`}>
+            <LumoMarkdown components={{ ...markdownComponents, a: ({ href, children }) => {
+              const artifact = artifacts.find((file) => href === '/' + file.name || href === '/workspace/' + file.name || href === file.name);
+              if (artifact) return <a className="underline text-blue-400" href={getFileDownloadUrl(workspace.id, artifact.fileId, artifact.version)}>{children}</a>;
+              if (!href || !/^https?:\/\//i.test(href)) return <span title="No committed workspace file matches this reference">{children} <small>(file unavailable)</small></span>;
+              return <a href={href} target="_blank" rel="noreferrer" className="underline text-blue-400">{children}</a>;
+            } }} className={`mt-1 text-sm leading-6 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
               {message.body}
             </LumoMarkdown>
-            {isLumo ? (
-              <div className="mt-2">
-                <ChatToolCalls
-                  calls={[{
-                    key: `${message.id}-shared-context`,
-                    name: 'shared_workspace_context',
-                    status: 'complete',
-                    target: workingContextLabel,
-                    node: canLumoWrite ? 'shared-workspace' : 'read-only',
-                  }]}
-                />
-              </div>
-            ) : null}
+            {!!artifacts.length && <div className="mt-2 flex flex-col gap-1">{artifacts.map((file) => <a key={`${file.fileId}:${file.version}`} href={getFileDownloadUrl(workspace.id, file.fileId, file.version)} className="rounded-lg border border-blue-400/30 p-2 text-xs text-blue-400"><FileText size={14} className="inline" /> {file.name} · v{file.version}</a>)}</div>}
+            {!!events.length && <details className="mt-2 text-xs opacity-75"><summary>Recorded tool activity ({events.length})</summary>{events.map((event, index) => <div key={index}>{event.name || event.tool || 'Tool'} · {event.type.replace('tool_', '')}</div>)}</details>}
+            {!isLumo && message.metadata?.runStatus ? <div className="mt-2 rounded-lg border border-blue-400/20 p-2 text-xs" role="status">
+              Lumo: {String(message.metadata.runStatus).replace('_', ' ')}
+              {message.metadata.error ? <p className="mt-1 text-rose-400">{String(message.metadata.error)}</p> : null}
+              {message.metadata.runStatus === 'awaiting_approval' && message.isMine ? (() => {
+                const pending = message.metadata.pendingInterrupt as { title?: string; description?: string; actionRequests?: Array<{name?: string; args?: unknown}>; actions?: Array<{ id: string; label: string }>; responseSpec?: { choices?: Array<{ label?: string; value?: string }> } } | undefined;
+                return <div className="mt-2 space-y-2"><strong>{pending?.title || 'Lumo needs your input'}</strong><p>{pending?.description}</p>
+                  {!!pending?.actionRequests?.length && <pre className="max-h-48 overflow-auto whitespace-pre-wrap">{JSON.stringify(pending.actionRequests, null, 2)}</pre>}
+                  {!!pending?.responseSpec?.choices?.length && <p>{pending.responseSpec.choices.map((item) => item.label).join(' · ')}</p>}
+                  <textarea aria-label="Response to Lumo" value={interactionText[message.id] || ''} onChange={(e) => setInteractionText((current) => ({ ...current, [message.id]: e.target.value }))} className="w-full rounded border border-slate-500 bg-transparent p-2" />
+                  {pending?.actionRequests?.length ? <><button className="mr-3 underline" onClick={() => void respond(message.id, { decision: 'approve' })}>Approve shown actions</button><button className="underline" onClick={() => void respond(message.id, { decision: 'reject' })}>Reject</button></> : pending?.actions?.length ? pending.actions.map((action) => <button className="mr-3 underline" key={action.id} onClick={() => void respond(message.id, { actionId: action.id, message: interactionText[message.id] })}>{action.label}</button>) : <button className="underline" onClick={() => void respond(message.id, { message: interactionText[message.id] })}>Send response</button>}
+                </div>;
+              })() : null}
+            </div> : null}
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               {canComment ? (
                 <Button
@@ -427,14 +428,7 @@ export default function WorkspaceTeamChatPanel({
         }`}>
           <div className="flex items-center justify-between gap-2">
             <span>{error || notice}</span>
-            {lumoRetryMessageId ? (
-              <Button
-                label="Retry Lumo"
-                size="sm"
-                variant="secondary"
-                onClick={() => void invokeLumo(lumoRetryMessageId)}
-              />
-            ) : null}
+
           </div>
         </div>
       ) : null}
@@ -469,25 +463,6 @@ export default function WorkspaceTeamChatPanel({
                   renderMessage(reply, true))}
               </section>
             ))}
-            {lumoBusyMessageId ? (
-              <div className={`ml-7 rounded-2xl border px-3 py-3 ${
-                isDarkMode ? 'border-violet-400/20 bg-violet-400/5' : 'border-violet-100 bg-white'
-              }`}>
-                <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-violet-500">
-                  <Bot size={16} />
-                  Lumo is checking the shared workspace
-                </div>
-                <ChatToolCalls
-                  calls={[{
-                    key: `${lumoBusyMessageId}-reading`,
-                    name: 'shared_workspace_context',
-                    status: 'running',
-                    target: workingContextLabel,
-                    node: canLumoWrite ? 'shared-workspace' : 'read-only',
-                  }]}
-                />
-              </div>
-            ) : null}
             <div ref={bottomRef} />
           </div>
         )}
@@ -502,66 +477,9 @@ export default function WorkspaceTeamChatPanel({
             <Button label="Cancel reply" size="sm" variant="ghost" onClick={() => setReplyTo(null)} />
           </div>
         ) : null}
-        <div className="relative">
-          <TextArea
-            label="Workspace Chat message"
-            isLabelHidden
-            value={draft}
-            rows={3}
-            width="100%"
-            placeholder={canComment
-              ? `Message the team… Use @Lumo for ${canLumoWrite ? 'shared file help' : 'read-only guidance'}`
-              : 'Viewer access is read-only'}
-            isDisabled={!canComment || sending}
-            disabledMessage="Commenter access is required to post in Workspace Chat."
-            startIcon={<AtSign size={16} />}
-            onChange={(value) => setDraft(value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                void handleSend();
-              }
-            }}
-          />
-          {mentionSuggestions.length ? (
-            <div className={`absolute bottom-full left-0 z-20 mb-2 w-full overflow-hidden rounded-xl border shadow-xl ${
-              isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'
-            }`}>
-              {mentionSuggestions.map((suggestion) => (
-                <button
-                  key={suggestion.id}
-                  type="button"
-                  className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm ${
-                    isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'
-                  }`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => selectMention(suggestion.displayName)}
-                >
-                  <span className={isDarkMode ? 'text-slate-100' : 'text-slate-800'}>
-                    @{suggestion.displayName}
-                  </span>
-                  <span className={isDarkMode ? 'text-slate-500' : 'text-slate-400'}>
-                    {suggestion.role}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-3">
-          <span className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-            {canComment ? 'Enter to send · Shift+Enter for a new line' : 'You can read Workspace Chat with Viewer access.'}
-          </span>
-          <Button
-            label={replyTo ? 'Send reply' : 'Send'}
-            variant="primary"
-            size="sm"
-            icon={<Send size={14} />}
-            isDisabled={!canComment || !draft.trim() || sending}
-            isLoading={sending}
-            onClick={() => void handleSend()}
-          />
-        </div>
+        {viewedVersion && <p className="mb-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-500">Viewing Locked v{viewedVersion.versionNumber}. File references use this snapshot; Lumo writes to Working.</p>}
+        <TeamChatComposer key={workspace.id} options={referenceOptions} disabled={!canComment} sending={sending} reply={Boolean(replyTo)} onSend={handleSend} />
+
       </div>
     </div>
   );

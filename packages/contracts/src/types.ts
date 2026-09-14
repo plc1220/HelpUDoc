@@ -507,3 +507,10 @@ export interface SkillEvolutionSuggestion {
   createdAt: string;
   updatedAt: string;
 }
+
+/** Explicit composer selection; identities never come from display-name matching. */
+export type TeamChatReference =
+  | { kind: 'person'; id: string; label: string }
+  | { kind: 'agent'; id: 'lumo'; label: string }
+  | { kind: 'skill'; id: string; label: string }
+  | { kind: 'file'; id: string; label: string; version?: number; publishedVersionId?: string };

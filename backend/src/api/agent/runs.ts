@@ -654,6 +654,7 @@ export function registerRunRoutes(
         return res.status(404).json({ error: 'Run not found' });
       }
       await ensureRunAccess(meta, user.userId);
+      if (meta.sharedTeamChannel) throw new HttpError(409, 'Respond to this run from Workspace Chat to preserve its shared-channel permissions');
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const authToken = await policyApi.buildAgentAuthToken({
@@ -712,6 +713,7 @@ export function registerRunRoutes(
         return res.status(404).json({ error: 'Run not found' });
       }
       await ensureRunAccess(meta, user.userId);
+      if (meta.sharedTeamChannel) throw new HttpError(409, 'Respond to this run from Workspace Chat to preserve its shared-channel permissions');
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const authToken = await policyApi.buildAgentAuthToken({
@@ -763,6 +765,7 @@ export function registerRunRoutes(
         return res.status(404).json({ error: 'Run not found' });
       }
       await ensureRunAccess(meta, user.userId);
+      if (meta.sharedTeamChannel) throw new HttpError(409, 'Respond to this run from Workspace Chat to preserve its shared-channel permissions');
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const authToken = await policyApi.buildAgentAuthToken({
