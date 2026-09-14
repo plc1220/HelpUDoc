@@ -24,6 +24,8 @@ import { WorkspaceService } from '../services/workspaceService';
 import { WorkspacePublicationService } from '../services/workspacePublicationService';
 import { WorkspaceCollaborationService } from '../services/workspaceCollaborationService';
 import { WorkspaceTeamChatAgentService } from '../services/workspaceTeamChatAgentService';
+import { WorkspaceRunLeaseManager } from '../services/agent-runs/workspaceRunLease';
+import { redisClient } from '../services/redisService';
 import { FileService } from '../services/fileService';
 import { FileStatusService } from '../services/fileStatusService';
 import { FilePublicationService } from '../services/filePublicationService';
@@ -67,6 +69,10 @@ export default function(
   const workspaceTeamChatAgentService = new WorkspaceTeamChatAgentService(
     workspaceService,
     userService,
+    fileService,
+    // Its own manager, but the same Redis key: the lock is one SET NX per
+    // workspace, so Shared Chat and agent runs still exclude each other.
+    new WorkspaceRunLeaseManager(redisClient),
   );
   const dailyReflectionService = new DailyReflectionService(dbService);
   const userMemoryService = new UserMemoryService(dbService);

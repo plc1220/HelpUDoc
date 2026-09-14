@@ -13,6 +13,12 @@ type HeldLease = {
   renewal: NodeJS.Timeout;
   controller: AbortController;
   lost: boolean;
+  /**
+   * False for a holder that is not an agent run. Shared Workspace Chat answers
+   * synchronously and writes no run record, so there is no status to read; the
+   * lease is then held purely for as long as the caller holds it.
+   */
+  requireRunStatus: boolean;
 };
 
 const activeStatus = (status: string | null | undefined) => status === 'queued' || status === 'running';
@@ -39,29 +45,47 @@ export class WorkspaceRunLeaseManager {
     if (!lease.controller.signal.aborted) lease.controller.abort();
   }
 
-  async acquire(runId: string, workspaceId: string, controller: AbortController): Promise<void> {
+  /**
+   * Take the workspace's mutation lock.
+   *
+   * `requireRunStatus: false` is for a holder with no agent-run record. The lock
+   * itself is unchanged — one writer per workspace either way — but the lease is
+   * not also tied to a run staying active, because there is no run to read.
+   */
+  async acquire(
+    runId: string,
+    workspaceId: string,
+    controller: AbortController,
+    options: { requireRunStatus?: boolean } = {},
+  ): Promise<void> {
+    const requireRunStatus = options.requireRunStatus !== false;
     const key = leaseKey(workspaceId);
     const token = `${runId}:${randomUUID()}`;
     while (!controller.signal.aborted) {
-      const status = await this.redis.hGet(metaKey(runId), 'status');
-      if (!activeStatus(status)) {
-        controller.abort();
-        break;
+      if (requireRunStatus) {
+        const status = await this.redis.hGet(metaKey(runId), 'status');
+        if (!activeStatus(status)) {
+          controller.abort();
+          break;
+        }
       }
       const acquired = await this.redis.set(key, token, { NX: true, PX: this.ttlMs });
       if (acquired === 'OK') {
         const renewal = setInterval(() => {
           void this.redis.eval(
-            'local status = redis.call("HGET", KEYS[2], "status"); '
-              + 'if redis.call("GET", KEYS[1]) == ARGV[1] and (status == "queued" or status == "running") '
-              + 'then return redis.call("PEXPIRE", KEYS[1], ARGV[2]) else return 0 end',
+            requireRunStatus
+              ? 'local status = redis.call("HGET", KEYS[2], "status"); '
+                + 'if redis.call("GET", KEYS[1]) == ARGV[1] and (status == "queued" or status == "running") '
+                + 'then return redis.call("PEXPIRE", KEYS[1], ARGV[2]) else return 0 end'
+              : 'if redis.call("GET", KEYS[1]) == ARGV[1] '
+                + 'then return redis.call("PEXPIRE", KEYS[1], ARGV[2]) else return 0 end',
             { keys: [key, metaKey(runId)], arguments: [token, String(this.ttlMs)] },
           ).then((renewed) => {
             if (Number(renewed) !== 1) this.lose(runId, token);
           }).catch(() => this.lose(runId, token));
         }, this.renewMs);
         renewal.unref?.();
-        this.held.set(runId, { key, token, renewal, controller, lost: false });
+        this.held.set(runId, { key, token, renewal, controller, lost: false, requireRunStatus });
         try {
           await this.assertOwned(runId);
         } catch (error) {
@@ -85,13 +109,13 @@ export class WorkspaceRunLeaseManager {
     }
     const [token, status] = await Promise.all([
       this.redis.get(lease.key),
-      this.redis.hGet(metaKey(runId), 'status'),
+      lease.requireRunStatus ? this.redis.hGet(metaKey(runId), 'status') : Promise.resolve(null),
     ]);
     if (token !== lease.token) {
       this.lose(runId, lease.token);
       throw new Error('Workspace execution lock was lost');
     }
-    if (!activeStatus(status)) {
+    if (lease.requireRunStatus && !activeStatus(status)) {
       this.lose(runId, lease.token);
       throw new Error(`Agent run cannot own workspace files while status is ${status}`);
     }

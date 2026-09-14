@@ -8,6 +8,8 @@ import type {
 } from './workspaceCollaborationService';
 import type { WorkspaceService } from './workspaceService';
 import type { UserService } from './userService';
+import type { FileService } from './fileService';
+import type { WorkspaceRunLeaseManager } from './agent-runs/workspaceRunLease';
 
 const textFromContent = (content: unknown): string => {
   if (typeof content === 'string') return content.trim();
@@ -63,10 +65,19 @@ export const extractAgentReplyText = (value: unknown): string => {
 export class WorkspaceTeamChatAgentService {
   private readonly workspaceService: WorkspaceService;
   private readonly userService: UserService;
+  private readonly fileService: FileService;
+  private readonly workspaceRunLease: WorkspaceRunLeaseManager;
 
-  constructor(workspaceService: WorkspaceService, userService: UserService) {
+  constructor(
+    workspaceService: WorkspaceService,
+    userService: UserService,
+    fileService: FileService,
+    workspaceRunLease: WorkspaceRunLeaseManager,
+  ) {
     this.workspaceService = workspaceService;
     this.userService = userService;
+    this.fileService = fileService;
+    this.workspaceRunLease = workspaceRunLease;
   }
 
   async respond(
@@ -150,7 +161,7 @@ export class WorkspaceTeamChatAgentService {
         : message.content,
     }));
 
-    const result = await runAgent('fast', workspaceId, prompt, agentHistory, {
+    const runTurn = () => runAgent('fast', workspaceId, prompt, agentHistory, {
       forceReset: true,
       authToken,
       internetSearchEnabled: false,
@@ -161,10 +172,76 @@ export class WorkspaceTeamChatAgentService {
         turnId: sourceMessage.id,
       },
     });
+
+    const result = canWriteSharedWorkspace
+      ? await this.runTurnAndCommitArtifacts(workspaceId, userId, sourceMessage, runTurn)
+      : await runTurn();
+
     const reply = extractAgentReplyText(result);
     if (!reply) {
       throw new HttpError(502, 'Lumo did not return a readable response');
     }
     return reply;
+  }
+
+  /**
+   * Run a writing turn the way an agent run does, so what it writes survives.
+   *
+   * The agent only ever writes to the workspace directory on disk; a separate
+   * commit is what turns that into workspace files. Shared Chat answered without
+   * one, so Lumo would truthfully report creating a file that never reached the
+   * files table — and the next agent run's mirror reconcile deleted it, because
+   * reconcile removes anything on disk the table does not know about.
+   *
+   * Read-only shared chat does not come here. Its mutating tools are refused by
+   * the agent's own guard, so there is nothing to commit, and committing anyway
+   * would be a way around the policy rather than a fix.
+   */
+  private async runTurnAndCommitArtifacts(
+    workspaceId: string,
+    userId: string,
+    sourceMessage: WorkspaceTeamMessage,
+    runTurn: () => Promise<unknown>,
+  ): Promise<unknown> {
+    // Namespaced so it cannot collide with a run id, and stable per message so
+    // a file this turn writes can be traced back to the question that asked.
+    const holderId = `team-chat:${sourceMessage.id}`;
+    const controller = new AbortController();
+    const assertLeaseOwned = () => this.workspaceRunLease.assertOwned(holderId);
+
+    // One writer per workspace, the same lock agent runs take. Shared Chat keeps
+    // no run record, so the lease is held for this call rather than tied to a
+    // run status that does not exist.
+    await this.workspaceRunLease.acquire(holderId, workspaceId, controller, {
+      requireRunStatus: false,
+    });
+    try {
+      // Bring the directory in line with the files table first, so the agent
+      // reads the current Shared content rather than whatever was last left.
+      await this.fileService.reconcileWorkspaceMirror(workspaceId, userId, assertLeaseOwned);
+      const baseline = await this.fileService.captureWorkspaceArtifactBaseline(workspaceId, userId);
+
+      const result = await runTurn();
+
+      await this.fileService.commitWorkspaceArtifacts(workspaceId, userId, holderId, {
+        baseline,
+        assertLeaseOwned,
+        runContext: {
+          conversationId: null,
+          turnId: sourceMessage.id,
+          langfuseTraceId: null,
+        },
+      });
+      return result;
+    } catch (error) {
+      // The caller persists Lumo's reply only after this resolves, so throwing
+      // is what keeps a false "I created it" out of the channel. Better a
+      // visible failure than a message the workspace cannot back up.
+      if (error instanceof HttpError) throw error;
+      const detail = error instanceof Error ? error.message : 'unknown storage error';
+      throw new HttpError(502, `Lumo could not save its workspace changes: ${detail}`);
+    } finally {
+      await this.workspaceRunLease.release(holderId);
+    }
   }
 }
