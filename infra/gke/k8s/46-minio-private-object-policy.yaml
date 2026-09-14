@@ -17,7 +17,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: enforce-private-object-policy
-          image: minio/mc:latest
+          image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
           env:
             - name: MINIO_ROOT_USER
               valueFrom:

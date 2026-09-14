@@ -13,7 +13,7 @@ services:
       - ../.postgres-data:/var/lib/postgresql/data
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: helpudoc-minio
     restart: unless-stopped
     environment:
@@ -26,7 +26,7 @@ services:
       - "9000:9000"
       - "9001:9001"
   minio-setup:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
       - minio
     environment:
