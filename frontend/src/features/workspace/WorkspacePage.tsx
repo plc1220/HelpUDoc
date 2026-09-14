@@ -999,6 +999,18 @@ export default function WorkspacePage() {
   const isPublishedMode = isPublishedVersionMode(publishedVersionView, selectedWorkspace);
   const canMutateContent = canMutateWorkspaceContent(selectedWorkspace, publishedVersionView);
   const canSyncSelectedDraft = isDraftSyncActionable(selectedWorkspace);
+  /**
+   * A sync is rewriting this workspace's files right now.
+   *
+   * Autosync runs on opening a linked draft, which is the same moment someone
+   * adds files to it, and the listing they are looking at is about to be
+   * replaced. Adding a file the sync is already bringing in is how a member ends
+   * up with a second copy of it, so the control is held until the listing is
+   * settled rather than letting them act on a view that is about to change.
+   */
+  const isDraftSyncInFlight = Boolean(
+    selectedWorkspace && syncingDraftWorkspaceId === selectedWorkspace.id,
+  );
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -9284,12 +9296,14 @@ export default function WorkspacePage() {
                         />
                         <div ref={fileActionMenuRef} className="relative">
                           <IconButton
-                            label="Add files or folders"
+                            label={isDraftSyncInFlight
+                              ? 'Syncing team updates — adding files is paused'
+                              : 'Add files or folders'}
                             icon={<Plus size={16} />}
                             variant="ghost"
                             size="sm"
                             onClick={() => setIsFileActionMenuOpen((prev) => !prev)}
-                            isDisabled={!canMutateContent}
+                            isDisabled={!canMutateContent || isDraftSyncInFlight}
                             aria-haspopup="menu"
                             aria-expanded={isFileActionMenuOpen}
                           />
