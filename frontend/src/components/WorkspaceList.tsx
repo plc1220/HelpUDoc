@@ -15,6 +15,7 @@ import {
   Typography,
 } from '@mui/material';
 import {
+  PushPin,
   Delete,
   DeleteOutline,
   Difference,
@@ -56,6 +57,9 @@ import {
 } from '../utils/workspaceLifecycle';
 
 interface WorkspaceListProps {
+  flat?: boolean;
+  pinnedIds?: string[];
+  onTogglePin?: (workspace: Workspace) => void;
   workspaces: Workspace[];
   selectedWorkspace: Workspace | null;
   onSelectWorkspace: (workspace: Workspace) => void;
@@ -74,6 +78,9 @@ interface WorkspaceListProps {
 const COLLAPSE_STORAGE_KEY = 'helpudoc.workspace-sections';
 
 const WorkspaceList: React.FC<WorkspaceListProps> = ({
+  flat = false,
+  pinnedIds = [],
+  onTogglePin,
   workspaces,
   selectedWorkspace,
   onSelectWorkspace,
@@ -166,6 +173,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       }))
       : [];
     const actions = [
+      onTogglePin ? { label: pinnedIds.includes(workspace.id) ? "Unpin workspace" : "Pin workspace", icon: <PushPin fontSize="small" />, onClick: () => onTogglePin(workspace) } : null,
       isPrivate
         && !isOwnerOnlyUnshared
         && lifecycleStatus === 'active'
@@ -222,7 +230,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         icon: <ManageAccounts fontSize="small" />,
         onClick: () => onManageTeamAccess(workspace),
       } : null,
-      !isSharedWorkspace ? {
+      !isSharedWorkspace && !onLifecycleWorkspace ? {
         label: `Delete workspace`,
         icon: <Delete fontSize="small" />,
         onClick: () => onDeleteWorkspace(workspace.id),
@@ -288,7 +296,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
           }}
           sx={{
             minWidth: 0,
-            minHeight: 68,
+            minHeight: 52,
             py: 1,
             pl: isPrivateSectionItem ? 1.5 : 0.5,
             pr: canRestore ? 11 : menuActions.length ? 6 : 1.5,
@@ -445,11 +453,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
             className="workspace-list-more"
             sx={{
               position: 'absolute',
-              top: 34,
+              top: 26,
               right: 6,
               transform: 'translateY(-50%)',
               opacity: 0,
               pointerEvents: 'none',
+              '@media (hover: none)': { opacity: 1, pointerEvents: 'auto' },
             }}
           >
             <Tooltip title="More workspace actions">
@@ -553,6 +562,8 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       </Collapse>
     </Box>
   );
+
+  if (flat) return <List disablePadding>{workspaces.map(renderWorkspace)}</List>;
 
   return (
     <List disablePadding>

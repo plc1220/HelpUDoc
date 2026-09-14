@@ -465,3 +465,8 @@ export const restorePublishedWorkspaceVersion = async (
   }
   return response.json();
 };
+
+export const permanentlyDeleteWorkspace = async (workspaceId: string): Promise<void> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/permanent`, { method: 'DELETE' });
+  if (!response.ok) await throwWorkspaceApiError(response, 'Failed to permanently delete workspace');
+};

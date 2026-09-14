@@ -695,40 +695,39 @@ export class WorkspaceService {
       throw new AccessDeniedError('Only workspace owners can delete a workspace');
     }
 
-    if (isSharedWorkspaceRecord(workspace)) {
-      await this.db.transaction(async (tx) => {
-        const lockedWorkspace = await tx<WorkspaceRecord>('workspaces')
-          .where({ id: workspaceId })
-          .forUpdate()
-          .first();
-        if (!lockedWorkspace) throw new NotFoundError('Workspace not found');
-        if (!isSharedWorkspaceRecord(lockedWorkspace)) {
-          throw new ConflictError('Workspace is no longer Shared');
-        }
-        if (lockedWorkspace.ownerId !== userId) {
-          throw new AccessDeniedError('Only workspace owners can delete a workspace');
-        }
-        if (lockedWorkspace.status === 'trashed') return;
-        await tx('workspaces').where({ id: workspaceId }).update({
-          status: 'trashed',
-          trashedAt: tx.fn.now(),
-          trashedByUserId: userId,
-          purgeAfter: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-          updatedAt: tx.fn.now(),
-          lastModifiedBy: userId,
-        });
-        await tx('workspace_publication_links').where({ teamWorkspaceId: workspaceId }).update({
-          status: 'detached',
-          detachedAt: tx.fn.now(),
-          reconnectToken: null,
-          updatedAt: tx.fn.now(),
-        });
-        await this.recordWorkspaceLifecycleAudit(tx, workspaceId, userId, 'workspace.trashed');
+    await this.db.transaction(async (tx) => {
+      const locked = await tx<WorkspaceRecord>('workspaces').where({ id: workspaceId }).forUpdate().first();
+      if (!locked) throw new NotFoundError('Workspace not found');
+      if (locked.ownerId !== userId || (locked as WorkspaceRecord & { isSystem?: boolean }).isSystem) throw new AccessDeniedError('Only owners can trash non-system workspaces');
+      if (locked.status === 'trashed') return;
+      await tx('workspaces').where({ id: workspaceId }).update({
+        status: 'trashed', trashedAt: tx.fn.now(), trashedByUserId: userId,
+        purgeAfter: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        updatedAt: tx.fn.now(), lastModifiedBy: userId,
       });
-      return;
-    }
+      if (isSharedWorkspaceRecord(locked)) {
+        await tx('workspace_publication_links').where({ teamWorkspaceId: workspaceId }).update({
+          status: 'detached', detachedAt: tx.fn.now(), reconnectToken: null, updatedAt: tx.fn.now(),
+        });
+      }
+      await this.recordWorkspaceLifecycleAudit(tx, workspaceId, userId, 'workspace.trashed');
+    });
+  }
 
-    await this.performWorkspaceDeletion(workspace.id);
+  async permanentlyDeleteWorkspace(workspaceId: string, userId: string): Promise<void> {
+    const versionIds = await this.db.transaction(async (tx) => {
+      const workspace = await tx<WorkspaceRecord>('workspaces').where({ id: workspaceId }).forUpdate().first();
+      if (!workspace) throw new NotFoundError('Workspace not found');
+      if (workspace.ownerId !== userId || (workspace as WorkspaceRecord & { isSystem?: boolean }).isSystem) {
+        throw new AccessDeniedError('Only owners can permanently delete their non-system workspaces');
+      }
+      if (workspace.status !== 'trashed') throw new ConflictError('Move the workspace to trash before deleting permanently');
+      const versions = await tx('workspace_published_versions').select('id').where({ teamWorkspaceId: workspaceId });
+      await tx('workspaces').where({ id: workspaceId }).del();
+      return versions.map((version: { id: string }) => version.id);
+    });
+    await this.performWorkspaceCleanup(workspaceId);
+    await Promise.all(versionIds.map((id: string) => fs.rm(path.join(WORKSPACE_DIR, '.published-versions', id), { recursive: true, force: true })));
   }
 
   async unshareWorkspace(workspaceId: string, actingUserId: string): Promise<void> {
@@ -794,25 +793,21 @@ export class WorkspaceService {
   }
 
   async restoreWorkspace(workspaceId: string, actingUserId: string): Promise<void> {
-    const restoredStatus = 'unshared';
-
     await this.db.transaction(async (tx) => {
       const workspace = await tx<WorkspaceRecord>('workspaces')
         .where({ id: workspaceId })
         .forUpdate()
         .first();
       if (!workspace) throw new NotFoundError('Workspace not found');
-      if (!isSharedWorkspaceRecord(workspace)) {
-        throw new ConflictError('Only trashed Shared workspaces can be restored');
-      }
+      const restoredStatus = isSharedWorkspaceRecord(workspace) ? 'unshared' : 'active';
       if (workspace.ownerId !== actingUserId) {
-        throw new AccessDeniedError('Only the Shared workspace owner can restore it');
+        throw new AccessDeniedError('Only the workspace owner can restore it');
       }
       if (workspace.status !== 'trashed') return;
       await tx('workspaces').where({ id: workspaceId }).update({
         status: restoredStatus,
-        unsharedAt: workspace.unsharedAt || tx.fn.now(),
-        unsharedByUserId: workspace.unsharedByUserId || actingUserId,
+        unsharedAt: restoredStatus === 'unshared' ? workspace.unsharedAt || tx.fn.now() : null,
+        unsharedByUserId: restoredStatus === 'unshared' ? workspace.unsharedByUserId || actingUserId : null,
         trashedAt: null,
         trashedByUserId: null,
         purgeAfter: null,
@@ -1271,7 +1266,7 @@ export class WorkspaceService {
   }
 
   /**
-   * Permanently removes expired Shared-workspace rows in a bounded batch.
+   * Permanently removes expired trashed workspace rows in a bounded batch.
    * `FOR UPDATE SKIP LOCKED` lets every API pod run the same sweep without
    * double-purging. Durable objects are intentionally retained until the
    * reference-aware object GC can account for file versions, publications,

@@ -1,3 +1,4 @@
+import WorkspaceNavigator from '../../components/WorkspaceNavigator';
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -5,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Box,
   CssBaseline,
+  Snackbar,
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
@@ -24,7 +26,6 @@ import remarkGfm from 'remark-gfm';
 import {
   createWorkspace,
   createPrivateWorkspaceCopy,
-  deleteWorkspace,
   getWorkspaces,
   renameWorkspace,
   getPublishedVersionFileContent,
@@ -124,7 +125,6 @@ import {
 import {
   isLinkedDraftAutoSyncEligible,
   getWorkspaceLifecycleStatus,
-  isOwnerOnlyUnsharedWorkspace,
   WORKSPACE_LIFECYCLE_ACTION_LABELS,
   type WorkspaceLifecycleAction,
 } from '../../utils/workspaceLifecycle';
@@ -906,6 +906,7 @@ export default function WorkspacePage() {
   const explicitWorkspaceOpenSequenceRef = useRef(0);
   const autoSyncInFlightRef = useRef<Set<string>>(new Set());
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
+  const [trashedWorkspace, setTrashedWorkspace] = useState<Workspace | null>(null);
   const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
   const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
@@ -1018,28 +1019,6 @@ export default function WorkspacePage() {
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [pendingRerunConfirmation, setPendingRerunConfirmation] = useState<PendingRerunConfirmation | null>(null);
 
-  const filteredWorkspaces = useMemo(() => {
-    const query = workspaceSearchQuery.trim().toLowerCase();
-    if (!query) {
-      return workspaces;
-    }
-    return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
-  }, [workspaceSearchQuery, workspaces]);
-  const mobilePrivateWorkspaces = useMemo(
-    () => filteredWorkspaces.filter((workspace) => (
-      (workspace.visibility !== 'team' || isOwnerOnlyUnsharedWorkspace(workspace))
-        && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
-    )).slice(0, 8),
-    [filteredWorkspaces],
-  );
-  const mobileTeamWorkspaces = useMemo(
-    () => filteredWorkspaces.filter((workspace) => (
-      workspace.visibility === 'team'
-        && !isOwnerOnlyUnsharedWorkspace(workspace)
-        && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
-    )).slice(0, 8),
-    [filteredWorkspaces],
-  );
   const landingFilteredWorkspaces = useMemo(() => {
     const query = landingWorkspaceQuery.trim().toLowerCase();
     if (!query) {
@@ -6916,19 +6895,17 @@ export default function WorkspacePage() {
 
   const handleDeleteWorkspace = async (id: string) => {
     const target = workspaces.find((workspace) => workspace.id === id);
-    if (target && !window.confirm(`Delete ${target.visibility === 'team' ? 'shared' : 'private'} workspace "${target.name}"?`)) {
-      return;
-    }
     try {
-      await deleteWorkspace(id);
-      setWorkspaces((current) => current.filter((workspace) => workspace.id !== id));
+      await trashWorkspace(id);
+      if (target) setTrashedWorkspace(target);
       if (selectedWorkspace?.id === id) {
         resetWorkspaceArtifactState();
         setSelectedWorkspace(null);
         setIsLandingPageVisible(true);
       }
+      await refreshWorkspaceList();
     } catch (error) {
-      console.error('Failed to delete workspace:', error);
+      addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to move workspace to trash.');
     }
   };
 
@@ -6938,9 +6915,7 @@ export default function WorkspacePage() {
   ) => {
     const confirmation = action === 'unshare'
       ? `Unshare "${workspace.name}"? Existing private drafts will be detached and must reconnect explicitly.`
-      : action === 'trash'
-        ? `Move "${workspace.name}" to trash? You can restore it before its scheduled deletion.`
-        : action === 'leave'
+      : action === 'leave'
           ? `Leave "${workspace.name}"? You will lose access to this Shared workspace.`
           : null;
     if (confirmation && !window.confirm(confirmation)) return;
@@ -6968,6 +6943,7 @@ export default function WorkspacePage() {
         }
       }
       const refreshed = await refreshWorkspaceList();
+      if (action === 'trash') setTrashedWorkspace(workspace);
       const updatedWorkspace = result.workspace
         ? hydrateWorkspace(result.workspace)
         : refreshed.find((candidate) => candidate.id === workspace.id);
@@ -8115,101 +8091,26 @@ export default function WorkspacePage() {
               </button>
             </div>
             <div className="max-h-[70dvh] overflow-y-auto px-4 pb-5">
-              <section className="space-y-2">
-                <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                  Private workspaces
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleCreateWorkspace();
-                    setIsMobileWorkspaceSheetOpen(false);
-                    setMobileSurface('chat');
-                  }}
-                  className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold ${
-                    isDarkMode ? 'border-slate-800 bg-slate-900 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'
-                  }`}
-                >
-                  <Plus size={15} />
-                  New Workspace
-                </button>
-                {mobilePrivateWorkspaces.map((workspace) => (
-                  <button
-                    key={workspace.id}
-                    type="button"
-                    onClick={() => {
-                      handleSelectWorkspace(workspace);
-                      setIsMobileWorkspaceSheetOpen(false);
-                      setMobileSurface('chat');
-                    }}
-                    className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
-                      selectedWorkspace?.id === workspace.id
-                        ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
-                        : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate">{workspace.name}</span>
-                      {isOwnerOnlyUnsharedWorkspace(workspace) ? (
-                        <span className={`block truncate text-[10px] ${isDarkMode ? 'text-amber-300' : 'text-amber-600'}`}>
-                          Unshared · Only you can access it
-                        </span>
-                      ) : null}
-                    </span>
-                    {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
-                  </button>
-                ))}
-                {!mobilePrivateWorkspaces.length ? (
-                  <p className={`rounded-xl px-3 py-3 text-sm ${
-                    isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'
-                  }`}>
-                    No private workspaces.
-                  </p>
-                ) : null}
-              </section>
-
-              <section className="mt-5 space-y-2">
-                <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                  Shared workspaces
-                </p>
-                {mobileTeamWorkspaces.map((workspace) => (
-                  <button
-                    key={workspace.id}
-                    type="button"
-                    onClick={() => {
-                      handleSelectWorkspace(workspace);
-                      setIsMobileWorkspaceSheetOpen(false);
-                      setMobileSurface('canvas');
-                    }}
-                    className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
-                      selectedWorkspace?.id === workspace.id
-                        ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
-                        : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate">{workspace.name}</span>
-                      <span className={`block truncate text-[10px] ${
-                        isDarkMode ? 'text-slate-500' : 'text-slate-500'
-                      }`}>
-                        {workspace.teamName || 'Shared workspace'}
-                        {' · '}
-                        {workspace.currentPublishedVersionNumber == null
-                          ? 'Working version'
-                          : `Locked v${workspace.currentPublishedVersionNumber}`}
-                      </span>
-                    </span>
-                    {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
-                  </button>
-                ))}
-                {!mobileTeamWorkspaces.length ? (
-                  <p className={`rounded-xl px-3 py-3 text-sm ${
-                    isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'
-                  }`}>
-                    No shared workspaces.
-                  </p>
-                ) : null}
-              </section>
+              <Button label="New workspace" onClick={() => { void handleCreateWorkspace(); setIsMobileWorkspaceSheetOpen(false); }} />
+              <input aria-label="Search workspaces" placeholder="Search workspaces" value={workspaceSearchQuery} onChange={(event) => setWorkspaceSearchQuery(event.target.value)} className="my-3 w-full rounded-lg border bg-transparent px-3 py-2" />
+              <WorkspaceNavigator
+                storageKey={`helpudoc.navigator.${authUser?.id || 'anonymous'}`}
+                search={workspaceSearchQuery}
+                onRefresh={refreshWorkspaceList}
+                workspaces={workspaces}
+                selectedWorkspace={selectedWorkspace}
+                onSelectWorkspace={(workspace) => { handleSelectWorkspace(workspace); setIsMobileWorkspaceSheetOpen(false); setMobileSurface(workspace.visibility === 'team' ? 'canvas' : 'chat'); }}
+                onDeleteWorkspace={handleDeleteWorkspace}
+                onLifecycleWorkspace={handleWorkspaceLifecycle}
+                onPublishWorkspace={setPublishWorkspaceTarget}
+                onHistoryWorkspace={setHistoryWorkspaceTarget}
+                onWithdrawWorkspace={setWithdrawWorkspaceTarget}
+                onManageTeamAccess={handleManageTeamAccess}
+                onSyncDraftWorkspace={handleSyncDraftWorkspace}
+                onReviewDraftChanges={handleReviewDraftChanges}
+                syncingDraftWorkspaceId={syncingDraftWorkspaceId}
+                lifecycleBusyWorkspaceId={lifecycleBusyWorkspaceId}
+              />
 
               <section className="mt-5 space-y-2">
                 <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
@@ -8325,10 +8226,12 @@ export default function WorkspacePage() {
         }}
       >
         <CssBaseline />
+        <Snackbar open={Boolean(trashedWorkspace)} autoHideDuration={8000} onClose={() => setTrashedWorkspace(null)} message={`Moved ${trashedWorkspace?.name || 'workspace'} to trash`} action={<Button label="Undo" onClick={() => { if (trashedWorkspace) void handleWorkspaceLifecycle(trashedWorkspace, 'restore'); setTrashedWorkspace(null); }} />} />
         {isMobileViewport ? (
           mobileWorkspaceShell
         ) : (
           <>
+
         <ExpandableSidebar
           handleDrawerToggle={handleDrawerToggle}
           isDrawerOpen={drawerOpen}
@@ -8337,7 +8240,9 @@ export default function WorkspacePage() {
         <CollapsibleDrawer
           open={drawerOpen}
           handleDrawerClose={handleDrawerToggle}
-          workspaces={filteredWorkspaces}
+          workspaces={workspaces}
+          storageKey={`helpudoc.navigator.${authUser?.id || "anonymous"}`}
+          onRefresh={refreshWorkspaceList}
           selectedWorkspace={selectedWorkspace}
           workspaceSearchQuery={workspaceSearchQuery}
           setWorkspaceSearchQuery={setWorkspaceSearchQuery}

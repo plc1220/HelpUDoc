@@ -1,12 +1,14 @@
 import React from 'react';
 import { Badge, Drawer, Box, IconButton, TextField } from '@mui/material';
 import { Add, CalendarMonth, ChevronLeft, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
-import WorkspaceList from './WorkspaceList';
+import WorkspaceNavigator from './WorkspaceNavigator';
 import type { Workspace } from '../types';
 import type { PaletteMode } from '@mui/material';
 import type { WorkspaceLifecycleAction } from '../utils/workspaceLifecycle';
 
 interface CollapsibleDrawerProps {
+  storageKey: string;
+  onRefresh: () => Promise<unknown>;
   open: boolean;
   handleDrawerClose: () => void;
   workspaces: Workspace[];
@@ -36,6 +38,8 @@ interface CollapsibleDrawerProps {
 const drawerWidth = 280;
 
 const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
+  storageKey,
+  onRefresh,
   open,
   handleDrawerClose,
   workspaces,
@@ -181,7 +185,11 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               pb: 1,
             }}
           >
-            <WorkspaceList
+            <WorkspaceNavigator
+              key={storageKey}
+              storageKey={storageKey}
+              search={workspaceSearchQuery}
+              onRefresh={onRefresh}
               workspaces={workspaces}
               selectedWorkspace={selectedWorkspace}
               onSelectWorkspace={onSelectWorkspace}
