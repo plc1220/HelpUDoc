@@ -374,6 +374,47 @@ export class FileService {
     return Boolean(existing);
   }
 
+  /**
+   * The file already at this path, when the upload is byte-for-byte the same.
+   *
+   * Uploading a file the workspace already holds used to be renamed to
+   * "name (2).ext" and stored again, which is how most duplicates in this
+   * product were made: 13 of the 16 "(N)" files on record are identical to a
+   * sibling. The common way in is a race — an autosync pulls a file in from the
+   * Shared workspace while the member is still uploading their copy of it — and
+   * a rename turns that into a second document nobody asked for.
+   *
+   * Only the same path is considered. Identical bytes under a name the user
+   * deliberately chose elsewhere are their business; this is about the upload
+   * that had nowhere to go but a made-up name.
+   */
+  async findIdenticalFileAtPath(
+    workspaceId: string,
+    fileName: string,
+    payload: Buffer,
+    userId: string,
+    options?: { allowSystemAdmin?: boolean },
+  ): Promise<any | null> {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
+    const relativePath = this.normalizeRelativePath(fileName);
+    const existing = await this.db('files')
+      .where({ workspaceId, name: relativePath })
+      .whereNull('deletedAt')
+      .first();
+    if (!existing?.currentVersionId) return null;
+
+    const version = await this.db('file_versions')
+      .where({ id: existing.currentVersionId })
+      .first();
+    // No recorded hash means nothing can be proven identical, so fall through
+    // to the existing behaviour rather than guess.
+    if (!version?.sha256) return null;
+    return version.sha256 === this.hashBuffer(payload) ? existing : null;
+  }
+
   async resolveUniqueRelativePath(
     workspaceId: string,
     fileName: string,

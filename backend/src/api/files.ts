@@ -619,9 +619,24 @@ export default function(
         } finally {
           await fs.unlink(diskPath).catch(() => undefined);
         }
+        const requestedPath = payload.path || req.file.originalname;
+        // Re-uploading a file the workspace already has is almost always an
+        // accident — most often a sync brought it in while the upload was in
+        // flight. Hand back what is already there instead of storing the same
+        // bytes again under a renamed path. 200 rather than 201: nothing was
+        // created.
+        const identical = await fileService.findIdenticalFileAtPath(
+          workspaceId,
+          requestedPath,
+          fileBuffer,
+          user.userId,
+        );
+        if (identical) {
+          return res.status(200).json({ ...identical, alreadyPresent: true });
+        }
         const uploadName = await fileService.resolveUniqueRelativePath(
           workspaceId,
-          payload.path || req.file.originalname,
+          requestedPath,
           user.userId,
         );
         const newFile = await fileService.createFile(
