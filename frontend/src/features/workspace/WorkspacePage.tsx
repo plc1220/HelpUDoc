@@ -229,6 +229,10 @@ const FileEditor = lazy(() => import('../../components/FileEditor'));
 const UIBlockRenderer = lazy(() => import('../../components/UIBlockRenderer'));
 
 const drawerWidth = 280;
+// How long a fetched slash catalogue is trusted before a focus or menu-open refetches it.
+// Short enough that a new skill grant shows up in the same sitting, long enough that
+// tabbing between windows does not re-request on every switch.
+const SLASH_METADATA_TTL_MS = 30_000;
 const FILE_PANE_WIDTH_STORAGE_KEY = 'helpudoc.workspace.filePaneWidth';
 const AGENT_PANE_WIDTH_STORAGE_KEY = 'helpudoc.workspace.agentPaneWidth';
 const DEFAULT_FILE_PANE_WIDTH = 320;
@@ -1143,6 +1147,10 @@ export default function WorkspacePage() {
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
   const [availablePlugins, setAvailablePlugins] = useState<PluginDefinition[]>([]);
+  // When the slash catalogue was last fetched, and the refetch bound to the current
+  // workspace. Skill access is granted elsewhere, so the picker has to re-ask.
+  const slashMetadataLoadedAtRef = useRef(0);
+  const slashMetadataRefreshRef = useRef<(() => void) | null>(null);
   const [interruptInputByMessageId, setInterruptInputByMessageId] = useState<Record<string, string>>({});
   const [interruptStructuredAnswersByMessageId, setInterruptStructuredAnswersByMessageId] = useState<
     Record<string, InterruptAnswersByQuestionId>
@@ -2527,6 +2535,7 @@ export default function WorkspacePage() {
         if (cancelled) {
           return;
         }
+        slashMetadataLoadedAtRef.current = Date.now();
         setAvailableSkills(skills);
         setAvailableMcpServers(mcpServers);
         setAvailablePlugins(plugins || []);
@@ -2535,10 +2544,31 @@ export default function WorkspacePage() {
       }
     };
 
+    // Skill access changes outside this tab -- a Team Lead grants a skill, an admin
+    // revokes one -- and the picker previously held its first answer until the workspace
+    // changed or the page reloaded. Refetch when the tab regains focus, and when the
+    // "/" menu opens on a stale copy, so a new grant appears without a reload.
+    const refreshIfStale = () => {
+      if (Date.now() - slashMetadataLoadedAtRef.current < SLASH_METADATA_TTL_MS) {
+        return;
+      }
+      void loadSlashMetadata();
+    };
+    slashMetadataRefreshRef.current = refreshIfStale;
+    const onFocus = () => refreshIfStale();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshIfStale();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
     void loadSlashMetadata();
 
     return () => {
       cancelled = true;
+      slashMetadataRefreshRef.current = null;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [selectedWorkspace?.id]);
 
@@ -2708,6 +2738,10 @@ export default function WorkspacePage() {
       }
       const query = commandMatch[2] || '';
       const triggerIndex = cursor - query.length - 1;
+      // Reaching for the menu is the moment a stale catalogue is most visible, so take
+      // it as the cue to re-ask. The refetch resolves asynchronously and re-renders the
+      // list in place; it never blocks opening the menu.
+      slashMetadataRefreshRef.current?.();
       setIsCommandOpen(true);
       setCommandQuery(query);
       setCommandTriggerIndex(triggerIndex);
