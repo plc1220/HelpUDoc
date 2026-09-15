@@ -93,23 +93,41 @@ const handleError = (res: Response, error: unknown, fallbackMessage: string) => 
   return res.status(500).json({ error: fallbackMessage });
 };
 
-const ensureSkillBuilderWorkspace = async (user: { userId: string; displayName: string }): Promise<string> => {
+/**
+ * The user's Skill Builder workspace, as a real `workspaces` row.
+ *
+ * This used to return the synthetic id `skill-builder-<userId>` and create only a
+ * directory. The run path treats a workspaceId as identifying a row -- run telemetry,
+ * run provenance and `ensureMembership` all do -- so the string failed three separate
+ * uuid checks, the last of which killed the run before it streamed anything.
+ */
+const ensureSkillBuilderWorkspace = async (
+  workspaceService: WorkspaceService,
+  user: { userId: string; displayName: string },
+): Promise<string> => {
   const cached = skillBuilderWorkspaceByUser.get(user.userId);
   if (cached) {
     return cached;
   }
 
-  const workspaceId = `skill-builder-${user.userId}`.replace(/[^a-zA-Z0-9_-]/g, '-');
-  const workspacePath = path.join(workspaceRoot, workspaceId);
-  await fs.mkdir(workspacePath, { recursive: true });
+  const workspace = await workspaceService.ensureBuilderScratchWorkspace({
+    userId: user.userId,
+    displayName: user.displayName,
+  } as any);
+  const workspaceId = String(workspace.id);
+  await fs.mkdir(path.join(workspaceRoot, workspaceId), { recursive: true });
   skillBuilderWorkspaceByUser.set(user.userId, workspaceId);
   return workspaceId;
 };
 
-const requireOwnedBuilderRun = async (req: Request, runId: string) => {
+const requireOwnedBuilderRun = async (
+  workspaceService: WorkspaceService,
+  req: Request,
+  runId: string,
+) => {
   const user = requireUserContext(req);
   const meta = await getRunMeta(runId);
-  const expectedWorkspaceId = await ensureSkillBuilderWorkspace(user);
+  const expectedWorkspaceId = await ensureSkillBuilderWorkspace(workspaceService, user);
   if (
     !meta
     || meta.userId !== user.userId
@@ -141,14 +159,14 @@ const guessMimeType = (fileName: string): string => {
   return 'application/octet-stream';
 };
 
-export function registerSkillBuilderRoutes(router: Router, _workspaceService: WorkspaceService) {
+export function registerSkillBuilderRoutes(router: Router, workspaceService: WorkspaceService) {
   router.post('/skill-builder/session', async (req, res) => {
     if (!ENABLE_SKILL_BUILDER_ASSISTANT) {
       return res.status(404).json({ error: 'Skill Builder assistant is disabled' });
     }
     try {
       const user = requireUserContext(req);
-      const workspaceId = await ensureSkillBuilderWorkspace(user);
+      const workspaceId = await ensureSkillBuilderWorkspace(workspaceService, user);
       res.json({
         workspaceId,
         limits: {
@@ -247,7 +265,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
     try {
       const user = requireUserContext(req);
       const payload = skillBuilderRunSchema.parse(req.body);
-      const workspaceId = await ensureSkillBuilderWorkspace(user);
+      const workspaceId = await ensureSkillBuilderWorkspace(workspaceService, user);
 
       const contextFiles = getContextFilesForUser(user.userId)
         .filter((file) => !payload.contextFileIds?.length || payload.contextFileIds.includes(file.fileId));
@@ -320,7 +338,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
 
   router.get('/skill-builder/runs/:runId', async (req, res) => {
     try {
-      const meta = await requireOwnedBuilderRun(req, req.params.runId);
+      const meta = await requireOwnedBuilderRun(workspaceService, req, req.params.runId);
       res.json(meta);
     } catch (error) {
       return handleError(res, error, 'Failed to fetch run status');
@@ -329,7 +347,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
 
   router.post('/skill-builder/runs/:runId/cancel', async (req, res) => {
     try {
-      await requireOwnedBuilderRun(req, req.params.runId);
+      await requireOwnedBuilderRun(workspaceService, req, req.params.runId);
       await cancelAgentRun(req.params.runId);
       res.json({ status: 'cancelled' });
     } catch (error) {
@@ -339,7 +357,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
 
   router.post('/skill-builder/runs/:runId/decision', async (req, res) => {
     try {
-      await requireOwnedBuilderRun(req, req.params.runId);
+      await requireOwnedBuilderRun(workspaceService, req, req.params.runId);
       const payload = runDecisionSchema.parse(req.body);
       const decisions = [
         payload.decision === 'edit'
@@ -374,7 +392,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
     let terminalStatus: 'completed' | 'failed' | 'cancelled' | 'awaiting_approval' | null = null;
 
     try {
-      await requireOwnedBuilderRun(req, runId);
+      await requireOwnedBuilderRun(workspaceService, req, runId);
       streamKey = getRunStreamKey(runId);
     } catch (error) {
       if (error instanceof HttpError) {

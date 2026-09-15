@@ -1224,7 +1224,7 @@ export class UserService {
     // default, so nothing upstream of this query proves the workspace is the caller's
     // own Private Workspace -- this checks it here rather than trusting the caller.
     const workspace = await this.db('workspaces')
-      .select('id', 'ownerId', 'workspaceType', 'visibility')
+      .select('id', 'ownerId', 'workspaceType', 'visibility', 'isBuilderScratch')
       .where({ id: workspaceId })
       .first();
     if (
@@ -1232,6 +1232,10 @@ export class UserService {
       || String(workspace.ownerId) !== String(userId)
       || workspace.workspaceType === 'team'
       || workspace.visibility === 'team'
+      // The Skill Builder's scratch workspace is private and owned by this user, so it
+      // would otherwise qualify. Keep it a clean room: the builder authors a skill and
+      // has no reason to load the author's other unreviewed drafts into that session.
+      || (workspace as { isBuilderScratch?: boolean }).isBuilderScratch
     ) {
       return [];
     }
@@ -1289,7 +1293,10 @@ export class UserService {
   ): Promise<OwnedWorkspaceSummary[]> {
     const query = this.db('workspaces')
       .select('id', 'name', 'visibility', 'workspaceType', 'status', 'isSystem')
-      .where({ ownerId: userId });
+      .where({ ownerId: userId })
+      // Not the Skill Builder's scratch workspace: counting it would inflate the
+      // deactivation impact preview and make a user look like they own work they do not.
+      .andWhere('isBuilderScratch', false);
     if (!options.includePurged) {
       query.whereNot({ status: 'purged' });
     }

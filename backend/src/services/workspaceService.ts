@@ -417,6 +417,9 @@ export class WorkspaceService {
           });
       })
       .andWhere('w.isSystem', false)
+      // The Skill Builder's scratch workspace belongs to the user but is not theirs to
+      // work in. Listing it would put a drafting area in the sidebar beside real work.
+      .andWhere('w.isBuilderScratch', false)
       // A whitelist, not a blacklist: `purged` rows are retained for recovery
       // and must never reappear here, including for the owner.
       .andWhere((statusQuery) => {
@@ -739,6 +742,65 @@ export class WorkspaceService {
         'g.name',
       )
       .orderBy('g.name', 'asc');
+  }
+
+  /**
+   * The Skill Builder's own workspace for this user, created on first use.
+   *
+   * The builder used to invent a synthetic id, `skill-builder-<userId>`, and create only
+   * a directory. Every part of the shared run path that reasonably assumes a workspaceId
+   * identifies a `workspaces` row then failed on it: the uuid columns in run telemetry
+   * and provenance rejected the string, and `ensureMembership` rejected the lookup,
+   * which killed the run outright. A real row removes the whole class rather than
+   * guarding each site as it is discovered.
+   *
+   * Dedicated, never one of the user's own workspaces: the builder writes and deletes
+   * files here, and the run path mirrors the workspace's files before it starts, so
+   * pointing it at real work would put that work in reach of a drafting session.
+   */
+  async ensureBuilderScratchWorkspace(user: UserContext): Promise<WorkspaceRecord> {
+    const existing = await this.db<WorkspaceRecord>('workspaces')
+      .where({ ownerId: user.userId, isBuilderScratch: true } as any)
+      .first();
+    if (existing) return existing;
+
+    const workspaceId = uuidv4();
+    const slug = await this.generateUniqueSlug(`skill-builder-${user.userId}`);
+    let workspace: WorkspaceRecord | undefined;
+    try {
+      [workspace] = await this.db<WorkspaceRecord>('workspaces')
+        .insert({
+          id: workspaceId,
+          name: 'Skill Builder drafts',
+          slug,
+          ownerId: user.userId,
+          lastModifiedBy: user.userId,
+          visibility: 'private',
+          workspaceType: 'private',
+          editingPolicy: null,
+          contentRevision: 0,
+          isBuilderScratch: true,
+        } as any)
+        .returning('*');
+    } catch (error) {
+      // Two builder sessions can open at once. Whoever lost the race reuses the row the
+      // winner created rather than failing the request.
+      const raced = await this.db<WorkspaceRecord>('workspaces')
+        .where({ ownerId: user.userId, isBuilderScratch: true } as any)
+        .first();
+      if (!raced) throw error;
+      return raced;
+    }
+
+    await this.db('workspace_members').insert({
+      workspaceId,
+      userId: user.userId,
+      role: 'owner',
+      canEdit: true,
+    }).onConflict(['workspaceId', 'userId']).ignore();
+
+    await this.createWorkspaceDirectory(workspaceId);
+    return workspace as WorkspaceRecord;
   }
 
   async createWorkspace(user: UserContext, name?: string): Promise<WorkspaceRecord> {

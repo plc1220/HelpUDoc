@@ -1540,3 +1540,83 @@ test('a Platform Admin may clear their own candidate only when the platform opts
     await db.destroy();
   }
 });
+
+test('the Skill Builder workspace is a real row, hidden from the user', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const users = new UserService(database);
+  const userId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  try {
+    await database.initialize();
+    const { WorkspaceService } = await import('../src/services/workspaceService');
+    const workspaces = new WorkspaceService(database);
+
+    await db('users').insert({
+      id: userId, externalId: `builder-${suffix}`, email: `builder-${suffix}@example.test`,
+      displayName: 'Builder user', isAdmin: false,
+    });
+
+    const scratch: any = await workspaces.ensureBuilderScratchWorkspace({
+      userId, displayName: 'Builder user',
+    } as any);
+
+    // The whole point: a real row with a real uuid, so every uuid column and every
+    // membership check in the run path accepts it.
+    assert.match(String(scratch.id), UUID_RE, 'the builder workspace must be a real uuid');
+    assert.equal(scratch.ownerId, userId);
+    assert.equal(scratch.visibility, 'private');
+    assert.equal(Boolean(scratch.isBuilderScratch), true);
+    assert.equal(Boolean(scratch.isSystem), false, 'isSystem would give admins write access here');
+
+    // `ensureMembership` is what killed the run before; it must now resolve.
+    const membership: any = await workspaces.ensureMembership(String(scratch.id), userId, { requireEdit: true });
+    assert.ok(membership, 'the run path must be able to resolve membership');
+
+    // Idempotent: a second session reuses the row rather than making another.
+    const again: any = await workspaces.ensureBuilderScratchWorkspace({
+      userId, displayName: 'Builder user',
+    } as any);
+    assert.equal(String(again.id), String(scratch.id));
+    assert.equal(
+      (await db('workspaces').where({ ownerId: userId, isBuilderScratch: true })).length, 1,
+    );
+
+    // Hidden from the user: it is theirs, but it is not work they did.
+    const listed = await workspaces.listWorkspacesForUser(userId);
+    assert.ok(
+      !(listed as any[]).some((row) => String(row.id) === String(scratch.id)),
+      'the scratch workspace must not appear in the workspace list',
+    );
+    const owned = await users.listOwnedWorkspaces(userId);
+    assert.ok(
+      !(owned as any[]).some((row) => String(row.id) === String(scratch.id)),
+      'it must not inflate the deactivation impact preview',
+    );
+
+    // A clean room: the builder authors one skill and must not pull the author's other
+    // unreviewed drafts into that session, even though it owns a private workspace that
+    // would otherwise qualify.
+    assert.deepEqual(
+      await users.getWorkspaceSkillDraftRuntimePins(String(scratch.id), userId), [],
+      'private drafts must not resolve inside the builder workspace',
+    );
+
+    // A normal workspace is unaffected by the new filter.
+    const normal: any = await workspaces.createWorkspace({ userId, displayName: 'Builder user' } as any, 'Real work');
+    const listedAgain = await workspaces.listWorkspacesForUser(userId);
+    assert.ok((listedAgain as any[]).some((row) => String(row.id) === String(normal.id)));
+    await db('workspace_members').where({ workspaceId: normal.id }).del().catch(() => undefined);
+    await db('workspaces').where({ id: normal.id }).del().catch(() => undefined);
+  } finally {
+    const rows = await db('workspaces').where({ ownerId: userId }).select('id').catch(() => []);
+    for (const row of rows as any[]) {
+      await db('workspace_members').where({ workspaceId: row.id }).del().catch(() => undefined);
+      await db('workspaces').where({ id: row.id }).del().catch(() => undefined);
+    }
+    await db('users').where({ id: userId }).del().catch(() => undefined);
+    await db.destroy();
+  }
+});
