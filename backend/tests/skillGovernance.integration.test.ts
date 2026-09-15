@@ -1272,3 +1272,113 @@ test('the catalogue lists every Team\'s skills and redacts what you cannot run',
     await db.destroy();
   }
 });
+
+test('a CD-managed skill republishes when its shipped content moves on', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const teamId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const migratedKey = `cdmanaged-${suffix}`;
+  const teamKey = `teamowned-${suffix}`;
+  const dir = path.join(skillsRoot, migratedKey);
+  const teamDir = path.join(skillsRoot, teamKey);
+  let teamSkillId: string | null = null;
+
+  const body = (note: string) => `---\nname: ${migratedKey}\ndescription: ${note}\n---\n\n# ${migratedKey}\n\n${note}\n`;
+
+  try {
+    await database.initialize();
+    await db('groups').insert({ id: teamId, name: `CD owner ${suffix}` });
+
+    // First deploy ships the skill; startup registers it from the filesystem.
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'SKILL.md'), body('First shipped version.'), 'utf-8');
+    let governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    const first = await db('skills as s')
+      .join('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .select('s.id', 'v.id as versionId', 'v.semanticVersion', 'v.manifestHash')
+      .where('s.skillKey', migratedKey).first();
+    assert.ok(first, 'the registry backfill must adopt a new filesystem skill');
+    assert.equal(first.semanticVersion, '1.0.0');
+
+    // A Team-owned skill whose folder says something else. The filesystem is only a
+    // materialised copy for these, so it must not drive a republish.
+    teamSkillId = uuidv4();
+    const teamVersionId = uuidv4();
+    await db('skills').insert({
+      id: teamSkillId, skillKey: teamKey, displayName: 'Team owned',
+      ownerTeamId: teamId, status: 'active',
+    });
+    await db('skill_versions').insert({
+      id: teamVersionId, skillId: teamSkillId, semanticVersion: '3.0.0',
+      manifestHash: 'e'.repeat(64), status: 'active',
+    });
+    await db('skills').where({ id: teamSkillId }).update({ defaultVersionId: teamVersionId });
+    await fs.mkdir(teamDir, { recursive: true });
+    await fs.writeFile(path.join(teamDir, 'SKILL.md'), body('Not the approved content.'), 'utf-8');
+
+    // A later deploy overwrites the shipped content. Restart.
+    await fs.writeFile(path.join(dir, 'SKILL.md'), body('Second shipped version.'), 'utf-8');
+    governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    const second = await db('skills as s')
+      .join('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .select('v.id as versionId', 'v.semanticVersion', 'v.manifestHash')
+      .where('s.skillKey', migratedKey).first();
+    assert.equal(second.semanticVersion, '1.0.1', 'drift must publish the next patch version');
+    assert.notEqual(second.manifestHash, first.manifestHash);
+    assert.notEqual(second.versionId, first.versionId);
+
+    // The superseded version stays: an approved version is immutable, so correcting
+    // drift adds one rather than rewriting the old row.
+    const previous = await db('skill_versions').where({ id: first.versionId }).first();
+    assert.ok(previous, 'the previous version must be retained');
+    assert.equal(previous.manifestHash, first.manifestHash);
+
+    // The new version reads back, which is the whole point: the detail dialog stops
+    // failing because the recorded blobs now exist.
+    const detail = await db('skill_version_files').where({ skillVersionId: second.versionId });
+    assert.equal(detail.length, 1);
+
+    // Idempotent: an unchanged folder publishes nothing further.
+    governance = new SkillGovernanceService(database);
+    await governance.initialize();
+    const third = await db('skill_versions').where({ skillId: first.id });
+    assert.equal(third.length, 2, 'a restart with no drift must not publish again');
+
+    // The Team-owned skill is untouched, whatever its folder says.
+    const teamAfter = await db('skills as s')
+      .join('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .select('v.semanticVersion', 'v.manifestHash')
+      .where('s.skillKey', teamKey).first();
+    assert.equal(teamAfter.semanticVersion, '3.0.0');
+    assert.equal(teamAfter.manifestHash, 'e'.repeat(64));
+    assert.equal(
+      (await db('skill_versions').where({ skillId: teamSkillId })).length, 1,
+      'a deploy must never republish a version a Team approved',
+    );
+  } finally {
+    for (const key of [migratedKey, teamKey]) {
+      const s = await db('skills').where({ skillKey: key }).first().catch(() => null);
+      if (s) {
+        await db('skills').where({ id: s.id }).update({ defaultVersionId: null }).catch(() => undefined);
+        await db('skill_version_files')
+          .whereIn('skillVersionId', db('skill_versions').select('id').where({ skillId: s.id }))
+          .del().catch(() => undefined);
+        await db('team_skill_grants').where({ skillId: s.id }).del().catch(() => undefined);
+        await db('skill_versions').where({ skillId: s.id }).del().catch(() => undefined);
+        await db('skills').where({ id: s.id }).del().catch(() => undefined);
+      }
+      await fs.rm(path.join(skillsRoot, key), { recursive: true, force: true }).catch(() => undefined);
+      await fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', key), {
+        recursive: true, force: true,
+      }).catch(() => undefined);
+    }
+    await db('audit_events').where({ actorRole: 'platform_migration' }).del().catch(() => undefined);
+    await db('groups').where({ id: teamId }).del().catch(() => undefined);
+    await db.destroy();
+  }
+});

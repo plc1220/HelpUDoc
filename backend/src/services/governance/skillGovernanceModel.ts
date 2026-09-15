@@ -166,6 +166,25 @@ export const normalizeGovernedFilePath = (raw: string): string => {
   return normalized;
 };
 
+/**
+ * The next free patch version above every version a skill already has.
+ *
+ * Used when republishing CD-managed content: the version must be new, because an
+ * approved version is immutable, and it must not collide with one already recorded.
+ */
+export const nextPatchVersion = (existing: string[]): string => {
+  let major = 1; let minor = 0; let patch = 0;
+  for (const value of existing) {
+    const match = SEMVER_PATTERN.exec(String(value || '').trim());
+    if (!match) continue;
+    const [a, b, c] = [Number(match[1]), Number(match[2]), Number(match[3])];
+    if (a > major || (a === major && b > minor) || (a === major && b === minor && c >= patch)) {
+      major = a; minor = b; patch = c + 1;
+    }
+  }
+  return `${major}.${minor}.${patch}`;
+};
+
 export const compareSemanticVersions = (left: string, right: string): number => {
   const parse = (value: string): [number, number, number] => {
     const match = SEMVER_PATTERN.exec(String(value || '').trim());

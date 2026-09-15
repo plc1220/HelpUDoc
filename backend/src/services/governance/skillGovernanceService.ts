@@ -19,6 +19,7 @@ import {
   ValidationResult,
   compareSemanticVersions,
   computePackageManifestHash,
+  nextPatchVersion,
   defaultSkillMarkdown,
   displayNameFromKey,
   governanceError,
@@ -70,6 +71,7 @@ export class SkillGovernanceService {
     await this.backfillLegacyRegistry();
     await this.backfillLegacyGrants();
     await this.archiveLegacySkillEvolution();
+    await this.republishDriftedRegistrySkills();
     await this.reconcileGovernedPackages();
     await this.backfillDraftRevisionValidation();
     const migration = await this.validateMigrationParity();
@@ -2607,6 +2609,110 @@ export class SkillGovernanceService {
    * runtime now requires both, so without this every existing draft would quietly stop
    * resolving. Idempotent: a revision that already carries a verdict is skipped.
    */
+  /**
+   * Publish a new version for a CD-managed skill whose shipped content has moved on.
+   *
+   * `backfillLegacyRegistry` registers a filesystem skill once and then skips it
+   * forever, but the deploy keeps overwriting `skills/<skillKey>` from the repo. The
+   * governed version therefore records whatever the content was on the day the skill
+   * was first seen, and drifts further with every edit. `validateMigrationParity`
+   * already reports this as `manifestMismatches`; nothing acted on it, so the recorded
+   * version pointed at content the platform no longer ships and, once its blobs were
+   * collected, at content that no longer existed.
+   *
+   * Scoped to skills the migration Team owns. For a Team-authored skill the blob store
+   * is the source of truth and the filesystem is a materialized copy, so republishing
+   * from disk would let a deploy silently overwrite a version a Team Lead approved.
+   *
+   * The previous version is left intact and a new one is published beside it: an
+   * approved version is immutable, so correcting drift means a new semantic version,
+   * not an edit to the old row.
+   */
+  private async republishDriftedRegistrySkills(): Promise<void> {
+    const migrationTeam = await this.db('groups').where({ name: DEFAULT_MIGRATION_TEAM }).first();
+    if (!migrationTeam) return;
+    const skills = await this.db('skills as s')
+      .join('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .select('s.id', 's.skillKey', 's.status', 'v.manifestHash', 'v.semanticVersion')
+      .where({ 's.ownerTeamId': migrationTeam.id, 's.status': 'active' });
+
+    const republished: string[] = [];
+    for (const skill of skills as any[]) {
+      const skillKey = String(skill.skillKey);
+      const packageRoot = path.join(skillsRoot, skillKey);
+      try {
+        if (!await pathExists(packageRoot)) continue;
+        const files = await this.packageStore.snapshotDirectory(packageRoot);
+        if (!files.length || !files.some((file) => file.path === 'SKILL.md')) continue;
+        const manifestHash = computePackageManifestHash(files);
+        if (manifestHash === skill.manifestHash) continue;
+
+        const existing = await this.db('skill_versions')
+          .select('semanticVersion')
+          .where({ skillId: skill.id });
+        const nextVersion = nextPatchVersion(
+          (existing as any[]).map((row) => String(row.semanticVersion)),
+        );
+        const versionId = uuidv4();
+        const materializedPath = await this.packageStore.materializeVersion(
+          skillKey,
+          versionId,
+          manifestHash,
+          files,
+        );
+        const metadata = await this.packageStore.readSkillMetadata(files);
+        await this.db.transaction(async (tx) => {
+          await tx('skill_versions').insert({
+            id: versionId,
+            skillId: skill.id,
+            semanticVersion: nextVersion,
+            manifestHash,
+            status: 'active',
+            validationSummary: JSON.stringify({
+              migrated: true,
+              republishedFromRegistry: true,
+              policyVersion: GOVERNANCE_POLICY_VERSION,
+            }),
+            materializedPath,
+            activatedAt: tx.fn.now(),
+          });
+          await tx('skill_version_files').insert(files.map((file) => ({
+            skillVersionId: versionId,
+            path: file.path,
+            contentHash: file.contentHash,
+            executable: (file.mode & 0o111) !== 0,
+            mode: file.mode,
+            sizeBytes: file.sizeBytes,
+            mimeType: file.mimeType,
+          })));
+          await tx('skills').where({ id: skill.id }).update({
+            displayName: metadata.name || undefined,
+            description: metadata.description || null,
+            defaultVersionId: versionId,
+            updatedAt: tx.fn.now(),
+          });
+        });
+        await this.audit({
+          actorUserId: null,
+          actorRole: 'platform_migration',
+          action: 'skill_version.republished_from_registry',
+          resourceType: 'skill_version',
+          resourceId: versionId,
+          policyVersion: GOVERNANCE_POLICY_VERSION,
+          previousState: { semanticVersion: skill.semanticVersion, manifestHash: skill.manifestHash },
+          newState: { semanticVersion: nextVersion, manifestHash },
+          metadata: { skillId: skill.id, skillKey },
+        });
+        republished.push(`${skillKey}@${nextVersion}`);
+      } catch (error) {
+        console.warn('Could not republish CD-managed skill', skillKey, error);
+      }
+    }
+    if (republished.length) {
+      console.info('Republished CD-managed skills from the shipped content', { skills: republished });
+    }
+  }
+
   /**
    * Rebuild the runtime files for every active default version that is missing them.
    *
