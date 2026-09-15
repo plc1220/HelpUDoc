@@ -756,12 +756,31 @@ export class SkillGovernanceService {
         validationSummary: jsonValue(candidate.validationSummary, {}),
         riskSummary: jsonValue(candidate.riskSummary, {}),
         diff,
-        files: await Promise.all(files.map(async (file: any) => ({
-          ...file,
-          content: isTextMime(file.mimeType)
-            ? (await this.packageStore.readBlob(file.contentHash)).toString('utf-8')
-            : undefined,
-        }))),
+        // Degrade per file, as `getSkillDetail` does. A candidate whose blob was lost
+        // still has to open: the decision, the validation evidence and the diff are all
+        // answered from the database, and a reviewer who cannot open the request cannot
+        // reject it either -- the submission would be stuck with no way to clear it.
+        files: await Promise.all(files.map(async (file: any) => {
+          if (!isTextMime(file.mimeType)) {
+            return { ...file, content: undefined, unavailable: false };
+          }
+          try {
+            return {
+              ...file,
+              content: (await this.packageStore.readBlob(file.contentHash)).toString('utf-8'),
+              unavailable: false,
+            };
+          } catch (error) {
+            return {
+              ...file,
+              content: undefined,
+              unavailable: true,
+              unavailableReason: error instanceof SkillGovernanceError
+                ? error.message
+                : 'Immutable skill content cannot be read',
+            };
+          }
+        })),
       } : null,
       decisions,
       permissions: {

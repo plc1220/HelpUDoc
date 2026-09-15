@@ -797,7 +797,13 @@ const ReviewDialog = ({
           <section className="flex min-h-0 flex-col border-b border-slate-200 lg:border-b-0 lg:border-r">
             <div className="border-b border-slate-200 px-5 py-3 text-sm font-semibold text-slate-800">Submitted SKILL.md</div>
             <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100">
-              {skillFile?.content || 'Binary or missing SKILL.md'}
+              {skillFile?.content
+                // Say which fault this is. A reviewer still has to be able to reject a
+                // candidate whose content was lost, and "missing SKILL.md" reads like the
+                // author forgot to write one rather than a storage failure.
+                || (skillFile?.unavailable
+                  ? `${skillFile.unavailableReason || 'Immutable skill content cannot be read'} The decision below still applies.`
+                  : 'Binary or missing SKILL.md')}
             </pre>
           </section>
           <aside className="overflow-y-auto p-5">
