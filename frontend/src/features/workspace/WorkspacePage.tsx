@@ -7902,7 +7902,7 @@ export default function WorkspacePage() {
             </span>
           </button>
           <div className="flex shrink-0 items-center gap-2">
-            <NotificationCenter />
+            <NotificationCenter placement="below" />
             <button
               type="button"
               onClick={() => {

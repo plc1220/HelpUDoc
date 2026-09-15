@@ -24,7 +24,7 @@ test('notification badge, inbox, read actions, live alerts and deep links', asyn
   await expect(page.getByLabel('Destination')).toContainText('messageId=message-b');
   notifications.unshift({ ...notifications[0], id: '33333333-3333-5333-a333-333333333333', readAt: null, payload: { title: 'Agent finished your task', description: 'Ready', workspaceId: 'workspace-a' } });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(page.locator('.MuiSnackbarContent-message').filter({ hasText: 'Agent finished your task' })).toBeVisible();
+  await expect(page.locator('.notification-toast').filter({ hasText: 'Agent finished your task' })).toBeVisible();
   await page.getByRole('button', { name: 'Notifications, 1 unread', exact: true }).click();
   await page.getByRole('button', { name: 'Mark all read' }).click();
   await expect(page.getByRole('button', { name: 'Mark all read' })).toBeDisabled();
@@ -44,7 +44,7 @@ test('notification inbox recovers from an API error and fits a mobile viewport',
   fail = false;
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
   await expect(page.getByText('You’re all caught up.')).toBeVisible();
-  const panel = await page.locator('.MuiPopover-paper').boundingBox();
+  const panel = await page.getByRole('dialog', { name: 'Notifications', exact: true }).boundingBox();
   expect(panel).not.toBeNull();
   expect(panel!.x).toBeGreaterThanOrEqual(0);
   expect(panel!.x + panel!.width).toBeLessThanOrEqual(390);
@@ -116,3 +116,40 @@ test('unavailable audio leaves the notification inbox usable', async ({ page }) 
   await page.getByRole('button', { name: 'Mute sound', exact: true }).click();
   await expect(page.getByText('Sound is unavailable or paused. Try Test sound again.')).toHaveCount(0);
 });
+
+for (const mode of ['light', 'dark'] as const) {
+  test(`notification rail position and readable Astryx ${mode} theme`, async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 680 });
+    await page.addInitScript((mode) => localStorage.setItem('helpudoc-color-mode', mode), mode);
+    await page.route('**/api/notifications', (route) => route.fulfill({ json: {
+      unreadCount: 1,
+      notifications: [{ id: 'review', eventType: 'skill_review.approve', readAt: null, createdAt: '2026-08-04T04:31:52Z', payload: { description: 'The updated research skill is ready to use.' } }],
+    } }));
+    await page.goto('/e2e/fixtures/notifications.html');
+    const bell = page.getByRole('button', { name: 'Notifications, 1 unread', exact: true });
+    const bellBox = await bell.boundingBox();
+    const settingsBox = await page.getByRole('button', { name: 'Settings', exact: true }).boundingBox();
+    expect(bellBox!.y).toBeGreaterThan(550);
+    expect(settingsBox!.y - (bellBox!.y + bellBox!.height)).toBeLessThanOrEqual(16);
+    await bell.click();
+    await expect(page.getByRole('button', { name: /Skill review approved/ })).toBeVisible();
+    const ratios = await page.locator('.notification-inbox').evaluate((panel) => {
+      const luminance = (color: string) => {
+        const values = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map((value) => {
+          const channel = value / 255;
+          return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+        });
+        return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722;
+      };
+      const background = luminance(getComputedStyle(panel).backgroundColor);
+      return ['.notification-title', '.notification-description'].map((selector) => {
+        const foreground = luminance(getComputedStyle(panel.querySelector(selector)!).color);
+        return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      });
+    });
+    ratios.forEach((ratio) => expect(ratio).toBeGreaterThanOrEqual(4.5));
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Notifications', exact: true })).not.toBeVisible();
+    await expect(bell).toBeFocused();
+  });
+}

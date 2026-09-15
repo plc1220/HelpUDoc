@@ -1,6 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Alert, Badge, Box, Button, Divider, IconButton, List, ListItemButton, ListItemText, Popover, Snackbar, Typography } from '@mui/material';
-import { NotificationsOutlined, VolumeOffOutlined, VolumeUpOutlined } from '@mui/icons-material';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useId, type ReactNode } from 'react';
+import { Button } from '@astryxdesign/core/Button';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { Popover } from '@astryxdesign/core/Popover';
+import { Toast } from '@astryxdesign/core/Toast';
+import { Bell, CheckCheck, Check, CircleHelp, AtSign, FileCheck2, Volume2, VolumeX, X } from 'lucide-react';
+import './NotificationCenter.css';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { apiFetch, buildApiUrl } from '../services/apiClient';
@@ -14,7 +18,26 @@ type Notification = {
   payload: { title?: string; description?: string; workspaceId?: string; conversationId?: string; messageId?: string };
 };
 
-const NotificationContext = createContext<{ unread: number; open: (anchor: HTMLElement) => void } | null>(null);
+const eventLabels: Record<string, string> = {
+  'agent.completed': 'Your task is ready',
+  'agent.feedback_required': 'Your feedback is needed',
+  'chat.mentioned': 'You were mentioned',
+  'skill_review.approve': 'Skill review approved',
+  'skill_review.submitted': 'Skill submitted for review',
+  'skill_review.request_changes': 'Changes requested',
+};
+const notificationTitle = (item: Notification) => item.payload.title || eventLabels[item.eventType] || item.eventType.replaceAll(/[._]/g, ' ').replace(/^./, (letter) => letter.toUpperCase());
+const notificationTime = (date: string) => {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 60000));
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
+  return new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+const NotificationContext = createContext<{
+  unread: number; activeId: string | null; content: ReactNode;
+  open: (id: string) => void; close: () => void;
+} | null>(null);
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -22,7 +45,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const sound = useNotificationSound(userId);
   const playNotificationSound = sound.play;
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [anchor, setAnchor] = useState<string | null>(null);
   const [items, setItems] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -82,47 +105,53 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     } catch { setError('Could not mark notification as read. Try again.'); }
   };
 
-  return <NotificationContext.Provider value={userId ? { unread, open: (element) => { setAnchor(element); void refreshRef.current(); } } : null}>
+  const content = <section className="notification-inbox" aria-label="Notification inbox">
+    <header className="notification-header">
+      <div><h2>Notifications</h2><span className="notification-subtitle">{unread ? `${unread} unread` : 'You’re up to date'}</span></div>
+      <div className="notification-actions">
+        <IconButton label="Mark all read" tooltip="Mark all read" icon={<CheckCheck size={17} />} variant="ghost" size="sm" isDisabled={!unread} onClick={() => void markRead().catch(() => setError('Could not mark notifications as read. Try again.'))} />
+        <IconButton label="Close notifications" icon={<X size={17} />} variant="ghost" size="sm" onClick={() => setAnchor(null)} />
+      </div>
+    </header>
+    {error && <div className="notification-error" role="alert"><span>{error}</span><Button label="Retry" variant="ghost" size="sm" onClick={() => void refreshRef.current()} /></div>}
+    <div className="notification-list">
+      {!items.length && <div className="notification-empty"><Bell size={24} strokeWidth={1.5} /><p>{loading ? 'Loading notifications…' : error ? 'Notifications are unavailable.' : 'You’re all caught up.'}</p><span>Task updates and mentions will appear here.</span></div>}
+      {items.map((item) => {
+        const Icon = item.eventType === 'agent.feedback_required' ? CircleHelp : item.eventType === 'chat.mentioned' ? AtSign : item.eventType === 'agent.completed' ? Check : FileCheck2;
+        return <button key={item.id} type="button" className="notification-item" data-unread={!item.readAt} onClick={() => void openNotification(item)}>
+          <span className="notification-event-icon"><Icon size={18} strokeWidth={1.7} /></span>
+          <span className="notification-copy"><span className="notification-title">{notificationTitle(item)}</span>
+            {item.payload.description && <span className="notification-description">{item.payload.description.slice(0, 240)}</span>}
+            <time dateTime={item.createdAt} title={new Date(item.createdAt).toLocaleString()}>{notificationTime(item.createdAt)}</time>
+          </span>
+          {!item.readAt && <span className="notification-unread-dot" aria-label="Unread" />}
+        </button>;
+      })}
+    </div>
+    <footer className="notification-footer">
+      <div className="notification-sound-row">
+        <Button label={sound.enabled ? 'Mute sound' : 'Enable sound'} icon={sound.enabled ? <Volume2 size={15} /> : <VolumeX size={15} />} variant="ghost" size="sm" aria-pressed={sound.enabled} onClick={sound.enabled ? sound.mute : sound.enable} />
+        {sound.enabled ? <Button label="Test sound" variant="ghost" size="sm" onClick={sound.test} /> : <span className="notification-sound-hint">Sound is off</span>}
+      </div>
+      {sound.enabled && !sound.ready && <p className="notification-sound-hint">Click Test sound to activate audio in this tab.</p>}
+      {sound.error && <p className="notification-error" role="status">{sound.error}</p>}
+    </footer>
+  </section>;
+
+  return <NotificationContext.Provider value={userId ? { unread, activeId: anchor, content, close: () => setAnchor(null), open: (id) => { setAnchor(id); void refreshRef.current(); } } : null}>
     {children}
-    <Popover open={Boolean(anchor)} anchorEl={anchor} onClose={() => setAnchor(null)} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
-      <Box sx={{ width: 380, maxWidth: 'calc(100vw - 24px)' }}>
-        <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography component="h2" fontWeight={600}>Notifications</Typography>
-          <Button size="small" disabled={!unread} onClick={() => void markRead().catch(() => setError('Could not mark notifications as read. Try again.'))}>Mark all read</Button>
-        </Box>
-        <Box sx={{ px: 2, pb: 1.5 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-            <Button size="small" startIcon={sound.enabled ? <VolumeUpOutlined /> : <VolumeOffOutlined />} aria-pressed={sound.enabled} onClick={sound.enabled ? sound.mute : sound.enable}>
-              {sound.enabled ? 'Mute sound' : 'Enable sound'}
-            </Button>
-            {sound.enabled && <Button size="small" onClick={sound.test}>Test sound</Button>}
-          </Box>
-          <Typography variant="caption" color="text.secondary">
-            {sound.enabled && !sound.ready ? 'Click Test sound to activate audio in this tab.' : 'Sound alerts play while this app is open.'}
-          </Typography>
-          {sound.error && <Alert severity="info" sx={{ mt: 1 }}>{sound.error}</Alert>}
-        </Box>
-        <Divider />
-        {error && <Alert severity="error" action={<Button onClick={() => void refreshRef.current()}>Retry</Button>}>{error}</Alert>}
-        <List sx={{ maxHeight: '60vh', overflowY: 'auto', py: 0 }}>
-          {!items.length && <Typography sx={{ p: 3 }} color="text.secondary">{loading ? 'Loading notifications…' : error ? 'Notifications are unavailable.' : 'You’re all caught up.'}</Typography>}
-          {items.map((item) => <ListItemButton key={item.id} alignItems="flex-start" onClick={() => void openNotification(item)} sx={{ bgcolor: item.readAt ? undefined : 'action.selected', borderBottom: 1, borderColor: 'divider' }}>
-            <ListItemText primary={<Typography fontWeight={item.readAt ? 400 : 600} fontSize={14}>{item.payload.title || item.eventType.replaceAll(/[._]/g, ' ')}</Typography>} secondary={<>
-              <span style={{ display: 'block', overflowWrap: 'anywhere' }}>{item.payload.description?.slice(0, 240)}</span>
-              <span>{new Date(item.createdAt).toLocaleString()}</span>
-            </>} />
-          </ListItemButton>)}
-        </List>
-      </Box>
-    </Popover>
-    <Snackbar open={Boolean(notice) && !anchor} autoHideDuration={7000} onClose={() => setNotice(null)} message={notice?.payload.title || 'New notification'} action={<Button color="inherit" onClick={() => notice && void openNotification(notice)}>View</Button>} />
+    {notice && !anchor && <div className="notification-toast"><Toast type="info" body={notificationTitle(notice)} isAutoHide autoHideDuration={7000} onDismiss={() => setNotice(null)} endContent={<Button label="View" variant="ghost" size="sm" onClick={() => void openNotification(notice)} />} /></div>}
   </NotificationContext.Provider>;
 }
 
-export default function NotificationCenter() {
+export default function NotificationCenter({ placement = 'above' }: { placement?: 'above' | 'below' | 'end' }) {
   const context = useContext(NotificationContext);
+  const id = useId();
   if (!context) return null;
-  return <IconButton aria-label={`Notifications${context.unread ? `, ${context.unread} unread` : ''}`} title="Notifications" onClick={(event) => context.open(event.currentTarget)}>
-    <Badge badgeContent={context.unread} color="error" max={99}><NotificationsOutlined fontSize="small" /></Badge>
-  </IconButton>;
+  return <Popover label="Notifications" placement={placement} alignment={placement === 'end' ? 'end' : 'start'} width="min(380px, calc(100vw - 32px))" className="notification-popover" style={{ padding: 0 }} isOpen={context.activeId === id} onOpenChange={(open) => open ? context.open(id) : context.activeId === id && context.close()} content={context.content}>
+    <span className="notification-trigger">
+      <IconButton label={`Notifications${context.unread ? `, ${context.unread} unread` : ''}`} tooltip="Notifications" icon={<Bell size={19} strokeWidth={1.7} />} variant="ghost" size="md" />
+      {context.unread > 0 && <span className="notification-count" aria-hidden="true">{context.unread > 99 ? '99+' : context.unread}</span>}
+    </span>
+  </Popover>;
 }
