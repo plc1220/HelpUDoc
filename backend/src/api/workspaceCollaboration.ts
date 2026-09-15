@@ -97,7 +97,8 @@ export default function workspaceCollaborationRoutes(
   router.get('/team-chat/messages', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { limit } = z.object({
+      const { limit, includeMessageId } = z.object({
+        includeMessageId: z.string().uuid().optional(),
         limit: z.coerce.number().int().positive().max(500).default(200),
       }).parse(req.query);
       await teamChatAgentService.refresh(requireWorkspaceId(req), user.userId);
@@ -105,6 +106,7 @@ export default function workspaceCollaborationRoutes(
         requireWorkspaceId(req),
         user.userId,
         limit,
+        includeMessageId,
       );
       res.json({ messages });
     } catch (error) {

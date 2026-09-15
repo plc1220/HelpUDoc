@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom';
 import { Button } from '@astryxdesign/core/Button';
 import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
 import TeamChatComposer from './TeamChatComposer';
@@ -112,6 +113,10 @@ export default function WorkspaceTeamChatPanel({
   markdownComponents: Components;
   onOpenPrivateWorkingCopy?: () => Promise<void>;
 }) {
+  const location = useLocation();
+  const notificationQuery = new URLSearchParams(location.search);
+  const targetMessageId = notificationQuery.get('workspaceId') === workspace.id ? notificationQuery.get('messageId') : null;
+  const scrolledNotification = useRef<string | null>(null);
   const isDarkMode = colorMode === 'dark';
   const [messages, setMessages] = useState<WorkspaceTeamMessage[]>([]);
   const [collaborators, setCollaborators] = useState<WorkspaceCollaborator[]>([]);
@@ -141,7 +146,7 @@ export default function WorkspaceTeamChatPanel({
   const loadMessages = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
-      const next = await listWorkspaceTeamMessages(workspace.id);
+      const next = await listWorkspaceTeamMessages(workspace.id, 200, targetMessageId || undefined);
       if (workspaceRef.current !== workspace.id) return;
       setMessages((current) => mergeMessages(current, next));
       for (const message of next) {
@@ -156,7 +161,7 @@ export default function WorkspaceTeamChatPanel({
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, [workspace.id]);
+  }, [workspace.id, targetMessageId]);
 
   useEffect(() => {
     setMessages([]);
@@ -176,8 +181,13 @@ export default function WorkspaceTeamChatPanel({
   }, [loadMessages, workspace.id]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length]);
+    if (targetMessageId && scrolledNotification.current !== location.search) {
+      const target = document.getElementById(`team-message-${targetMessageId}`);
+      if (target) { target.scrollIntoView({ block: 'center' }); scrolledNotification.current = location.search; }
+      return;
+    }
+    if (!targetMessageId) bottomRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages, targetMessageId, location.search]);
 
   const messageThreads = useMemo(() => {
     const repliesByRoot = new Map<string, WorkspaceTeamMessage[]>();
@@ -282,6 +292,8 @@ export default function WorkspaceTeamChatPanel({
     return (
       <article
         key={message.id}
+        id={`team-message-${message.id}`}
+        style={targetMessageId === message.id ? { outline: '2px solid #8b5cf6', outlineOffset: 2 } : undefined}
         className={`group rounded-2xl border px-3 py-2.5 ${
           isReply ? 'ml-7' : ''
         } ${

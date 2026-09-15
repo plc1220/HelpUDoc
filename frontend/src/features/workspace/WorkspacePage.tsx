@@ -1,8 +1,9 @@
+import NotificationCenter from '../../components/NotificationCenter';
 import WorkspaceNavigator from '../../components/WorkspaceNavigator';
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
   CssBaseline,
@@ -890,6 +891,8 @@ const isUsableWorkspaceId = (value: string | null | undefined): value is string 
 
 export default function WorkspacePage() {
   const navigate = useNavigate();
+  const notificationLocation = useLocation();
+  const handledNotification = useRef<string | null>(null);
   const { signOut, user: authUser } = useAuth();
   const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -3269,7 +3272,8 @@ export default function WorkspacePage() {
       }
       const conversations = await refreshConversationHistory(selectedWorkspace.id);
       if (conversations.length) {
-        const firstConversation = conversations[0];
+        const requestedConversationId = new URLSearchParams(window.location.search).get('conversationId');
+        const firstConversation = conversations.find((item) => item.id === requestedConversationId) || conversations[0];
         setActiveConversationId(firstConversation.id);
         await loadConversationMessages(firstConversation.id);
       } else {
@@ -3372,6 +3376,24 @@ export default function WorkspacePage() {
       setMobileSurface('canvas');
     }
   }, [publishedVersionView, resetWorkspaceArtifactState]);
+
+  useEffect(() => {
+    const query = new URLSearchParams(notificationLocation.search);
+    const notificationId = query.get('notificationId');
+    const workspaceId = query.get('workspaceId');
+    if (!notificationId || handledNotification.current === notificationLocation.key) return;
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+    handledNotification.current = notificationLocation.key;
+    handleSelectWorkspace(workspace);
+    setIsAgentPaneVisible(true);
+    setMobileSurface('chat');
+    const conversationId = query.get('conversationId');
+    if (conversationId && selectedWorkspaceIdRef.current === workspaceId) {
+      setActiveConversationId(conversationId);
+      void loadConversationMessages(conversationId);
+    }
+  }, [notificationLocation.key, notificationLocation.search, workspaces, handleSelectWorkspace, loadConversationMessages]);
 
   /**
    * Sync the Shared Working version into `My draft`. When overlapping changes exist the backend
@@ -7880,6 +7902,7 @@ export default function WorkspacePage() {
             </span>
           </button>
           <div className="flex shrink-0 items-center gap-2">
+            <NotificationCenter />
             <button
               type="button"
               onClick={() => {

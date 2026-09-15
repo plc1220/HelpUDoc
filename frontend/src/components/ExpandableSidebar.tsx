@@ -1,3 +1,4 @@
+import NotificationCenter from './NotificationCenter';
 import React from 'react';
 import { Box, IconButton } from '@mui/material';
 import { Menu as MenuIcon } from '@mui/icons-material';
@@ -39,6 +40,7 @@ const ExpandableSidebar: React.FC<SidebarProps> = ({ handleDrawerToggle, isDrawe
           >
             <MenuIcon />
           </IconButton>
+          <NotificationCenter />
           <IconButton onClick={onOpenSettings} title="Settings">
             <SettingsIcon />
           </IconButton>

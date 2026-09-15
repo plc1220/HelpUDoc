@@ -542,15 +542,6 @@ export default function governanceRoutes(service: SkillGovernanceService) {
     }
   });
 
-  router.get('/notifications', async (req, res) => {
-    try {
-      const user = requireUser(req);
-      return res.json(await service.listNotifications(user.userId, req.query.unread === 'true'));
-    } catch (error) {
-      return handleError(res, error);
-    }
-  });
-
   router.get('/governance/audit-events', async (req, res) => {
     try {
       const user = requireUser(req);

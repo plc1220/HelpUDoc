@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom';
 import type {
   ChangeEvent,
   ClipboardEvent,
@@ -252,6 +253,7 @@ export default function AgentChatPane({
   onOpenPrivateWorkingCopy?: () => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
+  const notificationLocation = useLocation();
   const [sharedMode, setSharedMode] = useState<SharedChatMode>('team');
   const sharedLumoCanWrite = Boolean(
     isSharedWorkspace
@@ -271,7 +273,7 @@ export default function AgentChatPane({
 
   useEffect(() => {
     setSharedMode('team');
-  }, [sharedWorkspace?.id]);
+  }, [sharedWorkspace?.id, notificationLocation.search]);
 
   const handleSharedModeChange = (mode: SharedChatMode) => {
     if (

@@ -125,9 +125,10 @@ export const createWorkspaceCollaborationObject = async (
 export const listWorkspaceTeamMessages = async (
   workspaceId: string,
   limit = 200,
+  includeMessageId?: string,
 ): Promise<WorkspaceTeamMessage[]> => {
   const response = await apiFetch(
-    `${API_URL}/workspaces/${workspaceId}/collaboration/team-chat/messages?limit=${limit}`,
+    `${API_URL}/workspaces/${workspaceId}/collaboration/team-chat/messages?limit=${limit}${includeMessageId ? `&includeMessageId=${encodeURIComponent(includeMessageId)}` : ''}`,
   );
   if (!response.ok) {
     return parseError(response, 'Failed to load Workspace Chat');

@@ -1,3 +1,4 @@
+import NotificationCenter from './NotificationCenter';
 import React from 'react';
 import { Badge, Drawer, Box, IconButton, TextField } from '@mui/material';
 import { Add, CalendarMonth, ChevronLeft, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
@@ -226,6 +227,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
             >
               {colorMode === 'dark' ? <LightMode fontSize="small" /> : <DarkMode fontSize="small" />}
             </IconButton>
+            {open && <NotificationCenter />}
             <IconButton
               onClick={handleOpenSettingsClick}
               title="Agent settings"

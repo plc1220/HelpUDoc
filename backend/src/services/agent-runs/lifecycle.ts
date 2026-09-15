@@ -1,3 +1,4 @@
+import type { NotificationService } from '../notificationService';
 import { createHash, randomUUID } from 'crypto';
 import { isFrontendSlidesEditExistingRun, slideEditArtifactCandidates } from './slideEditIntent';
 import type { IncomingMessage } from 'http';
@@ -180,6 +181,7 @@ let userMemoryService: UserMemoryService | null = null;
 let skillEvolutionService: SkillEvolutionService | null = null;
 let conversationService: ConversationService | null = null;
 let fileService: FileService | null = null;
+let notificationService: NotificationService | null = null;
 let agentStreamClient = {
   runAgentStream,
   resumeAgentStream,
@@ -188,6 +190,7 @@ let agentStreamClient = {
 };
 
 export function configureAgentRunServices(services: {
+  notificationService?: NotificationService | null;
   telemetryService?: RunTelemetryService | null;
   userMemoryService?: UserMemoryService | null;
   skillEvolutionService?: SkillEvolutionService | null;
@@ -195,6 +198,7 @@ export function configureAgentRunServices(services: {
   fileService?: FileService | null;
   agentStreamClient?: Partial<typeof agentStreamClient> | null;
 }) {
+  if ('notificationService' in services) notificationService = services.notificationService || null;
   if ('telemetryService' in services) {
     runTelemetryService = services.telemetryService || null;
   }
@@ -728,6 +732,8 @@ export const resolveStreamCloseDisposition = (input: {
 
 const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
   const metaKey = buildMetaKey(runId);
+  const shouldNotify = notificationService && (meta.status === 'completed' || meta.status === 'awaiting_approval');
+  const previous = shouldNotify ? await redisClient.hGetAll(metaKey) : {};
   const stringified: Record<string, string> = {};
   Object.entries(meta).forEach(([key, value]) => {
     if (value !== undefined) {
@@ -737,6 +743,17 @@ const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
   if (Object.keys(stringified).length) {
     await redisClient.hSet(metaKey, stringified);
     await redisClient.expire(metaKey, STREAM_TTL_SECONDS);
+  }
+  if (shouldNotify) {
+    try {
+      await notificationService!.notifyRun(runId, {
+        ...previous, ...stringified,
+        // Completion clears the resumable context; retain its navigation details for the alert.
+        runContext: stringified.runContext || previous.runContext || '',
+      });
+    } catch (error) {
+      console.error('Agent notification delivery failed', safeErrorForLog(error));
+    }
   }
 };
 

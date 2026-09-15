@@ -1,3 +1,5 @@
+import notificationRoutes from './notifications';
+import { NotificationService } from '../services/notificationService';
 import { Router } from 'express';
 import agentRoutes from './agent';
 import authRoutes from './auth';
@@ -49,7 +51,9 @@ export default function(
   );
   const fileService = new FileService(dbService, workspaceService);
   const conversationService = new ConversationService(dbService, workspaceService);
-  configureAgentRunServices({ conversationService, fileService });
+  const notificationService = new NotificationService(dbService.getDb());
+  configureAgentRunServices({ conversationService, fileService, notificationService });
+  router.use('/notifications', notificationRoutes(notificationService));
   const knowledgeService = new KnowledgeService(dbService, workspaceService, fileService);
   const knowledgeBaseService = new KnowledgeBaseService(dbService, knowledgeService);
   const userOAuthTokenService = new UserOAuthTokenService(dbService);

@@ -1,3 +1,4 @@
+import { createNotification } from './notificationService';
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -145,13 +146,24 @@ export class WorkspaceCollaborationService {
     workspaceId: string,
     userId: string,
     limit = 200,
+    includeMessageId?: string,
   ): Promise<WorkspaceTeamMessage[]> {
     await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     const rows = await this.teamMessageQuery(userId)
       .where('message.workspaceId', workspaceId)
       .orderBy('message.createdAt', 'desc')
       .limit(Math.min(Math.max(limit, 1), 500));
-    return (rows as WorkspaceTeamMessage[]).reverse();
+    const messages = (rows as WorkspaceTeamMessage[]).reverse();
+    // Preserve the exact destination of an older mention without exposing another workspace.
+    if (includeMessageId) {
+      const target = await this.getTeamMessage(workspaceId, includeMessageId, userId);
+      if (!messages.some((message) => message.id === target.id)) messages.push(target);
+      if (target.threadRootId && !messages.some((message) => message.id === target.threadRootId)) {
+        messages.push(await this.getTeamMessage(workspaceId, target.threadRootId, userId));
+      }
+      messages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+    return messages;
   }
 
   async listPendingTeamMessages(workspaceId: string, userId: string): Promise<WorkspaceTeamMessage[]> {
@@ -210,6 +222,16 @@ export class WorkspaceCollaborationService {
             userId: mentionedUserId,
           })),
         );
+      }
+      for (const recipientUserId of mentionedUserIds.filter((id) => id !== userId)) {
+        await createNotification(tx, {
+          recipientUserId,
+          eventType: 'chat.mentioned',
+          resourceType: 'workspace_team_message',
+          resourceId: id,
+          eventKey: id,
+          payload: { title: 'You were mentioned in team chat', description: body.slice(0, 500), workspaceId, messageId: id, channel: 'team' },
+        });
       }
     });
 
