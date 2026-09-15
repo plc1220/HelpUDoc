@@ -187,6 +187,17 @@ steps:
         infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
 
   # 6. Sync repo skills/ into skills PVC (workspace PVC is intentionally untouched).
+  #
+  # `.governed-versions/` is excluded from the wipe. It holds the content-addressed blobs
+  # and immutable version packages for every governed skill, and it is gitignored, so the
+  # tar below cannot restore it. Deleting it destroyed the only copy of the bytes for
+  # every skill a user had created through Skill Governance, while their Postgres rows
+  # survived -- leaving the catalog listing skills whose content read back as
+  # "Immutable skill content cannot be read".
+  #
+  # The per-skill compatibility pointers (skills/<skillKey>) are still replaced. Those are
+  # reconstructable: `reconcileGovernedPackages` re-materializes them from the blobs at
+  # backend startup.
   - id: sync-skills-pvc
     name: 'gcr.io/cloud-builders/kubectl'
     waitFor: ['deploy']
@@ -202,7 +213,7 @@ steps:
         test -n "$${APP_POD}"
         echo "Syncing repo skills/ to /app/skills in pod: $${APP_POD}"
 
-        kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+        kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 ! -name '.governed-versions' -exec rm -rf {} +"
         tar -C skills -cf - . | kubectl -n helpudoc exec -i "$${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
         kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
 

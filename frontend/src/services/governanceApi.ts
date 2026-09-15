@@ -219,7 +219,12 @@ export type SkillDetail = {
   skill: CatalogSkill;
   defaultVersion?: GovernedSkillVersion | null;
   versions: GovernedSkillVersion[];
-  files: SkillDraftFile[];
+  /**
+   * `unavailable` marks a file whose immutable content could not be read from storage.
+   * The rest of the detail still loads, so the dialog reports the fault against the file
+   * rather than failing the whole page.
+   */
+  files: Array<SkillDraftFile & { unavailable?: boolean; unavailableReason?: string }>;
   capabilities: SkillValidation['declaredCapabilities'];
   usage: {
     teamGrantCount: number;

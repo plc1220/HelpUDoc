@@ -69,6 +69,12 @@ export default function SkillDetailsDialog({
       .replace(/^---\s*\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/, ''),
     [detail],
   );
+  // A storage fault on SKILL.md is the common case and the one worth naming; the file
+  // list below still shows anything else that failed.
+  const unreadableReason = useMemo(
+    () => detail?.files.find((file) => file.unavailable)?.unavailableReason || null,
+    [detail],
+  );
   const skill = detail?.skill || initialSkill;
 
   const changeStatus = async (action: 'archive' | 'restore') => {
@@ -111,6 +117,12 @@ export default function SkillDetailsDialog({
                 <div className="governance-skill-markdown prose prose-slate max-w-none prose-headings:scroll-mt-4 prose-pre:overflow-x-auto">
                   {skillMarkdown ? (
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{skillMarkdown}</ReactMarkdown>
+                  ) : unreadableReason ? (
+                    <SettingsNotice variant="error">
+                      {unreadableReason} The rest of this page is read from the catalog and
+                      is unaffected. An administrator can restore the version from a backup
+                      or archive the skill.
+                    </SettingsNotice>
                   ) : (
                     <p>The published instructions are unavailable.</p>
                   )}

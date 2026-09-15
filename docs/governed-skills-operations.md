@@ -103,3 +103,35 @@ From `frontend/`:
 ```bash
 npm run build
 ```
+
+## Blob storage and the deploy
+
+`skills/.governed-versions/` holds the content-addressed blobs and immutable version
+packages for every governed skill. It is gitignored and exists only on the skills volume.
+
+The Cloud Build step `sync-skills-pvc` replaces the skills tree with the repo's copy. It
+must never delete `.governed-versions/`: the blobs are the only copy of the content for
+every skill a user created through Skill Governance, and the repo cannot restore them.
+Deleting it orphans the Postgres rows, so the catalog keeps listing skills whose content
+reads back as `SKILL_MATERIALIZATION_UNAVAILABLE`, and `list_skills` stops offering them
+because it walks the filesystem. The step excludes that directory with
+`find /app/skills -mindepth 1 -maxdepth 1 ! -name '.governed-versions'`.
+
+The per-skill compatibility pointers (`skills/<skillKey>`) and the version packages under
+`.governed-versions/packages/` are caches. `reconcileGovernedPackages` rebuilds both from
+the blobs at backend startup and logs `Restored governed skill packages`.
+
+A blob that is gone cannot be rebuilt from anything. Startup logs the affected skills as
+`Governed skills whose immutable content is unreadable`. Restore the volume from a backup,
+or archive those skills with `POST /api/skills/:skillId/archive`.
+
+To audit blob reachability, compare `content_blobs` against the volume:
+
+```bash
+kubectl -n helpudoc exec "$PG_POD" -- env PGPASSWORD="$PW" \
+  psql -U "$USER" -d "$DB" -At -c 'select "contentHash" from content_blobs' |
+while read -r h; do
+  kubectl -n helpudoc exec "$APP_POD" -c backend -- \
+    test -r "/app/skills/.governed-versions/blobs/${h:0:2}/$h" || echo "MISSING $h"
+done
+```

@@ -8,6 +8,7 @@ import {
   SkillGovernanceError,
   SkillGovernanceService,
 } from '../src/services/governance/skillGovernanceService';
+import { SkillPackageStore } from '../src/services/governance/skillPackageStore';
 import { skillsRoot } from '../src/services/skills/constants';
 import { UserService } from '../src/services/userService';
 
@@ -1096,6 +1097,98 @@ test('a Team Lead grants and revokes a skill their own Team owns', { skip: !enab
     await db('group_members').whereIn('groupId', [ownTeamId, foreignTeamId]).del().catch(() => undefined);
     await db('groups').whereIn('id', [ownTeamId, foreignTeamId]).del().catch(() => undefined);
     await db('users').whereIn('id', [leadId, memberId]).del().catch(() => undefined);
+    await db.destroy();
+  }
+});
+
+test('a missing blob degrades one file instead of the whole skill detail', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const adminId = uuidv4();
+  const teamId = uuidv4();
+  const skillId = uuidv4();
+  const versionId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `lostblob-${suffix}`;
+  const body = `---\nname: ${skillKey}\ndescription: Loses its blob.\n---\n\n# ${skillKey}\n`;
+  let contentHash: string | null = null;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+    const store = new SkillPackageStore(db, () => undefined);
+    await store.initialize();
+
+    await db('users').insert({
+      id: adminId, externalId: `lostblob-${suffix}`, email: `lostblob-${suffix}@example.test`,
+      displayName: 'Lost blob admin', isAdmin: true,
+    });
+    await db('groups').insert({ id: teamId, name: `Lost blob ${suffix}` });
+
+    const file = await store.persistBlob(Buffer.from(body, 'utf-8'), 'SKILL.md');
+    contentHash = file.contentHash;
+    await db('skills').insert({
+      id: skillId, skillKey, displayName: 'Lost blob skill',
+      description: 'Loses its blob.', ownerTeamId: teamId, status: 'active',
+    });
+    await db('skill_versions').insert({
+      id: versionId, skillId, semanticVersion: '1.0.0',
+      manifestHash: 'a'.repeat(64), status: 'active',
+    });
+    await db('skill_version_files').insert({
+      skillVersionId: versionId, path: 'SKILL.md', contentHash: file.contentHash,
+      executable: false, mode: file.mode, sizeBytes: file.sizeBytes, mimeType: file.mimeType,
+    });
+    await db('skills').where({ id: skillId }).update({ defaultVersionId: versionId });
+
+    // Healthy first: the content reads back.
+    const healthy = await governance.getSkillDetail(adminId, skillId);
+    assert.equal((healthy.files as any[])[0].content, body);
+    assert.equal((healthy.files as any[])[0].unavailable, false);
+
+    // Now delete the blob file, exactly as the deploy's skills-tree wipe did.
+    await fs.rm(path.join(
+      skillsRoot, '.governed-versions', 'blobs', contentHash.slice(0, 2), contentHash,
+    ), { force: true });
+
+    // The detail must still load. Everything that does not need the blob is intact, and
+    // the fault is reported against the file, naming the cause.
+    const degraded = await governance.getSkillDetail(adminId, skillId);
+    assert.equal(degraded.skill.skillKey, skillKey);
+    assert.equal(degraded.skill.displayName, 'Lost blob skill');
+    assert.equal((degraded.versions as any[]).length, 1);
+    assert.equal(degraded.usage.teamGrantCount, 0);
+    const degradedFile = (degraded.files as any[])[0];
+    assert.equal(degradedFile.unavailable, true);
+    assert.match(degradedFile.unavailableReason, /missing from storage/);
+    assert.equal(degradedFile.content, undefined);
+
+    // Archive is only reachable from this dialog, and the dialog only renders its
+    // actions once the detail loads. While a missing blob failed the whole response the
+    // admin had no way to retire a skill precisely when it was most broken.
+    assert.equal(degraded.permissions.canArchive, true);
+    const archived = await governance.setSkillStatus(adminId, skillId, 'archive');
+    assert.equal(archived.status, 'retired');
+    assert.equal(
+      (await db('skills').where({ id: skillId }).first()).status,
+      'retired',
+      'a Platform Admin must be able to archive a skill whose content is unreadable',
+    );
+  } finally {
+    if (contentHash) {
+      await db('content_blobs').where({ contentHash }).del().catch(() => undefined);
+    }
+    await db('skills').where({ id: skillId }).update({ defaultVersionId: null }).catch(() => undefined);
+    await db('skill_version_files').where({ skillVersionId: versionId }).del().catch(() => undefined);
+    await db('skill_versions').where({ skillId }).del().catch(() => undefined);
+    await db('skills').where({ id: skillId }).del().catch(() => undefined);
+    await db('groups').where({ id: teamId }).del().catch(() => undefined);
+    await db('users').where({ id: adminId }).del().catch(() => undefined);
+    await fs.rm(path.join(skillsRoot, skillKey), { recursive: true, force: true }).catch(() => undefined);
+    await fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', skillKey), {
+      recursive: true, force: true,
+    }).catch(() => undefined);
     await db.destroy();
   }
 });

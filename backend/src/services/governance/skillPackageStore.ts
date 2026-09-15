@@ -114,7 +114,21 @@ export class SkillPackageStore {
       return content;
     } catch (error) {
       if (error instanceof SkillGovernanceError) throw error;
-      throw new SkillGovernanceError(503, 'SKILL_MATERIALIZATION_UNAVAILABLE', 'Immutable skill content cannot be read');
+      // Name the fault. A blob that was never written, one the process cannot read, and
+      // one that is present but wrong call for different operator responses, and the
+      // previous catch-all collapsed all three into one message with no code to act on.
+      const code = (error as NodeJS.ErrnoException)?.code;
+      const reason = code === 'ENOENT'
+        ? 'is missing from storage'
+        : code === 'EACCES' || code === 'EPERM'
+          ? 'is not readable by this process'
+          : 'cannot be read';
+      console.warn('Immutable skill blob unavailable', { contentHash, code: code || 'unknown' });
+      throw new SkillGovernanceError(
+        503,
+        'SKILL_MATERIALIZATION_UNAVAILABLE',
+        `Immutable skill content ${reason}`,
+      );
     }
   }
 

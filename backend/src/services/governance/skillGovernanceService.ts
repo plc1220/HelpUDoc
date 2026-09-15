@@ -70,6 +70,7 @@ export class SkillGovernanceService {
     await this.backfillLegacyRegistry();
     await this.backfillLegacyGrants();
     await this.archiveLegacySkillEvolution();
+    await this.reconcileGovernedPackages();
     await this.backfillDraftRevisionValidation();
     const migration = await this.validateMigrationParity();
     const log = migration.ready ? console.info : console.warn;
@@ -1379,13 +1380,33 @@ export class SkillGovernanceService {
     const files = defaultVersion
       ? await this.packageStore.versionFiles(defaultVersion.id)
       : [];
-    const readableFiles = await Promise.all(files.map(async (file) => ({
-      ...file,
-      content: isTextMime(file.mimeType)
-        ? (await this.packageStore.readBlob(file.contentHash)).toString('utf-8')
-        : undefined,
-      encoding: isTextMime(file.mimeType) ? 'utf-8' : 'binary',
-    })));
+    // One unreadable file must not blank the whole dialog. Everything else here --
+    // name, description, owning Team, capabilities, version history, access counts --
+    // is answered from the database and needs no blob, so a storage fault is reported
+    // against the file it affects and the rest of the page still renders.
+    const readableFiles = await Promise.all(files.map(async (file) => {
+      if (!isTextMime(file.mimeType)) {
+        return { ...file, content: undefined, encoding: 'binary' as const, unavailable: false };
+      }
+      try {
+        return {
+          ...file,
+          content: (await this.packageStore.readBlob(file.contentHash)).toString('utf-8'),
+          encoding: 'utf-8' as const,
+          unavailable: false,
+        };
+      } catch (error) {
+        return {
+          ...file,
+          content: undefined,
+          encoding: 'utf-8' as const,
+          unavailable: true,
+          unavailableReason: error instanceof SkillGovernanceError
+            ? error.message
+            : 'Immutable skill content cannot be read',
+        };
+      }
+    }));
     const validationSummary = jsonValue<Partial<ValidationResult>>(
       defaultVersion?.validationSummary,
       {},
@@ -2586,6 +2607,60 @@ export class SkillGovernanceService {
    * runtime now requires both, so without this every existing draft would quietly stop
    * resolving. Idempotent: a revision that already carries a verdict is skipped.
    */
+  /**
+   * Rebuild the runtime files for every active default version that is missing them.
+   *
+   * `skills/<skillKey>` and `.governed-versions/packages/<skillKey>/<versionId>` are both
+   * caches over `content_blobs`, and the deploy replaces the skills tree wholesale. A
+   * governed skill whose package or compatibility pointer was removed still has its rows,
+   * so it appears in the catalog and in grants while nothing can load it: `list_skills`
+   * walks the filesystem, so it vanishes from the picker, and reading its content fails.
+   *
+   * Re-materializing here makes that self-correcting instead of permanent. Blobs
+   * themselves are not reconstructable -- if those are gone the version is genuinely
+   * lost, and this reports it rather than pretending otherwise.
+   */
+  private async reconcileGovernedPackages(): Promise<void> {
+    const rows = await this.db('skills as s')
+      .join('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .select('s.skillKey', 's.id as skillId', 'v.id as versionId', 'v.manifestHash')
+      .where({ 's.status': 'active', 'v.status': 'active' });
+
+    let restored = 0;
+    const unrecoverable: string[] = [];
+    for (const row of rows as any[]) {
+      const skillKey = normalizeGovernedSkillKey(row.skillKey || '');
+      if (!skillKey) continue;
+      const packagePath = this.packageStore.versionPackagePath(skillKey, row.versionId);
+      const defaultPath = path.join(skillsRoot, skillKey);
+      const [hasPackage, hasDefault] = await Promise.all([
+        pathExists(packagePath),
+        pathExists(defaultPath),
+      ]);
+      if (hasPackage && hasDefault) continue;
+      try {
+        const files = await this.packageStore.versionFiles(row.versionId);
+        if (!files.length) continue;
+        if (!hasPackage) {
+          await this.packageStore.materializeVersion(skillKey, row.versionId, row.manifestHash, files);
+        }
+        await this.packageStore.promoteDefaultPackage(skillKey, packagePath);
+        restored += 1;
+      } catch (error) {
+        // A missing blob cannot be rebuilt from anything else. Name the skill so an
+        // operator can restore it from a backup or retire it, and keep starting up.
+        unrecoverable.push(skillKey);
+      }
+    }
+    if (restored) console.info('Restored governed skill packages', { skills: restored });
+    if (unrecoverable.length) {
+      console.warn(
+        'Governed skills whose immutable content is unreadable; their blobs are missing',
+        { skills: unrecoverable },
+      );
+    }
+  }
+
   private async backfillDraftRevisionValidation(): Promise<void> {
     const drafts = await this.db('private_skill_drafts as d')
       .join('skill_draft_revisions as r', 'r.id', 'd.currentDraftRevisionId')
