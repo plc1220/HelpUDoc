@@ -810,9 +810,9 @@ export class WorkspacePublicationService {
           .where({
             privateWorkspaceId,
             userId,
+            teamWorkspaceId: teamWorkspace.id,
             status: 'active',
             baseSharedContentRevision: Number(link.baseSharedContentRevision || 0),
-            updatedAt: link.updatedAt,
           })
           .update({
             baseSharedContentRevision: currentSharedRevision,

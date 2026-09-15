@@ -25,6 +25,7 @@ type HarnessOptions = {
   sharedVisibility?: 'team' | 'private';
   sharedExists?: boolean;
   sharedAccess?: boolean;
+  subMillisecondLinkTimestamp?: boolean;
 };
 
 function hash(value: string): string {
@@ -146,7 +147,13 @@ function syncHarness(options: HarnessOptions = {}) {
   const sharedContent = makeContent(sharedFiles, options.sharedFolders);
   const fakeTx = ((table: string) => {
     if (table === 'workspace_publication_links') {
-      return { where: () => ({ update: updateLink }) };
+      return { where: (predicate: Record<string, unknown>) => ({
+        update: (payload: Record<string, unknown>) => {
+          // pg reads timestamps as JS Dates, dropping stored microseconds.
+          if (options.subMillisecondLinkTimestamp && 'updatedAt' in predicate) return Promise.resolve(0);
+          return updateLink(payload);
+        },
+      }) };
     }
     throw new Error(`Unexpected transaction table ${table}`);
   }) as any;
@@ -300,6 +307,7 @@ test('sync acknowledges unchanged Shared content while preserving unpublished dr
     privateFiles: { 'notes.txt': 'my edits', 'new.txt': 'new draft file' },
     privateRevision: 4,
     hasUnpublishedChanges: true,
+    subMillisecondLinkTimestamp: true,
   });
   const before = new Date().toISOString();
   const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
