@@ -1,0 +1,52 @@
+# What `gcloud builds submit .` must not upload.
+#
+# Cloud Build tars this directory into a GCS staging bucket and keeps it in build
+# history. Anything here that is a credential stays readable there after the build,
+# so this file is the durable version of "remember to delete the key first".
+#
+# Note: creating this file makes gcloud stop consulting .gitignore on its own, so the
+# include below is what keeps those rules in force. Do not remove it.
+#!include:.gitignore
+
+# Never upload the repository history. Nothing in infra/cloudbuild.yaml reads .git,
+# and it is usually the largest single directory here.
+.git/
+.gitignore
+
+# Credentials. Deliberately broader than what is in the tree today: a key that has not
+# been created yet is the one this is for. A service account key sat in this repo root
+# and would have been uploaded before this file existed.
+*-sa-key*.json
+*service-account*.json
+*credentials*.json
+*accessKeys*.csv
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Operator artifacts. Large, local, and meaningless to a build.
+backups/
+skills-pvc-backup-*/
+skills-pvc-backup-*.tar.gz
+skills-backuo-*.tar.gz
+*.tar.gz
+trace-*.json
+outputs/
+.playwright-mcp/
+claude-design/
+
+# Root-level screenshots and scratch notes. Scoped to the root with a leading slash so
+# images the frontend actually ships are still uploaded.
+/*.png
+/result.md
+
+# Agent and tooling state.
+.claude/
+.pytest_cache/
+**/__pycache__/
+
+# Kept by the include above, restated because losing either one is expensive:
+#   env/**/*.env          - local secrets
+#   skills/.governed-versions/ - runtime blob store; the deploy must never push it,
+#                                and sync-skills-pvc must never delete it
