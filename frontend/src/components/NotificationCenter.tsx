@@ -1,3 +1,4 @@
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useId, type ReactNode } from 'react';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
@@ -48,6 +49,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [anchor, setAnchor] = useState<string | null>(null);
   const [items, setItems] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
+  const [view, setView] = useState('unread');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<Notification | null>(null);
@@ -89,6 +91,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const markRead = useCallback(async (id?: string) => {
     const response = await apiFetch(buildApiUrl(id ? `/notifications/${id}/read` : '/notifications/read-all'), { method: 'POST' });
     if (!response.ok) throw new Error('Could not mark notifications as read.');
+    setNotice((current) => !id || current?.id === id ? null : current);
     await refreshRef.current();
   }, []);
 
@@ -105,6 +108,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     } catch { setError('Could not mark notification as read. Try again.'); }
   };
 
+  const visibleItems = view === 'unread' ? items.filter((item) => !item.readAt) : items;
   const content = <section className="notification-inbox" aria-label="Notification inbox">
     <header className="notification-header">
       <div><h2>Notifications</h2><span className="notification-subtitle">{unread ? `${unread} unread` : 'You’re up to date'}</span></div>
@@ -113,10 +117,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         <IconButton label="Close notifications" icon={<X size={17} />} variant="ghost" size="sm" onClick={() => setAnchor(null)} />
       </div>
     </header>
+    <div className="notification-view"><SegmentedControl label="Notification view" value={view} onChange={setView} layout="fill" size="sm"><SegmentedControlItem value="unread" label="Unread" /><SegmentedControlItem value="all" label="All" /></SegmentedControl></div>
     {error && <div className="notification-error" role="alert"><span>{error}</span><Button label="Retry" variant="ghost" size="sm" onClick={() => void refreshRef.current()} /></div>}
     <div className="notification-list">
-      {!items.length && <div className="notification-empty"><Bell size={24} strokeWidth={1.5} /><p>{loading ? 'Loading notifications…' : error ? 'Notifications are unavailable.' : 'You’re all caught up.'}</p><span>Task updates and mentions will appear here.</span></div>}
-      {items.map((item) => {
+      {!visibleItems.length && <div className="notification-empty"><Bell size={24} strokeWidth={1.5} /><p>{loading ? 'Loading notifications…' : error ? 'Notifications are unavailable.' : 'You’re all caught up.'}</p><span>{view === 'unread' ? 'Read notifications are saved in All.' : 'Task updates and mentions will appear here.'}</span></div>}
+      {visibleItems.map((item) => {
         const Icon = item.eventType === 'agent.feedback_required' ? CircleHelp : item.eventType === 'chat.mentioned' ? AtSign : item.eventType === 'agent.completed' ? Check : FileCheck2;
         return <button key={item.id} type="button" className="notification-item" data-unread={!item.readAt} onClick={() => void openNotification(item)}>
           <span className="notification-event-icon"><Icon size={18} strokeWidth={1.7} /></span>
@@ -138,7 +143,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     </footer>
   </section>;
 
-  return <NotificationContext.Provider value={userId ? { unread, activeId: anchor, content, close: () => setAnchor(null), open: (id) => { setAnchor(id); void refreshRef.current(); } } : null}>
+  return <NotificationContext.Provider value={userId ? { unread, activeId: anchor, content, close: () => setAnchor(null), open: (id) => { setAnchor(id); setView('unread'); void refreshRef.current(); } } : null}>
     {children}
     {notice && !anchor && <div className="notification-toast"><Toast type="info" body={notificationTitle(notice)} isAutoHide autoHideDuration={7000} onDismiss={() => setNotice(null)} endContent={<Button label="View" variant="ghost" size="sm" onClick={() => void openNotification(notice)} />} /></div>}
   </NotificationContext.Provider>;

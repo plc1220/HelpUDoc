@@ -153,3 +153,28 @@ for (const mode of ['light', 'dark'] as const) {
     await expect(bell).toBeFocused();
   });
 }
+
+test('mark all read clears Unread and retains history in All', async ({ page }) => {
+  let readAt: string | null = null;
+  await page.route('**/api/notifications**', (route) => {
+    if (route.request().method() === 'POST') { readAt = new Date().toISOString(); return route.fulfill({ status: 204 }); }
+    return route.fulfill({ json: { unreadCount: readAt ? 0 : 1, notifications: [{ id: '11111111-1111-5111-a111-111111111111', eventType: 'agent.completed', readAt, createdAt: new Date().toISOString(), payload: { title: 'Report completed' } }] } });
+  });
+  await page.goto('/e2e/fixtures/notifications.html');
+  await page.getByRole('button', { name: 'Notifications, 1 unread', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Unread', exact: true })).toBeChecked();
+  await expect(page.getByRole('button', { name: /Report completed/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Mark all read', exact: true }).click();
+  await expect(page.getByText('You’re all caught up.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Report completed/ })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'All', exact: true }).click();
+  await expect(page.getByRole('button', { name: /Report completed/ })).toBeVisible();
+  await expect(page.locator('.notification-unread-dot')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close notifications', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Notifications', exact: true })).not.toBeVisible();
+  // Astryx suppresses trigger clicks for 50ms after dismissal to avoid reopening on the same event.
+  await page.waitForTimeout(75);
+  await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Unread', exact: true })).toBeChecked();
+  await expect(page.getByText('You’re all caught up.')).toBeVisible();
+});

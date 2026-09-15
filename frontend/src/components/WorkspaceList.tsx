@@ -1,40 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Box,
-  Button,
-  Chip,
-  Collapse,
-  IconButton,
-  List,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
-  Menu,
-  MenuItem,
-  Tooltip,
-  Typography,
-} from '@mui/material';
-import {
-  PushPin,
-  Delete,
-  DeleteOutline,
-  Difference,
-  ExitToApp,
-  ExpandLess,
-  ExpandMore,
-  Groups,
-  History,
-  Lock,
-  ManageAccounts,
-  MoreHoriz,
-  Publish,
-  Share,
-  LinkOff,
-  Link,
-  RestoreFromTrash,
-  Sync,
-  Unpublished,
-} from '@mui/icons-material';
+import { Button } from '@astryxdesign/core/Button';
+import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
+import { Pin as PushPin, Trash2 as Delete, Trash2 as DeleteOutline, GitCompare as Difference, LogOut as ExitToApp, ChevronUp as ExpandLess, ChevronDown as ExpandMore, Users as Groups, History, Lock, UsersRound as ManageAccounts, MoreHorizontal as MoreHoriz, Upload as Publish, Share2 as Share, Unlink as LinkOff, Link, ArchiveRestore as RestoreFromTrash, RefreshCw as Sync, LockOpen as Unpublished } from 'lucide-react';
+import './WorkspaceNavigator.css';
 
 import type { Workspace } from '../types';
 import {
@@ -111,8 +79,6 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     ))
     : [];
   const [expanded, setExpanded] = useState({ private: true, shared: true, trash: false });
-  const [actionAnchorEl, setActionAnchorEl] = useState<null | HTMLElement>(null);
-  const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -139,7 +105,6 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     const isPrivate = workspace.visibility !== 'team';
     const isSharedWorkspace = workspace.visibility === 'team';
     const isOwnerOnlyUnshared = isOwnerOnlyUnsharedWorkspace(workspace);
-    const isPrivateSectionItem = isPrivate || isOwnerOnlyUnshared;
     const isOwner = workspace.role === 'owner';
     const lifecycleStatus = getWorkspaceLifecycleStatus(workspace);
     const isLifecycleBusy = lifecycleBusyWorkspaceId === workspace.id;
@@ -153,12 +118,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       && Boolean(onReviewDraftChanges);
     const isSyncingDraft = syncingDraftWorkspaceId === workspace.id;
     const lifecycleIcons: Record<WorkspaceLifecycleAction, React.ReactNode> = {
-      unshare: <LinkOff fontSize="small" />,
-      reshare: <Share fontSize="small" />,
-      trash: <DeleteOutline fontSize="small" />,
-      restore: <RestoreFromTrash fontSize="small" />,
-      leave: <ExitToApp fontSize="small" />,
-      reconnect: <Link fontSize="small" />,
+      unshare: <LinkOff size={16} />,
+      reshare: <Share size={16} />,
+      trash: <DeleteOutline size={16} />,
+      restore: <RestoreFromTrash size={16} />,
+      leave: <ExitToApp size={16} />,
+      reconnect: <Link size={16} />,
     };
     const availableLifecycleActions = onLifecycleWorkspace
       ? getSharedWorkspaceLifecycleActions(workspace)
@@ -173,7 +138,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       }))
       : [];
     const actions = [
-      onTogglePin ? { label: pinnedIds.includes(workspace.id) ? "Unpin workspace" : "Pin workspace", icon: <PushPin fontSize="small" />, onClick: () => onTogglePin(workspace) } : null,
+      onTogglePin ? { label: pinnedIds.includes(workspace.id) ? "Unpin workspace" : "Pin workspace", icon: <PushPin size={16} />, onClick: () => onTogglePin(workspace) } : null,
       isPrivate
         && !isOwnerOnlyUnshared
         && lifecycleStatus === 'active'
@@ -186,12 +151,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         } : null,
       canSyncDraft && onSyncDraftWorkspace ? {
         label: DRAFT_SYNC_ACTION_LABEL,
-        icon: <Sync fontSize="small" />,
+        icon: <Sync size={16} />,
         onClick: () => onSyncDraftWorkspace(workspace),
       } : null,
       canReviewDraftChanges && onReviewDraftChanges ? {
         label: DRAFT_REVIEW_CHANGES_ACTION_LABEL,
-        icon: <Difference fontSize="small" />,
+        icon: <Difference size={16} />,
         onClick: () => onReviewDraftChanges(workspace),
       } : null,
       isPrivate
@@ -199,12 +164,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         && !workspace.linkedTeamWorkspaceId
         && onPublishWorkspace ? {
         label: `Share workspace`,
-        icon: <Share fontSize="small" />,
+        icon: <Share size={16} />,
         onClick: () => onPublishWorkspace(workspace),
       } : null,
       isPrivate && workspace.linkedTeamWorkspaceId ? {
         label: `Open shared workspace`,
-        icon: <Groups fontSize="small" />,
+        icon: <Groups size={16} />,
         onClick: () => {
           const linked = workspaces.find((item) => item.id === workspace.linkedTeamWorkspaceId);
           if (linked) onSelectWorkspace(linked);
@@ -212,27 +177,27 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       } : null,
       isSharedWorkspace && lifecycleStatus === 'active' && workspace.canPublish && (hasChangesToPublish || isWithdrawn) && onPublishWorkspace ? {
         label: 'Lock current changes',
-        icon: <Publish fontSize="small" />,
+        icon: <Publish size={16} />,
         onClick: () => onPublishWorkspace(workspace),
       } : null,
       isSharedWorkspace && lifecycleStatus !== 'trashed' && hasPublishedVersions && onHistoryWorkspace ? {
         label: `View locked versions`,
-        icon: <History fontSize="small" />,
+        icon: <History size={16} />,
         onClick: () => onHistoryWorkspace(workspace),
       } : null,
       isSharedWorkspace && lifecycleStatus === 'active' && workspace.canPublish && workspace.currentPublishedVersionNumber != null && onWithdrawWorkspace ? {
         label: `Withdraw current lock`,
-        icon: <Unpublished fontSize="small" />,
+        icon: <Unpublished size={16} />,
         onClick: () => onWithdrawWorkspace(workspace),
       } : null,
       isSharedWorkspace && lifecycleStatus === 'active' && isOwner && onManageTeamAccess ? {
         label: `Manage access`,
-        icon: <ManageAccounts fontSize="small" />,
+        icon: <ManageAccounts size={16} />,
         onClick: () => onManageTeamAccess(workspace),
       } : null,
       !isSharedWorkspace && !onLifecycleWorkspace ? {
         label: `Delete workspace`,
-        icon: <Delete fontSize="small" />,
+        icon: <Delete size={16} />,
         onClick: () => onDeleteWorkspace(workspace.id),
       } : null,
       ...lifecycleActions,
@@ -248,332 +213,29 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     const sharedDetails = getSharedWorkspaceStatusDetails(workspace);
     const draftStatusLabel = getPrivateWorkspaceStatusLabel(workspace);
     const ownerOnlyStatusLabel = 'Unshared · Only you can access it';
-    const draftStatusColor = canSyncDraft
-      ? 'warning.main'
-      : canReviewDraftChanges ? 'info.main' : 'text.secondary';
-    const statusColor = lifecycleStatus === 'trashed'
-      ? 'error.main'
-      : lifecycleStatus === 'unshared'
-        ? 'warning.main'
-        : isWithdrawn
-          ? 'text.secondary'
-          : workspace.currentPublishedVersionNumber == null
-            ? 'text.secondary'
-            : hasChangesToPublish
-              ? 'warning.main'
-              : 'success.main';
-    const isActionMenuOpen = actionWorkspaceId === workspace.id;
-
-    return (
-      <Box
-        key={workspace.id}
-        sx={{
-          position: 'relative',
-          borderRadius: 2,
-          overflow: 'hidden',
-          mb: 1,
-          border: (theme) => isSelected ? `1px solid ${theme.palette.divider}` : '1px solid transparent',
-          backgroundColor: (theme) => isSelected
-            ? theme.palette.mode === 'light' ? 'rgba(37, 99, 235, 0.09)' : 'rgba(96, 165, 250, 0.14)'
-            : 'transparent',
-          '&:hover': {
-            borderColor: (theme) => theme.palette.divider,
-            backgroundColor: (theme) => isSelected
-              ? undefined
-              : theme.palette.mode === 'light' ? 'rgba(15, 23, 42, 0.04)' : 'rgba(148, 163, 184, 0.08)',
-          },
-          '&:hover .workspace-list-more, &:focus-within .workspace-list-more': {
-            opacity: 1,
-            pointerEvents: 'auto',
-          },
-        }}
-      >
-        <ListItemButton
-          selected={isSelected}
-          disabled={lifecycleStatus === 'trashed'}
-          onClick={() => {
-            if (lifecycleStatus !== 'trashed') onSelectWorkspace(workspace);
-          }}
-          sx={{
-            minWidth: 0,
-            minHeight: 52,
-            py: 1,
-            pl: isPrivateSectionItem ? 1.5 : 0.5,
-            pr: canRestore ? 11 : menuActions.length ? 6 : 1.5,
-            borderRadius: 2,
-            backgroundColor: 'transparent',
-            '&.Mui-selected, &.Mui-selected:hover, &:hover': { backgroundColor: 'transparent' },
-            '&.Mui-disabled': { opacity: 1 },
-          }}
-        >
-          <ListItemText
-            sx={{ minWidth: 0 }}
-            primary={workspace.name}
-            primaryTypographyProps={{
-              sx: {
-                display: '-webkit-box',
-                overflow: 'hidden',
-                WebkitBoxOrient: 'vertical',
-                WebkitLineClamp: 2,
-                overflowWrap: 'anywhere',
-                fontWeight: 600,
-                fontSize: '0.92rem',
-                lineHeight: 1.2,
-                mb: 0.25,
-              },
-            }}
-            secondaryTypographyProps={{ component: 'span' }}
-            secondary={isOwnerOnlyUnshared ? (
-              <Typography component="span" sx={{ fontSize: '0.76rem', lineHeight: 1.25, color: 'warning.main' }}>
-                {ownerOnlyStatusLabel}
-              </Typography>
-            ) : isPrivate ? (
-              workspace.linkedTeamWorkspaceId ? (
-                <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flexWrap: 'wrap' }}>
-                  <Typography
-                    component="span"
-                    sx={{
-                      fontSize: '0.76rem',
-                      lineHeight: 1.25,
-                      color: draftStatusColor,
-                    }}
-                  >
-                    {draftStatusLabel}
-                  </Typography>
-                  {canSyncDraft && onSyncDraftWorkspace ? (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      color="warning"
-                      startIcon={<Sync sx={{ fontSize: 14 }} />}
-                      disabled={isSyncingDraft}
-                      aria-label={`${DRAFT_SYNC_ACTION_LABEL} for ${workspace.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onSyncDraftWorkspace(workspace);
-                      }}
-                      sx={{
-                        minWidth: 0,
-                        px: 0.9,
-                        py: 0,
-                        fontSize: '0.7rem',
-                        lineHeight: 1.6,
-                        textTransform: 'none',
-                        '& .MuiButton-startIcon': { mr: 0.4 },
-                      }}
-                    >
-                      {isSyncingDraft ? 'Syncing…' : DRAFT_SYNC_ACTION_LABEL}
-                    </Button>
-                  ) : null}
-                  {canReviewDraftChanges && onReviewDraftChanges ? (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      color="info"
-                      startIcon={<Difference sx={{ fontSize: 14 }} />}
-                      aria-label={`${DRAFT_REVIEW_CHANGES_ACTION_LABEL} for ${workspace.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onReviewDraftChanges(workspace);
-                      }}
-                      sx={{
-                        minWidth: 0,
-                        px: 0.9,
-                        py: 0,
-                        fontSize: '0.7rem',
-                        lineHeight: 1.6,
-                        textTransform: 'none',
-                        '& .MuiButton-startIcon': { mr: 0.4 },
-                      }}
-                    >
-                      {DRAFT_REVIEW_CHANGES_ACTION_LABEL}
-                    </Button>
-                  ) : null}
-                </Box>
-              ) : draftStatusLabel
-            ) : (
-              <Box component="span" sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.7, minWidth: 0 }}>
-                <Box
-                  component="span"
-                  aria-label={publicationLabel}
-                  sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: statusColor, flexShrink: 0, mt: '0.35em' }}
-                />
-                <Typography
-                  component="span"
-                  sx={{
-                    display: '-webkit-box',
-                    overflow: 'hidden',
-                    WebkitBoxOrient: 'vertical',
-                    WebkitLineClamp: 2,
-                    overflowWrap: 'anywhere',
-                    minWidth: 0,
-                    fontSize: '0.76rem',
-                    lineHeight: 1.25,
-                    color: hasChangesToPublish || isWithdrawn ? statusColor : 'text.secondary',
-                  }}
-                >
-                  {sharedDetails}
-                </Typography>
-              </Box>
-            )}
-          />
-        </ListItemButton>
-        {canRestore && onLifecycleWorkspace ? (
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<RestoreFromTrash sx={{ fontSize: 14 }} />}
-            disabled={isLifecycleBusy}
-            aria-label={`Restore ${workspace.name}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onLifecycleWorkspace(workspace, 'restore');
-            }}
-            sx={{
-              position: 'absolute',
-              top: '50%',
-              right: 6,
-              transform: 'translateY(-50%)',
-              minWidth: 0,
-              px: 0.9,
-              py: 0.25,
-              fontSize: '0.7rem',
-              lineHeight: 1.5,
-              textTransform: 'none',
-              transition: 'transform 140ms cubic-bezier(0.23, 1, 0.32, 1)',
-              '&:active': { transform: 'translateY(-50%) scale(0.97)' },
-              '& .MuiButton-startIcon': { mr: 0.4 },
-            }}
-          >
-            {isLifecycleBusy ? 'Restoring…' : 'Restore'}
-          </Button>
-        ) : null}
-        {menuActions.length ? (
-          <Box
-            className="workspace-list-more"
-            sx={{
-              position: 'absolute',
-              top: 26,
-              right: 6,
-              transform: 'translateY(-50%)',
-              opacity: 0,
-              pointerEvents: 'none',
-              '@media (hover: none)': { opacity: 1, pointerEvents: 'auto' },
-            }}
-          >
-            <Tooltip title="More workspace actions">
-              <IconButton
-                size="small"
-                aria-label={`More actions for ${workspace.name}`}
-                aria-haspopup="menu"
-                aria-expanded={isActionMenuOpen ? 'true' : undefined}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setActionAnchorEl(event.currentTarget);
-                  setActionWorkspaceId(workspace.id);
-                }}
-                sx={{
-                  width: 32,
-                  height: 32,
-                  backgroundColor: (theme) => theme.palette.mode === 'light'
-                    ? 'rgba(248, 250, 252, 0.94)'
-                    : 'rgba(15, 23, 42, 0.94)',
-                  '&:hover': {
-                    backgroundColor: (theme) => theme.palette.mode === 'light'
-                      ? 'rgba(241, 245, 249, 1)'
-                      : 'rgba(30, 41, 59, 1)',
-                  },
-                }}
-              >
-                <MoreHoriz fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </Box>
-        ) : null}
-        <Menu
-          anchorEl={actionAnchorEl}
-          open={isActionMenuOpen}
-          onClose={() => {
-            setActionAnchorEl(null);
-            setActionWorkspaceId(null);
-          }}
-          onClick={(event) => event.stopPropagation()}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-          slotProps={{ paper: { sx: { minWidth: 220 } } }}
-        >
-          {menuActions.map((action) => (
-            <MenuItem
-              key={action.label}
-              disabled={action.disabled}
-              onClick={() => {
-                setActionAnchorEl(null);
-                setActionWorkspaceId(null);
-                action.onClick();
-              }}
-              sx={{ gap: 1 }}
-            >
-              <ListItemIcon sx={{ minWidth: 28 }}>{action.icon}</ListItemIcon>
-              <Typography variant="body2">{action.label}</Typography>
-            </MenuItem>
-          ))}
-        </Menu>
-      </Box>
-    );
+    const status = isOwnerOnlyUnshared ? ownerOnlyStatusLabel : isPrivate ? draftStatusLabel : sharedDetails;
+    return <div key={workspace.id} className="workspace-row" data-selected={isSelected}>
+      <button type="button" className="workspace-row-select" aria-current={isSelected ? 'page' : undefined} disabled={lifecycleStatus === 'trashed'} onClick={() => onSelectWorkspace(workspace)}>
+        <span className="workspace-row-title">{workspace.name}</span>
+        <span className="workspace-row-status">{!isPrivate && <span className="workspace-status-dot" aria-label={publicationLabel} />}{status}</span>
+      </button>
+      {canRestore && onLifecycleWorkspace && <Button label={isLifecycleBusy ? 'Restoring…' : 'Restore'} aria-label={`Restore ${workspace.name}`} size="sm" variant="ghost" isDisabled={isLifecycleBusy} onClick={() => onLifecycleWorkspace(workspace, 'restore')} />}
+      {!!menuActions.length && <div className="workspace-list-more"><DropdownMenu hasChevron={false} button={{ label: `More actions for ${workspace.name}`, icon: <MoreHoriz size={17} />, isIconOnly: true, variant: 'ghost', size: 'sm' }} menuWidth={230} items={menuActions.map((action) => ({ label: action.label, icon: action.icon, isDisabled: action.disabled, onClick: action.onClick }))} /></div>}
+      {isPrivate && canSyncDraft && onSyncDraftWorkspace && <div className="workspace-inline-action"><Button label={isSyncingDraft ? 'Syncing…' : DRAFT_SYNC_ACTION_LABEL} aria-label={`${DRAFT_SYNC_ACTION_LABEL} for ${workspace.name}`} icon={<Sync size={14} />} size="sm" variant="ghost" isDisabled={isSyncingDraft} onClick={() => onSyncDraftWorkspace(workspace)} /></div>}
+    </div>;
   };
 
-  const renderSection = (
-    key: 'private' | 'shared' | 'trash',
-    title: string,
-    icon: React.ReactNode,
-    items: Workspace[],
-    emptyLabel: string,
-  ) => (
-    <Box sx={{ mb: 1.5 }}>
-      <ListItemButton
-        onClick={() => setSectionExpanded(key, !expanded[key])}
-        aria-expanded={expanded[key]}
-        sx={{ borderRadius: 1.5, px: 0.5, py: 0.5, mb: 0.5, minWidth: 0 }}
-      >
-        {icon}
-        <Typography
-          variant="overline"
-          sx={{
-            minWidth: 0,
-            ml: 0.75,
-            flex: 1,
-            fontWeight: 700,
-            lineHeight: 1.25,
-            whiteSpace: 'normal',
-            overflowWrap: 'anywhere',
-          }}
-        >
-          {title}
-        </Typography>
-        <Chip label={items.length} size="small" sx={{ height: 18, fontSize: '0.68rem', mr: 0.5 }} />
-        {expanded[key] ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
-      </ListItemButton>
-      <Collapse in={expanded[key]} timeout="auto" unmountOnExit>
-        {items.length ? items.map(renderWorkspace) : (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 1, py: 1 }}>
-            {emptyLabel}
-          </Typography>
-        )}
-      </Collapse>
-    </Box>
-  );
-
-  if (flat) return <List disablePadding>{workspaces.map(renderWorkspace)}</List>;
-
-  return (
-    <List disablePadding>
-      {renderSection('private', 'Private workspaces', <Lock sx={{ fontSize: 16 }} />, privateWorkspaces, 'No private workspaces')}
-      {renderSection('shared', 'Shared workspaces', <Groups sx={{ fontSize: 16 }} />, sharedWorkspaces, 'No shared workspaces')}
-      {restorableWorkspaces.length
-        ? renderSection('trash', 'Trash', <DeleteOutline sx={{ fontSize: 16 }} />, restorableWorkspaces, 'Trash is empty')
-        : null}
-    </List>
-  );
+  const renderSection = (key: 'private' | 'shared' | 'trash', title: string, icon: React.ReactNode, items: Workspace[], emptyLabel: string) => <section>
+    <button type="button" className="workspace-section-toggle" aria-expanded={expanded[key]} onClick={() => setSectionExpanded(key, !expanded[key])}>
+      {icon}<span>{title}</span><span>{items.length}</span>{expanded[key] ? <ExpandLess size={14} /> : <ExpandMore size={14} />}
+    </button>
+    {expanded[key] && (items.length ? items.map(renderWorkspace) : <p className="workspace-empty">{emptyLabel}</p>)}
+  </section>;
+  if (flat) return <div className="workspace-list">{workspaces.map(renderWorkspace)}</div>;
+  return <div className="workspace-list">
+    {renderSection('private', 'Private workspaces', <Lock size={16} />, privateWorkspaces, 'No private workspaces')}
+    {renderSection('shared', 'Shared workspaces', <Groups size={16} />, sharedWorkspaces, 'No shared workspaces')}
+    {!!restorableWorkspaces.length && renderSection('trash', 'Trash', <DeleteOutline size={16} />, restorableWorkspaces, 'Trash is empty')}
+  </div>;
 };
-
 export default WorkspaceList;

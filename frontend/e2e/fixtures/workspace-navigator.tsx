@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ThemeProvider, createTheme } from '@mui/material';
+import { AppThemeRoot } from '../../src/AppThemeRoot';
+import '../../src/index.css';
 import CollapsibleDrawer from '../../src/components/CollapsibleDrawer';
 import type { Workspace } from '../../src/types';
 const initial = [
@@ -13,12 +14,12 @@ export function Fixture() {
   const [selected, setSelected] = useState<Workspace | null>(null);
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(true);
-  return <ThemeProvider theme={createTheme()}>
+  return <AppThemeRoot>
     <button style={{ marginLeft: 300 }} onClick={() => setOpen(true)}>Open navigation</button>
     <p style={{ marginLeft: 300 }} aria-label="Current workspace">{selected?.name}</p>
     <CollapsibleDrawer open={open} handleDrawerClose={() => setOpen(false)} storageKey="test.navigator" workspaces={workspaces} selectedWorkspace={selected} workspaceSearchQuery={search} setWorkspaceSearchQuery={setSearch}
       onRefresh={async () => { const response = await fetch('/fixture-workspaces'); setWorkspaces(await response.json()); }}
       onSelectWorkspace={setSelected} handleDeleteWorkspace={() => {}} onLifecycleWorkspace={() => {}} onCreateWorkspace={() => {}} onOpenSettings={() => {}} colorMode="light" onToggleColorMode={() => {}} />
-  </ThemeProvider>;
+  </AppThemeRoot>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);

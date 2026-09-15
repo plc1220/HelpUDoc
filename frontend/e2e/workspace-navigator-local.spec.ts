@@ -12,7 +12,7 @@ test('workspace switching, pin persistence and owned trash cleanup', async ({ pa
   await expect(page.getByText('Pinned', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close workspace menu' }).click();
   await page.keyboard.press('Control+k');
-  await page.getByRole('combobox').fill('Beta');
+  await page.getByRole('dialog', { name: 'Switch workspace', exact: true }).getByRole('textbox', { name: 'Search workspaces', exact: true }).fill('Beta');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect(page.getByLabel('Current workspace')).toHaveText('Beta research');
@@ -32,8 +32,8 @@ test('workspace switching, pin persistence and owned trash cleanup', async ({ pa
 
 test('trash errors retain the workspace and allow a successful restore', async ({ page }) => {
   await page.goto('/e2e/fixtures/workspace-navigator.html');
-  await page.getByRole('button', { name: 'All workspaces', exact: true }).click();
-  await page.getByRole('button', { name: 'Shared', exact: true }).click();
+  await page.getByRole('radio', { name: 'All workspaces', exact: true }).click();
+  await page.getByRole('radio', { name: 'Shared', exact: true }).click();
   await expect(page.getByRole('button', { name: /^Beta research/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Alpha plan Private', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Trash (1)' }).click();
@@ -47,4 +47,17 @@ test('trash errors retain the workspace and allow a successful restore', async (
   await page.route('**/fixture-workspaces', async (route) => route.fulfill({ json: [{ ...old, status: 'active' }] }));
   await page.getByRole('button', { name: 'Restore', exact: true }).click();
   await expect(page.getByText('Trash is empty.')).toBeVisible();
+});
+
+test('workspace pane has one search and no duplicate switcher', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('helpudoc-color-mode', 'dark'));
+  await page.goto('/e2e/fixtures/workspace-navigator.html');
+  const pane = page.getByRole('complementary', { name: 'Workspaces', exact: true });
+  await expect(pane.getByRole('button', { name: 'Switch workspace', exact: true })).toHaveCount(0);
+  await expect(pane.getByRole('textbox', { name: 'Search workspaces', exact: true })).toHaveCount(1);
+  await pane.getByRole('textbox', { name: 'Search workspaces', exact: true }).fill('Beta');
+  await expect(pane.getByRole('button', { name: /^Beta research/ })).toBeVisible();
+  await expect(pane.getByRole('button', { name: 'Alpha plan Private', exact: true })).toHaveCount(0);
+  await expect(pane.locator('[class*="Mui"]')).toHaveCount(0);
+  await page.screenshot({ path: '/tmp/helpudoc-workspace-pane-dark.png' });
 });

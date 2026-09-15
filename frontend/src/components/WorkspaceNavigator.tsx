@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { ComponentProps } from 'react';
-import { Alert, Autocomplete, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, List, ListItem, ListItemText, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
-import { DeleteOutline, UnfoldMore } from '@mui/icons-material';
+import { createPortal } from 'react-dom';
+import { Button } from '@astryxdesign/core/Button';
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Trash2, Search } from 'lucide-react';
+import './WorkspaceNavigator.css';
 import WorkspaceList from './WorkspaceList';
 import { permanentlyDeleteWorkspace, restoreWorkspace } from '../services/workspaceApi';
 import type { Workspace } from '../types';
@@ -23,6 +29,7 @@ export default function WorkspaceNavigator({ storageKey, search, onRefresh, ...p
   const [view, setView] = useState('recent');
   const [filter, setFilter] = useState('all');
   const [switcher, setSwitcher] = useState(false);
+  const [switchSearch, setSwitchSearch] = useState('');
   const [trashOpen, setTrashOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [confirmIds, setConfirmIds] = useState<string[]>([]);
@@ -31,7 +38,7 @@ export default function WorkspaceNavigator({ storageKey, search, onRefresh, ...p
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault(); setSwitcher((value) => !value);
+        event.preventDefault(); setSwitchSearch(''); setSwitcher((value) => !value);
       }
     };
     window.addEventListener('keydown', handler);
@@ -68,59 +75,63 @@ export default function WorkspaceNavigator({ storageKey, search, onRefresh, ...p
     try { await onRefresh(); } catch { failures.push('Could not refresh workspaces. Please reopen Trash.'); }
     setSelected([]); setConfirmIds([]); setBusy(false); setError(failures.join('\n'));
   };
-  return <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-    <Button onClick={() => setSwitcher(true)} endIcon={<UnfoldMore />} sx={{ justifyContent: 'space-between', textTransform: 'none', mb: 1 }} aria-label="Switch workspace">
-      <Typography noWrap sx={{ minWidth: 0, textAlign: 'left' }}>{selectedWorkspace?.name || 'Switch workspace'}</Typography>
-      <Typography variant="caption" sx={{ whiteSpace: 'nowrap', ml: 1 }}>{/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl+K'}</Typography>
-    </Button>
-    <ToggleButtonGroup exclusive size="small" value={view} onChange={(_, value) => value && setView(value)} fullWidth sx={{ '& .MuiToggleButton-root': { whiteSpace: 'nowrap', fontSize: 12, textTransform: 'none' } }}>
-      <ToggleButton value="recent">Recent</ToggleButton><ToggleButton value="all">All workspaces</ToggleButton>
-    </ToggleButtonGroup>
-    {(view === 'all' || search) && <ToggleButtonGroup exclusive size="small" value={filter} onChange={(_, value) => value && setFilter(value)} fullWidth sx={{ my: 1 }}>
-      <ToggleButton value="all">All</ToggleButton><ToggleButton value="private">Private</ToggleButton><ToggleButton value="shared">Shared</ToggleButton>
-    </ToggleButtonGroup>}
+  const commandMatches = ordered.filter((workspace) => workspace.name.toLowerCase().includes(switchSearch.toLowerCase()));
+  return <div className="workspace-navigator">
+    <SegmentedControl value={view} onChange={setView} label="Workspace view" layout="fill" size="sm">
+      <SegmentedControlItem value="recent" label="Recent" /><SegmentedControlItem value="all" label="All workspaces" />
+    </SegmentedControl>
+    {(view === 'all' || search) && <SegmentedControl value={filter} onChange={setFilter} label="Workspace visibility" layout="fill" size="sm">
+      <SegmentedControlItem value="all" label="All" /><SegmentedControlItem value="private" label="Private" /><SegmentedControlItem value="shared" label="Shared" />
+    </SegmentedControl>}
     {view === 'recent' && !search ? <>
-      {pinned.some((id) => active.some((w) => w.id === id)) && <><Typography variant="overline">Pinned</Typography>{renderList(ordered.filter((w) => pinned.includes(w.id)))}</>}
-      <Typography variant="overline">Recent</Typography>{renderList(ordered.filter((w) => !pinned.includes(w.id)).slice(0, 8))}
+      {pinned.some((id) => active.some((w) => w.id === id)) && <><h3 className="workspace-section-label">Pinned</h3>{renderList(ordered.filter((w) => pinned.includes(w.id)))}</>}
+      <h3 className="workspace-section-label">Recent</h3>{renderList(ordered.filter((w) => !pinned.includes(w.id)).slice(0, 8))}
     </> : renderList(matching)}
-    {!active.length && <Typography color="text.secondary" sx={{ py: 2 }}>Create a workspace to get started.</Typography>}
-    {(view === 'all' || search) && !matching.length && <Typography sx={{ py: 2 }}>No matching workspaces.</Typography>}
-    <Button startIcon={<DeleteOutline />} onClick={() => { setTrashOpen(true); setError(''); }} sx={{ mt: 'auto', justifyContent: 'flex-start' }}>Trash ({trash.length})</Button>
-    <Dialog open={switcher} onClose={() => setSwitcher(false)} fullWidth maxWidth="sm" aria-labelledby="workspace-switch-title">
-      <DialogTitle id="workspace-switch-title">Switch workspace</DialogTitle>
-      <DialogContent sx={{ minHeight: 320 }}>
-        <Autocomplete options={ordered} getOptionLabel={(workspace) => workspace.name} getOptionKey={(workspace) => workspace.id} autoHighlight openOnFocus
-          onChange={(_, workspace) => { if (workspace) { onSelectWorkspace(workspace); setSwitcher(false); } }}
-          renderOption={(optionProps, workspace) => <li {...optionProps} key={workspace.id}><ListItemText primary={workspace.name} secondary={`${pinned.includes(workspace.id) ? 'Pinned · ' : ''}${workspace.visibility === 'team' && workspace.status !== 'unshared' ? 'Shared' : 'Private'}`} /></li>}
-          renderInput={(params) => <TextField {...params} autoFocus label="Search workspaces" margin="dense" />} />
-      </DialogContent><DialogActions><Button onClick={() => setSwitcher(false)}>Close</Button></DialogActions>
-    </Dialog>
-    <Dialog open={trashOpen} onClose={() => { if (!busy) { setTrashOpen(false); setSelected([]); } }} fullWidth maxWidth="md" aria-labelledby="workspace-trash-title">
-      <DialogTitle id="workspace-trash-title">Trash ({trash.length})</DialogTitle>
-      <DialogContent>
-        <Typography color="text.secondary">Workspaces are kept for 30 days. Restored shared workspaces are private until you re-share them.</Typography>
-        {error && <Alert severity="error" sx={{ my: 1, whiteSpace: 'pre-line' }}>{error}</Alert>}
-        {!!trash.length && <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-          <Checkbox checked={trash.length > 0 && trash.every((w) => selected.includes(w.id))} indeterminate={selected.length > 0 && selected.length < trash.length} disabled={busy} inputProps={{ 'aria-label': 'Select all trashed workspaces' }} onChange={(_, checked) => setSelected(checked ? trash.map((w) => w.id) : [])} />
-          <Button disabled={!selected.length || busy} onClick={() => void run(selected, false)}>Restore selected</Button>
-          <Button color="error" disabled={!selected.length || busy} onClick={() => setConfirmIds(selected)}>Delete selected</Button>
-        </Stack>}
-        <List>{trash.map((workspace) => <ListItem key={workspace.id} disableGutters sx={{ gap: 1, flexWrap: 'wrap' }}>
-          <Checkbox checked={selected.includes(workspace.id)} disabled={busy} inputProps={{ 'aria-label': `Select ${workspace.name}` }} onChange={(_, checked) => setSelected((ids) => checked ? [...ids, workspace.id] : ids.filter((id) => id !== workspace.id))} />
-          <ListItemText primary={workspace.name} secondary={`Deleted ${workspace.trashedAt ? new Date(workspace.trashedAt).toLocaleDateString() : 'recently'}${workspace.purgeAfter ? ` · ${Math.max(0, Math.ceil((new Date(workspace.purgeAfter).getTime() - Date.now()) / 86400000))} days remaining` : ''}`} sx={{ minWidth: 180 }} />
-          <Button disabled={busy} onClick={() => void run([workspace.id], false)}>Restore</Button>
-          <Button color="error" disabled={busy} onClick={() => setConfirmIds([workspace.id])}>Delete permanently</Button>
-        </ListItem>)}</List>
-        {!trash.length && <Typography sx={{ py: 4 }}>Trash is empty.</Typography>}
-      </DialogContent>
-      <DialogActions><Button color="error" disabled={!trash.length || busy} onClick={() => setConfirmIds(trash.map((w) => w.id))}>Empty trash</Button><Button disabled={busy} onClick={() => setTrashOpen(false)}>Close</Button></DialogActions>
-    </Dialog>
-    <Dialog open={confirmIds.length > 0} onClose={() => !busy && setConfirmIds([])} aria-labelledby="permanent-delete-title">
-      <DialogTitle id="permanent-delete-title">Permanently delete {confirmIds.length} workspace{confirmIds.length === 1 ? '' : 's'}?</DialogTitle>
-      <DialogContent><Typography>This removes their files, conversations, and version history. This cannot be undone.</Typography>
-        <List dense>{confirmIds.map((id) => <ListItem key={id}><ListItemText primary={workspaces.find((w) => w.id === id)?.name || id} /></ListItem>)}</List>
-      </DialogContent>
-      <DialogActions><Button disabled={busy} onClick={() => setConfirmIds([])}>Cancel</Button><Button color="error" variant="contained" disabled={busy} onClick={() => void run(confirmIds, true)}>{busy ? 'Deleting…' : 'Delete permanently'}</Button></DialogActions>
-    </Dialog>
-  </Box>;
+    {!active.length && <p className="workspace-empty">Create a workspace to get started.</p>}
+    {(view === 'all' || search) && !matching.length && <p className="workspace-empty">No matching workspaces.</p>}
+    <div className="workspace-trash-link"><Button label={`Trash (${trash.length})`} icon={<Trash2 size={16} />} variant="ghost" size="sm" onClick={() => { setTrashOpen(true); setError(''); }} /></div>
+    {createPortal(<>
+      <Dialog isOpen={switcher} onOpenChange={setSwitcher} width="min(480px, calc(100vw - 32px))" aria-label="Switch workspace">
+        <DialogHeader title="Switch workspace" onOpenChange={setSwitcher} />
+        <div className="workspace-dialog-content">
+          <TextInput label="Search workspaces" isLabelHidden placeholder="Search workspaces" startIcon={<Search size={16} />} value={switchSearch} onChange={setSwitchSearch} hasAutoFocus onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') { event.preventDefault(); document.querySelector<HTMLButtonElement>('.workspace-command-result')?.focus(); }
+            if (event.key === 'Enter' && commandMatches[0]) { onSelectWorkspace(commandMatches[0]); setSwitcher(false); }
+          }} />
+          <div className="workspace-command-list">{commandMatches.map((workspace) => <button className="workspace-command-result" type="button" key={workspace.id} onClick={() => { onSelectWorkspace(workspace); setSwitcher(false); }}>
+            <span>{workspace.name}</span><small>{pinned.includes(workspace.id) ? 'Pinned · ' : ''}{workspace.visibility === 'team' && workspace.status !== 'unshared' ? 'Shared' : 'Private'}</small>
+          </button>)}</div>
+          {!commandMatches.length && <p className="workspace-empty">No matching workspaces.</p>}
+        </div>
+        <div className="workspace-dialog-actions"><Button label="Close" variant="ghost" onClick={() => setSwitcher(false)} /></div>
+      </Dialog>
+      <Dialog isOpen={trashOpen} onOpenChange={(open) => { if (!busy) { setTrashOpen(open); setSelected([]); } }} width="min(640px, calc(100vw - 32px))" aria-label="Workspace trash">
+        <DialogHeader title={`Trash (${trash.length})`} />
+        <div className="workspace-dialog-content">
+          <p className="workspace-empty">Workspaces are kept for 30 days. Restored shared workspaces are private until you re-share them.</p>
+          {error && <p className="workspace-error" role="alert">{error}</p>}
+          {!!trash.length && <div className="workspace-trash-actions">
+            <CheckboxInput label="Select all trashed workspaces" isLabelHidden value={trash.every((w) => selected.includes(w.id)) ? true : selected.length ? 'indeterminate' : false} isDisabled={busy} onChange={(checked) => setSelected(checked ? trash.map((w) => w.id) : [])} />
+            <Button label="Restore selected" variant="ghost" size="sm" isDisabled={!selected.length || busy} onClick={() => void run(selected, false)} />
+            <Button label="Delete selected" variant="ghost" size="sm" isDisabled={!selected.length || busy} onClick={() => setConfirmIds(selected)} />
+          </div>}
+          {trash.map((workspace) => <div className="workspace-trash-row" key={workspace.id}>
+            <CheckboxInput label={`Select ${workspace.name}`} isLabelHidden value={selected.includes(workspace.id)} isDisabled={busy} onChange={(checked) => setSelected((ids) => checked ? [...ids, workspace.id] : ids.filter((id) => id !== workspace.id))} />
+            <div className="workspace-trash-copy"><strong>{workspace.name}</strong><small>Deleted {workspace.trashedAt ? new Date(workspace.trashedAt).toLocaleDateString() : 'recently'}{workspace.purgeAfter ? ` · ${Math.max(0, Math.ceil((new Date(workspace.purgeAfter).getTime() - Date.now()) / 86400000))} days remaining` : ''}</small></div>
+            <Button label="Restore" variant="ghost" size="sm" isDisabled={busy} onClick={() => void run([workspace.id], false)} />
+            <Button label="Delete permanently" variant="ghost" size="sm" isDisabled={busy} onClick={() => setConfirmIds([workspace.id])} />
+          </div>)}
+          {!trash.length && <p className="workspace-empty">Trash is empty.</p>}
+        </div>
+        <div className="workspace-dialog-actions"><Button label="Empty trash" variant="ghost" isDisabled={!trash.length || busy} onClick={() => setConfirmIds(trash.map((w) => w.id))} /><Button label="Close" variant="secondary" isDisabled={busy} onClick={() => setTrashOpen(false)} /></div>
+      </Dialog>
+      <Dialog isOpen={confirmIds.length > 0} onOpenChange={(open) => { if (!open && !busy) setConfirmIds([]); }} purpose="form" width="min(480px, calc(100vw - 32px))" aria-label="Confirm permanent deletion">
+        <DialogHeader title={`Permanently delete ${confirmIds.length} workspace${confirmIds.length === 1 ? '' : 's'}?`} />
+        <div className="workspace-dialog-content"><p>This removes their files, conversations, and version history. This cannot be undone.</p>
+          <ul>{confirmIds.map((id) => <li key={id}>{workspaces.find((w) => w.id === id)?.name || id}</li>)}</ul>
+        </div>
+        <div className="workspace-dialog-actions"><Button label="Cancel" variant="ghost" isDisabled={busy} onClick={() => setConfirmIds([])} /><Button label={busy ? 'Deleting…' : 'Delete permanently'} variant="destructive" isDisabled={busy} onClick={() => void run(confirmIds, true)} /></div>
+      </Dialog>
+    </>, document.body)}
+  </div>;
 }

@@ -1,7 +1,9 @@
 import NotificationCenter from './NotificationCenter';
 import React from 'react';
-import { Badge, Drawer, Box, IconButton, TextField } from '@mui/material';
-import { Add, CalendarMonth, ChevronLeft, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Plus, CalendarDays, ChevronLeft, Settings, Sun, Moon, LogOut, Search } from 'lucide-react';
+import './WorkspaceNavigator.css';
 import WorkspaceNavigator from './WorkspaceNavigator';
 import type { Workspace } from '../types';
 import type { PaletteMode } from '@mui/material';
@@ -71,188 +73,31 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
     onOpenSettings();
   };
 
-  return (
-    <Drawer
-      sx={{
-        width: drawerWidth,
-        flexShrink: 0,
-        '& .MuiDrawer-paper': {
-          width: drawerWidth,
-          boxSizing: 'border-box',
-          backgroundColor: (theme) => theme.palette.background.default,
-          borderRight: (theme) => `1px solid ${theme.palette.divider}`,
-        },
-      }}
-      variant="persistent"
-      anchor="left"
-      open={open}
-    >
-      <Box
-        sx={{
-          display: 'flex',
-          flexDirection: 'column',
-          height: '100%',
-          minHeight: 0,
-          overflow: 'hidden',
-          p: 2.5,
-          gap: 2,
-        }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <IconButton
-              onClick={() => {
-                void onCreateWorkspace();
-              }}
-              size="small"
-              title="New workspace"
-              aria-label="Create workspace"
-              sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
-            >
-              <Add fontSize="small" />
-            </IconButton>
-            {onOpenSchedules ? (
-              <IconButton
-                type="button"
-                onClick={onOpenSchedules}
-                size="small"
-                title={scheduleCount ? `Schedules (${scheduleCount})` : 'Schedules'}
-                aria-label={scheduleCount ? `Open schedules, ${scheduleCount} scheduled jobs` : 'Open schedules'}
-                disabled={!selectedWorkspace || selectedWorkspace.visibility === 'team'}
-                sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
-              >
-                <Badge
-                  badgeContent={scheduleCount || undefined}
-                  color="primary"
-                  max={99}
-                  sx={{
-                    '& .MuiBadge-badge': {
-                      minWidth: 16,
-                      height: 16,
-                      fontSize: '0.62rem',
-                    },
-                  }}
-                >
-                  <CalendarMonth fontSize="small" />
-                </Badge>
-              </IconButton>
-            ) : null}
-          </Box>
-          <IconButton
-            onClick={handleDrawerClose}
-            size="small"
-            title="Close workspace menu"
-            aria-label="Close workspace menu"
-            sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
-          >
-            <ChevronLeft fontSize="small" />
-          </IconButton>
-        </Box>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, flexShrink: 0 }}>
-          <TextField
-            placeholder="Search workspaces"
-            variant="outlined"
-            fullWidth
-            size="small"
-            value={workspaceSearchQuery}
-            onChange={(e) => setWorkspaceSearchQuery(e.target.value)}
-            InputProps={{
-              sx: {
-                borderRadius: 2,
-                backgroundColor: (theme) => theme.palette.background.paper,
-              },
-            }}
-          />
-        </Box>
-
-        <Box
-          sx={{
-            flex: '1 1 0%',
-            display: 'flex',
-            flexDirection: 'column',
-            minHeight: 0,
-            overflow: 'hidden',
-          }}
-        >
-          <Box
-            sx={{
-              flex: '1 1 auto',
-              minHeight: 0,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              scrollbarGutter: 'stable',
-              pr: 0.25,
-              pb: 1,
-            }}
-          >
-            <WorkspaceNavigator
-              key={storageKey}
-              storageKey={storageKey}
-              search={workspaceSearchQuery}
-              onRefresh={onRefresh}
-              workspaces={workspaces}
-              selectedWorkspace={selectedWorkspace}
-              onSelectWorkspace={onSelectWorkspace}
-              onDeleteWorkspace={handleDeleteWorkspace}
-              onPublishWorkspace={onPublishWorkspace}
-              onHistoryWorkspace={onHistoryWorkspace}
-              onWithdrawWorkspace={onWithdrawWorkspace}
-              onManageTeamAccess={onManageTeamAccess}
-              onSyncDraftWorkspace={onSyncDraftWorkspace}
-              onReviewDraftChanges={onReviewDraftChanges}
-              onLifecycleWorkspace={onLifecycleWorkspace}
-              syncingDraftWorkspaceId={syncingDraftWorkspaceId}
-              lifecycleBusyWorkspaceId={lifecycleBusyWorkspaceId}
-            />
-          </Box>
-          <Box
-            sx={{
-              flexShrink: 0,
-              borderTop: (theme) => `1px solid ${theme.palette.divider}`,
-              pt: 1.25,
-              mt: 1.25,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 1,
-            }}
-          >
-            <IconButton
-              onClick={onToggleColorMode}
-              title={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              aria-label={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              size="small"
-              sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
-            >
-              {colorMode === 'dark' ? <LightMode fontSize="small" /> : <DarkMode fontSize="small" />}
-            </IconButton>
-            {open && <NotificationCenter />}
-            <IconButton
-              onClick={handleOpenSettingsClick}
-              title="Agent settings"
-              aria-label="Agent settings"
-              size="small"
-              sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
-            >
-              <Settings fontSize="small" />
-            </IconButton>
-            {onSignOut ? (
-              <IconButton
-                onClick={onSignOut}
-                title="Logout"
-                aria-label="Logout"
-                size="small"
-                sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2, ml: 'auto' }}
-              >
-                <Logout fontSize="small" />
-              </IconButton>
-            ) : null}
-          </Box>
-        </Box>
-      </Box>
-    </Drawer>
-  );
+  return <div style={{ width: drawerWidth, flexShrink: 0 }}>
+    <aside className="workspace-pane" aria-label="Workspaces" inert={!open} style={{ transform: open ? 'none' : 'translateX(-100%)' }}>
+      <header className="workspace-pane-toolbar">
+        <div className="workspace-pane-actions">
+          <IconButton label="Create workspace" tooltip="New workspace" icon={<Plus size={19} />} variant="ghost" onClick={() => void onCreateWorkspace()} />
+          {onOpenSchedules && <IconButton label={scheduleCount ? `Open schedules, ${scheduleCount} scheduled jobs` : 'Open schedules'} tooltip={scheduleCount ? `Schedules (${scheduleCount})` : 'Schedules'} icon={<CalendarDays size={18} />} variant="ghost" isDisabled={!selectedWorkspace || selectedWorkspace.visibility === 'team'} onClick={onOpenSchedules} />}
+        </div>
+        <IconButton label="Close workspace menu" icon={<ChevronLeft size={19} />} variant="ghost" onClick={handleDrawerClose} />
+      </header>
+      <TextInput label="Search workspaces" isLabelHidden placeholder="Search workspaces" startIcon={<Search size={16} />} value={workspaceSearchQuery} onChange={setWorkspaceSearchQuery} width="100%" />
+      <div className="workspace-pane-scroll">
+        <WorkspaceNavigator key={storageKey} storageKey={storageKey} search={workspaceSearchQuery} onRefresh={onRefresh}
+          workspaces={workspaces} selectedWorkspace={selectedWorkspace} onSelectWorkspace={onSelectWorkspace} onDeleteWorkspace={handleDeleteWorkspace}
+          onPublishWorkspace={onPublishWorkspace} onHistoryWorkspace={onHistoryWorkspace} onWithdrawWorkspace={onWithdrawWorkspace}
+          onManageTeamAccess={onManageTeamAccess} onSyncDraftWorkspace={onSyncDraftWorkspace} onReviewDraftChanges={onReviewDraftChanges}
+          onLifecycleWorkspace={onLifecycleWorkspace} syncingDraftWorkspaceId={syncingDraftWorkspaceId} lifecycleBusyWorkspaceId={lifecycleBusyWorkspaceId} />
+      </div>
+      <footer className="workspace-pane-toolbar workspace-pane-footer">
+        <IconButton label={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} icon={colorMode === 'dark' ? <Sun size={18} /> : <Moon size={18} />} variant="ghost" onClick={onToggleColorMode} />
+        {open && <NotificationCenter />}
+        <IconButton label="Agent settings" icon={<Settings size={18} />} variant="ghost" onClick={handleOpenSettingsClick} />
+        {onSignOut && <IconButton label="Logout" icon={<LogOut size={18} />} variant="ghost" onClick={onSignOut} />}
+      </footer>
+    </aside>
+  </div>;
 };
 
 export default CollapsibleDrawer;
