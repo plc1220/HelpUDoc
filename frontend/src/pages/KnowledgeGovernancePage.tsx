@@ -104,7 +104,9 @@ const KnowledgeGovernancePage = () => {
     setLoading(true);
     setError(null);
     try {
-      const [bases, myTeams] = await Promise.all([fetchKnowledgeBaseCatalog(), fetchEligibleTeams()]);
+      // Discovery scope, matching the skill catalogue: every Team's bases are listed so
+      // they can be found, with the ones this user cannot open redacted and locked.
+      const [bases, myTeams] = await Promise.all([fetchKnowledgeBaseCatalog('all'), fetchEligibleTeams()]);
       setCatalog(bases);
       setTeams(myTeams);
     } catch (err) {
@@ -213,29 +215,41 @@ const KnowledgeGovernancePage = () => {
               ) : (
                 <div className={`mt-4 ${catalogView === 'card' ? 'grid gap-4 md:grid-cols-2 xl:grid-cols-3' : 'space-y-2'}`}>
                   {visibleCatalog.map((base) => (
-                    <article key={base.id} className={`settings-selection-card rounded-2xl ${catalogView === 'compact' ? 'flex items-center gap-2 p-2.5' : catalogView === 'list' ? 'flex items-center gap-3 p-3' : 'p-4'}`}>
-                      <button type="button" onClick={() => setDetailId(base.id)} className={`min-w-0 flex-1 text-left ${catalogView === 'card' ? 'block w-full' : 'flex items-center justify-between gap-4'}`}>
+                    <article key={base.id} className={`settings-selection-card rounded-2xl ${base.entitled === false ? 'opacity-60' : ''} ${catalogView === 'compact' ? 'flex items-center gap-2 p-2.5' : catalogView === 'list' ? 'flex items-center gap-3 p-3' : 'p-4'}`}>
+                      {/* A base the caller cannot view is discovery only: `canView` refuses
+                          the detail and versions routes, so neither is offered. */}
+                      <button type="button" onClick={() => setDetailId(base.id)} disabled={base.entitled === false} className={`min-w-0 flex-1 text-left ${base.entitled === false ? 'cursor-default' : ''} ${catalogView === 'card' ? 'block w-full' : 'flex items-center justify-between gap-4'}`}>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <h3 className="truncate font-semibold text-slate-900">{base.name}</h3>
                             {catalogView !== 'card' ? <StatusBadge status={base.status} /> : null}
                           </div>
-                          <p className={`${catalogView === 'compact' ? 'inline' : 'mt-1'} truncate font-mono text-xs text-slate-500`}>{base.slug}@{base.currentVersion || '—'}</p>
+                          <p className={`${catalogView === 'compact' ? 'inline' : 'mt-1'} truncate font-mono text-xs text-slate-500`}>
+                            {base.entitled === false ? base.slug : `${base.slug}@${base.currentVersion || '—'}`}
+                          </p>
                           {catalogView !== 'compact' ? <p className={`${catalogView === 'card' ? 'mt-3 line-clamp-3 min-h-[60px]' : 'mt-1 line-clamp-1'} text-sm leading-5 text-slate-600`}>{base.description || 'No description provided.'}</p> : null}
                         </div>
                         <div className={`${catalogView === 'card' ? 'mt-4 border-t border-slate-100 pt-3' : 'shrink-0 text-right'} text-xs text-slate-500`}>
                           {catalogView === 'card' ? <StatusBadge status={base.status} /> : null}
                           <p className={catalogView === 'card' ? 'mt-2' : ''}>Owned by {base.ownerTeamName || 'Platform'}</p>
-                          <p className="mt-1">{base.sourceCount} sources · {base.teamGrantCount} teams</p>
+                          <p className="mt-1">
+                            {base.entitled === false
+                              ? `No access · ask ${base.ownerTeamName || 'a Platform Admin'}`
+                              : `${base.sourceCount} sources · ${base.teamGrantCount} teams`}
+                          </p>
                         </div>
                       </button>
                       <div className={`${catalogView === 'card' ? 'mt-4 grid grid-cols-2' : 'flex shrink-0'} gap-2`}>
-                        <button type="button" onClick={() => setDetailId(base.id)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
-                          <FileText size={16} /> {catalogView === 'compact' ? <span className="sr-only">Open</span> : 'Open'}
-                        </button>
-                        <button type="button" onClick={() => setVersionsId(base.id)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
-                          <History size={16} /> {catalogView === 'compact' ? <span className="sr-only">Versions</span> : 'Versions'}
-                        </button>
+                        {base.entitled === false ? null : (
+                          <>
+                            <button type="button" onClick={() => setDetailId(base.id)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
+                              <FileText size={16} /> {catalogView === 'compact' ? <span className="sr-only">Open</span> : 'Open'}
+                            </button>
+                            <button type="button" onClick={() => setVersionsId(base.id)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
+                              <History size={16} /> {catalogView === 'compact' ? <span className="sr-only">Versions</span> : 'Versions'}
+                            </button>
+                          </>
+                        )}
                       </div>
                     </article>
                   ))}

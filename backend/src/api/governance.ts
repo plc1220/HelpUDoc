@@ -371,7 +371,11 @@ export default function governanceRoutes(service: SkillGovernanceService) {
   router.get('/skills/catalog', async (req, res) => {
     try {
       const user = requireUser(req);
-      return res.json(await service.catalog(user.userId, parsePagination(req)));
+      // `scope=all` is the platform-wide discovery view. It is a read-only superset with
+      // the version fields redacted on rows the caller cannot run, so the default stays
+      // `entitled` and runtime pickers keep the narrower list they already rely on.
+      const scope = req.query.scope === 'all' ? 'all' : 'entitled';
+      return res.json(await service.catalog(user.userId, { ...parsePagination(req), scope }));
     } catch (error) {
       return handleError(res, error);
     }

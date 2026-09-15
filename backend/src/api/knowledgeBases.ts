@@ -50,7 +50,10 @@ export default function knowledgeBaseRoutes(service: KnowledgeBaseService, knowl
   };
 
   router.get('/catalog', async (req, res) => {
-    try { res.json(await service.catalog(userId(req))); }
+    // `scope=all` is the platform-wide discovery view. The default stays `entitled`
+    // because the composer's `@kb:` picker reads this route and filters only on
+    // publication status -- it trusts the server to have scoped the list already.
+    try { res.json(await service.catalog(userId(req), req.query.scope === 'all' ? 'all' : 'entitled')); }
     catch (error) { handle(res, error, 'Failed to list knowledge bases'); }
   });
 

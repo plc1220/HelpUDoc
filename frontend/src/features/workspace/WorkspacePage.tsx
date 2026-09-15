@@ -1575,6 +1575,10 @@ export default function WorkspacePage() {
     // are no longer taggable. Bases use a "kb:" prefix + human-readable name.
     const knowledgeBaseSuggestions = knowledgeBaseCatalog
       .filter((kb) => kb.status === 'published')
+      // This picker reads the default `entitled` catalogue scope, so every row is already
+      // usable. Checked anyway: if a caller ever switches this to the discovery scope,
+      // offering a base the agent will refuse is worse than not offering it.
+      .filter((kb) => kb.entitled !== false)
       .filter((kb) => !searchTerm || kb.name.toLowerCase().includes(searchTerm))
       .map((kb) => ({
         id: `kb:${kb.id}`,
@@ -2910,7 +2914,7 @@ export default function WorkspacePage() {
       return [...knowledgeBaseCatalog]
         .sort((left, right) => right.name.length - left.name.length)
         .flatMap((kb) => {
-          if (kb.status !== 'published') {
+          if (kb.status !== 'published' || kb.entitled === false) {
             return [];
           }
           const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'i');

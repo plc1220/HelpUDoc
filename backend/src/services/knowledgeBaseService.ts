@@ -162,12 +162,32 @@ export class KnowledgeBaseService {
     return group?.name ? String(group.name) : null;
   }
 
-  /** Bases the caller may view, with counts + availability. Admins see everything. */
-  async catalog(userId: string) {
+  /**
+   * Bases the caller may view, with counts + availability. Admins see everything.
+   *
+   * `scope: 'all'` is the platform-wide discovery view: every non-archived base, with
+   * `entitled: false` and the counts and version redacted on the ones the caller cannot
+   * open. It exists so a user can find out a base exists and who owns it. `canView`
+   * still gates every route that returns sources, bundles, graphs or snapshots, so this
+   * widens discovery without widening access.
+   */
+  async catalog(userId: string, scope: 'entitled' | 'all' = 'entitled') {
     const admin = await isPlatformAdmin(this.db, userId);
+    const teamIds = await userTeamIds(this.db, userId);
+    const grantedIds = teamIds.length
+      ? (await this.db('knowledge_base_group_grants')
+        .select('knowledgeBaseId')
+        .where('effect', 'allow')
+        .whereIn('teamId', teamIds)).map((row: any) => String(row.knowledgeBaseId))
+      : [];
+    const entitledTo = (row: KnowledgeBaseRow): boolean => {
+      if (admin) return true;
+      if (row.ownerTeamId && teamIds.includes(String(row.ownerTeamId))) return true;
+      return grantedIds.includes(String(row.id));
+    };
+
     let query = this.db('knowledge_bases as kb').where('kb.status', '!=', 'archived');
-    if (!admin) {
-      const teamIds = await userTeamIds(this.db, userId);
+    if (scope !== 'all' && !admin) {
       // Non-admins with no team memberships can access no bases.
       if (!teamIds.length) return [];
       query = query.andWhere((builder) => {
@@ -179,12 +199,19 @@ export class KnowledgeBaseService {
       });
     }
     const rows = await query.select('kb.*').orderBy('kb.name', 'asc');
-    return Promise.all(rows.map(async (row: KnowledgeBaseRow) => ({
-      ...this.mapKb(row),
-      ownerTeamName: await this.ownerTeamName(row.ownerTeamId),
-      ...(await this.usage(row.id)),
-      available: row.status === 'published',
-    })));
+    return Promise.all(rows.map(async (row: KnowledgeBaseRow) => {
+      const entitled = entitledTo(row);
+      const base = {
+        ...this.mapKb(row),
+        ownerTeamName: await this.ownerTeamName(row.ownerTeamId),
+        entitled,
+        available: row.status === 'published' && entitled,
+      };
+      if (entitled) return { ...base, ...(await this.usage(row.id)) };
+      // Name, owning Team and description only. How many sources a base holds and which
+      // version is current both describe its content to someone who cannot open it.
+      return { ...base, currentVersion: null, sourceCount: 0, teamGrantCount: 0 };
+    }));
   }
 
   /** Bases the caller can manage — for the create/manage view. */

@@ -22,6 +22,8 @@ export type KnowledgeBaseSummary = {
   sourceCount: number;
   teamGrantCount: number;
   available?: boolean;
+  /** False on a discovery row the caller cannot open; its counts are redacted. */
+  entitled?: boolean;
 };
 
 export type KnowledgeBaseMember = {
@@ -86,8 +88,17 @@ export const fetchEligibleTeams = async (): Promise<GovernanceTeam[]> => {
   return Array.isArray(body) ? body : (body.teams ?? []);
 };
 
-export const fetchKnowledgeBaseCatalog = () =>
-  jsonRequest<KnowledgeBaseSummary[]>(`${API_URL}/knowledge-bases/catalog`, undefined, 'Failed to load knowledge bases');
+/**
+ * `scope: 'all'` returns the platform-wide discovery list, including bases the caller
+ * cannot open (redacted, `entitled: false`). Callers that feed a picker must keep the
+ * default, which returns only bases the caller may actually use.
+ */
+export const fetchKnowledgeBaseCatalog = (scope: 'entitled' | 'all' = 'entitled') =>
+  jsonRequest<KnowledgeBaseSummary[]>(
+    `${API_URL}/knowledge-bases/catalog?scope=${scope}`,
+    undefined,
+    'Failed to load knowledge bases',
+  );
 
 export const fetchMyKnowledgeBases = () =>
   jsonRequest<KnowledgeBaseSummary[]>(`${API_URL}/knowledge-bases/mine`, undefined, 'Failed to load your knowledge bases');

@@ -1171,7 +1171,10 @@ const SkillGovernancePage = () => {
     setLoading(true);
     setError(null);
     try {
-      const [mySkills, catalogResponse] = await Promise.all([fetchMySkills(), fetchSkillCatalog()]);
+      // Discovery scope: the catalogue is the place to find out what the platform has,
+      // so it lists every Team's skills. Rows the user cannot run come back redacted and
+      // render locked.
+      const [mySkills, catalogResponse] = await Promise.all([fetchMySkills(), fetchSkillCatalog('all')]);
       setMine(mySkills);
       setCatalog(catalogResponse.skills);
       const leads = mySkills.eligibleTeams.filter((team) => team.isLead);
@@ -1710,23 +1713,34 @@ const SkillGovernancePage = () => {
               ) : (
                 <div className={`mt-4 ${catalogView === 'card' ? 'grid gap-4 md:grid-cols-2 xl:grid-cols-3' : 'space-y-2'}`}>
                   {visibleCatalog.map((skill) => (
-                    <article key={skill.id} className={`settings-selection-card rounded-2xl ${catalogView === 'compact' ? 'flex items-center gap-2 p-2.5' : catalogView === 'list' ? 'flex items-center gap-3 p-3' : 'p-4'}`}>
-                      <button type="button" onClick={() => setDetailSkill(skill)} className={`min-w-0 flex-1 text-left ${catalogView === 'card' ? 'block w-full' : 'flex items-center justify-between gap-4'}`}>
+                    <article key={skill.id} className={`settings-selection-card rounded-2xl ${skill.locked ? 'opacity-60' : ''} ${catalogView === 'compact' ? 'flex items-center gap-2 p-2.5' : catalogView === 'list' ? 'flex items-center gap-3 p-3' : 'p-4'}`}>
+                      {/* A locked row is discovery only. Opening the details dialog would
+                          just 404 -- the server refuses the detail route for a skill the
+                          caller cannot reach -- so it is not clickable. */}
+                      <button type="button" onClick={() => setDetailSkill(skill)} disabled={Boolean(skill.locked)} className={`min-w-0 flex-1 text-left ${skill.locked ? 'cursor-default' : ''} ${catalogView === 'card' ? 'block w-full' : 'flex items-center justify-between gap-4'}`}>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <h3 className="truncate font-semibold text-slate-900">{skill.displayName}</h3>
                             {catalogView !== 'card' ? <StatusBadge status={skill.status} /> : null}
                           </div>
-                          <p className={`${catalogView === 'compact' ? 'inline' : 'mt-1'} truncate font-mono text-xs text-slate-500`}>{skill.skillKey}@{skill.defaultSemanticVersion || '—'}</p>
+                          <p className={`${catalogView === 'compact' ? 'inline' : 'mt-1'} truncate font-mono text-xs text-slate-500`}>
+                            {skill.locked ? skill.skillKey : `${skill.skillKey}@${skill.defaultSemanticVersion || '—'}`}
+                          </p>
                           {catalogView !== 'compact' ? <p className={`${catalogView === 'card' ? 'mt-3 line-clamp-3 min-h-[60px]' : 'mt-1 line-clamp-1'} text-sm leading-5 text-slate-600`}>{skill.description || 'No description provided.'}</p> : null}
                         </div>
                         <div className={`${catalogView === 'card' ? 'mt-4 border-t border-slate-100 pt-3' : 'shrink-0 text-right'} text-xs text-slate-500`}>
                           {catalogView === 'card' ? <StatusBadge status={skill.status} /> : null}
                           <p className={catalogView === 'card' ? 'mt-2' : ''}>Owned by {skill.ownerTeamName}</p>
-                          <p className="mt-1">{skill.entitled ? skill.accessReasons.join(' · ') || 'You have access' : 'Not assigned to you'}</p>
+                          <p className="mt-1">
+                            {skill.entitled
+                              ? skill.accessReasons.join(' · ') || 'You have access'
+                              : `No access · ask ${skill.ownerTeamName}`}
+                          </p>
                         </div>
                       </button>
                       <div className={`${catalogView === 'card' ? 'mt-4 grid grid-cols-2' : 'flex shrink-0'} gap-2`}>
+                        {skill.locked ? null : (
+                          <>
                         <button type="button" onClick={() => void improve(skill)} disabled={Boolean(actionBusy)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold disabled:opacity-50">
                           {actionBusy === skill.id ? <Loader2 size={16} className="animate-spin" /> : <GitPullRequestArrow size={16} />}
                           {catalogView === 'compact' ? <span className="sr-only">Improve</span> : 'Improve'}
@@ -1745,6 +1759,8 @@ const SkillGovernancePage = () => {
                             {catalogView === 'compact' ? <span className="sr-only">Restore</span> : 'Restore'}
                           </button>
                         ) : null}
+                          </>
+                        )}
                       </div>
                     </article>
                   ))}

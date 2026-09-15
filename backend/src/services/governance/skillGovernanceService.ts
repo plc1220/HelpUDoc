@@ -1206,7 +1206,10 @@ export class SkillGovernanceService {
     return { events: events.map((event: any) => ({ ...event, metadata: jsonValue(event.metadata, {}) })) };
   }
 
-  async catalog(userId: string, options: { limit?: number; offset?: number } = {}): Promise<JsonRecord> {
+  async catalog(
+    userId: string,
+    options: { limit?: number; offset?: number; scope?: 'entitled' | 'all' } = {},
+  ): Promise<JsonRecord> {
     const user = await this.db('users').where({ id: userId }).first();
     if (!user) governanceError(401, 'AUTHENTICATION_REQUIRED', 'User not found');
     const isPlatformAdmin = await this.isPlatformAdmin(userId);
@@ -1244,7 +1247,11 @@ export class SkillGovernanceService {
       .orderBy('s.id', 'asc')
       .limit(limit)
       .offset(offset);
-    if (!isPlatformAdmin) {
+    // Discovery scope shows the whole platform catalogue so a user can find out what
+    // exists and who owns it. Entitled scope is the narrower "what can I run" list that
+    // every other caller expects.
+    const discovery = options.scope === 'all';
+    if (!discovery && !isPlatformAdmin) {
       query.where((builder) => {
         if (effective.skillIds.length) builder.whereIn('s.id', effective.skillIds);
         if (teamIds.length) {
@@ -1256,12 +1263,31 @@ export class SkillGovernanceService {
     }
     const skills = await query;
     return {
-      skills: skills.map((skill: any) => ({
-        ...skill,
-        entitled: effective.skillIds.includes(skill.id),
-        accessReasons: effective.reasons[skill.id] || [],
-        canAdminister: isPlatformAdmin || leadTeamIds.has(skill.ownerTeamId),
-      })),
+      skills: skills.map((skill: any) => {
+        const entitled = effective.skillIds.includes(skill.id);
+        const canAdminister = isPlatformAdmin || leadTeamIds.has(skill.ownerTeamId);
+        const row = {
+          ...skill,
+          entitled,
+          accessReasons: effective.reasons[skill.id] || [],
+          canAdminister,
+        };
+        // A locked discovery row carries name, owning Team and description -- enough to
+        // find the skill and know who to ask -- and nothing about its content. The exact
+        // version identity says nothing useful to someone who cannot run it, and the
+        // detail routes stay closed behind `requireCatalogVisibility` regardless.
+        if (entitled || canAdminister || teamIds.includes(String(skill.ownerTeamId))) {
+          return { ...row, locked: false };
+        }
+        return {
+          ...row,
+          locked: true,
+          defaultVersionId: null,
+          defaultSemanticVersion: null,
+          defaultManifestHash: null,
+          defaultVersionStatus: null,
+        };
+      }),
       limit,
       offset,
     };

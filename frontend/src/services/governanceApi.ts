@@ -191,6 +191,12 @@ export type CatalogSkill = {
   entitled: boolean;
   accessReasons: string[];
   canAdminister: boolean;
+  /**
+   * A discovery row the caller can neither run nor administer. Its version fields are
+   * redacted server-side and the detail routes refuse it, so the UI shows name, owning
+   * Team and description only.
+   */
+  locked?: boolean;
 };
 
 export type GovernedSkillVersion = {
@@ -423,11 +429,13 @@ const CATALOG_PAGE_SIZE = 100;
  * The server caps `/skills/catalog` at 100 rows per request, so page until a short page
  * comes back. Fetching a single default page silently hid every skill past the 50th.
  */
-export const fetchSkillCatalog = async (): Promise<{ skills: CatalogSkill[] }> => {
+export const fetchSkillCatalog = async (
+  scope: 'entitled' | 'all' = 'entitled',
+): Promise<{ skills: CatalogSkill[] }> => {
   const skills: CatalogSkill[] = [];
   for (let offset = 0; ; offset += CATALOG_PAGE_SIZE) {
     const page = await jsonRequest<{ skills: CatalogSkill[] }>(
-      `${API_URL}/skills/catalog?limit=${CATALOG_PAGE_SIZE}&offset=${offset}`,
+      `${API_URL}/skills/catalog?limit=${CATALOG_PAGE_SIZE}&offset=${offset}&scope=${scope}`,
       undefined,
       'Failed to load governed skill catalog',
     );

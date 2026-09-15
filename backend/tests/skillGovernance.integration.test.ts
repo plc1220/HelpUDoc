@@ -998,3 +998,82 @@ test('a Team Lead grants and revokes a skill their own Team owns', { skip: !enab
   }
 });
 
+test('the catalogue lists every Team\'s skills and redacts what you cannot run', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const ownerId = uuidv4();
+  const outsiderId = uuidv4();
+  const ownerTeamId = uuidv4();
+  const otherTeamId = uuidv4();
+  const skillId = uuidv4();
+  const versionId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `discovery-${suffix}`;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    await db('users').insert([
+      { id: ownerId, externalId: `disc-owner-${suffix}`, email: `disc-owner-${suffix}@example.test`, displayName: 'Discovery owner', isAdmin: false },
+      { id: outsiderId, externalId: `disc-out-${suffix}`, email: `disc-out-${suffix}@example.test`, displayName: 'Discovery outsider', isAdmin: false },
+    ]);
+    await db('groups').insert([
+      { id: ownerTeamId, name: `Discovery owner ${suffix}` },
+      { id: otherTeamId, name: `Discovery other ${suffix}` },
+    ]);
+    await db('group_members').insert([
+      { groupId: ownerTeamId, userId: ownerId },
+      { groupId: otherTeamId, userId: outsiderId },
+    ]);
+    await db('skills').insert({
+      id: skillId, skillKey, displayName: 'Discovery skill',
+      description: 'Findable by everyone, readable by its Team.',
+      ownerTeamId: ownerTeamId, status: 'active',
+    });
+    await db('skill_versions').insert({
+      id: versionId, skillId, semanticVersion: '2.1.0', manifestHash: 'b'.repeat(64), status: 'active',
+    });
+    await db('skills').where({ id: skillId }).update({ defaultVersionId: versionId });
+
+    // Discovery: the outsider can find it and see who to ask, and nothing more. Name,
+    // owning Team and description are the whole locked row.
+    const discovery = await governance.catalog(outsiderId, { scope: 'all', limit: 100 });
+    const row = (discovery.skills as any[]).find((entry) => entry.skillKey === skillKey);
+    assert.ok(row, 'discovery scope must list another Team\'s skill');
+    assert.equal(row.entitled, false);
+    assert.equal(row.locked, true);
+    assert.equal(row.ownerTeamName, `Discovery owner ${suffix}`);
+    assert.equal(row.description, 'Findable by everyone, readable by its Team.');
+    assert.equal(row.defaultSemanticVersion, null, 'the exact version must be redacted');
+    assert.equal(row.defaultManifestHash, null, 'the manifest hash must be redacted');
+    assert.equal(row.defaultVersionId, null);
+
+    // The default scope is untouched: it is still "what can I run", which is what the
+    // runtime pickers read.
+    const entitledOnly = await governance.catalog(outsiderId, { limit: 100 });
+    assert.ok(!(entitledOnly.skills as any[]).some((entry) => entry.skillKey === skillKey));
+
+    // Finding a skill does not open its content. Client filtering is never the boundary.
+    await assert.rejects(
+      () => governance.getSkillDetail(outsiderId, skillId),
+      (error: any) => error?.code === 'SKILL_RESOURCE_NOT_FOUND',
+    );
+
+    // A member of the owning Team is not locked out of their own Team's skill, even
+    // before anyone grants it to them.
+    const ownerView = await governance.catalog(ownerId, { scope: 'all', limit: 100 });
+    const ownerRow = (ownerView.skills as any[]).find((entry) => entry.skillKey === skillKey);
+    assert.equal(ownerRow.locked, false);
+    assert.equal(ownerRow.defaultSemanticVersion, '2.1.0');
+  } finally {
+    await db('skills').where({ id: skillId }).update({ defaultVersionId: null }).catch(() => undefined);
+    await db('skill_versions').where({ skillId }).del().catch(() => undefined);
+    await db('skills').where({ id: skillId }).del().catch(() => undefined);
+    await db('group_members').whereIn('groupId', [ownerTeamId, otherTeamId]).del().catch(() => undefined);
+    await db('groups').whereIn('id', [ownerTeamId, otherTeamId]).del().catch(() => undefined);
+    await db('users').whereIn('id', [ownerId, outsiderId]).del().catch(() => undefined);
+    await db.destroy();
+  }
+});
