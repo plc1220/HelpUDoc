@@ -668,3 +668,93 @@ test('a private draft runs only in a private workspace its author owns', { skip:
     await db.destroy();
   }
 });
+
+test('a Team disable never reaches another Team grant or a direct grant', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const users = new UserService(database);
+  const adminId = uuidv4();
+  const leadId = uuidv4();
+  const memberId = uuidv4();
+  const ownerTeamId = uuidv4();
+  const teamAId = uuidv4();
+  const teamBId = uuidv4();
+  const skillId = uuidv4();
+  const versionId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `cross-team-${suffix}`;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    await db('users').insert([
+      { id: adminId, externalId: `cross-admin-${suffix}`, email: `cross-admin-${suffix}@example.test`, displayName: 'Cross admin', isAdmin: true },
+      { id: leadId, externalId: `cross-lead-${suffix}`, email: `cross-lead-${suffix}@example.test`, displayName: 'Cross lead', isAdmin: false },
+      { id: memberId, externalId: `cross-member-${suffix}`, email: `cross-member-${suffix}@example.test`, displayName: 'Cross member', isAdmin: false },
+    ]);
+    await db('groups').insert([
+      { id: ownerTeamId, name: `Cross owner ${suffix}` },
+      { id: teamAId, name: `Cross A ${suffix}` },
+      { id: teamBId, name: `Cross B ${suffix}` },
+    ]);
+    // The member belongs to both Teams; only Team A has a Lead who can disable.
+    await db('group_members').insert([
+      { groupId: teamAId, userId: leadId },
+      { groupId: teamAId, userId: memberId },
+      { groupId: teamBId, userId: memberId },
+    ]);
+    await db('team_role_bindings').insert({
+      teamId: teamAId, userId: leadId, role: 'lead', assignedByUserId: null,
+    });
+    await db('skills').insert({
+      id: skillId, skillKey, displayName: 'Cross team skill', ownerTeamId, status: 'active',
+    });
+    await db('skill_versions').insert({
+      id: versionId, skillId, semanticVersion: '1.0.0', manifestHash: 'd'.repeat(64), status: 'active',
+    });
+    await db('skills').where({ id: skillId }).update({ defaultVersionId: versionId });
+
+    const promptSkills = async (userId: string) =>
+      (await users.getEffectivePromptAccess(userId))?.skillIds || [];
+    const governedSkills = async (userId: string) =>
+      (await governance.effectiveSkillAccess(userId)).skillKeys;
+
+    await governance.setTeamSkillGrant(adminId, teamAId, skillKey, true);
+    await governance.setTeamSkillGrant(adminId, teamBId, skillKey, true);
+
+    // Team A's Lead switches it off. Team B still grants it, so the member keeps it --
+    // that access was never Team A's to revoke.
+    await governance.setTeamSkillDisabled(leadId, teamAId, skillKey, true, 'Not for Team A');
+    assert.ok((await promptSkills(memberId)).includes(skillKey), 'Team B grant must survive a Team A disable');
+    assert.ok((await governedSkills(memberId)).includes(skillKey), 'both resolvers must agree');
+
+    // With Team B's grant gone the Team A disable is the only source left, so it applies.
+    await governance.setTeamSkillGrant(adminId, teamBId, skillKey, false);
+    assert.ok(!(await promptSkills(memberId)).includes(skillKey));
+    assert.ok(!(await governedSkills(memberId)).includes(skillKey));
+
+    // A direct Platform Admin grant is not Team-derived, so no Team disable touches it.
+    await governance.setUserSkillGrant(adminId, memberId, skillKey, true);
+    assert.ok((await promptSkills(memberId)).includes(skillKey), 'a direct grant must survive a Team disable');
+    assert.ok((await governedSkills(memberId)).includes(skillKey));
+    // ...and it is not reported as disabled, which would contradict the skill list.
+    assert.ok(!(await governance.effectiveSkillAccess(memberId)).disabledReasons[skillKey]);
+  } finally {
+    await db('team_skill_disables').whereIn('teamId', [teamAId, teamBId]).del().catch(() => undefined);
+    await db('user_skill_grants').where({ skillId }).del().catch(() => undefined);
+    await db('team_skill_grants').where({ skillId }).del().catch(() => undefined);
+    await db('skills').where({ id: skillId }).update({ defaultVersionId: null }).catch(() => undefined);
+    await db('skill_versions').where({ skillId }).del().catch(() => undefined);
+    await db('skills').where({ id: skillId }).del().catch(() => undefined);
+    await db('audit_events').whereIn('actorUserId', [adminId, leadId, memberId]).del().catch(() => undefined);
+    await db('notifications').whereIn('recipientUserId', [adminId, leadId, memberId]).del().catch(() => undefined);
+    await db('team_role_bindings').whereIn('teamId', [teamAId, teamBId]).del().catch(() => undefined);
+    await db('group_members').whereIn('groupId', [ownerTeamId, teamAId, teamBId]).del().catch(() => undefined);
+    await db('groups').whereIn('id', [ownerTeamId, teamAId, teamBId]).del().catch(() => undefined);
+    await db('users').whereIn('id', [adminId, leadId, memberId]).del().catch(() => undefined);
+    await db.destroy();
+  }
+});
+

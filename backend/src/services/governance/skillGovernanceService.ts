@@ -2259,19 +2259,26 @@ export class SkillGovernanceService {
           .join('skills as s', 's.id', 'tg.skillId')
           .join('skill_versions as v', 'v.id', 's.defaultVersionId')
           .join('groups as g', 'g.id', 'tg.teamId')
-          .select('s.id', 's.skillKey', 'g.name as teamName')
+          .select('s.id', 's.skillKey', 'g.name as teamName', 'tg.teamId as teamId')
           .where({ 'tg.effect': 'allow', 's.status': 'active', 'v.status': 'active' })
           .whereIn('tg.teamId', teamIds)
         : Promise.resolve([]),
       teamIds.length
         ? this.db('team_skill_disables as d')
           .join('groups as g', 'g.id', 'd.teamId')
-          .select('d.skillKey', 'g.name as teamName')
+          .select('d.skillKey', 'g.name as teamName', 'd.teamId as teamId')
           .whereIn('d.teamId', teamIds)
         : Promise.resolve([]),
     ]);
     // Mirrors the subtraction in `UserService.getEffectivePromptAccess` so the catalog's
     // `entitled` flag and `authorizeInvocation` agree with what the runtime will allow.
+    //
+    // A disable belongs to the Team that set it and removes only that Team's grant. A
+    // skill the user also reaches through another Team, or through a direct grant,
+    // survives -- that access is not the disabling Lead's to revoke.
+    const disabledByTeam = new Set(
+      (disabled as any[]).map((row) => `${String(row.teamId)}\u0000${String(row.skillKey)}`),
+    );
     const disabledByKey = new Map(
       (disabled as any[]).map((row) => [String(row.skillKey), String(row.teamName)]),
     );
@@ -2280,20 +2287,23 @@ export class SkillGovernanceService {
       byId.set(row.id, { skillKey: row.skillKey, reasons: ['Direct access'] });
     }
     for (const row of team as any[]) {
+      if (disabledByTeam.has(`${String(row.teamId)}\u0000${String(row.skillKey)}`)) continue;
       const current: { skillKey: string; reasons: string[] } = byId.get(row.id)
         || { skillKey: row.skillKey, reasons: [] };
       current.reasons.push(`via ${row.teamName} Team`);
       byId.set(row.id, current);
     }
-    for (const [id, value] of [...byId]) {
-      if (disabledByKey.has(value.skillKey)) byId.delete(id);
-    }
     return {
       skillIds: [...byId.keys()].sort(),
       skillKeys: [...byId.values()].map((item) => item.skillKey).sort(),
       reasons: Object.fromEntries([...byId].map(([id, value]) => [id, Array.from(new Set(value.reasons))])),
+      // Only explain a disable that actually cost the user the skill. A key one Team
+      // switched off but another Team still grants is not disabled for this user, and
+      // labelling it so would contradict `skillKeys`.
       disabledReasons: Object.fromEntries(
-        [...disabledByKey].map(([skillKey, teamName]) => [skillKey, `Disabled by the ${teamName} Team lead`]),
+        [...disabledByKey]
+          .filter(([skillKey]) => ![...byId.values()].some((item) => item.skillKey === skillKey))
+          .map(([skillKey, teamName]) => [skillKey, `Disabled by the ${teamName} Team lead`]),
       ),
     };
   }

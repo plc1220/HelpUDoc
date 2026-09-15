@@ -1080,7 +1080,7 @@ export class UserService {
         ? this.db('skill_grants as grant')
           .leftJoin('skills as governedSkill', 'governedSkill.skillKey', 'grant.skillId')
           .leftJoin('skill_versions as governedVersion', 'governedVersion.id', 'governedSkill.defaultVersionId')
-          .select('grant.skillId')
+          .select('grant.skillId', 'grant.principalId as teamId')
           .where({ 'grant.principalType': 'group', 'grant.effect': 'allow' })
           .whereIn('grant.principalId', groupIds)
           .andWhere((builder) => {
@@ -1107,7 +1107,7 @@ export class UserService {
         ? this.db('team_skill_grants as grant')
           .join('skills as skill', 'skill.id', 'grant.skillId')
           .join('skill_versions as version', 'version.id', 'skill.defaultVersionId')
-          .select('skill.skillKey as skillId')
+          .select('skill.skillKey as skillId', 'grant.teamId as teamId')
           .where({ 'grant.effect': 'allow', 'skill.status': 'active', 'version.status': 'active' })
           .whereIn('grant.teamId', groupIds)
         : Promise.resolve([]),
@@ -1123,7 +1123,7 @@ export class UserService {
         }),
       groupIds.length
         ? this.db('team_skill_disables')
-          .select('skillKey')
+          .select('skillKey', 'teamId')
           .whereIn('teamId', groupIds)
         : Promise.resolve([]),
       groupIds.length
@@ -1141,22 +1141,30 @@ export class UserService {
 
     // A Team Lead may switch a skill off for their Team. The disable is an override, not
     // a revocation: the admin's grant row stays intact, so re-enabling restores access.
-    const disabledSkillKeys = new Set(
-      (teamDisabledSkills as Array<{ skillKey?: string }>)
-        .map((row) => String(row.skillKey || ''))
-        .filter(Boolean),
+    //
+    // It is scoped to the Team that set it. Subtracting it from the whole union would let
+    // one Team's Lead revoke a skill the user also holds through another Team, or that a
+    // Platform Admin granted them directly -- neither of which that Lead governs.
+    const disabledByTeam = new Set(
+      (teamDisabledSkills as Array<{ skillKey?: string; teamId?: string }>)
+        .map((row) => `${String(row.teamId || '')}\u0000${String(row.skillKey || '')}`),
+    );
+    const teamGrantSurvives = (row: any) => !disabledByTeam.has(
+      `${String(row.teamId || '')}\u0000${String(row.skillId || '')}`,
     );
 
     return {
       isAdmin: user.isAdmin,
       skillIds: normalizeUniqueStrings(
         [
-          ...legacyGroupSkills,
+          // Team-derived grants drop out only where the granting Team disabled them.
+          ...(legacyGroupSkills as any[]).filter(teamGrantSurvives),
+          ...(governedTeamSkills as any[]).filter(teamGrantSurvives),
+          // Direct grants are not Team-derived, so no Team disable applies to them.
           ...legacyDirectSkills,
-          ...governedTeamSkills,
           ...governedDirectSkills,
         ].map((row: any) => String(row.skillId || '')),
-      ).filter((skillId) => !disabledSkillKeys.has(skillId)),
+      ),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
       knowledgeBaseIds: normalizeUniqueStrings(
         (knowledgeRows as Array<{ knowledgeBaseId?: string }>).map((row) => String(row.knowledgeBaseId || '')),
