@@ -3,6 +3,7 @@ import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import type { File as WorkspaceFile } from '../types';
 import { createFile, getFileContent } from '../services/fileApi';
 import { useCanvasAnnotations } from './CanvasAnnotationContext';
+import { useOfficeDocument } from './OfficeDocumentContext';
 import { locateAnnotationText } from '../utils/canvasAnnotations';
 import EditorLoadingState from './EditorLoadingState';
 import type { MarkdownRichEditorHandle } from './MarkdownRichEditor';
@@ -74,13 +75,15 @@ interface FileEditorProps {
   colorMode: 'light' | 'dark';
 }
 
-const OfficeDocumentReadOnlyPane: React.FC<{
+const OfficeDocumentPreviewPane: React.FC<{
   file: WorkspaceFile;
   fileContent: string;
   workspaceId: string;
   colorMode: 'light' | 'dark';
 }> = ({ file, fileContent, workspaceId, colorMode }) => {
   const isDarkMode = colorMode === 'dark';
+  const office = useOfficeDocument();
+  const canQuickEdit = Boolean(office?.canEdit && /\.docx$/i.test(file.name));
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
@@ -90,7 +93,9 @@ const OfficeDocumentReadOnlyPane: React.FC<{
             : 'border-amber-100 bg-amber-50 text-amber-950'
         }`}
       >
-        Read-only preview. Word and PowerPoint files are not editable in the workspace editor.
+        {canQuickEdit
+          ? 'Select text in the document preview for quick edits. Use the agent for larger changes.'
+          : 'Document preview. Use the agent to make changes to this file.'}
       </div>
       <div className="min-h-0 flex-1">
         <Suspense fallback={<EditorLoadingState />}>
@@ -360,7 +365,7 @@ const FileEditor: React.FC<FileEditorProps> = (props) => {
   }
   if (isBinaryOfficeDocument(props.file.name ?? '', props.file.mimeType)) {
     return (
-      <OfficeDocumentReadOnlyPane
+      <OfficeDocumentPreviewPane
         file={props.file}
         fileContent={props.fileContent}
         workspaceId={props.workspaceId}

@@ -30,7 +30,6 @@
     "hyparquet-compressors": "^1.1.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.546.0",
-    "mammoth": "^1.12.0",
     "mermaid": "^11.12.0",
     "monaco-editor": "^0.54.0",
     "papaparse": "^5.5.3",

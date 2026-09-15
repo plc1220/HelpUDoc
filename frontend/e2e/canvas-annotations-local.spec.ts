@@ -41,10 +41,15 @@ for (const mode of ['text', 'html', 'source']) {
     if (mode === 'html') await page.frameLocator('iframe').locator('#title').click();
     else if (mode === 'source') {
       await expect(page.getByRole('textbox', { name: 'Editor content' })).toBeVisible();
-      await page.locator('.view-lines').click({ position: { x: 20, y: 10 } });
-      const selectAll = await page.evaluate(() => /Macintosh/.test(navigator.userAgent) ? 'Meta+a' : 'Control+a');
-      await page.keyboard.press(selectAll);
-      await page.locator('.view-lines').dispatchEvent('mouseup', { button: 0 });
+      const passage = page.locator('.view-line').getByText('Selected passage', { exact: true });
+      await expect(passage).toBeVisible();
+      const bounds = (await passage.boundingBox())!;
+      // Exercise Monaco's actual pointer selection and mouse-up handling. A
+      // synthetic mouse-up after Select All can race the editor's selection update.
+      await page.mouse.move(bounds.x + 1, bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(bounds.x + bounds.width + 4, bounds.y + bounds.height / 2, { steps: 10 });
+      await page.mouse.up();
     } else {
       await page.getByTestId('passage').evaluate(el => { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range); el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); });
     }

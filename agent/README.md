@@ -74,6 +74,16 @@ Service URL: `http://localhost:8001`
 
 - `POST /documents/extract`
 
+### Office previews and quick edits
+
+- `POST /documents/office-preview` accepts signed workspace context plus `{workspaceId, filename, content}` (base64 DOCX/PPTX). Returns a PDF preview, original-source SHA revision, and optional DOCX paragraph/style metadata.
+- `POST /documents/office-edit` additionally accepts the source `revision` and a validated paragraph/range edit. It returns new DOCX bytes; the backend owns permissions, strict version checks, history, and publication. These operations do not invoke an LLM or mutate a shared workspace path in the agent.
+- Rendering requires LibreOffice Writer/Impress, redistributable fonts, and Linux `libseccomp2` (installed in `agent/Dockerfile`). Native macOS development uses LibreOffice plus `sandbox-exec`. `OFFICE_PREVIEW_SOFFICE` can set the converter executable explicitly.
+- Each conversion uses a private temporary profile, denied network access, macro/OLE restrictions, a 60-second timeout, and a 2 GiB Linux child memory cap. Conversion concurrency is one. Previews are cached by source SHA/format/renderer version for 15 minutes within a 128 MiB / 16-entry budget. Input is limited to 25 MiB and PDF output to 50 MiB. Validated native charts with embedded XLSX data are supported; external linked content and active objects are rejected.
+- Native quick edits byte-splice only the target paragraph in the original DOCX package. Unsupported or protected structures remain read-only. Annotation metadata uses the source revision, independent of regenerated PDF timestamps.
+- Run `PYTHONPATH=agent agent/.venv/bin/python -m pytest agent/tests/test_document_quick_edit.py agent/tests/test_office_preview.py` from the repo root. Real rendering tests run when LibreOffice is available. `python agent/scripts/smoke_office_preview.py` exercises real DOCX/PPTX rendering and native edit/refresh without model credentials. Both CI and deployment image builds run this smoke before rollout.
+- Shipping this feature requires rebuilding the agent image together with backend and frontend; no database migration is needed.
+
 ## Running with Docker Compose
 
 From the repo root:

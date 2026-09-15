@@ -2112,3 +2112,68 @@ body {
 .canvas-annotations button[type='submit'] { background-color: var(--color-accent); color: var(--color-on-accent) !important; }
 .canvas-annotations button:disabled { opacity: 0.5; }
 .canvas-annotations button * { color: inherit; }
+.canvas-annotations-pin { position: absolute; pointer-events: auto; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid var(--color-background-surface); background: var(--color-accent); box-shadow: var(--shadow-low); font-size: 12px; font-weight: 600; cursor: pointer; }
+.canvas-annotations button.canvas-annotations-pin { color: var(--color-on-accent) !important; }
+.canvas-annotations-pin:focus-visible { outline: 2px solid var(--color-border-blue); outline-offset: 2px; }
+.office-document-preview {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 420px;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  background: var(--color-background-surface);
+}
+.office-preview-toolbar, .office-quick-edit-actions, .office-quick-edit-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2, 8px);
+}
+.office-preview-toolbar {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.office-toolbar-spacer { flex: 1; }
+.office-preview-pages { position: relative; flex: 1; min-height: 0; }
+.office-preview-refreshing { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--color-background-surface) 90%, transparent); }
+.document-pdf-preview { background: var(--color-background-sunken, var(--color-background-surface)); }
+.document-pdf-loading { background: var(--color-background-surface); color: var(--color-text-secondary); }
+.document-pdf-open { background: var(--color-background-surface); border-radius: var(--radius-element, 8px); }
+.office-preview-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
+.office-preview-error { display: flex; gap: 8px; align-items: center; padding: 8px 12px; color: var(--color-error); }
+.office-quick-edit {
+  position: absolute;
+  z-index: 8;
+  inset-inline: 12px;
+  bottom: 16px;
+  margin-inline: auto;
+  max-width: 660px;
+  max-height: 75%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border-emphasized);
+  border-radius: var(--radius-container, 12px);
+  background: var(--color-background-surface);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 14%);
+}
+.office-quick-edit-heading { justify-content: space-between; }
+.office-quick-edit-actions { flex-wrap: wrap; }
+.office-style-selector { width: 156px; }
+.office-font-size { display: flex; align-items: center; gap: 2px; width: 112px; }
+.office-font-size > :first-child { min-width: 0; flex: 1; }
+.office-text-edit { display: flex; flex-direction: column; gap: 10px; }
+.office-source-choice { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-element, 8px); }
+.office-document-preview button { color: var(--color-text-primary) !important; }
+.office-document-preview button * { color: inherit; }
+.office-text-edit button[type='submit'] { background: var(--color-accent); color: var(--color-on-accent) !important; }
+.office-document-preview button:disabled { opacity: .5; }
+@media (max-width: 600px) {
+  .office-preview-toolbar > :nth-child(2) { display: none; }
+  .office-quick-edit { inset-inline: 6px; bottom: 8px; padding: 8px; }
+}

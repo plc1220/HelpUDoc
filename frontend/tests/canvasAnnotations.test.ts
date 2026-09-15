@@ -16,3 +16,13 @@ test('agent context preserves file, quote, comment and replies as quoted data', 
   assert.equal(context.selection, 'Selected passage');
   assert.deepEqual(context.replies, ['Reviewer: add a source']);
 });
+
+test('document pins reject changed content and invalid coordinates', async () => {
+  const { documentPin, documentRevision } = await import('../src/utils/canvasAnnotations.ts');
+  const revision = documentRevision('original');
+  const anchor = { anchorFingerprint: JSON.stringify({ kind: 'document-pin', revision, x: 0.25, y: 0.75 }) };
+  assert.deepEqual(documentPin(anchor, revision), { x: 0.25, y: 0.75 });
+  assert.equal(documentPin(anchor, documentRevision('changed')), null);
+  assert.equal(documentPin({ anchorFingerprint: JSON.stringify({ kind: 'document-pin', revision, x: 2, y: 0 }) }, revision), null);
+  assert.equal(documentPin({ anchorFingerprint: 'malformed' }, revision), null);
+});

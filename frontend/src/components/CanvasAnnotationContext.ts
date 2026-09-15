@@ -4,6 +4,7 @@ import type { WorkspaceCollaborationObject } from '../services/workspaceCollabor
 
 export type CanvasAnnotationState = {
   active: boolean;
+  canComment?: boolean;
   annotations: WorkspaceCollaborationObject[];
   select: (anchor: AnnotationAnchor) => void;
   open: (id: string) => void;

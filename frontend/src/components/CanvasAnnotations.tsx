@@ -13,7 +13,7 @@ import {
   getWorkspaceCollaborationObject, replyToWorkspaceCollaborationObject, updateWorkspaceCollaborationObject,
   type WorkspaceCollaborationObject, type WorkspaceCollaborationMessage,
 } from '../services/workspaceCollaborationApi';
-import { annotationChatPrompt, locateAnnotationText, textRange, type AnnotationAnchor } from '../utils/canvasAnnotations';
+import { annotationChatPrompt, locateAnnotationText, textRange, documentPin, documentAnchorLabel, type AnnotationAnchor } from '../utils/canvasAnnotations';
 import { CanvasAnnotationContext } from './CanvasAnnotationContext';
 
 type Props = { workspace: Workspace | null; filePath?: string; onAgentChat: (prompt: string) => void; children: ReactNode };
@@ -37,7 +37,7 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
   const [loadingThread, setLoadingThread] = useState(false);
   const [error, setError] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
-  const [marks, setMarks] = useState<Array<{ id: string; x: number; y: number; width: number; height: number }>>([]);
+  const [marks, setMarks] = useState<Array<{ id: string; x: number; y: number; width: number; height: number; pin?: boolean }>>([]);
   const canComment = ['owner', 'editor', 'contributor', 'commenter'].includes(workspace.role || '');
   const selected = objects.find(item => item.id === selectedId);
   const annotations = useMemo(() => objects.filter(item => item.status !== 'resolved' && item.status !== 'addressed'), [objects]);
@@ -77,7 +77,7 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
     const id = query.get('annotationId');
     if (id && openedNotificationRef.current !== id && objects.some(item => item.id === id)) { openedNotificationRef.current = id; open(id); }
   }, [objects, open]);
-  const context = useMemo(() => ({ active, annotations, select, open }), [active, annotations, select, open]);
+  const context = useMemo(() => ({ active, canComment, annotations, select, open }), [active, canComment, annotations, select, open]);
 
   useEffect(() => {
     const root = contentRef.current;
@@ -88,9 +88,26 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
       const bounds = root.getBoundingClientRect();
       const next: typeof marks = [];
       for (const item of annotations) {
-        if (item.blockId) continue;
-        const match = locateAnnotationText(surface.textContent || '', item);
-        const range = match && textRange(surface, ...match);
+        const scopedSurface = item.blockId?.startsWith('document:')
+          ? Array.from(root.querySelectorAll<HTMLElement>('[data-annotation-surface]')).find(el => el.dataset.annotationSurface === item.blockId)
+          : undefined;
+        if (item.blockId && !scopedSurface) continue;
+        if (scopedSurface && item.anchorFingerprint) {
+          try {
+            const fingerprint = JSON.parse(item.anchorFingerprint);
+            if (fingerprint.kind === 'document-text' && fingerprint.revision !== scopedSurface.dataset.annotationRevision) continue;
+          } catch { /* Older annotations can have a non-JSON fingerprint. */ }
+        }
+        if (scopedSurface && item.anchorFingerprint?.includes('document-pin')) {
+          const pin = documentPin(item, scopedSurface.dataset.annotationRevision || '');
+          if (!pin) continue;
+          const rect = scopedSurface.getBoundingClientRect();
+          next.push({ id: item.id, x: rect.left - bounds.left + rect.width * pin.x, y: rect.top - bounds.top + rect.height * pin.y, width: 24, height: 24, pin: true });
+          continue;
+        }
+        const textSurface = scopedSurface || surface;
+        const match = locateAnnotationText(textSurface.textContent || '', item);
+        const range = match && textRange(textSurface, ...match);
         if (!range) continue;
         for (const rect of Array.from(range.getClientRects())) {
           if (rect.width && rect.height) next.push({ id: item.id, x: rect.left - bounds.left, y: rect.top - bounds.top, width: rect.width, height: rect.height });
@@ -135,25 +152,40 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
       <div className="canvas-annotations-toolbar">
         {canComment && <ToggleButton label="Annotate" icon={<MessageSquarePlus size={14} />} size="sm" isPressed={active} onPressedChange={setActive} />}
         <Button label={`Comments (${annotations.length})`} icon={<MessageSquare size={14} />} variant="ghost" size="sm" onClick={() => setPanel(!panel)} />
-        {active && <Text type="supporting" maxLines={1}>Select text or click an HTML element</Text>}
+        {active && <Text type="supporting" maxLines={1}>Select text or click a page, slide, or HTML element</Text>}
       </div>
       <div className="canvas-annotations-body">
         <div className="canvas-annotations-content">
-          <div ref={contentRef} className="h-full" onMouseUp={() => {
+          <div ref={contentRef} className="h-full" onMouseUp={(event) => {
             if (!active || contentRef.current?.querySelector('.monaco-editor')) return;
             const selection = window.getSelection();
-            if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+            if (!selection || selection.isCollapsed || !selection.rangeCount) {
+              const target = event.target instanceof Element ? event.target : null;
+              const page = target?.closest<HTMLElement>('[data-annotation-surface]');
+              if (!page || target?.closest('button,a,input,textarea')) return;
+              const rect = page.getBoundingClientRect();
+              if (!rect.width || !rect.height) return;
+              select({ blockId: page.dataset.annotationSurface, anchorText: page.dataset.annotationLabel,
+                anchorFingerprint: JSON.stringify({ kind: 'document-pin', revision: page.dataset.annotationRevision || '', x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) }) });
+              return;
+            }
             const range = selection.getRangeAt(0);
             const root = contentRef.current;
             if (!root || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
-            const surface = root.querySelector<HTMLElement>('[contenteditable="true"]') || root;
+            const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+            const page = element?.closest<HTMLElement>('[data-annotation-surface]');
+            const endElement = range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement;
+            if (page !== endElement?.closest('[data-annotation-surface]')) { setError('Select text within one page or slide.'); return; }
+            const surface = page || root.querySelector<HTMLElement>('[contenteditable="true"]') || root;
             if (!surface.contains(range.startContainer) || !surface.contains(range.endContainer)) return;
             const before = range.cloneRange(); before.selectNodeContents(surface); before.setEnd(range.startContainer, range.startOffset);
             const quote = range.toString().slice(0, 4000);
-            if (quote.trim()) select({ anchorText: quote, anchorStart: before.toString().length, anchorEnd: before.toString().length + quote.length });
+            if (quote.trim()) select({ blockId: page?.dataset.annotationSurface, anchorText: quote, anchorStart: before.toString().length, anchorEnd: before.toString().length + quote.length,
+              ...(page ? { anchorFingerprint: JSON.stringify({ kind: 'document-text', revision: page.dataset.annotationRevision || '' }) } : {}),
+            });
           }}>{children}</div>
           <div className="canvas-annotations-marks" aria-label="Comment highlights">
-            {marks.map((mark, index) => <button key={`${mark.id}:${index}`} type="button" aria-label="Open annotation" onClick={() => open(mark.id)} className="canvas-annotations-mark" style={{ left: mark.x, top: mark.y, width: mark.width, height: mark.height }} />)}
+            {marks.map((mark, index) => <button key={`${mark.id}:${index}`} type="button" aria-label="Open annotation" onClick={() => open(mark.id)} className={mark.pin ? "canvas-annotations-pin" : "canvas-annotations-mark"} style={{ left: mark.x, top: mark.y, width: mark.width, height: mark.height }}>{mark.pin ? annotations.findIndex(item => item.id === mark.id) + 1 : null}</button>)}
           </div>
         </div>
         {panel && <aside aria-label="Canvas comments" className="canvas-annotations-panel">
@@ -164,6 +196,15 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
           {error && <div role="alert" className="canvas-annotations-error"><Text type="supporting">{error}</Text></div>}
           {anchor || selected ? <>
             <div><Button label="All comments" icon={<ArrowLeft size={14}/>} variant="ghost" size="sm" onClick={() => { setAnchor(null); setSelectedId(null); setBody(''); }} /></div>
+            {documentAnchorLabel((anchor || selected)!) && <Text type="supporting">{documentAnchorLabel((anchor || selected)!)}</Text>}
+            {selected?.anchorFingerprint && (() => {
+              try {
+                const fingerprint = JSON.parse(selected.anchorFingerprint);
+                const current = contentRef.current?.querySelector<HTMLElement>('[data-annotation-revision]')?.dataset.annotationRevision;
+                return current && fingerprint.revision && fingerprint.revision !== current
+                  ? <Text type="supporting">This comment refers to an earlier document revision.</Text> : null;
+              } catch { return null; }
+            })()}
             <Card variant="default" padding={3} className="canvas-annotations-quote">
               <Text type="supporting" display="block">{(anchor || selected)?.anchorText || (anchor || selected)?.blockId || filePath}</Text>
             </Card>

@@ -9,7 +9,7 @@ The backend is an Express + TypeScript API for HelpUDoc. It handles:
 - agent run orchestration
 - conversation history persistence
 - admin-only settings for agent config, skills, users, and skill-builder workflows
-- the live collaboration WebSocket server
+- shared workspace comments, annotations, and notifications
 
 ## Prerequisites
 
@@ -121,6 +121,17 @@ This provisions PostgreSQL, Redis, and MinIO with the same defaults used by the 
 - `POST /api/agent/runs/:runId/respond`
 - `POST /api/agent/runs/:runId/act`
 
+### Office previews and quick edits
+
+All routes below require workspace membership and use the prefix `/api/workspaces/:workspaceId/files`:
+
+- `GET /:fileId/office-preview` renders the exact stored DOCX/PPTX version. It returns PDF bytes as base64, the source SHA-256 `revision`, `version`, `canEdit`, and an optional DOCX paragraph/style map.
+- `POST /office-preview` accepts `{filename, content}` for a base64 document snapshot. This endpoint is read-only and always returns `canEdit: false`, `version: null`.
+- `POST /:fileId/quick-edit` accepts `{version, revision, edit: {paragraphId, start, end, quote, action, value}}`. DOCX actions are `bold`, `italic`, `fontSize`, `style`, and `replaceText`. Offsets count Unicode code points within the source paragraph. Font sizes use half-point increments; paragraph styles must already exist in the document.
+- `POST /:fileId/quick-edit/undo` accepts `{version, restoreVersion}`. It restores only the base version of the caller's latest quick edit, provided no later file change has occurred.
+
+Edits require write access, preserve immutable file history, and reject stale saves even in direct-edit shared workspaces. Edit and undo responses include the updated `file.content` as base64. Preview requests use signed internal calls to the agent's Office converter; sources are limited to 25 MiB and rendered PDFs to 50 MiB. The agent runtime needs LibreOffice and the document fonts (see `agent/README.md`). Conversion failures do not modify source files.
+
 ### Admin settings
 
 These routes are protected by system-admin checks:
@@ -137,7 +148,6 @@ These routes are protected by system-admin checks:
 - The server initializes its database structures during startup.
 - CORS is configured with `credentials: true` so cookie-based auth works in local and deployed flows.
 - Session storage uses Redis via `connect-redis`.
-- The collaboration server starts automatically from the same Node process.
 
 ## Related docs
 

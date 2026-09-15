@@ -116,6 +116,7 @@ import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
 import WorkspaceConflictDialog from '../../components/WorkspaceConflictDialog';
 import WorkspaceWithdrawPublicationDialog from '../../components/WorkspaceWithdrawPublicationDialog';
 import CanvasAnnotations from '../../components/CanvasAnnotations';
+import { OfficeDocumentContext } from '../../components/OfficeDocumentContext';
 import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
 import WorkspaceReviewChangesDialog from '../../components/WorkspaceReviewChangesDialog';
 import {
@@ -7731,6 +7732,24 @@ export default function WorkspacePage() {
     setMobileSurface('chat');
   };
 
+  const officeDocumentContext = {
+    canEdit: canMutateContent,
+    onAgentChat: handleAnnotationChat,
+    onSaved: (file: WorkspaceFile) => {
+      const workspaceId = selectedWorkspace?.id;
+      if (!workspaceId) return;
+      markPrivateWorkspaceChanged(workspaceId);
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      setFiles(previous => previous.map(item => String(item.id) === String(file.id) ? { ...item, ...file } : item));
+      if (slideSelectionRef.current !== `${workspaceId}:${file.id}`) return;
+      const content = file.content || '';
+      setFileContent(content);
+      lastAutoSavedContentRef.current = content;
+      setSelectedFile(previous => previous && String(previous.id) === String(file.id) ? { ...previous, ...file } : previous);
+      setSelectedFileDetails(previous => previous && String(previous.id) === String(file.id) ? { ...previous, ...file } : previous);
+    },
+  };
+
   const handleMobileSelectFile = (file: WorkspaceFile) => {
     setSelectedDashboardPath(null);
     setSelectedFile(file);
@@ -7811,7 +7830,7 @@ export default function WorkspacePage() {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <CanvasAnnotations workspace={selectedWorkspace} filePath={selectedFile?.name} onAgentChat={handleAnnotationChat}>
+        <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={selectedFile?.name} onAgentChat={handleAnnotationChat}>
         {isEditMode && selectedWorkspace ? (
           <Suspense fallback={editorLoadingFallback}>
             <FileEditor
@@ -7870,7 +7889,7 @@ export default function WorkspacePage() {
             </p>
           </div>
         )}
-        </CanvasAnnotations>
+        </CanvasAnnotations></OfficeDocumentContext.Provider>
       </div>
       <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
         <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
@@ -9173,7 +9192,7 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden min-h-0">
-                    <CanvasAnnotations workspace={selectedWorkspace} filePath={selectedFile?.name} onAgentChat={handleAnnotationChat}>
+                    <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={selectedFile?.name} onAgentChat={handleAnnotationChat}>
                     {isEditMode && !isPublishedMode && selectedWorkspace ? (
                       <Suspense fallback={editorLoadingFallback}>
                         <FileEditor
@@ -9222,7 +9241,7 @@ export default function WorkspacePage() {
                         )}
                       </div>
                     )}
-                    </CanvasAnnotations>
+                    </CanvasAnnotations></OfficeDocumentContext.Provider>
                   </div>
                 </div>
               </div>

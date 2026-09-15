@@ -255,6 +255,9 @@ jobs:
           docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
             python /app/agent/scripts/smoke_officecli.py
 
+          docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
+            python /app/agent/scripts/smoke_office_preview.py
+
   deploy:
     name: Deploy to GKE
     needs: [guard, build-backend, build-frontend, build-agent]

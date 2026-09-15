@@ -109,6 +109,8 @@ jobs:
       - name: Install agent dependencies
         run: pip install -r agent/requirements.txt pytest pytest-asyncio
       - name: Run agent tests
+        env:
+          PYTHONPATH: agent
         run: |
           python -m pytest \
             tests/test_agent_import_smoke.py \
@@ -116,6 +118,8 @@ jobs:
             tests/test_mcp_binding.py \
             tests/test_tool_factory.py \
             tests/test_skill_sandbox.py \
+            agent/tests/test_document_quick_edit.py \
+            agent/tests/test_office_preview.py \
             tests/office
 
   docker-backend:
@@ -187,6 +191,7 @@ jobs:
           docker run --rm helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_import.py
           docker run --rm helpudoc-agent:ci-smoke officecli --version
           docker run --rm helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_officecli.py
+          docker run --rm helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_office_preview.py
           docker run --rm helpudoc-agent:ci-smoke sh -c \
             'cd /app/agent/licenses/officecli && sha256sum -c SHA256SUMS'
 

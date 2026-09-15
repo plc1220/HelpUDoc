@@ -11,6 +11,14 @@ WORKDIR /app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     libreoffice-calc \
+    libreoffice-writer \
+    libreoffice-impress \
+    libseccomp2 \
+    fonts-crosextra-carlito \
+    fonts-crosextra-caladea \
+    fonts-liberation2 \
+    fonts-noto-core \
+    fonts-noto-cjk \
     curl \
     libicu72 \
     nodejs \

@@ -30,11 +30,7 @@ import xml from 'react-syntax-highlighter/dist/esm/languages/hljs/xml';
 import yaml from 'react-syntax-highlighter/dist/esm/languages/hljs/yaml';
 import atomOneDark from 'react-syntax-highlighter/dist/esm/styles/hljs/atom-one-dark';
 import github from 'react-syntax-highlighter/dist/esm/styles/hljs/github';
-import type JSZipType from 'jszip';
-import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from 'pdfjs-dist';
 import type { File } from '../types';
-import { apiFetch } from '../services/apiClient';
-import { getFilePreviewUrl } from '../services/fileApi';
 import { parsePlotlySpec } from '../utils/plotlySpec';
 import {
   configureMermaid,
@@ -49,6 +45,8 @@ import {
   isSpreadsheetDocument,
   officeOnlineEmbedUrl,
 } from '../utils/officeFiles';
+import PdfDocumentPreview from './PdfDocumentPreview';
+import OfficeDocumentPreview from './OfficeDocumentPreview';
 import WorkspaceHtmlPreviewFrame from './WorkspaceHtmlPreviewFrame';
 
 const PlotlyChart = lazy(() => import('./PlotlyChart'));
@@ -69,17 +67,10 @@ type TabularPreview = {
   truncatedColumns: boolean;
 };
 
-type PptxSlidePreview = {
-  slideNumber: number;
-  title: string;
-  lines: string[];
-};
-
 const PARQUET_PREVIEW_MAX_ROWS = 100;
 const PARQUET_PREVIEW_MAX_COLUMNS = 20;
 const SPREADSHEET_PREVIEW_MAX_ROWS = 100;
 const SPREADSHEET_PREVIEW_MAX_COLUMNS = 20;
-const PPTX_PREVIEW_MAX_SLIDES = 80;
 SyntaxHighlighter.registerLanguage('bash', bash);
 SyntaxHighlighter.registerLanguage('c', cpp);
 SyntaxHighlighter.registerLanguage('cpp', cpp);
@@ -162,7 +153,6 @@ let parquetRuntimePromise: Promise<{
 }> | null = null;
 
 let spreadsheetRuntimePromise: Promise<typeof import('xlsx')> | null = null;
-let pptxZipRuntimePromise: Promise<typeof JSZipType> | null = null;
 
 const loadParquetRuntime = async () => {
   if (!parquetRuntimePromise) {
@@ -190,14 +180,6 @@ const loadSpreadsheetRuntime = async () => {
   }
 
   return spreadsheetRuntimePromise;
-};
-
-const loadPptxZipRuntime = async () => {
-  if (!pptxZipRuntimePromise) {
-    pptxZipRuntimePromise = import('jszip').then((module) => module.default || module);
-  }
-
-  return pptxZipRuntimePromise;
 };
 
 const getFileExtension = (fileName: string): string => {
@@ -253,275 +235,6 @@ const decodeBase64ToArrayBuffer = (value: string) => {
   }
 
   return bytes.buffer;
-};
-
-const pdfWorkerUrl = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-);
-// The worker asset is immutable and its content hash does not change when the
-// serving headers change. Version the URL so browsers do not reuse a cached
-// response with the old, incorrect MIME type.
-pdfWorkerUrl.searchParams.set('v', '2');
-GlobalWorkerOptions.workerSrc = pdfWorkerUrl.toString();
-
-type PdfPreviewProps = {
-  file: File;
-  fileContent: string;
-  workspaceId?: string;
-};
-
-const PdfPreview: React.FC<PdfPreviewProps> = ({ file, fileContent, workspaceId }) => {
-  const pagesRef = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [error, setError] = useState<string | null>(null);
-  const [openUrl, setOpenUrl] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    let loadingTask: ReturnType<typeof getDocument> | null = null;
-    let pdfDocument: PDFDocumentProxy | null = null;
-    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
-    let objectUrl: string | null = null;
-
-    const clearPages = () => {
-      if (pagesRef.current) {
-        pagesRef.current.replaceChildren();
-      }
-    };
-
-    const loadAndRender = async () => {
-      setStatus('loading');
-      setError(null);
-      setOpenUrl(null);
-      clearPages();
-
-      try {
-        let bytes: ArrayBuffer;
-        if (workspaceId) {
-          const response = await apiFetch(getFilePreviewUrl(workspaceId, file.id));
-          if (!response.ok) {
-            throw new Error(`Preview request failed (${response.status})`);
-          }
-          bytes = await response.arrayBuffer();
-        } else if (file.publicUrl) {
-          const response = await apiFetch(file.publicUrl);
-          if (!response.ok) {
-            throw new Error(`Preview request failed (${response.status})`);
-          }
-          bytes = await response.arrayBuffer();
-        } else if (fileContent.trim()) {
-          bytes = decodeBase64ToArrayBuffer(fileContent);
-        } else {
-          throw new Error('No PDF data is available for preview.');
-        }
-
-        if (cancelled) return;
-
-        objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-        setOpenUrl(objectUrl);
-        loadingTask = getDocument({ data: new Uint8Array(bytes) });
-        pdfDocument = await loadingTask.promise;
-        if (cancelled || !pagesRef.current) return;
-
-        const availableWidth = Math.max(pagesRef.current.clientWidth - 32, 320);
-        for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
-          if (cancelled || !pagesRef.current) return;
-
-          const page = await pdfDocument.getPage(pageNumber);
-          const baseViewport = page.getViewport({ scale: 1 });
-          const scale = Math.min(1.5, availableWidth / baseViewport.width);
-          const viewport = page.getViewport({ scale });
-          const pageContainer = document.createElement('div');
-          pageContainer.className = 'flex justify-center px-4 pb-4 first:pt-4';
-          const canvas = document.createElement('canvas');
-          canvas.className = 'block h-auto max-w-full bg-white shadow-md';
-          const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-          canvas.width = Math.floor(viewport.width * pixelRatio);
-          canvas.height = Math.floor(viewport.height * pixelRatio);
-          canvas.style.width = `${viewport.width}px`;
-          canvas.style.height = `${viewport.height}px`;
-          pageContainer.appendChild(canvas);
-          pagesRef.current.appendChild(pageContainer);
-
-          const context = canvas.getContext('2d');
-          if (!context) {
-            throw new Error(`Unable to create a canvas for page ${pageNumber}.`);
-          }
-          renderTask = page.render({
-            canvasContext: context,
-            viewport,
-            transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-          });
-          await renderTask.promise;
-          renderTask = null;
-        }
-
-        if (!cancelled) setStatus('ready');
-      } catch (cause) {
-        if (cancelled) return;
-        console.error('PDF preview error', cause);
-        setStatus('error');
-        setError(cause instanceof Error ? cause.message : 'Unable to render this PDF.');
-      }
-    };
-
-    void loadAndRender();
-
-    return () => {
-      cancelled = true;
-      renderTask?.cancel();
-      void loadingTask?.destroy();
-      void pdfDocument?.destroy();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      clearPages();
-    };
-  }, [file.id, file.publicUrl, fileContent, retryCount, workspaceId]);
-
-  const handleOpenNewTab = () => {
-    if (openUrl) window.open(openUrl, '_blank', 'noopener,noreferrer');
-  };
-
-  return (
-    <div className="relative h-full w-full overflow-hidden bg-slate-100">
-      <div
-        ref={pagesRef}
-        className="h-full w-full overflow-auto"
-        aria-label={`${file.name} PDF preview`}
-      />
-      {status === 'loading' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-100/95 text-sm text-slate-500" role="status">
-          Loading PDF preview…
-        </div>
-      )}
-      {status === 'error' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-100 px-6 text-center" role="alert">
-          <p className="text-sm text-red-600">Unable to render this PDF.</p>
-          <p className="max-w-md text-xs text-slate-500">{error}</p>
-          <button
-            type="button"
-            onClick={() => setRetryCount((count) => count + 1)}
-            className="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
-          >
-            Retry preview
-          </button>
-        </div>
-      )}
-      {status === 'ready' && openUrl && (
-        <button
-          type="button"
-          onClick={handleOpenNewTab}
-          className="absolute right-3 top-3 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white shadow-md transition hover:bg-black/75"
-        >
-          Open in new tab
-        </button>
-      )}
-    </div>
-  );
-};
-
-/** Mammoth may emit empty or whitespace-only markup for minimal docs. */
-const isDocxHtmlEffectivelyEmpty = (html: string): boolean => {
-  if (!html.trim()) return true;
-  try {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const text = doc.body?.textContent ?? '';
-    return text.replace(/\u00a0/g, ' ').trim().length === 0;
-  } catch {
-    return false;
-  }
-};
-
-const parseXmlDocument = (xml: string): Document => {
-  const doc = new DOMParser().parseFromString(xml, 'application/xml');
-  const parseError = doc.getElementsByTagName('parsererror')[0];
-  if (parseError) {
-    throw new Error(parseError.textContent || 'Invalid XML in PowerPoint file.');
-  }
-  return doc;
-};
-
-const getXmlAttr = (element: Element, name: string): string => {
-  return element.getAttribute(name) || element.getAttribute(name.split(':').pop() || name) || '';
-};
-
-const normalizePptxText = (value: string): string => {
-  return value.replace(/\s+/g, ' ').trim();
-};
-
-const extractPptxParagraphs = (slideXml: string): string[] => {
-  const doc = parseXmlDocument(slideXml);
-  const paragraphNodes = Array.from(doc.getElementsByTagName('a:p'));
-  const paragraphs = paragraphNodes
-    .map((paragraph) => {
-      const pieces = Array.from(paragraph.getElementsByTagName('a:t')).map(
-        (node) => node.textContent || '',
-      );
-      return normalizePptxText(pieces.join(''));
-    })
-    .filter(Boolean);
-
-  const deduped: string[] = [];
-  for (const paragraph of paragraphs) {
-    if (deduped[deduped.length - 1] !== paragraph) {
-      deduped.push(paragraph);
-    }
-  }
-  return deduped;
-};
-
-const resolvePptxSlidePaths = async (
-  zip: JSZipType,
-): Promise<string[]> => {
-  const presentationXml = await zip.file('ppt/presentation.xml')?.async('string');
-  const relsXml = await zip.file('ppt/_rels/presentation.xml.rels')?.async('string');
-  if (!presentationXml || !relsXml) {
-    return Object.keys(zip.files)
-      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
-      .sort((left, right) => {
-        const leftIndex = Number(left.match(/slide(\d+)\.xml$/i)?.[1] || 0);
-        const rightIndex = Number(right.match(/slide(\d+)\.xml$/i)?.[1] || 0);
-        return leftIndex - rightIndex;
-      });
-  }
-
-  const presentationDoc = parseXmlDocument(presentationXml);
-  const relsDoc = parseXmlDocument(relsXml);
-  const relTargetById = new Map(
-    Array.from(relsDoc.getElementsByTagName('Relationship')).map((relationship) => [
-      getXmlAttr(relationship, 'Id'),
-      getXmlAttr(relationship, 'Target'),
-    ]),
-  );
-
-  return Array.from(presentationDoc.getElementsByTagName('p:sldId'))
-    .map((slideId) => relTargetById.get(getXmlAttr(slideId, 'r:id')) || '')
-    .filter(Boolean)
-    .map((target) => {
-      const normalized = target.replace(/\\/g, '/').replace(/^\/+/, '');
-      return normalized.startsWith('ppt/') ? normalized : `ppt/${normalized}`;
-    });
-};
-
-const extractPptxPreview = async (fileContent: string): Promise<PptxSlidePreview[]> => {
-  const JSZip = await loadPptxZipRuntime();
-  const zip = await JSZip.loadAsync(decodeBase64ToArrayBuffer(fileContent));
-  const slidePaths = (await resolvePptxSlidePaths(zip)).slice(0, PPTX_PREVIEW_MAX_SLIDES);
-  const slides: PptxSlidePreview[] = [];
-
-  for (const [index, slidePath] of slidePaths.entries()) {
-    const slideXml = await zip.file(slidePath)?.async('string');
-    if (!slideXml) continue;
-    const lines = extractPptxParagraphs(slideXml);
-    slides.push({
-      slideNumber: index + 1,
-      title: lines[0] || `Slide ${index + 1}`,
-      lines,
-    });
-  }
-
-  return slides;
 };
 
 const formatPreviewCell = (value: unknown): string => {
@@ -657,15 +370,6 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const [spreadsheetPreviewTitle, setSpreadsheetPreviewTitle] = useState('Spreadsheet preview');
   const [spreadsheetError, setSpreadsheetError] = useState<string | null>(null);
   const [isSpreadsheetLoading, setIsSpreadsheetLoading] = useState(false);
-  const [docxHtml, setDocxHtml] = useState<string | null>(null);
-  const [docxHtmlSource, setDocxHtmlSource] = useState<string | null>(null);
-  const [docxError, setDocxError] = useState<string | null>(null);
-  const [isDocxLoading, setIsDocxLoading] = useState(false);
-  const [pptxPreview, setPptxPreview] = useState<PptxSlidePreview[] | null>(null);
-  const [pptxPreviewSource, setPptxPreviewSource] = useState<string | null>(null);
-  const [pptxError, setPptxError] = useState<string | null>(null);
-  const [isPptxLoading, setIsPptxLoading] = useState(false);
-
   const parsedCsv = useMemo(() => {
     if (!isCsvFile || !fileContent.trim()) return null;
     try {
@@ -886,116 +590,6 @@ const FileRenderer: React.FC<FileRendererProps> = ({
     };
   }, [fileContent, isSpreadsheetFile]);
 
-  useEffect(() => {
-    if (!isDocxFile) {
-      setDocxHtml(null);
-      setDocxHtmlSource(null);
-      setDocxError(null);
-      setIsDocxLoading(false);
-      return;
-    }
-
-    if (!fileContent.trim()) {
-      setDocxHtml(null);
-      setDocxHtmlSource(null);
-      setDocxError(null);
-      setIsDocxLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const run = async () => {
-      setIsDocxLoading(true);
-      setDocxHtml(null);
-      setDocxHtmlSource(null);
-      setDocxError(null);
-      try {
-        const mammoth = await import('mammoth');
-        const arrayBuffer = decodeBase64ToArrayBuffer(fileContent);
-        const { value } = await mammoth.convertToHtml({ arrayBuffer });
-        if (!cancelled) {
-          setDocxHtml(value);
-          setDocxHtmlSource(fileContent);
-        }
-      } catch (error) {
-        console.error('DOCX preview error', error);
-        if (!cancelled) {
-          setDocxHtml(null);
-          setDocxHtmlSource(null);
-          setDocxError(
-            error instanceof Error
-              ? error.message
-              : 'Could not convert this Word file to HTML.',
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setIsDocxLoading(false);
-        }
-      }
-    };
-
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [fileContent, isDocxFile]);
-
-  useEffect(() => {
-    if (!isPptxFile) {
-      setPptxPreview(null);
-      setPptxPreviewSource(null);
-      setPptxError(null);
-      setIsPptxLoading(false);
-      return;
-    }
-
-    if (!fileContent.trim()) {
-      setPptxPreview(null);
-      setPptxPreviewSource(null);
-      setPptxError(null);
-      setIsPptxLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const run = async () => {
-      setIsPptxLoading(true);
-      setPptxPreview(null);
-      setPptxPreviewSource(null);
-      setPptxError(null);
-      try {
-        const slides = await extractPptxPreview(fileContent);
-        if (!cancelled) {
-          setPptxPreview(slides);
-          setPptxPreviewSource(fileContent);
-        }
-      } catch (error) {
-        console.error('PPTX preview error', error);
-        if (!cancelled) {
-          setPptxPreview(null);
-          setPptxPreviewSource(null);
-          setPptxError(
-            error instanceof Error
-              ? error.message
-              : 'Could not read this PowerPoint file.',
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setIsPptxLoading(false);
-        }
-      }
-    };
-
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [fileContent, isPptxFile]);
-
   const markdownComponents = useMemo(
     () => createMarkdownComponents({
       workspaceId,
@@ -1211,7 +805,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       );
     }
     if (isPdfFile) {
-      return <PdfPreview file={file} fileContent={fileContent} workspaceId={workspaceId} />;
+      return <PdfDocumentPreview file={file} fileContent={fileContent} workspaceId={workspaceId} />;
     }
     if (isCsvFile) {
       if (!fileContent.trim()) {
@@ -1322,83 +916,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         </div>
       );
     }
-    if (isDocxFile) {
-      const docxBanner = (
-        <div
-          className={`shrink-0 border-b px-4 py-2 text-xs ${
-            colorMode === 'dark'
-              ? 'border-slate-700 text-slate-400'
-              : 'border-gray-200 text-gray-500'
-          }`}
-        >
-          <span
-            className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}
-          >
-            Word preview
-          </span>
-          {' · '}
-          Approximate layout
-        </div>
-      );
-      const docxProse = [
-        colorMode === 'dark' ? 'prose prose-invert' : 'prose prose-slate',
-        'max-w-none break-words p-4 text-sm',
-        disableInternalScroll ? 'h-auto overflow-y-visible' : 'min-h-0 flex-1 overflow-y-auto',
-      ].join(' ');
-      /** Converts async; first paint may run before useEffect sets isDocxLoading. */
-      const docxAwaitingPreview =
-        isDocxLoading
-        || (fileContent.trim().length > 0 && (docxHtml === null || docxHtmlSource !== fileContent) && !docxError);
-      if (docxAwaitingPreview) {
-        return (
-          <div className="flex h-full min-h-0 flex-col">
-            {docxBanner}
-            <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-gray-500">
-              Loading preview…
-            </div>
-          </div>
-        );
-      }
-      if (docxError) {
-        return (
-          <div className="flex h-full min-h-0 flex-col">
-            {docxBanner}
-            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-red-600">
-              Preview failed: {docxError}
-            </div>
-          </div>
-        );
-      }
-      if (docxHtml == null) {
-        return (
-          <div className="flex h-full min-h-0 flex-col">
-            {docxBanner}
-            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-gray-500">
-              No file content loaded. Preview is unavailable.
-            </div>
-          </div>
-        );
-      }
-      if (isDocxHtmlEffectivelyEmpty(docxHtml)) {
-        return (
-          <div className="flex h-full min-h-0 flex-col">
-            {docxBanner}
-            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-gray-500">
-              No previewable text in this document.
-            </div>
-          </div>
-        );
-      }
-      return (
-        <div className="flex h-full min-h-0 flex-col">
-          {docxBanner}
-          <div
-            className={`helpudoc-docx-preview min-h-0 flex-1 ${docxProse}`}
-            // mammoth emits semantic HTML; images may be embedded or omitted by the converter
-            dangerouslySetInnerHTML={{ __html: docxHtml }}
-          />
-        </div>
-      );
+    if (isDocxFile || isPptxFile) {
+      return <OfficeDocumentPreview key={`${workspaceId}:${file.id}`} file={file} fileContent={fileContent} workspaceId={workspaceId} />;
     }
     if (isSpreadsheetFile) {
       if (isSpreadsheetLoading) {
@@ -1444,139 +963,6 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         spreadsheetPreview,
         SPREADSHEET_PREVIEW_MAX_ROWS,
         SPREADSHEET_PREVIEW_MAX_COLUMNS,
-      );
-    }
-    if (isPptxFile) {
-      const banner = (
-        <div
-          className={`shrink-0 border-b px-4 py-2 text-xs ${
-            colorMode === 'dark'
-              ? 'border-slate-700 text-slate-400'
-              : 'border-gray-200 text-gray-500'
-          }`}
-        >
-          <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
-            PowerPoint preview
-          </span>
-          {' · '}
-          Text extraction
-        </div>
-      );
-      const awaitingPreview =
-        isPptxLoading
-        || (fileContent.trim().length > 0 && (pptxPreview === null || pptxPreviewSource !== fileContent) && !pptxError);
-
-      if (awaitingPreview) {
-        return (
-          <div className="flex h-full min-h-0 flex-col">
-            {banner}
-            <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-gray-500">
-              Loading preview...
-            </div>
-          </div>
-        );
-      }
-
-      if (pptxError) {
-        return (
-          <div className="flex h-full min-h-0 flex-col">
-            {banner}
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center text-sm text-red-600">
-              <p>Preview failed: {pptxError}</p>
-              {fileContent.trim() ? (
-                <button
-                  type="button"
-                  onClick={() => downloadBinaryFile(
-                    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                    file?.name || 'presentation.pptx',
-                  )}
-                  className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${
-                    colorMode === 'dark'
-                      ? 'bg-slate-600 hover:bg-slate-500'
-                      : 'bg-slate-800 hover:bg-slate-700'
-                  }`}
-                >
-                  Download file
-                </button>
-              ) : null}
-            </div>
-          </div>
-        );
-      }
-
-      if (!pptxPreview || pptxPreview.length === 0) {
-        return (
-          <div className="flex h-full min-h-0 flex-col">
-            {banner}
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center text-sm text-gray-500">
-              <p>No previewable slide text found.</p>
-              {fileContent.trim() ? (
-                <button
-                  type="button"
-                  onClick={() => downloadBinaryFile(
-                    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                    file?.name || 'presentation.pptx',
-                  )}
-                  className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${
-                    colorMode === 'dark'
-                      ? 'bg-slate-600 hover:bg-slate-500'
-                      : 'bg-slate-800 hover:bg-slate-700'
-                  }`}
-                >
-                  Download file
-                </button>
-              ) : null}
-            </div>
-          </div>
-        );
-      }
-
-      return (
-        <div className="flex h-full min-h-0 flex-col">
-          {banner}
-          <div
-            className={`min-h-0 flex-1 overflow-y-auto px-5 py-4 ${
-              colorMode === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-gray-50 text-gray-900'
-            }`}
-          >
-            <div className="mx-auto flex max-w-4xl flex-col gap-4">
-              <div className={`text-xs ${colorMode === 'dark' ? 'text-slate-400' : 'text-gray-500'}`}>
-                {pptxPreview.length} slide{pptxPreview.length === 1 ? '' : 's'}
-                {pptxPreview.length === PPTX_PREVIEW_MAX_SLIDES ? ` shown, capped at ${PPTX_PREVIEW_MAX_SLIDES}` : ''}
-              </div>
-              {pptxPreview.map((slide) => (
-                <section
-                  key={slide.slideNumber}
-                  className={`rounded-lg border p-4 shadow-sm ${
-                    colorMode === 'dark'
-                      ? 'border-slate-800 bg-slate-900'
-                      : 'border-gray-200 bg-white'
-                  }`}
-                >
-                  <div className={`mb-3 text-xs font-medium ${colorMode === 'dark' ? 'text-slate-400' : 'text-gray-500'}`}>
-                    Slide {slide.slideNumber}
-                  </div>
-                  <h3 className={`mb-3 text-base font-semibold ${colorMode === 'dark' ? 'text-slate-100' : 'text-gray-900'}`}>
-                    {slide.title}
-                  </h3>
-                  {slide.lines.length > 0 ? (
-                    <div className={`space-y-2 text-sm leading-6 ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
-                      {slide.lines.map((line, index) => (
-                        <p key={`${slide.slideNumber}-${index}`} className="whitespace-pre-wrap break-words">
-                          {line}
-                        </p>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className={`text-sm ${colorMode === 'dark' ? 'text-slate-400' : 'text-gray-500'}`}>
-                      No text on this slide.
-                    </p>
-                  )}
-                </section>
-              ))}
-            </div>
-          </div>
-        </div>
       );
     }
     if (isOfficeFile) {

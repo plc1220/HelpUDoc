@@ -11,11 +11,13 @@ import { HttpError } from '../errors';
 import { WorkspaceService } from '../services/workspaceService';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
 import { GoogleDriveService } from '../services/googleDriveService';
+import { OfficeDocumentService } from '../services/officeDocumentService';
 
 export default function(
   fileService: FileService,
   workspaceService: WorkspaceService,
   googleOAuthService: GoogleOAuthService,
+  officeDocuments = new OfficeDocumentService(fileService, workspaceService),
 ) {
   const router = Router({ mergeParams: true });
   const upload = multer({
@@ -106,6 +108,55 @@ export default function(
     console.error(fallbackMessage, error);
     return res.status(500).json({ error: fallbackMessage });
   };
+
+  const officeFileId = (value: string) => {
+    if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+      throw new HttpError(400, 'Invalid file ID');
+    }
+    return Number(value);
+  };
+
+  // Byte previews are read-only, including immutable published snapshots and virtual files.
+  router.post('/office-preview', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await officeDocuments.previewBytes(req.params.workspaceId, user.userId, req.body);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid Office preview payload' });
+      handleError(res, error, 'Failed to render Office preview');
+    }
+  });
+
+  router.get('/:fileId/office-preview', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await officeDocuments.preview(req.params.workspaceId, officeFileId(req.params.fileId), user.userId);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) { handleError(res, error, 'Failed to render Office preview'); }
+  });
+
+  router.post('/:fileId/quick-edit', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      res.json(await officeDocuments.quickEdit(req.params.workspaceId, officeFileId(req.params.fileId), user.userId, req.body));
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid quick edit payload' });
+      handleError(res, error, 'Failed to apply document edit');
+    }
+  });
+
+  router.post('/:fileId/quick-edit/undo', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      res.json(await officeDocuments.undo(req.params.workspaceId, officeFileId(req.params.fileId), user.userId, req.body));
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid undo payload' });
+      handleError(res, error, 'Failed to undo document edit');
+    }
+  });
 
   router.get('/drive/search', async (req: Request<{ workspaceId: string }>, res: Response) => {
     try {
