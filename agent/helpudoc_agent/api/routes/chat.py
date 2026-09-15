@@ -267,6 +267,47 @@ def _validated_fresh_stream_input(
     return {"messages": messages}
 
 
+# Module level so it can be tested directly. It closes over nothing in the route
+# factory, and the turn-inclusion rule below is worth asserting on its own.
+def _prepare_payload(message: ChatRequest) -> List[Dict[str, Any]]:
+    payload: List[Dict[str, Any]] = []
+    if message.history:
+        for item in message.history:
+            if isinstance(item, dict):
+                payload.append(dict(item))
+            else:
+                payload.append({"role": "user", "content": str(item)})
+    if message.messageContent:
+        copied_blocks = [_copy_content_block(block) for block in message.messageContent]
+        for index in range(len(payload) - 1, -1, -1):
+            role = str(payload[index].get("role") or "").strip().lower()
+            if role in {"user", "human"}:
+                payload[index]["content"] = copied_blocks
+                return payload
+        payload.append({"role": "user", "content": copied_blocks})
+        return payload
+    if payload:
+        # Append the turn being sent. Returning `payload` alone dropped it, so a
+        # caller that carries its own history -- the Skill Creator, which gets a fresh
+        # thread per run and has no checkpoint to continue from -- sent every turn
+        # into a conversation that ended at the previous assistant reply. The model
+        # answered the last question it could see and produced the same reply again,
+        # which read as the assistant ignoring everything the user typed.
+        #
+        # Workspace chat was unaffected: it continues through the LangGraph
+        # checkpointer on a stable thread id and sends no history.
+        current = str(message.message or "").strip()
+        if current:
+            last = payload[-1] if payload else None
+            last_role = str((last or {}).get("role") or "").strip().lower()
+            last_content = last.get("content") if isinstance(last, dict) else None
+            # A caller that already included the current turn must not have it twice.
+            if not (last_role in {"user", "human"} and last_content == message.message):
+                payload.append({"role": "user", "content": message.message})
+        return payload
+    return [{"role": "user", "content": message.message}]
+
+
 def register_chat_routes(
     app: FastAPI,
     *,
@@ -316,26 +357,6 @@ def register_chat_routes(
             "mcpServers": describe_mcp_servers(settings),
         }
 
-    def _prepare_payload(message: ChatRequest) -> List[Dict[str, Any]]:
-        payload: List[Dict[str, Any]] = []
-        if message.history:
-            for item in message.history:
-                if isinstance(item, dict):
-                    payload.append(dict(item))
-                else:
-                    payload.append({"role": "user", "content": str(item)})
-        if message.messageContent:
-            copied_blocks = [_copy_content_block(block) for block in message.messageContent]
-            for index in range(len(payload) - 1, -1, -1):
-                role = str(payload[index].get("role") or "").strip().lower()
-                if role in {"user", "human"}:
-                    payload[index]["content"] = copied_blocks
-                    return payload
-            payload.append({"role": "user", "content": copied_blocks})
-            return payload
-        if payload:
-            return payload
-        return [{"role": "user", "content": message.message}]
 
     def _build_preloaded_skill_prompt(
         runtime: AgentRuntimeState,
