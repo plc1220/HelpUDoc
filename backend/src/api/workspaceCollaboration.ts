@@ -16,7 +16,7 @@ const createObjectSchema = z.object({
   fileId: z.number().int().positive().optional(),
   filePath: z.string().trim().max(2_000).optional(),
   blockId: z.string().trim().max(255).optional(),
-  anchorText: z.string().trim().max(4_000).optional(),
+  anchorText: z.string().max(4_000).optional(),
   anchorStart: z.number().int().nonnegative().optional(),
   anchorEnd: z.number().int().nonnegative().optional(),
   anchorFingerprint: z.string().trim().max(255).optional(),

@@ -23,6 +23,11 @@ export type WorkspaceCollaborationObject = {
   visibility: 'private' | 'workspace_audience';
   status: WorkspaceCollaborationStatus;
   filePath: string | null;
+  anchorText?: string;
+  anchorStart?: number;
+  anchorEnd?: number;
+  blockId?: string;
+  anchorFingerprint?: string;
   title: string | null;
   body: string;
   authorId: string | null;
@@ -109,6 +114,11 @@ export const createWorkspaceCollaborationObject = async (
     body: string;
     filePath?: string;
     sourceTeamMessageId?: string;
+    anchorText?: string;
+    anchorStart?: number;
+    anchorEnd?: number;
+    blockId?: string;
+    anchorFingerprint?: string;
   },
 ): Promise<WorkspaceCollaborationObject> => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/collaboration/objects`, {

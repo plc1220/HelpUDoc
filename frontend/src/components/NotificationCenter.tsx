@@ -17,7 +17,7 @@ type Notification = {
   eventType: string;
   createdAt: string;
   readAt: string | null;
-  payload: { title?: string; description?: string; workspaceId?: string; conversationId?: string; messageId?: string };
+  payload: { title?: string; description?: string; workspaceId?: string; conversationId?: string; messageId?: string; annotationId?: string; filePath?: string };
 };
 
 const eventLabels: Record<string, string> = {
@@ -113,6 +113,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         const query = new URLSearchParams({ workspaceId: item.payload.workspaceId, notificationId: item.id });
         if (item.payload.conversationId) query.set('conversationId', item.payload.conversationId);
         if (item.payload.messageId) query.set('messageId', item.payload.messageId);
+        if (item.payload.annotationId) query.set('annotationId', item.payload.annotationId);
+        if (item.payload.filePath) query.set('filePath', item.payload.filePath);
         navigate(`/?${query}`);
       }
     } catch { setError('Could not mark notification as read. Try again.'); }

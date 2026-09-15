@@ -1,9 +1,9 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import type { File as WorkspaceFile } from '../types';
-import { getAuthUser } from '../auth/authStore';
 import { createFile, getFileContent } from '../services/fileApi';
-import { createCollabSession } from '../services/collabClient';
+import { useCanvasAnnotations } from './CanvasAnnotationContext';
+import { locateAnnotationText } from '../utils/canvasAnnotations';
 import EditorLoadingState from './EditorLoadingState';
 import type { MarkdownRichEditorHandle } from './MarkdownRichEditor';
 import { isBinaryOfficeDocument } from '../utils/officeFiles';
@@ -14,29 +14,6 @@ const MonacoEditor = lazy(async () => {
 });
 const MarkdownRichEditor = lazy(() => import('./MarkdownRichEditor'));
 const FileRenderer = lazy(() => import('./FileRenderer'));
-
-const COLLAB_COLORS = [
-  '#0ea5e9',
-  '#f97316',
-  '#10b981',
-  '#e11d48',
-  '#a855f7',
-  '#14b8a6',
-  '#f59e0b',
-  '#6366f1',
-];
-
-const hashToColor = (seed: string) => {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const index = Math.abs(hash) % COLLAB_COLORS.length;
-  return COLLAB_COLORS[index];
-};
-
-const formatPresenceName = (name: string) => name.trim() || 'Anonymous';
 
 const getLanguage = (fileName: string) => {
   const extension = fileName.split('.').pop()?.toLowerCase();
@@ -124,29 +101,22 @@ const OfficeDocumentReadOnlyPane: React.FC<{
   );
 };
 
-const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
+const WorkspaceFileEditor: React.FC<FileEditorProps> = ({
   file,
   fileContent,
   onContentChange,
   workspaceId,
   colorMode,
 }) => {
+  const annotation = useCanvasAnnotations();
+  const annotationRef = useRef(annotation);
+  annotationRef.current = annotation;
+  const [mountedEditor, setMountedEditor] = useState<MonacoEditorNamespace.IStandaloneCodeEditor | null>(null);
   const fileId = file?.id ? String(file.id) : null;
   const fileName = file?.name ?? '';
-  const isDraftFile = Boolean(fileId && fileId.startsWith('draft:'));
   const editorRef = useRef<MonacoEditorNamespace.IStandaloneCodeEditor | null>(null);
   const mdxEditorRef = useRef<MarkdownRichEditorHandle | null>(null);
-  const collabSessionRef = useRef<ReturnType<typeof createCollabSession> | null>(null);
-  const monacoBindingRef = useRef<{ destroy: () => void } | null>(null);
-  const presenceStyleRef = useRef<HTMLStyleElement | null>(null);
-  const lastContentRef = useRef<string>(fileContent);
-  const isApplyingRemoteRef = useRef(false);
-  const mdxOriginRef = useRef({ source: 'mdx-editor' });
-  const syncOriginRef = useRef({ source: 'collab-sync' });
-  const hasSeededRef = useRef(false);
-  const [collabReady, setCollabReady] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('connecting');
-  const [presenceUsers, setPresenceUsers] = useState<Array<{ clientId: number; name: string; color: string }>>([]);
+  const isApplyingContentRef = useRef(false);
   const [mdxError, setMdxError] = useState<string | null>(null);
   const isDarkMode = colorMode === 'dark';
   const monacoTheme = isDarkMode ? 'helpudoc-nord' : 'vs';
@@ -214,8 +184,46 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
 
   const handleEditorDidMount = (editorInstance: MonacoEditorNamespace.IStandaloneCodeEditor) => {
     editorRef.current = editorInstance;
-    void bindMonaco();
+    setMountedEditor(editorInstance);
   };
+
+  useEffect(() => {
+    if (!mountedEditor) return;
+    const subscription = mountedEditor.onMouseUp((event) => {
+      const state = annotationRef.current;
+      const selection = mountedEditor.getSelection();
+      const model = mountedEditor.getModel();
+      if (!state || !model) return;
+      if (!state.active && event.target.position) {
+        const offset = model.getOffsetAt(event.target.position);
+        const item = state.annotations.find(item => {
+          const match = !item.blockId && locateAnnotationText(model.getValue(), item);
+          return match && offset >= match[0] && offset < match[1];
+        });
+        if (item) state.open(item.id);
+        return;
+      }
+      if (!state.active || !selection || selection.isEmpty()) return;
+      const anchorStart = model.getOffsetAt(selection.getStartPosition());
+      const anchorText = model.getValueInRange(selection).slice(0, 4000);
+      state.select({ anchorText, anchorStart, anchorEnd: anchorStart + anchorText.length });
+    });
+    const decorations = mountedEditor.createDecorationsCollection();
+    const paint = () => {
+      const model = mountedEditor.getModel();
+      if (!model) return;
+      decorations.set((annotationRef.current?.annotations || []).flatMap(item => {
+        if (item.blockId) return [];
+        const match = locateAnnotationText(model.getValue(), item);
+        if (!match) return [];
+        const start = model.getPositionAt(match[0]); const end = model.getPositionAt(match[1]);
+        return [{ range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column }, options: { inlineClassName: 'canvas-annotation-highlight', hoverMessage: { value: 'Canvas comment — open Comments to view the thread.' } } }];
+      }));
+    };
+    paint();
+    const timer = window.setInterval(paint, 700);
+    return () => { subscription.dispose(); decorations.clear(); window.clearInterval(timer); };
+  }, [mountedEditor]);
 
   const handleUndo = () => {
     editorRef.current?.focus();
@@ -227,90 +235,6 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
     editorRef.current?.trigger('toolbar', 'redo', null);
   };
 
-  const applyTextUpdate = (nextValue: string) => {
-    const session = collabSessionRef.current;
-    if (!session) {
-      onContentChange(nextValue);
-      return;
-    }
-
-    const yText = session.yText;
-    const current = yText.toString();
-    if (current === nextValue) {
-      return;
-    }
-
-    let start = 0;
-    const currentLength = current.length;
-    const nextLength = nextValue.length;
-    while (start < currentLength && start < nextLength && current[start] === nextValue[start]) {
-      start += 1;
-    }
-
-    let endCurrent = currentLength - 1;
-    let endNext = nextLength - 1;
-    while (endCurrent >= start && endNext >= start && current[endCurrent] === nextValue[endNext]) {
-      endCurrent -= 1;
-      endNext -= 1;
-    }
-
-    const deleteCount = endCurrent - start + 1;
-    const insertText = nextValue.slice(start, endNext + 1);
-
-    session.doc.transact(() => {
-      if (deleteCount > 0) {
-        yText.delete(start, deleteCount);
-      }
-      if (insertText) {
-        yText.insert(start, insertText);
-      }
-    }, mdxOriginRef.current);
-  };
-
-  const ensurePresenceStyles = useCallback((users: Array<{ clientId: number; color: string }>) => {
-    if (typeof document === 'undefined') return;
-    if (!presenceStyleRef.current) {
-      const styleEl = document.createElement('style');
-      styleEl.setAttribute('data-collab-presence', 'true');
-      document.head.appendChild(styleEl);
-      presenceStyleRef.current = styleEl;
-    }
-    const rules = users
-      .map((user) => (
-        `.yRemoteSelection-${user.clientId} { background-color: ${user.color}33; }`
-        + `.yRemoteSelectionHead-${user.clientId} { border-left: 2px solid ${user.color}; border-right: 2px solid ${user.color}; }`
-      ))
-      .join('\n');
-    presenceStyleRef.current.textContent = rules;
-  }, []);
-
-  const bindMonaco = useCallback(async () => {
-    if (!fileName || getLanguage(fileName) === 'markdown') return;
-    const session = collabSessionRef.current;
-    if (!session) return;
-    const editorInstance = editorRef.current;
-    if (!editorInstance) return;
-    const model = editorInstance.getModel();
-    if (!model) return;
-
-    const { MonacoBinding } = await import('y-monaco');
-    if (collabSessionRef.current !== session || editorRef.current !== editorInstance) {
-      return;
-    }
-
-    monacoBindingRef.current?.destroy();
-    monacoBindingRef.current = new MonacoBinding(
-      session.yText,
-      model,
-      new Set([editorInstance]),
-      session.provider.awareness ?? undefined,
-    );
-  }, [fileName]);
-
-  useEffect(() => {
-    lastContentRef.current = fileContent;
-  }, [fileContent]);
-
   useEffect(() => {
     if (!fileName || getLanguage(fileName) !== 'markdown') {
       return;
@@ -321,120 +245,14 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
       return;
     }
 
-    isApplyingRemoteRef.current = true;
+    isApplyingContentRef.current = true;
     editorInstance.setMarkdown(fileContent || '');
-    isApplyingRemoteRef.current = false;
+    isApplyingContentRef.current = false;
   }, [fileContent, fileName]);
 
   useEffect(() => {
     setMdxError(null);
   }, [fileId]);
-
-  useEffect(() => {
-    if (!fileId || isDraftFile) {
-      setCollabReady(false);
-      setPresenceUsers([]);
-      setConnectionStatus('disconnected');
-      return;
-    }
-
-    const session = createCollabSession(workspaceId, fileId);
-    collabSessionRef.current = session;
-    setCollabReady(true);
-    setConnectionStatus('connecting');
-    hasSeededRef.current = false;
-
-    const authUser = getAuthUser();
-    const localName = formatPresenceName(authUser?.name ?? 'Local User');
-    const localColor = hashToColor(authUser?.id ?? localName);
-    if (session.provider.awareness) {
-      session.provider.awareness.setLocalStateField('user', {
-        name: localName,
-        color: localColor,
-      });
-    }
-
-    const yText = session.yText;
-    const handleTextChange = (_event: unknown, transaction: { origin?: unknown }) => {
-      const nextValue = yText.toString();
-      if (nextValue === lastContentRef.current) {
-        return;
-      }
-      lastContentRef.current = nextValue;
-      onContentChange(nextValue);
-
-      const isMarkdownFile = fileName ? getLanguage(fileName) === 'markdown' : false;
-      if (isMarkdownFile && transaction.origin !== mdxOriginRef.current) {
-        const editorInstance = mdxEditorRef.current;
-        if (editorInstance) {
-          isApplyingRemoteRef.current = true;
-          editorInstance.setMarkdown(nextValue);
-          isApplyingRemoteRef.current = false;
-        }
-      }
-    };
-
-    const updatePresence = () => {
-      const awareness = session.provider.awareness;
-      if (!awareness) {
-        setPresenceUsers([]);
-        return;
-      }
-      const states = Array.from(awareness.getStates().entries()).map(([clientId, state]) => {
-        const user = (state as { user?: { name?: string; color?: string } }).user;
-        const name = formatPresenceName(user?.name ?? `User ${clientId}`);
-        const color = user?.color ?? hashToColor(String(clientId));
-        return { clientId, name, color };
-      });
-      const others = states.filter((entry) => entry.clientId !== session.doc.clientID);
-      setPresenceUsers(others);
-      ensurePresenceStyles(states);
-    };
-
-    const handleStatus = (event: { status: string }) => {
-      setConnectionStatus(event.status);
-    };
-
-    const handleAwarenessChange = () => {
-      updatePresence();
-    };
-
-    yText.observe(handleTextChange);
-    void bindMonaco();
-    updatePresence();
-    session.provider.on('status', handleStatus);
-    session.provider.on('awarenessChange', handleAwarenessChange);
-
-    return () => {
-      yText.unobserve(handleTextChange);
-      session.provider.off('status', handleStatus);
-      session.provider.off('awarenessChange', handleAwarenessChange);
-      monacoBindingRef.current?.destroy();
-      monacoBindingRef.current = null;
-      session.provider.destroy();
-      session.doc.destroy();
-      collabSessionRef.current = null;
-      setPresenceUsers([]);
-      setConnectionStatus('disconnected');
-    };
-  }, [fileId, fileName, isDraftFile, workspaceId, onContentChange, bindMonaco, ensurePresenceStyles]);
-
-  useEffect(() => {
-    const session = collabSessionRef.current;
-    if (!session || !fileId || isDraftFile || hasSeededRef.current) return;
-
-    if (session.yText.length > 0) {
-      hasSeededRef.current = true;
-      return;
-    }
-
-    if (!fileContent) return;
-
-    session.doc.transact(() => {
-      session.yText.insert(0, fileContent);
-    }, syncOriginRef.current);
-    hasSeededRef.current = true;
-  }, [fileContent, fileId, isDraftFile]);
 
   if (!file) {
     return null;
@@ -442,50 +260,8 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
 
   const resolvedFileName = file.name ?? '';
   const isMarkdown = getLanguage(resolvedFileName) === 'markdown';
-  const statusLabel = connectionStatus === 'connected'
-    ? 'Live'
-    : connectionStatus === 'connecting'
-      ? 'Connecting'
-      : 'Offline';
-  const statusColor = connectionStatus === 'connected'
-    ? 'bg-emerald-500'
-    : connectionStatus === 'connecting'
-      ? 'bg-amber-500'
-      : 'bg-gray-400';
-  const visibleUsers = presenceUsers.slice(0, 3);
-  const overflowCount = presenceUsers.length - visibleUsers.length;
-
   return (
     <div className="h-full flex flex-col">
-      <div className={`border-b px-3 py-2 flex flex-wrap gap-2 items-center justify-between text-xs ${
-        isDarkMode ? 'border-slate-700/70 bg-slate-950/70' : 'bg-gray-100'
-      }`}>
-        <div className={`flex items-center gap-2 ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>
-          <span className={`inline-block h-2 w-2 rounded-full ${statusColor}`} />
-          <span title="Collaboration connection; file saving is separate">{statusLabel === 'Offline' ? 'Collaboration offline' : statusLabel}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          {visibleUsers.map((user) => (
-            <div
-              key={user.clientId}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded-full border ${
-                isDarkMode
-                  ? 'border-slate-700/70 bg-slate-900/85 text-slate-200'
-                  : 'border-gray-200 bg-white text-gray-700'
-              }`}
-            >
-              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: user.color }} />
-              <span className="max-w-[120px] truncate">{user.name}</span>
-            </div>
-          ))}
-          {overflowCount > 0 && (
-            <span className={isDarkMode ? 'text-slate-500' : 'text-gray-500'}>+{overflowCount}</span>
-          )}
-          {presenceUsers.length === 0 && (
-            <span className={isDarkMode ? 'text-slate-500' : 'text-gray-400'}>No collaborators</span>
-          )}
-        </div>
-      </div>
       {!isMarkdown && (
         <div className={`p-1 border-b backdrop-blur ${
           isDarkMode ? 'border-slate-700/70 bg-slate-950/70' : 'border-slate-200 bg-white/95'
@@ -537,9 +313,9 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
                 ref={mdxEditorRef}
                 markdown={fileContent}
                 onChange={(value) => {
-                  if (isApplyingRemoteRef.current) return;
+                  if (isApplyingContentRef.current) return;
                   setMdxError(null);
-                  applyTextUpdate(value);
+                  onContentChange(value);
                 }}
                 onError={setMdxError}
                 onImageUpload={handleImageUpload}
@@ -553,10 +329,9 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
               height="100%"
               language={getLanguage(resolvedFileName)}
               defaultValue={fileContent}
-              value={collabReady ? undefined : fileContent}
+              value={fileContent}
               onMount={handleEditorDidMount}
               onChange={(value) => {
-                if (collabReady) return;
                 onContentChange(value || '');
               }}
               theme={monacoTheme}
@@ -593,7 +368,7 @@ const FileEditor: React.FC<FileEditorProps> = (props) => {
       />
     );
   }
-  return <CollabWorkspaceFileEditor key={`${props.workspaceId}:${props.file.id}`} {...props} />;
+  return <WorkspaceFileEditor key={`${props.workspaceId}:${props.file.id}`} {...props} />;
 };
 
 export default FileEditor;

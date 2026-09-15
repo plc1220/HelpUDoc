@@ -2088,3 +2088,27 @@ body {
     background: var(--color-background-card);
   }
 }
+
+/* Canvas annotation chrome uses the same Astryx tokens as the workspace/chat UI. */
+.canvas-annotations { display: flex; height: 100%; min-height: 0; flex-direction: column; color: var(--color-text-primary); }
+.canvas-annotations-toolbar { display: flex; flex-shrink: 0; align-items: center; gap: var(--spacing-2); padding: var(--spacing-2) var(--spacing-3); border-bottom: var(--border-width) solid var(--color-border); background: var(--color-background-surface); }
+.canvas-annotations-body { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.canvas-annotations-content { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+.canvas-annotations-panel { position: absolute; inset-block: 0; right: 0; z-index: 20; display: flex; width: 336px; max-width: 90%; flex-direction: column; gap: var(--spacing-3); overflow-y: auto; padding: var(--spacing-4); background: var(--color-background-surface); border-left: var(--border-width) solid var(--color-border); box-shadow: var(--shadow-low); }
+.canvas-annotations-panel-header { display: flex; align-items: center; justify-content: space-between; }
+.canvas-annotations-quote { max-height: 144px; overflow: auto; border-inline-start: 2px solid var(--color-border-emphasized); }
+.canvas-annotations-message-body { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--spacing-1); }
+.canvas-annotations-reply { border-top: var(--border-width) solid var(--color-border); padding-top: var(--spacing-3); }
+.canvas-annotations-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-2); }
+.canvas-annotations-composer, .canvas-annotations-card-content { display: flex; flex-direction: column; gap: var(--spacing-2); }
+.canvas-annotations-submit { display: flex; justify-content: flex-end; }
+.canvas-annotations-error { color: var(--color-error); }
+.canvas-annotations-toast { position: absolute; right: var(--spacing-2); bottom: var(--spacing-2); padding: var(--spacing-2); border-radius: var(--radius-element); background: var(--color-background-surface); color: var(--color-error); }
+.canvas-annotations-marks { pointer-events: none; position: absolute; inset: 0; overflow: hidden; }
+.canvas-annotations-mark { position: absolute; pointer-events: auto; cursor: pointer; }
+.canvas-annotations-mark, .canvas-annotation-highlight { background: color-mix(in srgb, var(--color-accent) 15%, transparent); border: 0; border-bottom: 2px solid var(--color-border-emphasized); }
+.canvas-annotations-mark:focus-visible { outline: 2px solid var(--color-border-blue); outline-offset: 1px; }
+.canvas-annotations button { color: var(--color-text-primary) !important; }
+.canvas-annotations button[type='submit'] { background-color: var(--color-accent); color: var(--color-on-accent) !important; }
+.canvas-annotations button:disabled { opacity: 0.5; }
+.canvas-annotations button * { color: inherit; }

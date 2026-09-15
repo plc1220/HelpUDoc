@@ -46,7 +46,6 @@ export class DatabaseService {
     await this.createWorkspaceCollaborationObjectsTable();
     await this.createWorkspaceCollaborationMessagesTable();
     await this.createWorkspaceCollaborationMentionsTable();
-    await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createKnowledgeSourceGroupGrantsTable();
     await this.createKnowledgeBaseTables();
@@ -570,26 +569,6 @@ export class DatabaseService {
         'workspace_publication_links',
         'reconnectToken',
         (table) => table.uuid('reconnectToken'),
-      );
-    }
-  }
-
-  private async createCollabDocumentsTable(): Promise<void> {
-    const exists = await this.db.schema.hasTable('collab_documents');
-    if (!exists) {
-      await this.db.schema.createTable('collab_documents', (table) => {
-        table.string('id').primary();
-        table.binary('state');
-        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
-        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
-      });
-      console.log('Created "collab_documents" table.');
-    } else {
-      await this.ensureColumn('collab_documents', 'state', (table) => table.binary('state'));
-      await this.ensureColumn(
-        'collab_documents',
-        'updatedAt',
-        (table) => table.timestamp('updatedAt').defaultTo(this.db.fn.now()),
       );
     }
   }

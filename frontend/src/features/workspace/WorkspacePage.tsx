@@ -115,6 +115,7 @@ import WorkspacePublishDialog from '../../components/WorkspacePublishDialog';
 import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
 import WorkspaceConflictDialog from '../../components/WorkspaceConflictDialog';
 import WorkspaceWithdrawPublicationDialog from '../../components/WorkspaceWithdrawPublicationDialog';
+import CanvasAnnotations from '../../components/CanvasAnnotations';
 import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
 import WorkspaceReviewChangesDialog from '../../components/WorkspaceReviewChangesDialog';
 import {
@@ -929,6 +930,8 @@ export default function WorkspacePage() {
   const [fileSaveStatus, setFileSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
+  const [annotationChatFocusKey, setAnnotationChatFocusKey] = useState(0);
+  const handledAnnotationFile = useRef<string | null>(null);
   const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
   const [internetSearchEnabled, setInternetSearchEnabled] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -3387,13 +3390,25 @@ export default function WorkspacePage() {
     handledNotification.current = notificationLocation.key;
     handleSelectWorkspace(workspace);
     setIsAgentPaneVisible(true);
-    setMobileSurface('chat');
+    setMobileSurface(query.get('annotationId') ? 'canvas' : 'chat');
     const conversationId = query.get('conversationId');
     if (conversationId && selectedWorkspaceIdRef.current === workspaceId) {
       setActiveConversationId(conversationId);
       void loadConversationMessages(conversationId);
     }
   }, [notificationLocation.key, notificationLocation.search, workspaces, handleSelectWorkspace, loadConversationMessages]);
+
+  useEffect(() => {
+    const query = new URLSearchParams(notificationLocation.search);
+    if (!query.get('annotationId') || query.get('workspaceId') !== selectedWorkspace?.id || handledAnnotationFile.current === notificationLocation.key) return;
+    const target = files.find(file => file.name === query.get('filePath'));
+    if (target) {
+      handledAnnotationFile.current = notificationLocation.key;
+      setSelectedFile(target);
+      setIsEditMode(shouldForceEditMode(target.name));
+      setMobileSurface('canvas');
+    }
+  }, [notificationLocation.key, notificationLocation.search, selectedWorkspace?.id, files]);
 
   /**
    * Sync the Shared Working version into `My draft`. When overlapping changes exist the backend
@@ -7710,6 +7725,12 @@ export default function WorkspacePage() {
     });
   }, [closeCommand, closeMention, isAgentPaneVisible, updateCommandState]);
 
+  const handleAnnotationChat = (prompt: string) => {
+    setAnnotationChatFocusKey(key => key + 1);
+    handleLumoPrompt(chatMessage.trim() ? `${chatMessage}\n\n${prompt}` : prompt);
+    setMobileSurface('chat');
+  };
+
   const handleMobileSelectFile = (file: WorkspaceFile) => {
     setSelectedDashboardPath(null);
     setSelectedFile(file);
@@ -7790,6 +7811,7 @@ export default function WorkspacePage() {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
+        <CanvasAnnotations workspace={selectedWorkspace} filePath={selectedFile?.name} onAgentChat={handleAnnotationChat}>
         {isEditMode && selectedWorkspace ? (
           <Suspense fallback={editorLoadingFallback}>
             <FileEditor
@@ -7848,6 +7870,7 @@ export default function WorkspacePage() {
             </p>
           </div>
         )}
+        </CanvasAnnotations>
       </div>
       <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
         <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
@@ -9150,6 +9173,7 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden min-h-0">
+                    <CanvasAnnotations workspace={selectedWorkspace} filePath={selectedFile?.name} onAgentChat={handleAnnotationChat}>
                     {isEditMode && !isPublishedMode && selectedWorkspace ? (
                       <Suspense fallback={editorLoadingFallback}>
                         <FileEditor
@@ -9198,6 +9222,7 @@ export default function WorkspacePage() {
                         )}
                       </div>
                     )}
+                    </CanvasAnnotations>
                   </div>
                 </div>
               </div>
@@ -9211,6 +9236,7 @@ export default function WorkspacePage() {
             />
 
             <AgentChatPane
+              agentChatFocusKey={annotationChatFocusKey}
               colorMode={colorMode}
               agentPaneStyles={agentPaneStyles}
               isAgentPaneVisible={isAgentPaneVisible}

@@ -21,7 +21,6 @@
     "@emotion/styled": "^11.14.1",
     "@helpudoc/contracts": "file:../packages/contracts",
     "@helpudoc/dashboard-runtime": "file:../packages/dashboard-runtime",
-    "@hocuspocus/provider": "^3.4.3",
     "@mdxeditor/editor": "^3.48.0",
     "@monaco-editor/react": "^4.7.0",
     "@mui/icons-material": "^7.3.4",
@@ -47,9 +46,7 @@
     "react-syntax-highlighter": "^16.0.0",
     "remark-gfm": "^4.0.1",
     "xlsx": "^0.18.5",
-    "y-monaco": "^0.1.6",
-    "yaml": "^2.8.1",
-    "yjs": "^13.6.27"
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@astryxdesign/cli": "^0.1.7",

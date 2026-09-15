@@ -83,6 +83,7 @@ export default function AgentChatPane({
   interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
   interruptErrorByMessageId,
+  agentChatFocusKey,
   chatMessage,
   chatAttachments,
   commandTags,
@@ -171,6 +172,7 @@ export default function AgentChatPane({
   interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
   interruptErrorByMessageId: Record<string, string>;
+  agentChatFocusKey?: number;
   chatMessage: string;
   chatAttachments: ChatComposerAttachment[];
   commandTags: CommandTag[];
@@ -274,6 +276,13 @@ export default function AgentChatPane({
   useEffect(() => {
     setSharedMode('team');
   }, [sharedWorkspace?.id, notificationLocation.search]);
+
+  useEffect(() => {
+    if (!agentChatFocusKey) return;
+    setSharedMode('private');
+    const timer = window.setTimeout(() => chatInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [agentChatFocusKey, chatInputRef]);
 
   const handleSharedModeChange = (mode: SharedChatMode) => {
     if (

@@ -34,7 +34,6 @@ ENV_FILE=../env/local/dev.env npm run dev
 
 API base URL: `http://localhost:3000/api`
 
-The collaboration server starts alongside the API and listens on `ws://localhost:1234` by default.
 
 ## Key environment variables
 
@@ -70,7 +69,6 @@ The collaboration server starts alongside the API and listens on `ws://localhost
 | `AGENT_URL` | Base URL of the Python agent service. |
 | `AGENT_CONFIG_PATH` | Shared runtime config path for agent settings editing. |
 | `AGENT_JWT_SECRET` | Secret used to sign backend-to-agent requests. |
-| `COLLAB_PORT` | Collaboration WebSocket server port. |
 
 ### Local fallback identity
 

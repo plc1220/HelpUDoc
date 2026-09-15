@@ -21,7 +21,6 @@ import { UserMemoryService } from './services/userMemoryService';
 import { configureAgentRunServices } from './services/agentRunService';
 import { userContextMiddleware } from './middleware/userContext';
 import { blockingRedisClient, redisClient } from './services/redisService';
-import { startCollabServer } from './collab/collabServer';
 import { logWorkspaceRootDiagnostic } from './config/workspaceRoot';
 import { getBackendEnv } from './config/env';
 import { SkillGovernanceService } from './services/governance/skillGovernanceService';
@@ -90,7 +89,6 @@ async function startServer() {
   app.use(userContextMiddleware(userService));
 
   app.use('/api', apiRoutes(databaseService, userService, skillGovernanceService));
-  startCollabServer(databaseService, userService);
 
   app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);

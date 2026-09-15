@@ -27,7 +27,6 @@ The app reads Vite-style `VITE_*` variables from your shell, `.env.local`, or Do
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `VITE_API_URL` | `http://localhost:3000/api` | Base URL for backend API calls in local development. |
-| `VITE_COLLAB_URL` | `ws://localhost:1234` | Collaboration WebSocket endpoint. |
 | `VITE_AUTH_MODE` | `hybrid` | Matches backend auth mode and controls login behavior. |
 | `VITE_GOOGLE_CLIENT_ID` | unset | Enables Google sign-in UI when provided. |
 | `VITE_DEBUG_STREAM` | unset | Enables extra client-side stream debugging helpers. |
@@ -120,12 +119,17 @@ The settings API client supports:
 - skill-builder sessions with streamed runs
 - user and group administration
 
+## Canvas annotations
+
+In a Shared workspace, use **Annotate** to highlight text (including source-editor selections) or click an HTML preview element to place a pin. Comments persist with the file and support replies and resolution. Other workspace members receive an inbox notification that opens the file and thread. Private comments do not notify other members.
+
+**Add to agent chat** opens the agent composer with the file, selected passage or element, comment, and replies. Review and send the prepared message to invoke the agent. Existing composer text is preserved. Comments and replies refresh every 15 seconds. Text anchors reattach only to an exact saved position or a unique matching passage; HTML pins are hidden if their element no longer matches the saved text.
+
 ## Rendering notes
 
 - HTML previews are sandboxed in an iframe.
 - Markdown uses `react-markdown` with GFM support.
 - Plotly and Mermaid are rendered client-side.
-- Collaboration uses Hocuspocus/Yjs via `@hocuspocus/provider`.
 
 ## Related docs
 

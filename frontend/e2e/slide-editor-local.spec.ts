@@ -1,9 +1,12 @@
 import { expect, test } from '@playwright/test';
 
 // Runs against a local Vite server; no production login, file mutation, or AI call.
-test('HTML source editing supports replace, undo, find, and file isolation', async ({ page, baseURL }) => {
+for (const firstId of ['draft:first', '101']) {
+test(`HTML source editing (${firstId}) supports replace, undo, find, and file isolation`, async ({ page, baseURL }) => {
   test.skip(!baseURL || !/^http:\/\/(localhost|127\.0\.0\.1):/.test(baseURL), 'Local Vite server required');
   const requests: string[] = [];
+  const sockets: string[] = [];
+  page.on('websocket', socket => sockets.push(socket.url()));
   page.on('request', request => requests.push(request.url()));
   await page.route('**/__slide-editor-qc', route => route.fulfill({
     contentType: 'text/html',
@@ -20,7 +23,7 @@ test('HTML source editing supports replace, undo, find, and file isolation', asy
       import '/src/index.css';
       function Harness() {
         const [content, setContent] = React.useState('<section class="slide">Original title</section>');
-        const [id, setId] = React.useState('draft:first');
+        const [id, setId] = React.useState('${firstId}');
         return React.createElement('div', {},
           React.createElement('button', {onClick: () => { setId('draft:second'); setContent('<section>Second file</section>'); }}, 'Switch file'),
           React.createElement('pre', {'data-testid':'content'}, content),
@@ -57,5 +60,9 @@ test('HTML source editing supports replace, undo, find, and file isolation', asy
   await expect(input).toBeVisible();
   expect(requests.some(url => /cdn\.jsdelivr\.net/.test(url))).toBe(false);
   expect(requests.some(url => url.includes('/src/components/FileRenderer.tsx'))).toBe(false);
+  await expect(page.getByText('No collaborators', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Collaboration offline', { exact: true })).toHaveCount(0);
+  expect(sockets.some(url => url.includes(':1234'))).toBe(false);
   await page.screenshot({ path: test.info().outputPath('narrow-editor.png') });
 });
+}

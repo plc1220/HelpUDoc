@@ -446,6 +446,9 @@ export class WorkspaceCollaborationService {
       await this.getTeamMessage(workspaceId, input.sourceTeamMessageId, userId);
     }
 
+    const recipients = input.type === 'annotation' && input.visibility === 'workspace_audience'
+      ? (await this.workspaceService.listCollaborators(workspaceId, userId)).collaborators.map(member => member.userId)
+      : [];
     const id = uuidv4();
     await this.db.transaction(async (tx) => {
       await tx('workspace_collaboration_objects').insert({
@@ -458,7 +461,7 @@ export class WorkspaceCollaborationService {
         fileId: input.fileId || null,
         filePath: this.optionalText(input.filePath),
         blockId: this.optionalText(input.blockId),
-        anchorText: this.optionalText(input.anchorText),
+        anchorText: input.anchorText || null,
         anchorStart: input.anchorStart ?? null,
         anchorEnd: input.anchorEnd ?? null,
         anchorFingerprint: this.optionalText(input.anchorFingerprint),
@@ -476,6 +479,12 @@ export class WorkspaceCollaborationService {
             userId: mentionedUserId,
           })),
         );
+      }
+      for (const recipientUserId of new Set(recipients.filter(id => id !== userId))) {
+        await createNotification(tx, {
+          recipientUserId, eventType: 'annotation.created', resourceType: 'workspace_annotation', resourceId: id, eventKey: id,
+          payload: { title: 'New canvas comment', description: input.body.trim().slice(0, 500), workspaceId, annotationId: id, filePath: input.filePath },
+        });
       }
     });
 
@@ -497,20 +506,24 @@ export class WorkspaceCollaborationService {
       throw new AccessDeniedError('Commenter access is required to reply');
     }
 
-    const [message] = await this.db('workspace_collaboration_messages')
-      .insert({
-        id: uuidv4(),
-        objectId,
-        authorId: userId,
-        body: body.trim(),
-      })
-      .returning('*');
-    await this.db('workspace_collaboration_objects')
-      .where({ id: objectId })
-      .update({
-        status: object.status === 'open' ? 'discussing' : object.status,
-        updatedAt: this.db.fn.now(),
+    const recipients = object.type === 'annotation' && object.visibility === 'workspace_audience'
+      ? (await this.workspaceService.listCollaborators(workspaceId, userId)).collaborators.map(member => member.userId)
+      : [];
+    const message = await this.db.transaction(async tx => {
+      const [created] = await tx('workspace_collaboration_messages').insert({
+        id: uuidv4(), objectId, authorId: userId, body: body.trim(),
+      }).returning('*');
+      await tx('workspace_collaboration_objects').where({ id: objectId }).update({
+        status: object.status === 'open' ? 'discussing' : object.status, updatedAt: tx.fn.now(),
       });
+      for (const recipientUserId of new Set(recipients.filter(id => id !== userId))) {
+        await createNotification(tx, {
+          recipientUserId, eventType: 'annotation.replied', resourceType: 'workspace_annotation', resourceId: objectId, eventKey: created.id,
+          payload: { title: 'New reply to a canvas comment', description: body.trim().slice(0, 500), workspaceId, annotationId: objectId, filePath: object.filePath },
+        });
+      }
+      return created;
+    });
     return message;
   }
 

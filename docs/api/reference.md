@@ -771,9 +771,9 @@ Source files: `packages/contracts/src/types.ts`, `packages/contracts/src/agentSt
 
 ---
 
-## Collaboration WebSocket
+## File editing
 
-Not part of `/api`: the backend starts a **Yjs** collaboration server (default `ws://localhost:1234`, `COLLAB_PORT`). Document sync is separate from the REST API.
+Workspace file edits are saved through the file REST API. Real-time document synchronization is not supported.
 
 ---
 
