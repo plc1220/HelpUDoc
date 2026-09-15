@@ -1045,6 +1045,26 @@ export class SkillGovernanceService {
           status: 'archived',
           updatedAt: tx.fn.now(),
         });
+        // Approval publishes the version; on its own it does not let the owning Team run
+        // it. Entitlement lives in a separate row, and the only interface that wrote one
+        // was Platform-Admin-only, so an approved skill stalled until an admin was found.
+        // Create the owning Team's grant here instead. `ignore()` leaves an existing
+        // grant's `grantedByUserId` and `createdAt` alone, so re-approving is a no-op and
+        // a Team that somehow lost its grant gets it back.
+        //
+        // A `team_skill_disables` row is deliberately untouched: if the Lead switched this
+        // skill off for the Team, publishing a new version must not switch it back on.
+        const existingTeamGrant = await tx('team_skill_grants')
+          .where({ teamId: request.ownerTeamId, skillId })
+          .first();
+        if (!existingTeamGrant) {
+          await tx('team_skill_grants').insert({
+            teamId: request.ownerTeamId,
+            skillId,
+            effect: 'allow',
+            grantedByUserId: userId,
+          }).onConflict(['teamId', 'skillId']).ignore();
+        }
         if (shouldSetDefault) {
           await this.packageStore.promoteDefaultPackage(candidate.skillKey, materializedPath!);
           promotedDefault = true;
@@ -1059,6 +1079,7 @@ export class SkillGovernanceService {
           manifestHash: candidate.manifestHash,
           active: true,
           defaultSelected: shouldSetDefault,
+          ownerTeamGranted: !existingTeamGrant,
         };
         });
       } catch (error) {
@@ -1128,6 +1149,27 @@ export class SkillGovernanceService {
             versionId: result.versionId,
           },
         });
+      }
+      // Assignment is its own audited action even though it committed alongside the
+      // approval, so the access trail reads the same whether the grant came from this
+      // approval, a Team Lead, or a Platform Admin.
+      if (result.ownerTeamGranted) {
+        await this.audit({
+          actorUserId: userId,
+          actorRole: 'team_lead',
+          action: 'skill_access.team_granted',
+          resourceType: 'skill',
+          resourceId: String(result.skillId),
+          policyVersion: GOVERNANCE_POLICY_VERSION,
+          metadata: { teamId: request.ownerTeamId, source: 'approval' },
+        });
+        await this.notifyTeamMembers(
+          request.ownerTeamId,
+          'skill_access.granted',
+          'skill',
+          String(result.skillId),
+          { skillKey: candidate.skillKey, source: 'team', teamId: request.ownerTeamId },
+        );
       }
     }
     await this.notify(
@@ -1430,11 +1472,13 @@ export class SkillGovernanceService {
   }
 
   /**
-   * Every skill the Team can currently reach, with the Lead's per-Team disable state.
+   * Every skill the Team can currently reach, with the Lead's per-Team disable state,
+   * plus the skills the Team owns but has not granted itself yet.
    *
    * Deliberately queries the grant tables rather than `catalog()`: a disabled skill is
    * subtracted from `effectiveSkillAccess`, so it would vanish from the catalog and the
-   * Lead would have no way to switch it back on.
+   * Lead would have no way to switch it back on. The ungranted rows are what the Lead
+   * picks from to create a grant, so without them the grant control has no candidates.
    */
   async listTeamSkillAccess(userId: string, teamId: string): Promise<JsonRecord> {
     await this.requireUser(userId);
@@ -1442,7 +1486,7 @@ export class SkillGovernanceService {
     const team = await this.db('groups').where({ id: teamId }).first();
     if (!team) governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Team not found');
 
-    const [governed, legacy, disables] = await Promise.all([
+    const [governed, legacy, disables, ownedUngranted] = await Promise.all([
       this.db('team_skill_grants as tg')
         .join('skills as s', 's.id', 'tg.skillId')
         .join('groups as g', 'g.id', 's.ownerTeamId')
@@ -1463,6 +1507,28 @@ export class SkillGovernanceService {
         .select('skillId')
         .where({ principalType: 'group', principalId: teamId, effect: 'allow' }),
       this.db('team_skill_disables').select('skillKey', 'reason', 'updatedAt').where({ teamId }),
+      // Skills this Team owns that carry no grant yet. A Lead may grant exactly these
+      // (`setTeamSkillGrant` refuses any skill the Team does not own), so they are the
+      // candidate list for the grant control.
+      this.db('skills as s')
+        .join('groups as g', 'g.id', 's.ownerTeamId')
+        .leftJoin('skill_versions as v', 'v.id', 's.defaultVersionId')
+        .leftJoin('team_skill_grants as tg', function joinGrant() {
+          this.on('tg.skillId', '=', 's.id').andOn('tg.teamId', '=', 's.ownerTeamId');
+        })
+        .select(
+          's.id',
+          's.skillKey',
+          's.displayName',
+          's.description',
+          's.status',
+          'g.name as ownerTeamName',
+          's.ownerTeamId',
+          'v.semanticVersion as defaultSemanticVersion',
+          'v.status as defaultVersionStatus',
+        )
+        .where({ 's.ownerTeamId': teamId, 's.status': 'active' })
+        .whereNull('tg.skillId'),
     ]);
 
     const disabledByKey = new Map(
@@ -1481,6 +1547,7 @@ export class SkillGovernanceService {
       defaultVersionStatus: row.defaultVersionStatus || null,
       grantSource: 'governed' as const,
       ownedByTeam: String(row.ownerTeamId) === String(teamId),
+      granted: true,
       disabled: disabledByKey.has(String(row.skillKey)),
       disabledReason: disabledByKey.get(String(row.skillKey))?.reason || null,
     }));
@@ -1502,6 +1569,31 @@ export class SkillGovernanceService {
         defaultVersionStatus: null,
         grantSource: 'legacy' as any,
         ownedByTeam: false,
+        granted: true,
+        disabled: disabledByKey.has(skillKey),
+        disabledReason: disabledByKey.get(skillKey)?.reason || null,
+      });
+    }
+
+    // Owned but not granted: the Team published this skill and nobody has assigned it
+    // yet. Surfaced as `granted: false` so the Lead can create the grant without waiting
+    // for a Platform Admin.
+    for (const row of ownedUngranted as any[]) {
+      const skillKey = String(row.skillKey || '');
+      if (!skillKey || governedKeys.has(skillKey)) continue;
+      skills.push({
+        id: row.id,
+        skillKey,
+        displayName: row.displayName,
+        description: row.description,
+        status: row.status,
+        ownerTeamId: row.ownerTeamId,
+        ownerTeamName: row.ownerTeamName,
+        defaultSemanticVersion: row.defaultSemanticVersion || null,
+        defaultVersionStatus: row.defaultVersionStatus || null,
+        grantSource: 'governed' as const,
+        ownedByTeam: true,
+        granted: false,
         disabled: disabledByKey.has(skillKey),
         disabledReason: disabledByKey.get(skillKey)?.reason || null,
       });

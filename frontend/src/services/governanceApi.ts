@@ -236,6 +236,8 @@ export type TeamSkillAccessEntry = {
   defaultVersionStatus?: string | null;
   grantSource: 'governed' | 'legacy';
   ownedByTeam: boolean;
+  /** False for a skill the Team owns but has not assigned to itself yet. */
+  granted: boolean;
   disabled: boolean;
   disabledReason?: string | null;
 };
@@ -545,6 +547,20 @@ export const fetchTeamSkillAccess = (teamId: string) =>
     `${API_URL}/teams/${encodeURIComponent(teamId)}/skill-access`,
     undefined,
     'Failed to load Team skill access',
+  );
+
+/**
+ * Grant or revoke a governed skill for a Team. The server accepts a Team Lead only for a
+ * skill their own Team owns; a Platform Admin may do it for any Team.
+ */
+export const setTeamSkillGrant = (teamId: string, skillId: string, allow: boolean) =>
+  jsonRequest<{ teamId: string; skillId: string; skillKey: string; granted: boolean }>(
+    `${API_URL}/teams/${encodeURIComponent(teamId)}/skill-grants/${encodeURIComponent(skillId)}`,
+    {
+      method: allow ? 'PUT' : 'DELETE',
+      headers: { 'Idempotency-Key': idempotencyKey() },
+    },
+    `Failed to ${allow ? 'grant' : 'revoke'} the skill for this Team`,
   );
 
 export const setTeamSkillDisabled = (

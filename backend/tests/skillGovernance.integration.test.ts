@@ -758,3 +758,243 @@ test('a Team disable never reaches another Team grant or a direct grant', { skip
   }
 });
 
+test('approval gives the owning Team access without a Platform Admin', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const users = new UserService(database);
+  const proposerId = uuidv4();
+  const reviewerId = uuidv4();
+  const outsiderId = uuidv4();
+  const teamId = uuidv4();
+  const otherTeamId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `autogrant-${suffix}`;
+  let draftId: string | null = null;
+  let requestId: string | null = null;
+  let skillId: string | null = null;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    await db('users').insert([
+      { id: proposerId, externalId: `ag-proposer-${suffix}`, email: `ag-proposer-${suffix}@example.test`, displayName: 'Autogrant proposer', isAdmin: false },
+      { id: reviewerId, externalId: `ag-reviewer-${suffix}`, email: `ag-reviewer-${suffix}@example.test`, displayName: 'Autogrant reviewer', isAdmin: false },
+      { id: outsiderId, externalId: `ag-outsider-${suffix}`, email: `ag-outsider-${suffix}@example.test`, displayName: 'Autogrant outsider', isAdmin: false },
+    ]);
+    await db('groups').insert([
+      { id: teamId, name: `Autogrant owner ${suffix}` },
+      { id: otherTeamId, name: `Autogrant other ${suffix}` },
+    ]);
+    await db('group_members').insert([
+      { groupId: teamId, userId: proposerId },
+      { groupId: teamId, userId: reviewerId },
+      { groupId: otherTeamId, userId: outsiderId },
+    ]);
+    await db('team_role_bindings').insert({
+      teamId, userId: reviewerId, role: 'lead', assignedByUserId: null,
+    });
+
+    const created = await governance.createDraft(proposerId, { proposalType: 'new' });
+    draftId = String(created.id);
+    const updated = await governance.updateDraft(proposerId, draftId, Number(created.draftRevision), {
+      proposedSkillKey: skillKey,
+      proposedOwnerTeamId: teamId,
+      displayName: 'Autogrant skill',
+      description: 'Checks that approval assigns the owning Team.',
+      files: [{
+        path: 'SKILL.md',
+        content: [
+          '---',
+          'name: Autogrant skill',
+          'description: Checks that approval assigns the owning Team.',
+          '---',
+          '',
+          '# Autogrant skill',
+          '',
+          'Use this package only for the governance integration test.',
+          '',
+        ].join('\n'),
+      }],
+    });
+    const submitted = await governance.submitDraft(proposerId, draftId, {
+      owningTeamId: teamId,
+      semanticVersion: '1.0.0',
+      expectedDraftRevision: Number(updated.draftRevision),
+      submissionNote: 'Autogrant test',
+    });
+    requestId = String(submitted.id);
+
+    const review = await governance.getReview(reviewerId, requestId);
+    const approved = await governance.decideReview(reviewerId, requestId, {
+      decision: 'approve',
+      expectedRequestRevision: Number(review.requestRevision),
+    });
+    skillId = String(approved.skillId);
+
+    // The point of the change: no second, Platform-Admin-only trip is needed.
+    const grant = await db('team_skill_grants').where({ teamId, skillId }).first();
+    assert.ok(grant, 'approval must assign the skill to its owning Team');
+    assert.equal(String(grant.grantedByUserId), reviewerId);
+    assert.ok(((await users.getEffectivePromptAccess(proposerId))?.skillIds || []).includes(skillKey));
+
+    // Assignment is audited separately from the approval and the activation.
+    const grantEvents = await db('audit_events')
+      .where({ action: 'skill_access.team_granted', resourceId: skillId });
+    assert.equal(grantEvents.length, 1);
+
+    // A Lead switching the skill off must survive a later version being published.
+    await governance.setTeamSkillDisabled(reviewerId, teamId, skillKey, true, 'Paused');
+    const improvement = await governance.createDraft(proposerId, {
+      proposalType: 'improvement',
+      sourceSkillId: skillId,
+    });
+    const improved = await governance.updateDraft(proposerId, String(improvement.id), Number(improvement.draftRevision), {
+      files: [{
+        path: 'SKILL.md',
+        content: `${(improvement.files as any[]).find((file: any) => file.path === 'SKILL.md')?.content || ''}\nSecond version.\n`,
+      }],
+    });
+    const resubmitted = await governance.submitDraft(proposerId, String(improvement.id), {
+      owningTeamId: teamId,
+      semanticVersion: '1.1.0',
+      expectedDraftRevision: Number(improved.draftRevision),
+      submissionNote: 'Second version',
+    });
+    const secondReview = await governance.getReview(reviewerId, String(resubmitted.id));
+    await governance.decideReview(reviewerId, String(resubmitted.id), {
+      decision: 'approve',
+      expectedRequestRevision: Number(secondReview.requestRevision),
+    });
+    assert.ok(
+      await db('team_skill_disables').where({ teamId, skillKey }).first(),
+      'publishing a new version must not clear a Lead\'s disable',
+    );
+    // And the grant row was not rewritten by the second approval.
+    const regrant = await db('team_skill_grants').where({ teamId, skillId }).first();
+    assert.equal(String(regrant.grantedByUserId), reviewerId);
+    assert.equal(String(regrant.createdAt), String(grant.createdAt));
+  } finally {
+    await db('team_skill_disables').where({ teamId }).del().catch(() => undefined);
+    await db('team_skill_grants').where({ teamId }).del().catch(() => undefined);
+    if (skillId) {
+      await db('skills').where({ id: skillId }).update({ defaultVersionId: null }).catch(() => undefined);
+      await db('skill_version_files').whereIn('skillVersionId', db('skill_versions').select('id').where({ skillId })).del().catch(() => undefined);
+      await db('skill_versions').where({ skillId }).del().catch(() => undefined);
+    }
+    await db('skill_review_decisions').whereIn('requestId', db('skill_review_requests').select('id').where({ ownerTeamId: teamId })).del().catch(() => undefined);
+    await db('skill_review_requests').where({ ownerTeamId: teamId }).del().catch(() => undefined);
+    await db('private_skill_drafts').where({ ownerUserId: proposerId }).del().catch(() => undefined);
+    if (skillId) await db('skills').where({ id: skillId }).del().catch(() => undefined);
+    await db('audit_events').whereIn('actorUserId', [proposerId, reviewerId, outsiderId]).del().catch(() => undefined);
+    await db('notifications').whereIn('recipientUserId', [proposerId, reviewerId, outsiderId]).del().catch(() => undefined);
+    await db('team_role_bindings').where({ teamId }).del().catch(() => undefined);
+    await db('group_members').whereIn('groupId', [teamId, otherTeamId]).del().catch(() => undefined);
+    await db('groups').whereIn('id', [teamId, otherTeamId]).del().catch(() => undefined);
+    await db('users').whereIn('id', [proposerId, reviewerId, outsiderId]).del().catch(() => undefined);
+    await Promise.all([
+      fs.rm(path.join(skillsRoot, skillKey), { recursive: true, force: true }),
+      fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', skillKey), { recursive: true, force: true }),
+    ]);
+    await db.destroy();
+  }
+});
+
+test('a Team Lead grants and revokes a skill their own Team owns', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const users = new UserService(database);
+  const leadId = uuidv4();
+  const memberId = uuidv4();
+  const ownTeamId = uuidv4();
+  const foreignTeamId = uuidv4();
+  const ownSkillId = uuidv4();
+  const ownVersionId = uuidv4();
+  const foreignSkillId = uuidv4();
+  const foreignVersionId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const ownKey = `lead-own-${suffix}`;
+  const foreignKey = `lead-foreign-${suffix}`;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    await db('users').insert([
+      { id: leadId, externalId: `lead-grant-${suffix}`, email: `lead-grant-${suffix}@example.test`, displayName: 'Grant lead', isAdmin: false },
+      { id: memberId, externalId: `lead-member-${suffix}`, email: `lead-member-${suffix}@example.test`, displayName: 'Grant member', isAdmin: false },
+    ]);
+    await db('groups').insert([
+      { id: ownTeamId, name: `Lead own ${suffix}` },
+      { id: foreignTeamId, name: `Lead foreign ${suffix}` },
+    ]);
+    await db('group_members').insert([
+      { groupId: ownTeamId, userId: leadId },
+      { groupId: ownTeamId, userId: memberId },
+    ]);
+    await db('team_role_bindings').insert({
+      teamId: ownTeamId, userId: leadId, role: 'lead', assignedByUserId: null,
+    });
+    await db('skills').insert([
+      { id: ownSkillId, skillKey: ownKey, displayName: 'Lead own skill', ownerTeamId: ownTeamId, status: 'active' },
+      { id: foreignSkillId, skillKey: foreignKey, displayName: 'Lead foreign skill', ownerTeamId: foreignTeamId, status: 'active' },
+    ]);
+    await db('skill_versions').insert([
+      { id: ownVersionId, skillId: ownSkillId, semanticVersion: '1.0.0', manifestHash: 'e'.repeat(64), status: 'active' },
+      { id: foreignVersionId, skillId: foreignSkillId, semanticVersion: '1.0.0', manifestHash: 'f'.repeat(64), status: 'active' },
+    ]);
+    await db('skills').where({ id: ownSkillId }).update({ defaultVersionId: ownVersionId });
+    await db('skills').where({ id: foreignSkillId }).update({ defaultVersionId: foreignVersionId });
+
+    const promptSkills = async (userId: string) =>
+      (await users.getEffectivePromptAccess(userId))?.skillIds || [];
+
+    // The Lead needs candidates to grant, so the listing has to surface a skill the Team
+    // owns but has not assigned itself.
+    const before = await governance.listTeamSkillAccess(leadId, ownTeamId);
+    const candidate = (before.skills as any[]).find((entry) => entry.skillKey === ownKey);
+    assert.ok(candidate, 'an owned but ungranted skill must be listed');
+    assert.equal(candidate.granted, false);
+    assert.equal(candidate.ownedByTeam, true);
+
+    await governance.setTeamSkillGrant(leadId, ownTeamId, ownKey, true);
+    assert.ok((await promptSkills(memberId)).includes(ownKey));
+
+    const after = await governance.listTeamSkillAccess(leadId, ownTeamId);
+    assert.equal((after.skills as any[]).find((entry) => entry.skillKey === ownKey).granted, true);
+
+    await governance.setTeamSkillGrant(leadId, ownTeamId, ownKey, false);
+    assert.ok(!(await promptSkills(memberId)).includes(ownKey));
+
+    // Authority stops at the Team boundary: a Lead cannot assign another Team's skill.
+    await assert.rejects(
+      () => governance.setTeamSkillGrant(leadId, ownTeamId, foreignKey, true),
+      (error: any) => error?.code === 'SKILL_ACTION_FORBIDDEN',
+    );
+    // Nor act on a Team they do not lead.
+    await assert.rejects(
+      () => governance.setTeamSkillGrant(leadId, foreignTeamId, foreignKey, true),
+      (error: any) => error?.code === 'SKILL_ACTION_FORBIDDEN',
+    );
+    // An ordinary member has no grant authority at all.
+    await assert.rejects(
+      () => governance.setTeamSkillGrant(memberId, ownTeamId, ownKey, true),
+      (error: any) => error?.code === 'SKILL_ACTION_FORBIDDEN',
+    );
+  } finally {
+    await db('team_skill_grants').whereIn('skillId', [ownSkillId, foreignSkillId]).del().catch(() => undefined);
+    await db('skills').whereIn('id', [ownSkillId, foreignSkillId]).update({ defaultVersionId: null }).catch(() => undefined);
+    await db('skill_versions').whereIn('skillId', [ownSkillId, foreignSkillId]).del().catch(() => undefined);
+    await db('skills').whereIn('id', [ownSkillId, foreignSkillId]).del().catch(() => undefined);
+    await db('audit_events').whereIn('actorUserId', [leadId, memberId]).del().catch(() => undefined);
+    await db('notifications').whereIn('recipientUserId', [leadId, memberId]).del().catch(() => undefined);
+    await db('team_role_bindings').where({ teamId: ownTeamId }).del().catch(() => undefined);
+    await db('group_members').whereIn('groupId', [ownTeamId, foreignTeamId]).del().catch(() => undefined);
+    await db('groups').whereIn('id', [ownTeamId, foreignTeamId]).del().catch(() => undefined);
+    await db('users').whereIn('id', [leadId, memberId]).del().catch(() => undefined);
+    await db.destroy();
+  }
+});
+
