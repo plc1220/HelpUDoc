@@ -310,6 +310,22 @@ spec:
                   name: helpudoc-config
                   key: ENABLE_SKILL_SANDBOX_RUNNER
                   optional: true
+            # Skill review separation of duties. Both default off; set either only
+            # deliberately, because each removes the second reader from the cases it
+            # covers. Every self-approval is recorded on
+            # `skill_review_decisions.selfApproved` and its audit event.
+            - name: ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL
+                  optional: true
+            - name: ALLOW_SINGLE_LEAD_SKILL_SELF_APPROVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: ALLOW_SINGLE_LEAD_SKILL_SELF_APPROVAL
+                  optional: true
             # Published file artifacts. Without these the backend silently falls
             # back to the workspace store under a published/ prefix, so a release
             # test passes against the wrong bucket. Compose was fixed in 3eb6561;

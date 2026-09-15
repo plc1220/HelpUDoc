@@ -834,7 +834,12 @@ const ReviewDialog = ({
             </label>
             {!review.permissions.canReview ? (
               <SettingsNotice variant="warning">
-                You cannot review this version. Authors cannot approve their own submissions.
+                {review.permissions.isProposer
+                  // Naming the route out matters most here: the reader is looking at
+                  // their own submission and the buttons are dead, and "authors cannot
+                  // approve their own submissions" alone does not say who can.
+                  ? 'You submitted this version, so you cannot review it. Another Team Lead of the owning Team can approve it.'
+                  : 'You cannot review this version. Only a Team Lead of the owning Team can decide it.'}
               </SettingsNotice>
             ) : null}
             {review.activationStatus === 'failed' ? (
