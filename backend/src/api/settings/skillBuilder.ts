@@ -276,22 +276,27 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
         ? `${payload.prompt}\n\n${contextLines.join('\n')}`
         : payload.prompt;
 
-      let authToken: string | undefined;
-      if (isSkillSandboxRunnerEnabled()) {
-        const token = signAgentContextToken({
-          sub: user.userId,
-          userId: user.userId,
-          workspaceId,
-          isAdmin: false,
-          skillAllowIds: [],
-          mcpServerAllowIds: [],
-          mcpServerDenyIds: [],
-          allowSkillSandbox: true,
-        });
-        if (token) {
-          authToken = token;
-        }
-      }
+      // Always sign the context token. It carried only the sandbox grant, so with the
+      // sandbox disabled -- the default, and the state of every current deployment --
+      // the run reached the agent with no token at all, and therefore no userId or
+      // workspaceId. It also arrived with no `skillAllowIds` claim, which
+      // `is_skill_allowed` treats as "no policy, allow everything", so the builder could
+      // load any skill on the platform. An explicit empty list denies them all instead.
+      //
+      // `isAdmin: false` and the empty allowlist are deliberate and must stay: the
+      // builder writes files into its own scratch workspace and has no reason to consume
+      // skills, and platform administration is not runtime consumption (see
+      // `resolveEffectiveAgentPolicy`).
+      const authToken = signAgentContextToken({
+        sub: user.userId,
+        userId: user.userId,
+        workspaceId,
+        isAdmin: false,
+        skillAllowIds: [],
+        mcpServerAllowIds: [],
+        mcpServerDenyIds: [],
+        ...(isSkillSandboxRunnerEnabled() ? { allowSkillSandbox: true } : {}),
+      }) ?? undefined;
 
       const { runId, status } = await startAgentRun({
         workspaceId,
