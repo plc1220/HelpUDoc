@@ -8,7 +8,7 @@ const initial = [
   { id: 'beta', name: 'Beta research', visibility: 'team', role: 'owner', status: 'active' },
   { id: 'old', name: 'Old draft', visibility: 'private', role: 'owner', status: 'trashed', trashedAt: '2026-09-14', purgeAfter: '2026-10-14' },
 ] as Workspace[];
-function Fixture() {
+export function Fixture() {
   const [workspaces, setWorkspaces] = useState(initial);
   const [selected, setSelected] = useState<Workspace | null>(null);
   const [search, setSearch] = useState('');

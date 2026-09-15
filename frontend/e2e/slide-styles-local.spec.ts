@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+type SlideStyleHarnessWindow = Window & { operations: unknown[] };
+
 test.beforeEach(async ({ page, baseURL }) => {
   test.skip(!baseURL || !/^http:\/\/(localhost|127\.0\.0\.1):/.test(baseURL), 'Local Vite server required');
   await page.route('**/__slide-styles-qc*', route => route.fulfill({ contentType: 'text/html', body: `<html><head><script type="module">
@@ -45,7 +47,7 @@ test('browse, filter, generate, compare, apply and undo without touching deck du
   await page.getByRole('searchbox').fill('forest');
   await expect(page.getByRole('button', { name: 'Explore Editorial Forest', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Explore Editorial Forest', exact: true }).click();
-  expect(await page.evaluate(() => (window as any).operations)).toEqual([]);
+  expect(await page.evaluate(() => (window as SlideStyleHarnessWindow).operations)).toEqual([]);
   await page.getByRole('button', { name: 'Preview on my deck' }).click();
   await expect(page.getByRole('button', { name: 'Apply Editorial Forest' })).toBeVisible();
   await expect(page.frameLocator('iframe[title="Proposed slide deck"]').getByRole('heading')).toHaveText('Proposed Editorial Forest');
@@ -57,7 +59,7 @@ test('browse, filter, generate, compare, apply and undo without touching deck du
   await expect(page.getByTestId('original')).toContainText('Proposed Editorial Forest');
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(page.getByTestId('original')).toContainText('Original');
-  expect(await page.evaluate(() => (window as any).operations)).toEqual(['generate:editorial-forest', 'commit', 'commit']);
+  expect(await page.evaluate(() => (window as SlideStyleHarnessWindow).operations)).toEqual(['generate:editorial-forest', 'commit', 'commit']);
   expect(errors).toEqual([]);
 });
 
@@ -82,7 +84,7 @@ test('gallery uses 34 real static template covers with no per-card frames or ext
   await expect(page.getByText(/^Template sample · Source Serif 4/)).toBeVisible();
   await page.getByRole('img', { name: 'Editorial Forest sample cover' }).evaluate((img: HTMLImageElement) => img.decode());
   await expect(page.getByRole('heading', { name: 'Editorial Forest', exact: true })).toBeInViewport();
-  expect(await page.evaluate(() => (window as any).operations)).toEqual([]);
+  expect(await page.evaluate(() => (window as SlideStyleHarnessWindow).operations)).toEqual([]);
   await page.screenshot({ path: test.info().outputPath('template-detail.png') });
 });
 
@@ -96,7 +98,7 @@ test('stale apply leaves a concurrent edit untouched', async ({ page }) => {
   await expect(page.getByRole('alert')).toContainText('deck changed');
   await page.getByRole('tab', { name: 'Preview', exact: true }).click();
   await expect(page.getByTestId('original')).toContainText('Concurrent change');
-  expect(await page.evaluate(() => (window as any).operations)).toEqual(['generate:editorial-forest']);
+  expect(await page.evaluate(() => (window as SlideStyleHarnessWindow).operations)).toEqual(['generate:editorial-forest']);
 });
 
 test('narrow gallery supports keyboard tabs, empty search, and read-only browsing', async ({ page }) => {
@@ -122,7 +124,7 @@ test('a gallery opened by an agent choice resumes that choice without launching 
   await page.goto('/__slide-styles-qc?choose');
   await page.getByRole('button', { name: 'Explore Editorial Forest', exact: true }).click();
   await page.getByRole('button', { name: 'Use this style & continue' }).click();
-  expect(await page.evaluate(() => (window as any).operations)).toEqual(['choose:editorial-forest']);
+  expect(await page.evaluate(() => (window as SlideStyleHarnessWindow).operations)).toEqual(['choose:editorial-forest']);
 });
 
 test('the real chat style chooser opens the gallery and receives the chosen catalog identity', async ({ page }) => {
@@ -131,10 +133,14 @@ test('the real chat style chooser opens the gallery and receives the chosen cata
   await expect(page.getByRole('tab', { name: 'Styles' })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: 'Explore Editorial Forest', exact: true }).click();
   await page.getByRole('button', { name: 'Use this style & continue' }).click();
-  const operations = await page.evaluate(() => (window as any).operations);
+  const operations = await page.evaluate(() => (window as SlideStyleHarnessWindow).operations);
   expect(operations).toHaveLength(1);
-  expect(operations[0].interactionId).toBe('style-choice-1');
-  expect(operations[0].values.selectedChoiceId).toBe('editorial-forest');
-  expect(operations[0].values.designPath).toContain('editorial-forest/design.md');
-  expect(operations[0].message).toContain('do not restart');
+  expect(operations[0]).toMatchObject({
+    interactionId: 'style-choice-1',
+    values: {
+      selectedChoiceId: 'editorial-forest',
+      designPath: expect.stringContaining('editorial-forest/design.md'),
+    },
+    message: expect.stringContaining('do not restart'),
+  });
 });

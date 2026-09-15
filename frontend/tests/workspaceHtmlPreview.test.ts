@@ -13,7 +13,8 @@ test('preview storage bootstraps before deck code without exposing persistent st
   assert.ok(output.indexOf('data-preview-storage') < output.indexOf('deck()'));
   assert.ok(output.startsWith('<!doctype html>'));
   const bootstrap = output.match(/<script data-preview-storage>([\s\S]*?)<\/script>/)![1];
-  const window: Record<string, any> = {};
+  type PreviewStorage = Omit<Storage, 'setItem'> & { setItem(key: string, value: unknown): void };
+  const window = {} as { localStorage: PreviewStorage; sessionStorage: PreviewStorage };
   Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('Opaque origin'); } });
   runInNewContext(bootstrap, { window });
   assert.equal(window.localStorage.getItem('missing'), null);

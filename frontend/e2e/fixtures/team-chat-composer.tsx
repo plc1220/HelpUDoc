@@ -6,7 +6,7 @@ import { applyColorModeToDocument } from '../../src/colorMode';
 applyColorModeToDocument('dark');
 import TeamChatComposer from '../../src/components/chat/TeamChatComposer';
 import PublishedWorkspaceChatHeader from '../../src/components/chat/PublishedWorkspaceChatHeader';
-function Fixture() {
+export function Fixture() {
  const [sent, setSent] = useState<unknown[]>([]);
  const [width, setWidth] = useState(280);
  return <main style={{ padding: 24, color: '#e2e8f0', background: '#0d1524', minHeight: '100vh' }}>

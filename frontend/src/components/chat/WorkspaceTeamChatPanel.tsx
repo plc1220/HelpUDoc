@@ -136,6 +136,7 @@ export default function WorkspaceTeamChatPanel({
   const canPropose = CONTRIBUTOR_ROLES.has(role);
   const canLumoWrite = workspace.canEdit === true;
   const workingContextLabel = 'Shared Working version';
+  const viewedVersionId = viewedVersion?.versionId;
 
   const loadMessages = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -197,7 +198,7 @@ export default function WorkspaceTeamChatPanel({
     let cancelled = false;
     setReferenceOptions([]);
     void Promise.allSettled([
-      viewedVersion ? getPublishedVersionSnapshot(workspace.id, viewedVersion.versionId).then((value) => value.files) : getFiles(workspace.id),
+      viewedVersionId ? getPublishedVersionSnapshot(workspace.id, viewedVersionId).then((value) => value.files) : getFiles(workspace.id),
       fetchSlashMetadata(workspace.id),
     ]).then(([fileResult, metadataResult]) => {
       const files = fileResult.status === 'fulfilled' ? fileResult.value : [];
@@ -206,12 +207,12 @@ export default function WorkspaceTeamChatPanel({
       setReferenceOptions([
         { kind: 'agent', id: 'lumo', label: 'Lumo', description: canLumoWrite ? 'Agent · can edit Working' : 'Agent · read-only' },
         ...collaborators.map((person): TeamChatReference & { description: string } => ({ kind: 'person', id: person.userId, label: person.displayName, description: person.role })),
-        ...(Array.isArray(files) ? files : []).map((file): TeamChatReference => ({ kind: 'file', id: String(file.id), label: file.name, version: Number(file.version) || undefined, publishedVersionId: viewedVersion?.versionId })),
+        ...(Array.isArray(files) ? files : []).map((file): TeamChatReference => ({ kind: 'file', id: String(file.id), label: file.name, version: Number(file.version) || undefined, publishedVersionId: viewedVersionId })),
         ...metadata.skills.filter((skill) => skill.valid).map((skill): TeamChatReference & { description?: string } => ({ kind: 'skill', id: skill.id, label: skill.name, description: skill.description })),
       ]);
     }).catch((error) => { if (!cancelled) setError(error instanceof Error ? error.message : 'Unable to load references'); });
     return () => { cancelled = true; };
-  }, [workspace.id, collaborators, canLumoWrite, viewedVersion?.versionId]);
+  }, [workspace.id, collaborators, canLumoWrite, viewedVersionId]);
 
   const handleSend = async (body: string, references: TeamChatReference[]) => {
     if (!body.trim() || sending || !canComment) return;

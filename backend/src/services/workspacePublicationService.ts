@@ -770,6 +770,7 @@ export class WorkspacePublicationService {
     resolutions: Record<string, PublishResolution>,
   ) {
     const currentSharedRevision = Number(teamWorkspace.contentRevision || 0);
+    const comparisonStartedAt = new Date().toISOString();
     const [privateContent, sharedContent] = await Promise.all([
       this.readWorkspaceContent(privateWorkspaceId),
       this.readWorkspaceContent(teamWorkspace.id),
@@ -799,6 +800,29 @@ export class WorkspacePublicationService {
 
     const sharedChanged = !this.workspaceContentsMatch(baseContent, sharedContent);
     if (!sharedChanged) {
+      // A metadata-only touch (or byte-identical revision) can still mark the
+      // draft stale. Acknowledge the comparison without rewriting draft files
+      // or changing its unpublished edits. Use the start time so later legacy
+      // edits without revision bumps still trigger the timestamp fallback.
+      await this.db.transaction(async (tx) => {
+        await this.assertSharedWorkingRevision(tx, teamWorkspace.id, currentSharedRevision);
+        const updated = await tx('workspace_publication_links')
+          .where({
+            privateWorkspaceId,
+            userId,
+            status: 'active',
+            baseSharedContentRevision: Number(link.baseSharedContentRevision || 0),
+            updatedAt: link.updatedAt,
+          })
+          .update({
+            baseSharedContentRevision: currentSharedRevision,
+            basePublishedVersionId: teamWorkspace.currentPublishedVersionId || null,
+            updatedAt: comparisonStartedAt,
+          });
+        if (updated !== 1) {
+          throw new ConflictError('The private workspace link changed while syncing');
+        }
+      });
       return {
         workspaceId: privateWorkspaceId,
         teamWorkspaceId: teamWorkspace.id,
