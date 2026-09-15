@@ -248,20 +248,6 @@ const DraftEditor = ({
   );
   const [busy, setBusy] = useState<'save' | 'validate' | 'submit' | 'pin' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [privateWorkspaces, setPrivateWorkspaces] = useState<Workspace[]>([]);
-  const [pinWorkspaceId, setPinWorkspaceId] = useState('');
-
-  useEffect(() => {
-    // Only a Private Workspace the user owns can run an unreviewed draft.
-    void getWorkspaces()
-      .then((rows: Workspace[]) => {
-        const eligible = (rows || []).filter((workspace) =>
-          workspace.visibility !== 'team' && workspace.workspaceType !== 'team' && workspace.role === 'owner');
-        setPrivateWorkspaces(eligible);
-        setPinWorkspaceId((current) => current || eligible[0]?.id || '');
-      })
-      .catch(() => setPrivateWorkspaces([]));
-  }, []);
 
   const fileEntries = useMemo(
     () => Object.entries(files)
@@ -384,15 +370,15 @@ const DraftEditor = ({
     }
   };
 
-  const addToWorkspace = async () => {
-    if (!pinWorkspaceId) return;
+  const addToWorkspace = async (workspaceId: string) => {
+    if (!workspaceId) return;
     setBusy('pin');
     setError(null);
     try {
-      // Save first: the pin freezes the current revision, so unsaved edits
+      // Save first: the runtime resolves the draft's current revision, so unsaved edits
       // would not be the ones that run.
       const saved = await persist();
-      await pinWorkspaceSkillDraft(pinWorkspaceId, draft.id);
+      await pinWorkspaceSkillDraft(workspaceId, draft.id);
       setDraft(await fetchSkillDraft(saved?.id || draft.id));
     } catch (pinError) {
       setError(pinError instanceof Error ? pinError.message : 'Failed to use this draft in the workspace');
@@ -533,34 +519,9 @@ const DraftEditor = ({
                 <p className="text-sm font-medium text-slate-700">Use in my workspaces</p>
                 <p className="mt-1 text-xs text-slate-500">
                   {draft.proposalType === 'improvement'
-                    ? `While this draft is in use, the workspace runs it instead of the published ${skillKey}.`
-                    : 'Runs the saved draft in a private workspace you own. Nobody else can see or use it.'}
+                    ? `On by default in every private workspace you own. Where it is on, the workspace runs this draft instead of the published ${skillKey}.`
+                    : 'On by default in every private workspace you own. Nobody else can see or use it. Switch it off where you do not want it.'}
                 </p>
-                {privateWorkspaces.length ? (
-                  <div className="mt-2 flex gap-2">
-                    <select
-                      value={pinWorkspaceId}
-                      onChange={(event) => setPinWorkspaceId(event.target.value)}
-                      className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm"
-                      aria-label="Private workspace"
-                    >
-                      {privateWorkspaces.map((workspace) => (
-                        <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => void addToWorkspace()}
-                      disabled={Boolean(busy) || !pinWorkspaceId}
-                      className="settings-portal-button-secondary inline-flex items-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-semibold disabled:opacity-50"
-                    >
-                      {busy === 'pin' ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-                      Add
-                    </button>
-                  </div>
-                ) : (
-                  <p className="mt-2 text-xs text-slate-500">You own no private workspace to use this in yet.</p>
-                )}
                 {draft.workspacePins?.length ? (
                   <ul className="mt-3 space-y-1.5">
                     {draft.workspacePins.map((pin) => (
@@ -568,17 +529,26 @@ const DraftEditor = ({
                         <span className="min-w-0 truncate text-slate-700">{pin.workspaceName}</span>
                         <button
                           type="button"
-                          onClick={() => void removeFromWorkspace(pin.workspaceId)}
+                          onClick={() => void (pin.enabled
+                            ? removeFromWorkspace(pin.workspaceId)
+                            : addToWorkspace(pin.workspaceId))}
                           disabled={Boolean(busy)}
-                          className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                          aria-pressed={pin.enabled}
+                          className={`inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold disabled:opacity-50 ${
+                            pin.enabled
+                              ? 'text-slate-600 hover:bg-slate-100'
+                              : 'text-emerald-700 hover:bg-emerald-50'
+                          }`}
                         >
-                          <X size={13} />
-                          Remove
+                          {busy === 'pin' ? <Loader2 size={13} className="animate-spin" /> : null}
+                          {pin.enabled ? 'On' : 'Off'}
                         </button>
                       </li>
                     ))}
                   </ul>
-                ) : null}
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">You own no private workspace to use this in yet.</p>
+                )}
               </div>
               <label className="block text-sm font-medium text-slate-700">
                 Proposed version

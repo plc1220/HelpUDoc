@@ -2400,6 +2400,20 @@ export class DatabaseService {
       });
     }
 
+    // A user's own private skill draft runs in every Private Workspace they own. That is
+    // the default, so the stored row is the exception: one row per workspace the owner
+    // switched the draft off for. `private_workspace_skill_draft_pins` is retained but no
+    // longer read at runtime, so a rollback to the opt-in model still has its rows.
+    if (!await this.db.schema.hasTable('private_workspace_skill_draft_exclusions')) {
+      await this.db.schema.createTable('private_workspace_skill_draft_exclusions', (table) => {
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('draftId').notNullable().references('id').inTable('private_skill_drafts').onDelete('CASCADE');
+        table.uuid('excludedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['workspaceId', 'draftId']);
+      });
+    }
+
     if (!await this.db.schema.hasTable('published_version_skill_pins')) {
       await this.db.schema.createTable('published_version_skill_pins', (table) => {
         table.uuid('publishedVersionId').notNullable().references('id').inTable('workspace_published_versions').onDelete('CASCADE');

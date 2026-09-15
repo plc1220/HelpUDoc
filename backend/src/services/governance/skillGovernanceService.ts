@@ -70,6 +70,7 @@ export class SkillGovernanceService {
     await this.backfillLegacyRegistry();
     await this.backfillLegacyGrants();
     await this.archiveLegacySkillEvolution();
+    await this.backfillDraftRevisionValidation();
     const migration = await this.validateMigrationParity();
     const log = migration.ready ? console.info : console.warn;
     log('Governed skill migration parity', migration);
@@ -206,13 +207,20 @@ export class SkillGovernanceService {
       initialFiles = [file];
     }
 
+    // Validate the first revision for the same reason `updateDraft` does: a draft is
+    // runnable in the owner's Private Workspaces from the moment it exists, so the
+    // verdict has to be on the revision row before the runtime reads it.
+    const initialValidation = await this.validateSnapshot(
+      { proposedSkillKey: skillKey, displayName, description, proposalType },
+      initialFiles,
+    );
     const revision = await this.createDraftRevision({
       draftId,
       userId,
       revisionNumber: 1,
       parentRevisionId: null,
       files: initialFiles,
-      validationSummary: {},
+      validationSummary: initialValidation as unknown as JsonRecord,
       createDraft: {
         ownerUserId: userId,
         proposalType,
@@ -224,6 +232,9 @@ export class SkillGovernanceService {
         description,
       },
     });
+    if (initialValidation.valid) {
+      await this.materializeDraftRevision(skillKey, revision.id, initialFiles);
+    }
     const auditEventId = await this.audit({
       actorUserId: userId,
       actorRole: 'skill_proposer',
@@ -256,11 +267,27 @@ export class SkillGovernanceService {
     const hasReviewHistory = Boolean(
       await this.db('skill_review_requests').where({ draftId }).first(),
     );
-    const workspacePins = await this.db('private_workspace_skill_draft_pins as pin')
-      .join('workspaces as w', 'w.id', 'pin.workspaceId')
-      .select('pin.workspaceId', 'w.name as workspaceName', 'pin.draftRevisionId', 'pin.pinnedAt')
-      .where('pin.draftId', draftId)
-      .orderBy('w.name', 'asc');
+    // Every Private Workspace the owner owns, each with its on/off state. The draft runs
+    // in all of them by default, so listing only the stored rows would show the opposite
+    // of the truth: a row means the owner switched the draft *off* there.
+    const [ownedWorkspaces, draftExclusions] = await Promise.all([
+      this.db('workspaces as w')
+        .select('w.id as workspaceId', 'w.name as workspaceName')
+        .where('w.ownerId', userId)
+        .whereNot('w.workspaceType', 'team')
+        .whereNot('w.visibility', 'team')
+        .whereNotIn('w.status', ['trashed', 'purged'])
+        .orderBy('w.name', 'asc'),
+      this.db('private_workspace_skill_draft_exclusions').select('workspaceId').where({ draftId }),
+    ]);
+    const excludedWorkspaceIds = new Set(
+      (draftExclusions as any[]).map((row) => String(row.workspaceId)),
+    );
+    const workspacePins = (ownedWorkspaces as any[]).map((row) => ({
+      workspaceId: String(row.workspaceId),
+      workspaceName: String(row.workspaceName),
+      enabled: !excludedWorkspaceIds.has(String(row.workspaceId)),
+    }));
     return {
       ...draft,
       workspacePins,
@@ -328,13 +355,21 @@ export class SkillGovernanceService {
 
     const nextRevision = expectedRevision + 1;
     const nextFileList = [...nextFiles.values()];
+    // A private draft now runs in the owner's Private Workspaces without an explicit
+    // per-workspace step, so the runtime has no later chance to check it. Validate each
+    // revision as it is saved and record the verdict: a malformed SKILL.md raises inside
+    // the agent's frontmatter parser, so only a valid revision may be materialized.
+    const savedValidation = await this.validateSnapshot(
+      { ...draft, proposedSkillKey: nextSkillKey },
+      nextFileList,
+    );
     const revision = await this.createDraftRevision({
       draftId,
       userId,
       revisionNumber: nextRevision,
       parentRevisionId: draft.currentDraftRevisionId,
       files: nextFileList,
-      validationSummary: {},
+      validationSummary: savedValidation as unknown as JsonRecord,
       updateDraft: {
         expectedRevision,
         proposedSkillKey: nextSkillKey,
@@ -346,7 +381,14 @@ export class SkillGovernanceService {
     // A workspace that uses this draft follows the edit. Re-materializing here
     // keeps the token-building read path free of writes, and the old package is
     // pruned only after the pins point at the new revision.
-    await this.advanceDraftPins(draftId, nextSkillKey, revision.id, nextFileList, draft.proposedSkillKey);
+    await this.advanceDraftPins(
+      draftId,
+      nextSkillKey,
+      revision.id,
+      nextFileList,
+      draft.proposedSkillKey,
+      savedValidation.valid,
+    );
     const auditEventId = await this.audit({
       actorUserId: userId,
       actorRole: 'skill_proposer',
@@ -385,7 +427,8 @@ export class SkillGovernanceService {
       // `draftRevisionId` foreign key is RESTRICT, so leaving them to the same
       // cascade as the revisions they point at can abort the delete.
       await this.db('private_workspace_skill_draft_pins').where({ draftId }).del();
-      await this.pruneUnpinnedDraftPackages(draftId, draft.proposedSkillKey);
+      await this.db('private_workspace_skill_draft_exclusions').where({ draftId }).del();
+      await this.pruneSupersededDraftPackages(draftId, draft.proposedSkillKey, { keepCurrent: false });
       await this.db('private_skill_drafts').where({ id: draftId }).del();
       return 'deleted' as const;
     });
@@ -2069,19 +2112,15 @@ export class SkillGovernanceService {
     }
 
     await this.materializeDraftRevision(skillKey, draft.currentDraftRevisionId, files);
-    await this.db('private_workspace_skill_draft_pins').insert({
-      workspaceId,
-      draftId,
-      draftRevisionId: draft.currentDraftRevisionId,
-    }).onConflict(['workspaceId', 'draftId']).merge({
-      draftRevisionId: draft.currentDraftRevisionId,
-      pinnedAt: this.db.fn.now(),
-    });
+    // Switching the draft back on for this workspace means clearing its exclusion. The
+    // draft is available in the owner's Private Workspaces by default, so there is no
+    // row to add -- only one to remove.
+    await this.db('private_workspace_skill_draft_exclusions').where({ workspaceId, draftId }).del();
 
     const auditEventId = await this.audit({
       actorUserId: userId,
       actorRole: 'skill_proposer',
-      action: 'skill_draft.private_pin_added',
+      action: 'skill_draft.private_use_enabled',
       resourceType: 'private_skill_draft',
       resourceId: draftId,
       metadata: {
@@ -2097,46 +2136,64 @@ export class SkillGovernanceService {
       skillKey,
       draftRevisionId: draft.currentDraftRevisionId,
       workspaceName: workspace.name,
+      enabled: true,
       auditEventId,
     };
   }
 
+  /**
+   * Stop using this draft in one Private Workspace.
+   *
+   * Records an exclusion rather than removing a pin: the draft stays available in every
+   * other Private Workspace its owner owns, so the package must stay materialized.
+   */
   async unpinWorkspaceSkillDraft(userId: string, workspaceId: string, draftId: string): Promise<JsonRecord> {
     await this.ownedDraft(userId, draftId);
     await this.requirePrivateWorkspaceOwner(userId, workspaceId);
-    const removed = await this.db('private_workspace_skill_draft_pins').where({ workspaceId, draftId }).del();
-    if (!removed) {
-      governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'This draft is not used in that workspace');
-    }
-    await this.pruneUnpinnedDraftPackages(draftId);
+    await this.db('private_workspace_skill_draft_exclusions').insert({
+      workspaceId,
+      draftId,
+      excludedByUserId: userId,
+    }).onConflict(['workspaceId', 'draftId']).ignore();
     const auditEventId = await this.audit({
       actorUserId: userId,
       actorRole: 'skill_proposer',
-      action: 'skill_draft.private_pin_removed',
+      action: 'skill_draft.private_use_disabled',
       resourceType: 'private_skill_draft',
       resourceId: draftId,
       metadata: { workspaceId },
     });
-    return { workspaceId, draftId, auditEventId };
+    return { workspaceId, draftId, enabled: false, auditEventId };
   }
 
+  /**
+   * Which of the owner's Private Workspaces this draft runs in.
+   *
+   * Returns every eligible workspace with an on/off state, not just the ones carrying a
+   * row: the default is on, so the caller cannot infer the answer from stored rows alone.
+   */
   async listWorkspaceSkillDraftPins(userId: string, workspaceId: string): Promise<JsonRecord> {
     await this.requirePrivateWorkspaceOwner(userId, workspaceId);
-    const pins = await this.db('private_workspace_skill_draft_pins as pin')
-      .join('private_skill_drafts as d', 'd.id', 'pin.draftId')
-      .select(
-        'pin.workspaceId',
-        'pin.draftId',
-        'pin.draftRevisionId',
-        'pin.pinnedAt',
-        'd.proposedSkillKey as skillKey',
-        'd.displayName',
-        'd.proposalType',
-        'd.status as draftStatus',
-      )
-      .where({ 'pin.workspaceId': workspaceId, 'd.ownerUserId': userId })
-      .orderBy('d.displayName', 'asc');
-    return { pins };
+    const [drafts, exclusions] = await Promise.all([
+      this.db('private_skill_drafts as d')
+        .select(
+          'd.id as draftId',
+          'd.currentDraftRevisionId as draftRevisionId',
+          'd.proposedSkillKey as skillKey',
+          'd.displayName',
+          'd.proposalType',
+          'd.status as draftStatus',
+        )
+        .where({ 'd.ownerUserId': userId, 'd.status': 'private' })
+        .orderBy('d.displayName', 'asc'),
+      this.db('private_workspace_skill_draft_exclusions').select('draftId').where({ workspaceId }),
+    ]);
+    const excluded = new Set((exclusions as any[]).map((row) => String(row.draftId)));
+    return {
+      pins: (drafts as any[])
+        .filter((row) => row.skillKey && row.draftRevisionId)
+        .map((row) => ({ ...row, workspaceId, enabled: !excluded.has(String(row.draftId)) })),
+    };
   }
 
   private async requirePrivateWorkspaceOwner(userId: string, workspaceId: string): Promise<any> {
@@ -2158,23 +2215,37 @@ export class SkillGovernanceService {
    * Move every pin on *draftId* onto *revisionId*. A no-op for the common case
    * of a draft nobody uses in a workspace yet.
    */
+  /**
+   * Publish the draft's new current revision to the package cache.
+   *
+   * Every private draft is runnable in its owner's Private Workspaces, so there is no
+   * pin to wait for: materialize on save. Doing it here keeps the token-building read
+   * path free of writes, and the superseded package is pruned only afterwards.
+   *
+   * An invalid revision is deliberately not materialized. The runtime query requires a
+   * valid revision too, so the draft simply stops resolving until the owner fixes it,
+   * rather than reaching the agent and raising in its frontmatter parser.
+   */
   private async advanceDraftPins(
     draftId: string,
     skillKey: string,
     revisionId: string,
     files: FileSnapshot[],
     previousSkillKey?: string,
+    valid = true,
   ): Promise<void> {
-    const pinned = await this.db('private_workspace_skill_draft_pins').where({ draftId }).first();
-    if (!pinned) return;
-    await this.materializeDraftRevision(skillKey, revisionId, files);
+    if (valid) {
+      await this.materializeDraftRevision(skillKey, revisionId, files);
+    }
+    // Legacy pin rows are no longer read at runtime, but keep them pointing at the
+    // current revision while they exist so a rollback does not resurrect a stale one.
     await this.db('private_workspace_skill_draft_pins')
       .where({ draftId })
       .update({ draftRevisionId: revisionId, pinnedAt: this.db.fn.now() });
-    await this.pruneUnpinnedDraftPackages(draftId, skillKey);
+    await this.pruneSupersededDraftPackages(draftId, skillKey);
     // Renaming the skill ID leaves packages behind under the old key.
     if (previousSkillKey && normalizeGovernedSkillKey(previousSkillKey) !== skillKey) {
-      await this.pruneUnpinnedDraftPackages(draftId, previousSkillKey);
+      await this.pruneSupersededDraftPackages(draftId, previousSkillKey);
     }
   }
 
@@ -2196,17 +2267,27 @@ export class SkillGovernanceService {
   }
 
   /**
-   * Drop package directories for revisions of *draftId* that no pin references.
-   * The database keeps every revision row; only the filesystem cache shrinks.
+   * Drop package directories for superseded revisions of *draftId*.
+   *
+   * The runtime resolves a draft through its current revision, so that is the only one
+   * worth caching. The database keeps every revision row; only the filesystem cache
+   * shrinks, and a package is reconstructable from `content_blobs` either way.
    */
-  private async pruneUnpinnedDraftPackages(draftId: string, skillKeyHint?: string): Promise<void> {
-    const [draft, pinned] = await Promise.all([
-      this.db('private_skill_drafts').select('proposedSkillKey').where({ id: draftId }).first(),
-      this.db('private_workspace_skill_draft_pins').select('draftRevisionId').where({ draftId }),
-    ]);
+  private async pruneSupersededDraftPackages(
+    draftId: string,
+    skillKeyHint?: string,
+    options: { keepCurrent?: boolean } = { keepCurrent: true },
+  ): Promise<void> {
+    const draft = await this.db('private_skill_drafts')
+      .select('proposedSkillKey', 'currentDraftRevisionId')
+      .where({ id: draftId })
+      .first();
     const skillKey = normalizeGovernedSkillKey(skillKeyHint || draft?.proposedSkillKey || '');
     if (!skillKey) return;
-    const keep = new Set(pinned.map((row: any) => String(row.draftRevisionId)));
+    // Deleting the draft keeps nothing; saving a revision keeps the one now current.
+    const keep = new Set(
+      options.keepCurrent === false ? [] : [String(draft?.currentDraftRevisionId || '')],
+    );
     const revisions = await this.db('skill_draft_revisions').select('id').where({ draftId });
     await Promise.all(revisions
       .filter((revision: any) => !keep.has(String(revision.id)))
@@ -2494,6 +2575,56 @@ export class SkillGovernanceService {
 
   private async validateSnapshot(draft: any, files: FileSnapshot[]): Promise<ValidationResult> {
     return this.validator.validate(draft, files);
+  }
+
+  /**
+   * Record a validation verdict on draft revisions saved before drafts became runnable
+   * by default, and materialize the ones that pass.
+   *
+   * Revisions written under the opt-in model carry an empty `validationSummary`, because
+   * validation was an explicit user action and materialization happened at pin time. The
+   * runtime now requires both, so without this every existing draft would quietly stop
+   * resolving. Idempotent: a revision that already carries a verdict is skipped.
+   */
+  private async backfillDraftRevisionValidation(): Promise<void> {
+    const drafts = await this.db('private_skill_drafts as d')
+      .join('skill_draft_revisions as r', 'r.id', 'd.currentDraftRevisionId')
+      .select(
+        'd.id',
+        'd.proposedSkillKey',
+        'd.displayName',
+        'd.description',
+        'd.proposalType',
+        'r.id as revisionId',
+        'r.validationSummary',
+      )
+      .where('d.status', 'private');
+
+    let repaired = 0;
+    for (const draft of drafts as any[]) {
+      const summary = typeof draft.validationSummary === 'string'
+        ? JSON.parse(draft.validationSummary || '{}')
+        : (draft.validationSummary || {});
+      if (typeof summary?.valid === 'boolean') continue;
+      const skillKey = normalizeGovernedSkillKey(draft.proposedSkillKey || '');
+      if (!skillKey) continue;
+      try {
+        const files = await this.packageStore.draftFiles(draft.revisionId);
+        const validation = await this.validateSnapshot(draft, files);
+        await this.db('skill_draft_revisions')
+          .where({ id: draft.revisionId })
+          .update({ validationSummary: JSON.stringify(validation) });
+        if (validation.valid) {
+          await this.materializeDraftRevision(skillKey, draft.revisionId, files);
+        }
+        repaired += 1;
+      } catch (error) {
+        // One unreadable draft must not stop the backend from starting. The draft simply
+        // stays unresolvable until its owner saves it again.
+        console.warn('Could not backfill validation for skill draft', draft.id, error);
+      }
+    }
+    if (repaired) console.info('Backfilled skill draft validation', { revisions: repaired });
   }
 
   private async backfillLegacyRegistry(): Promise<void> {

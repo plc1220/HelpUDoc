@@ -71,11 +71,14 @@ export type SkillDraft = SkillDraftSummary & {
   files: SkillDraftFile[];
   validationSummary?: Partial<SkillValidation>;
   eligibleTeams: GovernanceTeam[];
+  /**
+   * Every private workspace the owner owns, with whether the draft runs there. A draft is
+   * on by default, so this is a full list with state -- not a list of pins.
+   */
   workspacePins: Array<{
     workspaceId: string;
     workspaceName: string;
-    draftRevisionId: string;
-    pinnedAt: string;
+    enabled: boolean;
   }>;
 };
 

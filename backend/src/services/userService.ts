@@ -1219,20 +1219,54 @@ export class UserService {
     workspaceId: string,
     userId: string,
   ): Promise<WorkspaceSkillDraftRuntimePin[]> {
-    const rows = await this.db('private_workspace_skill_draft_pins as pin')
-      .join('private_skill_drafts as draft', 'draft.id', 'pin.draftId')
-      .join('skill_draft_revisions as revision', 'revision.id', 'pin.draftRevisionId')
+    // A pin row used to be the authorization artifact: it could only exist because
+    // `requirePrivateWorkspaceOwner` had already passed. Drafts are now available by
+    // default, so nothing upstream of this query proves the workspace is the caller's
+    // own Private Workspace -- this checks it here rather than trusting the caller.
+    const workspace = await this.db('workspaces')
+      .select('id', 'ownerId', 'workspaceType', 'visibility')
+      .where({ id: workspaceId })
+      .first();
+    if (
+      !workspace
+      || String(workspace.ownerId) !== String(userId)
+      || workspace.workspaceType === 'team'
+      || workspace.visibility === 'team'
+    ) {
+      return [];
+    }
+
+    const rows = await this.db('private_skill_drafts as draft')
+      .join('skill_draft_revisions as revision', 'revision.id', 'draft.currentDraftRevisionId')
+      .leftJoin('private_workspace_skill_draft_exclusions as excluded', function joinExclusion() {
+        this.on('excluded.draftId', '=', 'draft.id')
+          .andOnVal('excluded.workspaceId', '=', workspaceId);
+      })
       .select(
         'draft.proposedSkillKey as skillKey',
-        'pin.draftId',
-        'pin.draftRevisionId as versionId',
+        'draft.id as draftId',
+        'draft.currentDraftRevisionId as versionId',
         'revision.manifestHash',
+        'revision.validationSummary',
         'draft.displayName',
         'draft.description',
       )
-      .where({ 'pin.workspaceId': workspaceId, 'draft.ownerUserId': userId })
+      // Only an editable draft runs: a submitted candidate belongs to its Team's review,
+      // and an archived one is finished. The owner check is what keeps another user's
+      // draft out, and the workspace check above keeps it out of shared workspaces.
+      .where({ 'draft.ownerUserId': userId, 'draft.status': 'private' })
+      .whereNull('excluded.draftId')
       .orderBy('draft.proposedSkillKey', 'asc');
     return rows
+      // A revision that failed validation is never materialized, so resolving it would
+      // hand the agent a package that is not on disk. `updateDraft` records the verdict
+      // when the revision is saved.
+      .filter((row: any) => {
+        const summary = typeof row.validationSummary === 'string'
+          ? JSON.parse(row.validationSummary || '{}')
+          : (row.validationSummary || {});
+        return summary?.valid === true;
+      })
       .filter((row: any) => row.skillKey && row.manifestHash)
       .map((row: any) => ({
         skillKey: String(row.skillKey),

@@ -655,6 +655,7 @@ test('a private draft runs only in a private workspace its author owns', { skip:
     }).catch(() => undefined);
     if (draftId) {
       await db('private_workspace_skill_draft_pins').where({ draftId }).del().catch(() => undefined);
+      await db('private_workspace_skill_draft_exclusions').where({ draftId }).del().catch(() => undefined);
       await db('skill_draft_revision_files')
         .whereIn('draftRevisionId', db('skill_draft_revisions').select('id').where({ draftId }))
         .del().catch(() => undefined);
@@ -897,6 +898,107 @@ test('approval gives the owning Team access without a Platform Admin', { skip: !
       fs.rm(path.join(skillsRoot, skillKey), { recursive: true, force: true }),
       fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', skillKey), { recursive: true, force: true }),
     ]);
+    await db.destroy();
+  }
+});
+
+test('a private draft runs in every private workspace its owner owns until switched off', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const authorId = uuidv4();
+  const firstWorkspaceId = uuidv4();
+  const secondWorkspaceId = uuidv4();
+  const teamWorkspaceId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `default-on-${suffix}`;
+  let draftId: string | null = null;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+    const users = new UserService(database);
+
+    await db('users').insert({
+      id: authorId,
+      externalId: `default-on-${suffix}`,
+      email: `default-on-${suffix}@example.test`,
+      displayName: 'Default on author',
+      isAdmin: false,
+    });
+    await db('workspaces').insert([
+      { id: firstWorkspaceId, name: `First ${suffix}`, slug: `first-${suffix}`, ownerId: authorId, visibility: 'private', workspaceType: 'private' },
+      { id: secondWorkspaceId, name: `Second ${suffix}`, slug: `second-${suffix}`, ownerId: authorId, visibility: 'private', workspaceType: 'private' },
+      { id: teamWorkspaceId, name: `Shared ${suffix}`, slug: `shared-${suffix}`, ownerId: authorId, visibility: 'team', workspaceType: 'team' },
+    ]);
+
+    const created = await governance.createDraft(authorId, { proposalType: 'new' });
+    draftId = String(created.id);
+    await governance.updateDraft(authorId, draftId, Number(created.draftRevision), {
+      proposedSkillKey: skillKey,
+      displayName: 'Default on skill',
+      description: 'Available everywhere its owner works.',
+      files: [{
+        path: 'SKILL.md',
+        content: `---\nname: ${skillKey}\ndescription: Available everywhere its owner works.\n---\n\n# ${skillKey}\n`,
+      }],
+    });
+
+    const keysIn = async (workspaceId: string) =>
+      (await users.getWorkspaceSkillDraftRuntimePins(workspaceId, authorId)).map((pin) => pin.skillKey);
+
+    // The change: no per-workspace step was taken anywhere, and it runs in both.
+    assert.deepEqual(await keysIn(firstWorkspaceId), [skillKey]);
+    assert.deepEqual(await keysIn(secondWorkspaceId), [skillKey], 'a second private workspace needs no pin');
+    // A shared workspace never inherits an unreviewed draft, whatever the owner does.
+    assert.deepEqual(await keysIn(teamWorkspaceId), []);
+
+    // A workspace created later is covered too -- that is what "by default" has to mean.
+    const laterWorkspaceId = uuidv4();
+    await db('workspaces').insert({
+      id: laterWorkspaceId, name: `Later ${suffix}`, slug: `later-${suffix}`, ownerId: authorId, visibility: 'private', workspaceType: 'private',
+    });
+    assert.deepEqual(await keysIn(laterWorkspaceId), [skillKey]);
+    await db('workspaces').where({ id: laterWorkspaceId }).del();
+
+    // Switching it off is per workspace and leaves the others alone.
+    await governance.unpinWorkspaceSkillDraft(authorId, secondWorkspaceId, draftId);
+    assert.deepEqual(await keysIn(firstWorkspaceId), [skillKey]);
+    assert.deepEqual(await keysIn(secondWorkspaceId), []);
+
+    const listed = await governance.listWorkspaceSkillDraftPins(authorId, secondWorkspaceId);
+    const entry = (listed.pins as any[]).find((pin) => pin.draftId === draftId);
+    assert.equal(entry.enabled, false, 'the listing must report state, not just stored rows');
+
+    // And switching it back on clears the exclusion.
+    await governance.pinWorkspaceSkillDraft(authorId, secondWorkspaceId, draftId);
+    assert.deepEqual(await keysIn(secondWorkspaceId), [skillKey]);
+
+    // A revision that fails validation is never materialized, so it stops resolving
+    // rather than reaching the agent and raising in its frontmatter parser.
+    const current = await governance.getDraft(authorId, draftId);
+    await governance.updateDraft(authorId, draftId, Number(current.draftRevision), {
+      files: [{ path: 'SKILL.md', content: 'no frontmatter here\n' }],
+    });
+    assert.deepEqual(await keysIn(firstWorkspaceId), [], 'an invalid revision must not run');
+  } finally {
+    await fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', skillKey), {
+      recursive: true, force: true,
+    }).catch(() => undefined);
+    if (draftId) {
+      await db('private_workspace_skill_draft_exclusions').where({ draftId }).del().catch(() => undefined);
+      await db('private_workspace_skill_draft_pins').where({ draftId }).del().catch(() => undefined);
+      await db('skill_draft_revision_files')
+        .whereIn('draftRevisionId', db('skill_draft_revisions').select('id').where({ draftId }))
+        .del().catch(() => undefined);
+      await db('private_skill_drafts').where({ id: draftId }).update({ currentDraftRevisionId: null }).catch(() => undefined);
+      await db('skill_draft_revisions').where({ draftId }).del().catch(() => undefined);
+      await db('private_skill_drafts').where({ id: draftId }).del().catch(() => undefined);
+    }
+    await db('audit_events').where({ actorUserId: authorId }).del().catch(() => undefined);
+    await db('notifications').where({ recipientUserId: authorId }).del().catch(() => undefined);
+    await db('workspaces').whereIn('id', [firstWorkspaceId, secondWorkspaceId, teamWorkspaceId]).del().catch(() => undefined);
+    await db('users').where({ id: authorId }).del().catch(() => undefined);
     await db.destroy();
   }
 });

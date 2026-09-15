@@ -554,6 +554,9 @@ export default function governanceRoutes(service: SkillGovernanceService) {
     }
   });
 
+  // PUT switches the draft on for this workspace (clears an exclusion); DELETE switches
+  // it off (records one). A draft is on by default in every Private Workspace its owner
+  // owns, so these toggle the exception rather than creating the permission.
   router.put('/workspaces/:workspaceId/skill-draft-pins/:draftId', async (req, res) => {
     try {
       const user = requireUser(req);
