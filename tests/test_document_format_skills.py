@@ -52,7 +52,7 @@ def test_document_skills_use_on_demand_inspection() -> None:
     assert "container_tools/render_slides.py" in pptx_content
     assert "For a tagged or named `.pdf`, load the `pdf` skill." in general_prompt
     assert "for DOCX or Word documents load the docx skill" in runtime_prompt
-    assert "For `@knowledge` context" in general_prompt
+    assert "For `@kb` context" in general_prompt
     assert "search_document" in resolve_skill_scope(skills["pdf"]).runtime_tools
     assert "inspect_document" in resolve_skill_scope(skills["xlsx"]).runtime_tools
     assert "inspect_document" in resolve_skill_scope(skills["pptx"]).runtime_tools

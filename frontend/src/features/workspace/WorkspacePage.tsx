@@ -2929,7 +2929,7 @@ export default function WorkspacePage() {
         if (item.metadata?.ingestion?.status !== 'published') {
           return [];
         }
-        const mentionPattern = new RegExp(`(^|[\\s([{])@knowledge:${item.id}(?=$|[\\s)\\]}])`, 'i');
+        const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${item.id}(?=$|[\\s)\\]}])`, 'i');
         return mentionPattern.test(value)
           ? [{ id: item.id, title: item.title }]
           : [];
@@ -2979,7 +2979,7 @@ export default function WorkspacePage() {
         nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
       });
       workspaceKnowledge.forEach((item) => {
-        const mentionPattern = new RegExp(`(^|[\\s([{])@knowledge:${item.id}(?=$|[\\s)\\]}])`, 'gi');
+        const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${item.id}(?=$|[\\s)\\]}])`, 'gi');
         nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
       });
       return nextValue.replace(/\s{2,}/g, ' ').trim();
@@ -3008,7 +3008,7 @@ export default function WorkspacePage() {
         if (kb) pattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'gi');
       } else if (tagId.startsWith('knowledge:')) {
         const id = tagId.slice('knowledge:'.length);
-        pattern = new RegExp(`(^|[\\s([{])@knowledge:${id}(?=$|[\\s)\\]}])`, 'gi');
+        pattern = new RegExp(`(^|[\\s([{])@kb:${id}(?=$|[\\s)\\]}])`, 'gi');
       } else if (tagId.startsWith('file:')) {
         const file = visibleFiles.find((item) => `file:${item.id}` === tagId);
         if (file) pattern = new RegExp(`(^|[\\s([{])@${escapeRegExp(file.name)}(?=$|[\\s)\\]}])`, 'gi');
@@ -8038,7 +8038,7 @@ export default function WorkspacePage() {
     const before = chatMessage.slice(0, cursorStart);
     const after = chatMessage.slice(cursorEnd);
     const prefix = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
-    const trigger = `${prefix}@knowledge:`;
+    const trigger = `${prefix}@kb:`;
     const nextValue = `${before}${trigger}${after}`;
     setChatMessage(nextValue);
     closeCommand();

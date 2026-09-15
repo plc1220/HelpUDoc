@@ -54,7 +54,7 @@ If the user tags workspace files (e.g., `@filename`), treat those tagged paths a
 - For PDF, DOCX, XLSX/XLSM, PPTX, CSV/TSV, Markdown, and text documents, use
   `search_document` followed by bounded `inspect_document` calls against the
   original file.
-- For `@knowledge` context, read the supplied OKF `index.md` first with
+- For `@kb` context, read the supplied OKF `index.md` first with
   `knowledge_read`, then follow only relevant concept links or use
   `knowledge_search`.
 - Use `read_file`, `ls`, `glob`, or `grep` for ordinary text/code files when
