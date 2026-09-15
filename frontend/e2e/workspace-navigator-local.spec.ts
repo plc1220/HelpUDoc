@@ -19,13 +19,14 @@ test('workspace switching, pin persistence and owned trash cleanup', async ({ pa
   await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: 'Trash (1)' }).click();
   await expect(page.getByText('Old draft', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Empty trash', exact: true }).click();
+  await page.screenshot({ path: '/tmp/helpudoc-trash-simplified.png' });
+  await page.getByRole('button', { name: 'Delete Old draft permanently', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Permanently delete 1 workspace?' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Trash (1)' })).toBeVisible();
   await page.route('**/workspaces/old/permanent', async (route) => route.fulfill({ status: 204 }));
   await page.route('**/fixture-workspaces', async (route) => route.fulfill({ json: [] }));
-  await page.getByRole('button', { name: 'Empty trash', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete Old draft permanently', exact: true }).click();
   await page.getByRole('dialog').last().getByRole('button', { name: 'Delete permanently', exact: true }).click();
   await expect(page.getByText('Trash is empty.')).toBeVisible();
 });

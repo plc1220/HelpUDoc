@@ -27,3 +27,6 @@
 .notification-count { position: absolute; top: 0; right: -2px; min-width: 15px; height: 15px; padding: 0 3px; display: grid; place-items: center; border-radius: 5px; background: var(--color-accent); color: var(--color-text-on-accent, var(--color-background-body)); font-size: 9px; line-height: 1; font-weight: 600; pointer-events: none; box-shadow: 0 0 0 2px var(--color-background-surface); }
 .notification-toast { position: fixed; bottom: 24px; right: 24px; z-index: 1500; max-width: calc(100vw - 32px); }
 .notification-view { padding: 10px 14px 4px; }
+
+.notification-browser-settings { display: flex; flex-direction: column; gap: 8px; padding-bottom: 10px; margin-bottom: 6px; border-bottom: 1px solid var(--color-border); }
+.notification-footer, .notification-header, .notification-view { flex-shrink: 0; }

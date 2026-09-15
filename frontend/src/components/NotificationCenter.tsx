@@ -9,6 +9,7 @@ import './NotificationCenter.css';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { apiFetch, buildApiUrl } from '../services/apiClient';
+import { useBrowserNotifications } from '../hooks/useBrowserNotifications';
 import { useNotificationSound } from '../hooks/useNotificationSound';
 
 type Notification = {
@@ -22,6 +23,7 @@ type Notification = {
 const eventLabels: Record<string, string> = {
   'agent.completed': 'Your task is ready',
   'agent.feedback_required': 'Your feedback is needed',
+  'chat.message': 'New team message',
   'chat.mentioned': 'You were mentioned',
   'skill_review.approve': 'Skill review approved',
   'skill_review.submitted': 'Skill submitted for review',
@@ -45,6 +47,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const userId = user?.id;
   const navigate = useNavigate();
   const sound = useNotificationSound(userId);
+  const browser = useBrowserNotifications(userId);
+  const showBrowserAlert = browser.show;
+  const reconcileBrowserAlerts = browser.reconcile;
+  const openRef = useRef<(item: Notification) => void>(() => {});
   const playNotificationSound = sound.play;
   const [anchor, setAnchor] = useState<string | null>(null);
   const [items, setItems] = useState<Notification[]>([]);
@@ -69,9 +75,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         if (!response.ok) throw new Error('Could not load notifications.');
         const data = await response.json() as { notifications: Notification[]; unreadCount: number };
         if (!active) return;
-        const latest = data.notifications.find((item) => !item.readAt && seen.current && !seen.current.has(item.id));
+        const newItems = data.notifications.filter((item) => !item.readAt && seen.current && !seen.current.has(item.id));
+        const latest = newItems.find((item) => item.eventType !== 'chat.message');
+        for (const item of newItems) showBrowserAlert({ id: item.id, eventType: item.eventType, title: notificationTitle(item), body: item.payload.description }, () => openRef.current(item));
+        reconcileBrowserAlerts(data.notifications.filter((item) => !item.readAt).map((item) => item.id));
         if (latest) { setNotice(latest); playNotificationSound(); }
-        seen.current = new Set(data.notifications.map((item) => item.id));
+        if (!seen.current) seen.current = new Set();
+        data.notifications.forEach((item) => seen.current!.add(item.id));
         setItems(data.notifications); setUnread(data.unreadCount); setError('');
       } catch {
         if (active) setError('Could not load notifications. Try again.');
@@ -86,7 +96,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     const onFocus = () => void refresh();
     window.addEventListener('focus', onFocus);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', onFocus); };
-  }, [userId, playNotificationSound]); // Poll independently of the currently open workspace or task.
+  }, [userId, playNotificationSound, showBrowserAlert, reconcileBrowserAlerts]); // Poll independently of the currently open workspace or task.
 
   const markRead = useCallback(async (id?: string) => {
     const response = await apiFetch(buildApiUrl(id ? `/notifications/${id}/read` : '/notifications/read-all'), { method: 'POST' });
@@ -107,6 +117,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       }
     } catch { setError('Could not mark notification as read. Try again.'); }
   };
+
+  useEffect(() => { openRef.current = (item) => { void openNotification(item); }; });
 
   const visibleItems = view === 'unread' ? items.filter((item) => !item.readAt) : items;
   const content = <section className="notification-inbox" aria-label="Notification inbox">
@@ -134,6 +146,15 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       })}
     </div>
     <footer className="notification-footer">
+      <div className="notification-browser-settings">
+        <div className="notification-sound-row">
+          <Button label={browser.enabled ? 'Disable browser alerts' : 'Enable browser alerts'} variant="ghost" size="sm" isDisabled={!browser.supported || browser.permission === 'denied'} onClick={browser.enabled ? browser.disable : browser.enable} />
+          {browser.enabled && <Button label="Test alert" variant="ghost" size="sm" onClick={browser.test} />}
+        </div>
+        {browser.enabled && <SegmentedControl label="Browser alert preference" value={browser.scope} onChange={(value) => browser.setScope(value === 'all' ? 'all' : 'important')} layout="fill" size="sm"><SegmentedControlItem value="important" label="Mentions & tasks" /><SegmentedControlItem value="all" label="All messages & tasks" /></SegmentedControl>}
+        <p className="notification-sound-hint">{!browser.supported ? 'Browser alerts are unavailable in this browser.' : browser.permission === 'denied' ? 'Notifications are blocked. Allow them in your browser’s site settings.' : 'Desktop alerts while HelpUDoc is open, including in a background tab.'}</p>
+        {browser.error && <p className="notification-error" role="status">{browser.error}</p>}
+      </div>
       <div className="notification-sound-row">
         <Button label={sound.enabled ? 'Mute sound' : 'Enable sound'} icon={sound.enabled ? <Volume2 size={15} /> : <VolumeX size={15} />} variant="ghost" size="sm" aria-pressed={sound.enabled} onClick={sound.enabled ? sound.mute : sound.enable} />
         {sound.enabled ? <Button label="Test sound" variant="ghost" size="sm" onClick={sound.test} /> : <span className="notification-sound-hint">Sound is off</span>}

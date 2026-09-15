@@ -7,7 +7,6 @@ import {
 import {
   Bot,
   ChevronRight,
-  Eye,
   History,
   Maximize2,
   MessageSquareText,
@@ -115,17 +114,6 @@ export default function PublishedWorkspaceChatHeader({
           </ButtonGroup>
         ) : null}
       </div>
-
-      {isAgentPaneVisible && mode === 'team' ? (
-        <div className={`mt-2 flex items-center gap-2 rounded-xl px-2.5 py-1.5 ${
-          isDarkMode ? 'bg-slate-900 text-slate-300' : 'bg-slate-50 text-slate-600'
-        }`}>
-          <Eye size={13} className="shrink-0 text-blue-500" />
-          <span className="text-[11px] leading-snug">
-            Visible to workspace members. Lumo reads the Shared Working version.
-          </span>
-        </div>
-      ) : null}
     </div>
   );
 }

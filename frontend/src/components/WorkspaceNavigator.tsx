@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@astryxdesign/core/Button';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
@@ -105,25 +106,26 @@ export default function WorkspaceNavigator({ storageKey, search, onRefresh, ...p
         </div>
         <div className="workspace-dialog-actions"><Button label="Close" variant="ghost" onClick={() => setSwitcher(false)} /></div>
       </Dialog>
-      <Dialog isOpen={trashOpen} onOpenChange={(open) => { if (!busy) { setTrashOpen(open); setSelected([]); } }} width="min(640px, calc(100vw - 32px))" aria-label="Workspace trash">
-        <DialogHeader title={`Trash (${trash.length})`} />
-        <div className="workspace-dialog-content">
-          <p className="workspace-empty">Workspaces are kept for 30 days. Restored shared workspaces are private until you re-share them.</p>
+      <Dialog isOpen={trashOpen} onOpenChange={(open) => { if (!busy) { setTrashOpen(open); setSelected([]); } }} width="min(520px, calc(100vw - 32px))" aria-label="Workspace trash">
+        <DialogHeader title={`Trash (${trash.length})`} onOpenChange={busy ? undefined : (open) => { setTrashOpen(open); setSelected([]); }} />
+        <div className="workspace-dialog-content workspace-trash-content">
+          {!!trash.length && <p className="workspace-empty">Automatically deleted after 30 days.</p>}
           {error && <p className="workspace-error" role="alert">{error}</p>}
-          {!!trash.length && <div className="workspace-trash-actions">
-            <CheckboxInput label="Select all trashed workspaces" isLabelHidden value={trash.every((w) => selected.includes(w.id)) ? true : selected.length ? 'indeterminate' : false} isDisabled={busy} onChange={(checked) => setSelected(checked ? trash.map((w) => w.id) : [])} />
-            <Button label="Restore selected" variant="ghost" size="sm" isDisabled={!selected.length || busy} onClick={() => void run(selected, false)} />
-            <Button label="Delete selected" variant="ghost" size="sm" isDisabled={!selected.length || busy} onClick={() => setConfirmIds(selected)} />
+          {trash.length > 1 && <div className="workspace-trash-selection">
+            <CheckboxInput label={selected.length ? `${selected.length} selected` : 'Select all'} value={trash.every((w) => selected.includes(w.id)) ? true : selected.length ? 'indeterminate' : false} isDisabled={busy} onChange={(checked) => setSelected(checked ? trash.map((w) => w.id) : [])} />
           </div>}
-          {trash.map((workspace) => <div className="workspace-trash-row" key={workspace.id}>
-            <CheckboxInput label={`Select ${workspace.name}`} isLabelHidden value={selected.includes(workspace.id)} isDisabled={busy} onChange={(checked) => setSelected((ids) => checked ? [...ids, workspace.id] : ids.filter((id) => id !== workspace.id))} />
-            <div className="workspace-trash-copy"><strong>{workspace.name}</strong><small>Deleted {workspace.trashedAt ? new Date(workspace.trashedAt).toLocaleDateString() : 'recently'}{workspace.purgeAfter ? ` · ${Math.max(0, Math.ceil((new Date(workspace.purgeAfter).getTime() - Date.now()) / 86400000))} days remaining` : ''}</small></div>
-            <Button label="Restore" variant="ghost" size="sm" isDisabled={busy} onClick={() => void run([workspace.id], false)} />
-            <Button label="Delete permanently" variant="ghost" size="sm" isDisabled={busy} onClick={() => setConfirmIds([workspace.id])} />
-          </div>)}
-          {!trash.length && <p className="workspace-empty">Trash is empty.</p>}
+          <div className="workspace-trash-list">{trash.map((workspace) => <div className="workspace-trash-row" key={workspace.id}>
+            {trash.length > 1 && <CheckboxInput label={`Select ${workspace.name}`} isLabelHidden value={selected.includes(workspace.id)} isDisabled={busy} onChange={(checked) => setSelected((ids) => checked ? [...ids, workspace.id] : ids.filter((id) => id !== workspace.id))} />}
+            <div className="workspace-trash-copy"><strong>{workspace.name}</strong><small>{workspace.purgeAfter ? `${Math.max(0, Math.ceil((new Date(workspace.purgeAfter).getTime() - Date.now()) / 86400000))} days left` : `Deleted ${workspace.trashedAt ? new Date(workspace.trashedAt).toLocaleDateString() : 'recently'}`}</small></div>
+            <Button label="Restore" variant="secondary" size="sm" isDisabled={busy} onClick={() => void run([workspace.id], false)} />
+            <IconButton label={`Delete ${workspace.name} permanently`} tooltip="Delete permanently" icon={<Trash2 size={16} />} variant="ghost" size="sm" isDisabled={busy} onClick={() => setConfirmIds([workspace.id])} />
+          </div>)}</div>
+          {trash.some((workspace) => workspace.visibility === 'team') && <p className="workspace-empty workspace-trash-note">Shared workspaces restore as private. You can share them again.</p>}
+          {!trash.length && <div className="workspace-trash-empty"><Trash2 size={28} strokeWidth={1.5} /><p>Trash is empty.</p></div>}
         </div>
-        <div className="workspace-dialog-actions"><Button label="Empty trash" variant="ghost" isDisabled={!trash.length || busy} onClick={() => setConfirmIds(trash.map((w) => w.id))} /><Button label="Close" variant="secondary" isDisabled={busy} onClick={() => setTrashOpen(false)} /></div>
+        {trash.length > 1 && <div className="workspace-dialog-actions">
+          {selected.length ? <><Button label="Restore selected" variant="secondary" size="sm" isDisabled={busy} onClick={() => void run(selected, false)} /><Button label="Delete selected" variant="ghost" size="sm" isDisabled={busy} onClick={() => setConfirmIds(selected)} /></> : <Button label="Empty trash" variant="ghost" size="sm" isDisabled={busy} onClick={() => setConfirmIds(trash.map((w) => w.id))} />}
+        </div>}
       </Dialog>
       <Dialog isOpen={confirmIds.length > 0} onOpenChange={(open) => { if (!open && !busy) setConfirmIds([]); }} purpose="form" width="min(480px, calc(100vw - 32px))" aria-label="Confirm permanent deletion">
         <DialogHeader title={`Permanently delete ${confirmIds.length} workspace${confirmIds.length === 1 ? '' : 's'}?`} />

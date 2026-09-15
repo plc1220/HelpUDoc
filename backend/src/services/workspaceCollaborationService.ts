@@ -200,6 +200,7 @@ export class WorkspaceCollaborationService {
       replyTo = await this.getTeamMessage(workspaceId, input.replyToMessageId, userId);
     }
 
+    const { collaborators } = await this.workspaceService.listCollaborators(workspaceId, userId);
     const id = uuidv4();
     const body = input.body.trim();
     await this.db.transaction(async (tx) => {
@@ -223,14 +224,15 @@ export class WorkspaceCollaborationService {
           })),
         );
       }
-      for (const recipientUserId of mentionedUserIds.filter((id) => id !== userId)) {
+      for (const recipientUserId of new Set([...collaborators.map((member) => member.userId), ...mentionedUserIds].filter((id) => id !== userId))) {
+        const mentioned = mentionedUserIds.includes(recipientUserId);
         await createNotification(tx, {
           recipientUserId,
-          eventType: 'chat.mentioned',
+          eventType: mentioned ? 'chat.mentioned' : 'chat.message',
           resourceType: 'workspace_team_message',
           resourceId: id,
           eventKey: id,
-          payload: { title: 'You were mentioned in team chat', description: body.slice(0, 500), workspaceId, messageId: id, channel: 'team' },
+          payload: { title: mentioned ? 'You were mentioned in team chat' : 'New team chat message', description: body.slice(0, 500), workspaceId, messageId: id, channel: 'team' },
         });
       }
     });

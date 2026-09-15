@@ -20,13 +20,23 @@
 .workspace-empty { margin: 8px 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.6; }
 .workspace-trash-link { margin-top: auto; padding-top: 16px; }
 .workspace-dialog-content { padding: 16px 20px; color: var(--color-text-primary); font-size: 13px; line-height: 1.6; }
-.workspace-dialog-actions, .workspace-trash-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 20px; }
+.workspace-dialog-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 20px; }
 .workspace-dialog-actions { justify-content: flex-end; border-top: 1px solid var(--color-border); }
 .workspace-dialog-content ul { padding-left: 20px; }
 .workspace-command-list { margin-top: 12px; max-height: 300px; overflow-y: auto; }
 .workspace-command-result { display: flex; flex-direction: column; gap: 4px; border: 0; border-radius: 8px; padding: 10px; background: transparent; color: var(--color-text-primary); text-align: left; width: 100%; cursor: pointer; }
 .workspace-command-result:hover { background: var(--color-background-muted); }
 .workspace-command-result small, .workspace-trash-copy small { color: var(--color-text-secondary); font-size: 11px; }
-.workspace-trash-row { display: flex; align-items: center; gap: 8px; padding: 12px 0; flex-wrap: wrap; border-bottom: 1px solid var(--color-border); }
-.workspace-trash-copy { display: flex; flex: 1; min-width: 130px; flex-direction: column; overflow-wrap: anywhere; }
+.workspace-trash-row { display: flex; align-items: center; gap: 8px; padding: 14px 0; border-bottom: 1px solid var(--color-border); }
+.workspace-trash-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; overflow-wrap: anywhere; }
 .workspace-error { color: var(--color-error); white-space: pre-line; }
+
+.workspace-trash-content { padding-top: 0; }
+.workspace-trash-selection { padding: 14px 0 0; }
+.workspace-trash-list { max-height: min(360px, 45dvh); overflow-y: auto; }
+.workspace-trash-row:last-child { border-bottom: 0; }
+.workspace-trash-copy strong { font-size: 13px; font-weight: 550; line-height: 1.5; }
+.workspace-trash-copy small { margin-top: 3px; }
+.workspace-trash-note { margin-top: 12px; }
+.workspace-trash-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 0; color: var(--color-text-secondary); }
+.workspace-trash-empty p { margin: 0; }
