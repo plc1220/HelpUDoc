@@ -8,6 +8,13 @@ metadata:
     app.kubernetes.io/managed-by: gcp-cloud-build-deploy
 spec:
   backoffLimit: 3
+  # Completed Jobs are garbage-collected instead of lingering. A Job's `spec.template`
+  # is immutable, so a Job left in the cluster makes the next change to this pod spec --
+  # an image bump, an env change -- fail the whole deploy with "field is immutable".
+  # That is what broke the deploy when the image moved to Quay: these Jobs had sat here
+  # since the first bootstrap. Both bodies are idempotent, so re-running on a later
+  # deploy is harmless and keeps the bucket policy reconciled.
+  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
