@@ -1427,7 +1427,17 @@ const SkillGovernancePage = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {mine.reviews.map((review) => (
-                      <tr key={review.id}>
+                      // Openable by the proposer. `getReview` already admits them, and the
+                      // dialog decides what to offer from `permissions.canReview`: a
+                      // read-only view of the frozen candidate and the reviewer's notes,
+                      // or the decision buttons when they are allowed to act on it. Until
+                      // now the only way in was the Team reviews tab, so a proposer who
+                      // was not a Lead of the owning Team could never open their own.
+                      <tr
+                        key={review.id}
+                        onClick={() => void openReview(review.id)}
+                        className="cursor-pointer hover:bg-slate-50"
+                      >
                         <td className="px-3 py-3"><span className="font-medium">{review.skillKey}</span><span className="text-slate-500">@{review.semanticVersion}</span></td>
                         <td className="px-3 py-3">{review.ownerTeamName}</td>
                         <td className="px-3 py-3">

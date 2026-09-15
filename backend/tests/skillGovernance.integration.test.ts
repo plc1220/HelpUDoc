@@ -1382,3 +1382,161 @@ test('a CD-managed skill republishes when its shipped content moves on', { skip:
     await db.destroy();
   }
 });
+
+test('a Platform Admin may clear their own candidate only when the platform opts in', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const adminId = uuidv4();
+  const otherLeadId = uuidv4();
+  const memberId = uuidv4();
+  const teamId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `adminself-${suffix}`;
+  const previous = process.env.ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL;
+  let draftId: string | null = null;
+  let requestId: string | null = null;
+  let memberDraftId: string | null = null;
+  let memberRequestId: string | null = null;
+
+  const skillFile = (name: string) => ([{
+    path: 'SKILL.md',
+    content: `---\nname: ${name}\ndescription: Admin self approval check.\n---\n\n# ${name}\n`,
+  }]);
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+
+    await db('users').insert([
+      { id: adminId, externalId: `as-admin-${suffix}`, email: `as-admin-${suffix}@example.test`, displayName: 'Self admin', isAdmin: true },
+      { id: otherLeadId, externalId: `as-lead-${suffix}`, email: `as-lead-${suffix}@example.test`, displayName: 'Other lead', isAdmin: false },
+      { id: memberId, externalId: `as-member-${suffix}`, email: `as-member-${suffix}@example.test`, displayName: 'Plain member', isAdmin: false },
+    ]);
+    await db('groups').insert({ id: teamId, name: `Admin self ${suffix}` });
+    await db('group_members').insert([
+      { groupId: teamId, userId: adminId },
+      { groupId: teamId, userId: otherLeadId },
+      { groupId: teamId, userId: memberId },
+    ]);
+    // Two leads, so the single-lead override cannot be what unblocks this.
+    await db('team_role_bindings').insert([
+      { teamId, userId: adminId, role: 'lead', assignedByUserId: null },
+      { teamId, userId: otherLeadId, role: 'lead', assignedByUserId: null },
+    ]);
+
+    const created = await governance.createDraft(adminId, { proposalType: 'new' });
+    draftId = String(created.id);
+    const updated = await governance.updateDraft(adminId, draftId, Number(created.draftRevision), {
+      proposedSkillKey: skillKey,
+      proposedOwnerTeamId: teamId,
+      displayName: 'Admin self approval',
+      description: 'Admin self approval check.',
+      files: skillFile(skillKey),
+    });
+    const submitted = await governance.submitDraft(adminId, draftId, {
+      owningTeamId: teamId,
+      semanticVersion: '1.0.0',
+      expectedDraftRevision: Number(updated.draftRevision),
+      submissionNote: 'Admin self approval',
+    });
+    requestId = String(submitted.id);
+
+    // Off by default: separation of duties holds even for a Platform Admin.
+    delete process.env.ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL;
+    let review = await governance.getReview(adminId, requestId);
+    assert.equal(review.permissions.canReview, false, 'the dialog must not offer a decision it cannot make');
+    await assert.rejects(
+      () => governance.decideReview(adminId, requestId!, {
+        decision: 'approve', expectedRequestRevision: Number(review.requestRevision),
+      }),
+      (error: any) => error?.code === 'SKILL_ACTION_FORBIDDEN',
+    );
+
+    // Opted in: the admin can clear their own candidate, and it is recorded as such.
+    process.env.ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL = 'true';
+    review = await governance.getReview(adminId, requestId);
+    assert.equal(review.permissions.canReview, true);
+    const approved = await governance.decideReview(adminId, requestId, {
+      decision: 'approve', expectedRequestRevision: Number(review.requestRevision),
+    });
+    assert.equal(approved.status, 'approved');
+    const decision = await db('skill_review_decisions').where({ requestId }).first();
+    assert.equal(decision.selfApproved, true, 'a self-approval must be visible in the decision record');
+
+    // The exception is scoped to the admin's own work. Somebody else's candidate is
+    // still reviewed by a Lead who is not its proposer, admin or not.
+    const memberDraft = await governance.createDraft(memberId, { proposalType: 'new' });
+    memberDraftId = String(memberDraft.id);
+    const memberUpdated = await governance.updateDraft(memberId, memberDraftId, Number(memberDraft.draftRevision), {
+      proposedSkillKey: `${skillKey}-member`,
+      proposedOwnerTeamId: teamId,
+      displayName: 'Member proposal',
+      description: 'Admin self approval check.',
+      files: skillFile(`${skillKey}-member`),
+    });
+    const memberSubmitted = await governance.submitDraft(memberId, memberDraftId, {
+      owningTeamId: teamId,
+      semanticVersion: '1.0.0',
+      expectedDraftRevision: Number(memberUpdated.draftRevision),
+      submissionNote: 'Member proposal',
+    });
+    memberRequestId = String(memberSubmitted.id);
+    const memberReview = await governance.getReview(memberId, memberRequestId);
+    assert.equal(memberReview.permissions.canReview, false, 'a plain proposer never gains self-approval');
+    await assert.rejects(
+      () => governance.decideReview(memberId, memberRequestId!, {
+        decision: 'approve', expectedRequestRevision: Number(memberReview.requestRevision),
+      }),
+      (error: any) => error?.code === 'SKILL_ACTION_FORBIDDEN',
+    );
+  } finally {
+    if (previous === undefined) delete process.env.ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL;
+    else process.env.ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL = previous;
+    for (const key of [skillKey, `${skillKey}-member`]) {
+      const row = await db('skills').where({ skillKey: key }).first().catch(() => null);
+      if (row) {
+        await db('skills').where({ id: row.id }).update({ defaultVersionId: null }).catch(() => undefined);
+        await db('team_skill_grants').where({ skillId: row.id }).del().catch(() => undefined);
+        await db('skill_version_files')
+          .whereIn('skillVersionId', db('skill_versions').select('id').where({ skillId: row.id }))
+          .del().catch(() => undefined);
+        await db('skill_versions').where({ skillId: row.id }).del().catch(() => undefined);
+        await db('skills').where({ id: row.id }).del().catch(() => undefined);
+      }
+      await fs.rm(path.join(skillsRoot, key), { recursive: true, force: true }).catch(() => undefined);
+      await fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', key), { recursive: true, force: true }).catch(() => undefined);
+    }
+    for (const rid of [requestId, memberRequestId]) {
+      if (rid) {
+        await db('skill_review_decisions').where({ requestId: rid }).del().catch(() => undefined);
+        await db('skill_candidate_policy_results')
+          .whereIn('candidateId', db('skill_review_candidates').select('id').where({ requestId: rid }))
+          .del().catch(() => undefined);
+        await db('skill_review_candidate_files')
+          .whereIn('candidateId', db('skill_review_candidates').select('id').where({ requestId: rid }))
+          .del().catch(() => undefined);
+        await db('skill_review_requests').where({ id: rid }).update({ currentCandidateId: null }).catch(() => undefined);
+        await db('skill_review_candidates').where({ requestId: rid }).del().catch(() => undefined);
+        await db('skill_review_requests').where({ id: rid }).del().catch(() => undefined);
+      }
+    }
+    for (const did of [draftId, memberDraftId]) {
+      if (did) {
+        await db('skill_draft_revision_files')
+          .whereIn('draftRevisionId', db('skill_draft_revisions').select('id').where({ draftId: did }))
+          .del().catch(() => undefined);
+        await db('private_skill_drafts').where({ id: did }).update({ currentDraftRevisionId: null }).catch(() => undefined);
+        await db('skill_draft_revisions').where({ draftId: did }).del().catch(() => undefined);
+        await db('private_skill_drafts').where({ id: did }).del().catch(() => undefined);
+      }
+    }
+    await db('audit_events').whereIn('actorUserId', [adminId, otherLeadId, memberId]).del().catch(() => undefined);
+    await db('notifications').whereIn('recipientUserId', [adminId, otherLeadId, memberId]).del().catch(() => undefined);
+    await db('team_role_bindings').where({ teamId }).del().catch(() => undefined);
+    await db('group_members').where({ groupId: teamId }).del().catch(() => undefined);
+    await db('groups').where({ id: teamId }).del().catch(() => undefined);
+    await db('users').whereIn('id', [adminId, otherLeadId, memberId]).del().catch(() => undefined);
+    await db.destroy();
+  }
+});
