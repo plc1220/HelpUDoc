@@ -237,6 +237,10 @@ const buildRunDedupeKey = (
   userId?: string,
 ) => `agent:run:key:${workspaceId}:${userId || 'anonymous'}:${persona}:${turnId}`;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const toTelemetryWorkspaceId = (workspaceId: string): string | null =>
+  UUID_RE.test(workspaceId) ? workspaceId : null;
+
 const stableNormalize = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map(stableNormalize);
@@ -3174,7 +3178,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
   if (runTelemetryService) {
     await runTelemetryService.recordQueuedRun({
       runId,
-      workspaceId: params.workspaceId,
+      workspaceId: toTelemetryWorkspaceId(params.workspaceId),
       userId: params.userId,
       conversationId: params.conversationId,
       turnId: params.turnId,
@@ -4104,7 +4108,7 @@ async function runAgentRunWorker(
         try {
           await runTelemetryService.appendToolEvent({
             runId,
-            workspaceId: params.workspaceId,
+            workspaceId: toTelemetryWorkspaceId(params.workspaceId),
             userId: params.userId,
             conversationId: params.conversationId,
             turnId: params.turnId,
