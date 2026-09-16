@@ -39,6 +39,17 @@ type CreatorMessage = {
 
 const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+/**
+ * Did this reply try to propose something?
+ *
+ * A balanced candidate mentioning `actions` that will not parse is a proposal the
+ * creator truncated or malformed -- not conversation. Both used to end as an empty
+ * panel, which is exactly what a question looks like, so the user had no way to tell
+ * "still asking" from "proposed something unreadable".
+ */
+const looksLikeAProposal = (text: string): boolean =>
+  extractJsonPayloads(text).some((candidate) => candidate.includes('"actions"'));
+
 const parseActions = (text: string): SkillBuilderAction[] => {
   // Not a fence regex. The Creator proposes skills whose SKILL.md documents how to run
   // their own scripts, so the json block it emits contains nested ```bash fences inside
@@ -133,7 +144,18 @@ export default function SkillCreatorDialog({
         setError(chunk.message || 'Skill Creator failed');
       } else if (chunk.type === 'done') {
         const proposed = parseActions(assistantText);
-        if (proposed.length) setActions(proposed);
+        if (proposed.length) {
+          setActions(proposed);
+        } else if (looksLikeAProposal(assistantText)) {
+          // Balanced, mentions `actions`, will not parse: truncated at the token limit
+          // or malformed. Saying so beats an empty panel, which is indistinguishable
+          // from the creator still asking a question.
+          setError(
+            'The creator proposed a skill but its file list could not be read. It may have '
+            + 'been cut short. Ask it to send the proposal again, or split the skill into '
+            + 'fewer files.',
+          );
+        }
       }
     }, controller.signal, lastEventIdRef.current);
   };

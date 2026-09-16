@@ -69,3 +69,35 @@ test('braces inside strings do not end the value early', () => {
   }) + '\n```';
   assert.match(parseActions(reply)[0].content, /\{"a": \[1,2\]\}/);
 });
+
+// The two shapes the scanner cannot rescue: balanced, mentions `actions`, will not parse.
+// They must be distinguishable from conversation so the dialog can say which happened.
+const looksLikeAProposal = (text: string): boolean =>
+  extractJsonPayloads(text).some((candidate) => candidate.includes('"actions"'));
+
+test('a truncated proposal is reported, not silently empty', () => {
+  const cut = '```json\n{"actions": [{"type": "upsert_text", "path": "SKILL.md", "content": "half a fi';
+  assert.deepEqual(parseActions(cut), [], 'it cannot be parsed');
+  assert.equal(looksLikeAProposal(cut), false, 'an unbalanced cut has no candidate at all');
+});
+
+test('a malformed but balanced proposal is distinguishable from conversation', () => {
+  const bad = '```json\n{"actions": [{"type":"create_skill","skillId":"x"},]}\n```';
+  assert.deepEqual(parseActions(bad), [], 'invalid JSON yields no actions');
+  assert.equal(looksLikeAProposal(bad), true, 'but it is recognisably an attempted proposal');
+  assert.equal(looksLikeAProposal('Which weather API should it call?'), false);
+});
+
+test('many files with nested fences and a decoy block parse cleanly', () => {
+  const actions = [
+    { type: 'create_skill', skillId: 'multi', name: 'Multi', description: 'many files' },
+    { type: 'upsert_text', path: 'SKILL.md', content: '```bash\npython x.py\n```\n```python\nprint({"k": [1,2]})\n```\n' },
+    { type: 'upsert_text', path: 'scripts/a.py', content: 'd = {"a": {"b": [1, 2]}}\n' },
+    { type: 'upsert_text', path: 'references/g.md', content: 'quote " and \\ backslash\n```json\n{"decoy":{"actions":[]}}\n```\n' },
+    { type: 'remove', path: 'old.md' },
+  ];
+  const reply = 'Proposal:\n\n```json\n' + JSON.stringify({ actions }, null, 2) + '\n```\n\nLet me know.';
+  const got = parseActions(reply);
+  assert.equal(got.length, 5);
+  assert.match(got[3].content, /decoy/, 'a json block inside a string stays inside it');
+});
