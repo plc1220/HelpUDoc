@@ -23,6 +23,8 @@ import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { safeMarkdownUrlTransform } from '../../utils/markdownUrls';
+import { remarkEditorHtml } from '../../utils/remarkEditorHtml';
 import remarkGfm from 'remark-gfm';
 import {
   createWorkspace,
@@ -1857,7 +1859,7 @@ export default function WorkspacePage() {
         : wrapInDocument(fileContent)
       : wrapInDocument(
         renderToStaticMarkup(
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkEditorHtml]} urlTransform={safeMarkdownUrlTransform}>{fileContent}</ReactMarkdown>
         )
       );
 

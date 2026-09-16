@@ -1,22 +1,24 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
-import { DocxEditor, useEditorState } from '@docx-editor.dev/react';
+import { DocxEditor, normalizeImageBytes, useEditorState } from '@docx-editor.dev/react';
 import { defaultFonts } from '@docx-editor.dev/fonts';
+import { clipboardDropLandsText, clipboardPasteLandsContent, validateRasterHeader } from '@docx-editor.dev/core/editor';
 import type { FontConfigurationFragment } from '@docx-editor.dev/core/editor';
 import type { DocumentSource, Editor } from '@docx-editor.dev/core/contracts/editor';
 import { Button } from '@astryxdesign/core/Button';
 import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import { Text } from '@astryxdesign/core/Text';
-import { Bold, Italic, Undo2, Redo2 } from 'lucide-react';
+import { Bold, ImagePlus, Italic, Undo2, Redo2 } from 'lucide-react';
 import { API_URL, apiFetch } from '../services/apiClient';
 import { getAuthUser } from '../auth/authStore';
-import type { File } from '../types';
+import type { File as WorkspaceFile } from '../types';
+import { EDITOR_IMAGE_ACCEPT, isWorkspaceImageDrag, loadWorkspaceImage, readWorkspaceImageDrag, validateEditorImage } from '../utils/editorImages';
 import { useOfficeDocument } from './OfficeDocumentContext';
 import '@docx-editor.dev/core/styles/editor.css';
 import './native-docx-editor.css';
 
 export type NativeDocxEditorState = { dirty: boolean; saving: boolean; error: string | null };
 export type NativeDocxEditorHandle = { save(): Promise<void> };
-type Props = { workspaceId: string; file: File; onStateChange?: (state: NativeDocxEditorState) => void };
+type Props = { workspaceId: string; file: WorkspaceFile; onStateChange?: (state: NativeDocxEditorState) => void };
 type Source = { content: string; version: number; revision: string; canEdit: boolean; readOnlyReason: string | null };
 type Draft = { materialize: () => Promise<ArrayBuffer>; base: Source };
 
@@ -74,8 +76,34 @@ async function responseJson<T>(response: Response): Promise<T> {
     : body.error || 'The document could not be saved. Your edits are kept here.');
   return body as T;
 }
-function NativeToolbar() {
+async function nativeImageBytes(file: File): Promise<Uint8Array> {
+  validateEditorImage(file);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (file.type !== 'image/webp') return bytes;
+  // Convert WebP to the PNG format supported by the editor's image insertion
+  // adapter and Word consumers, leaving existing document media untouched.
+  const header = validateRasterHeader(bytes, 'image/webp');
+  if (!header) throw new Error('This photo could not be read. Choose a valid WebP image.');
+  if (header.pixelWidth > 16384 || header.pixelHeight > 16384 || header.pixelWidth * header.pixelHeight > 40_000_000) {
+    throw new Error('This photo is too large. Choose a smaller image.');
+  }
+  const bitmap = await createImageBitmap(file);
+  try {
+    if (bitmap.width > 16384 || bitmap.height > 16384 || bitmap.width * bitmap.height > 40_000_000) {
+      throw new Error('This photo is too large. Choose a smaller image.');
+    }
+    const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('This photo could not be read. Try a PNG or JPEG image.');
+    context.drawImage(bitmap, 0, 0);
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(result => result ? resolve(result) : reject(new Error('This photo could not be read.')), 'image/png'));
+    return new Uint8Array(await blob.arrayBuffer());
+  } finally { bitmap.close(); }
+}
+
+function NativeToolbar({ onInsertPhoto, inserting }: { onInsertPhoto: () => void; inserting: boolean }) {
   const parseError = useEditorState(snapshot => snapshot.parseError);
+  const editable = useEditorState(snapshot => snapshot.editable);
   return <>
     <DocxEditor.Toolbar preset={false} overflow={false} className="native-docx-toolbar">
       <DocxEditor.Toolbar.Undo icon={<Undo2 size={16} />} />
@@ -85,6 +113,11 @@ function NativeToolbar() {
       <DocxEditor.Toolbar.FontSize />
       <DocxEditor.Toolbar.Bold icon={<Bold size={16} />} />
       <DocxEditor.Toolbar.Italic icon={<Italic size={16} />} />
+      <DocxEditor.Toolbar.Separator />
+      <span onMouseDown={event => event.preventDefault()}>
+        <Button label="Photo" icon={<ImagePlus size={16} />} size="sm" variant="ghost"
+          isDisabled={!editable || inserting} onClick={onInsertPhoto} />
+      </span>
     </DocxEditor.Toolbar>
     {parseError && <div role="alert" className="native-docx-notice">This document could not be opened: {parseError}</div>}
   </>;
@@ -110,12 +143,19 @@ const NativeDocxEditor = forwardRef<NativeDocxEditorHandle, Props>(function Nati
   const [reload, setReload] = useState(0);
   const [loading, setLoading] = useState(true);
   const [confirmReload, setConfirmReload] = useState(false);
+  const [insertingImage, setInsertingImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [imageDragOver, setImageDragOver] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageTaskRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
   const effectiveCanEdit = canEdit && office?.canEdit !== false;
   const user = getAuthUser();
   const cacheKey = `${user?.id || 'anonymous'}:${workspaceId}:${file.id}`;
   const url = `${API_URL}/workspaces/${encodeURIComponent(workspaceId)}/files/${encodeURIComponent(file.id)}/docx-content`;
 
-  useEffect(() => { stateCallback.current?.({ dirty, saving, error }); }, [dirty, saving, error]);
+  useEffect(() => { stateCallback.current?.({ dirty, saving: saving || insertingImage, error }); }, [dirty, saving, insertingImage, error]);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   useLayoutEffect(() => () => {
     clearTimeout(draftTimer.current);
     void drafts.get(cacheKey)?.materialize().catch(() => {});
@@ -164,6 +204,7 @@ const NativeDocxEditor = forwardRef<NativeDocxEditorHandle, Props>(function Nati
   }, [cacheKey]);
 
   const save = useCallback(async () => {
+    if (imageTaskRef.current) await imageTaskRef.current;
     const editor = editorRef.current;
     const base = baseRef.current;
     if (!dirtyRef.current) return;
@@ -178,7 +219,7 @@ const NativeDocxEditor = forwardRef<NativeDocxEditorHandle, Props>(function Nati
       const generation = generationRef.current;
       const buffer = await editor.save();
       const content = encode(buffer);
-      const result = await responseJson<{ file: File; revision: string }>(await apiFetch(url, {
+      const result = await responseJson<{ file: WorkspaceFile; revision: string }>(await apiFetch(url, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, version: expectedVersion, revision: expectedRevision }),
       }));
@@ -201,6 +242,43 @@ const NativeDocxEditor = forwardRef<NativeDocxEditorHandle, Props>(function Nati
   }, [cacheKey, effectiveCanEdit, url]);
   useImperativeHandle(ref, () => ({ save }), [save]);
 
+  const insertImage = (load: () => Promise<File>) => {
+    const editor = editorRef.current;
+    if (!editor || !effectiveCanEdit || savingRef.current || imageTaskRef.current || !editor.snapshot().editable) return;
+    const expectedPackageRevision = editor.getDocumentHandle().revision;
+    const pin = editor.retainSelection();
+    setInsertingImage(true); setImageError(null);
+    const task = (async () => {
+      try {
+        const photo = await load();
+        const image = normalizeImageBytes(await nativeImageBytes(photo));
+        if (!image.ok) throw new Error(image.reasonKey.endsWith('oversize') ? 'This photo is too large. Choose a smaller image.' : 'This photo could not be read. Choose a valid PNG, JPEG, GIF, or WebP image.');
+        if (!mountedRef.current || editorRef.current !== editor) return;
+        if (officeRef.current?.canEdit === false || !editor.snapshot().editable) throw new Error('You no longer have permission to edit this document.');
+        const command = { type: 'insertImage' as const, data: image.bytes, mime: image.mime, widthPoints: image.widthPoints,
+          heightPoints: image.heightPoints, title: photo.name, expectedPackageRevision };
+        const permitted = editor.canExecuteImageCommand(command);
+        if (!permitted.ok) throw new Error(permitted.reason === 'invalid-range' ? 'Click in the document text to place the photo, then try again.' : permitted.reason);
+        const result = await editor.executeImageCommand(command);
+        if (!result.ok) throw new Error(result.reason === 'invalid-range' ? 'Click in the document text to place the photo, then try again.' : result.reason);
+        editor.focus();
+      } catch (cause) {
+        if (mountedRef.current) setImageError(cause instanceof Error ? cause.message : 'This photo could not be inserted. Try again.');
+      } finally {
+        if (pin && mountedRef.current && editorRef.current === editor) editor.releaseSelection(pin);
+        imageTaskRef.current = null;
+        if (mountedRef.current) setInsertingImage(false);
+      }
+    })();
+    imageTaskRef.current = task;
+  };
+
+  const imageFiles = (transfer: DataTransfer): File[] => Array.from(transfer.files).filter(item => item.type.startsWith('image/'));
+  const insertImageFiles = (photos: File[]) => {
+    if (photos.length > 1) { setImageError('Insert one photo at a time.'); return; }
+    if (photos[0]) insertImage(() => Promise.resolve(photos[0]));
+  };
+
   const downloadDraft = async () => {
     try {
       const bytes = await editorRef.current?.save();
@@ -211,9 +289,55 @@ const NativeDocxEditor = forwardRef<NativeDocxEditorHandle, Props>(function Nati
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to download your edits.'); }
   };
 
-  return <div className="native-docx-editor" aria-label="Word document editor" onKeyDown={event => {
+  return <div className={`native-docx-editor${imageDragOver ? ' native-docx-editor--image-drop' : ''}`} aria-label="Word document editor" onKeyDown={event => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.stopPropagation(); void save().catch(() => {}); }
+  }} onDragOverCapture={event => {
+    const workspaceDrag = isWorkspaceImageDrag(event.dataTransfer);
+    const hasFiles = Array.from(event.dataTransfer.types).includes('Files');
+    if (!workspaceDrag && !hasFiles && !event.dataTransfer.types.includes('application/x-helpudoc-workspace-file-id')) return;
+    event.preventDefault(); event.stopPropagation();
+    const ready = effectiveCanEdit && !saving && !insertingImage;
+    event.dataTransfer.dropEffect = ready && (workspaceDrag || hasFiles) ? 'copy' : 'none';
+    setImageDragOver(ready && (workspaceDrag || hasFiles));
+  }} onDragLeave={event => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setImageDragOver(false);
+  }} onDropCapture={event => {
+    setImageDragOver(false);
+    const workspaceDrag = isWorkspaceImageDrag(event.dataTransfer);
+    const photos = imageFiles(event.dataTransfer);
+    const fileDrag = workspaceDrag || event.dataTransfer.types.includes('application/x-helpudoc-workspace-file-id') || event.dataTransfer.types.includes('Files');
+    if (!fileDrag) return;
+    // Let the engine's text lane handle rich copied content carrying a fallback
+    // bitmap, rather than inserting the same content twice.
+    if (!workspaceDrag && clipboardDropLandsText(event.dataTransfer)) return;
+    event.preventDefault(); event.stopPropagation();
+    if (!effectiveCanEdit || saving || insertingImage) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest('.docx-paginated-surface')) { setImageError('Drop the photo onto the document page.'); return; }
+    // The paginated engine owns zoom, columns and table-cell hit testing. Feed it
+    // a pointer gesture at the drop location instead of guessing a text offset.
+    const point = { bubbles: true, clientX: event.clientX, clientY: event.clientY, button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    target.dispatchEvent(new PointerEvent('pointerdown', { ...point, buttons: 1 }));
+    target.dispatchEvent(new PointerEvent('pointerup', { ...point, buttons: 0 }));
+    if (workspaceDrag) {
+      const payload = readWorkspaceImageDrag(event.dataTransfer);
+      if (!payload) { setImageError('This photo could not be read. Drag it from the file pane again.'); return; }
+      insertImage(() => loadWorkspaceImage(workspaceId, payload));
+    } else if (photos.length) insertImageFiles(photos);
+    else setImageError('Choose a PNG, JPEG, GIF, or WebP image.');
+  }} onPasteCapture={event => {
+    if (!effectiveCanEdit || saving || insertingImage || clipboardPasteLandsContent(event.clipboardData)) return;
+    const photos = imageFiles(event.clipboardData);
+    if (!photos.length) return;
+    event.preventDefault(); event.stopPropagation(); insertImageFiles(photos);
   }}>
+    <input ref={imageInputRef} type="file" accept={EDITOR_IMAGE_ACCEPT} hidden aria-label="Insert photo into Word document" onChange={event => {
+      insertImageFiles(Array.from(event.currentTarget.files || [])); event.currentTarget.value = '';
+    }} />
+    {(imageError || insertingImage) && <div className="native-docx-notice" role={imageError ? 'alert' : 'status'}>
+      <Text type="supporting">{imageError || 'Inserting photo…'}</Text>
+      {imageError && <Button label="Dismiss" size="sm" variant="ghost" onClick={() => setImageError(null)} />}
+    </div>}
     {(error || notice) && <div className="native-docx-notice" role={error ? 'alert' : 'status'}>
       <Text type="supporting">{error || notice}</Text>
       {dirty && <Button label="Download my edits" size="sm" variant="ghost" onClick={() => { void downloadDraft(); }} />}
@@ -223,7 +347,7 @@ const NativeDocxEditor = forwardRef<NativeDocxEditorHandle, Props>(function Nati
     {loading ? <div className="native-docx-loading" role="status"><Text type="body">Opening Word document…</Text></div>
       : source && fonts ? <DocxEditor.Root document={source} fonts={fonts} mode={effectiveCanEdit && !saving ? 'edit' : 'view'}
         onReady={editor => { editorRef.current = editor; }} onChange={changed}>
-        <NativeToolbar />
+        <NativeToolbar onInsertPhoto={() => imageInputRef.current?.click()} inserting={insertingImage} />
         <DocxEditor.Viewport className="native-docx-viewport"><DocxEditor.Content /><DocxEditor.FontNotice /></DocxEditor.Viewport>
       </DocxEditor.Root> : null}
     <AlertDialog isOpen={confirmReload} onOpenChange={setConfirmReload} title="Load the latest version?"

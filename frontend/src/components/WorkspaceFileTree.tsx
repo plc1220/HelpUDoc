@@ -13,6 +13,7 @@ import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 
 import type { DashboardArtifactInfo, File as WorkspaceFile } from '../types';
 import { getFileDisplayName, getFileTypeIcon } from '../utils/files';
+import { isEditorImageName, WORKSPACE_IMAGE_DRAG_MIME } from '../utils/editorImages';
 import {
   buildWorkspaceFileTree,
   getWorkspaceAncestorFolderPaths,
@@ -265,9 +266,12 @@ const TreeFileRow: React.FC<{
     }
     draggedFileIdRef.current = fileId;
     setDraggedFileId(fileId);
-    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.effectAllowed = isEditorImageName(file.name || '') ? 'copyMove' : 'move';
     event.dataTransfer.setData(WORKSPACE_FILE_DRAG_MIME, fileId);
     event.dataTransfer.setData('text/plain', fileId);
+    if (isEditorImageName(file.name || '')) {
+      event.dataTransfer.setData(WORKSPACE_IMAGE_DRAG_MIME, JSON.stringify({ fileId, name: file.name }));
+    }
   };
   const clearDragState = () => {
     draggedFileIdRef.current = null;
@@ -280,6 +284,7 @@ const TreeFileRow: React.FC<{
         isBeingDragged ? 'opacity-40' : ''
       }`}
       title={node.path}
+      data-workspace-file-id={fileId}
       draggable={isDraggable}
       onDragStart={handleDragStart}
       onDragEnd={(event) => {

@@ -1,7 +1,8 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import type { File as WorkspaceFile } from '../types';
-import { createFile, getFileContent } from '../services/fileApi';
+import { createFile } from '../services/fileApi';
+import { loadWorkspaceImage, readEditorImageDataUrl, validateEditorImage, type WorkspaceImageDrag } from '../utils/editorImages';
 import { useCanvasAnnotations } from './CanvasAnnotationContext';
 import { locateAnnotationText } from '../utils/canvasAnnotations';
 import EditorLoadingState from './EditorLoadingState';
@@ -121,21 +122,21 @@ const WorkspaceFileEditor: React.FC<FileEditorProps> = ({
   const editorRef = useRef<MonacoEditorNamespace.IStandaloneCodeEditor | null>(null);
   const mdxEditorRef = useRef<MarkdownRichEditorHandle | null>(null);
   const isApplyingContentRef = useRef(false);
-  const [mdxError, setMdxError] = useState<string | null>(null);
   const isDarkMode = colorMode === 'dark';
   const monacoTheme = isDarkMode ? 'helpudoc-nord' : 'vs';
 
   const handleImageUpload = useCallback(async (image: File) => {
+    validateEditorImage(image);
     const created = await createFile(workspaceId, image);
     if (!created?.id) {
       throw new Error('Image upload did not return a file identifier.');
     }
-    const stored = await getFileContent(workspaceId, String(created.id));
-    if (!stored?.content) {
-      throw new Error('Image upload could not be read back.');
-    }
-    return `data:${stored.mimeType || image.type || 'image/*'};base64,${stored.content}`;
+    return readEditorImageDataUrl(image);
   }, [workspaceId]);
+
+  const handleWorkspaceImageDrop = useCallback(async (payload: WorkspaceImageDrag) => (
+    readEditorImageDataUrl(await loadWorkspaceImage(workspaceId, payload))
+  ), [workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -254,10 +255,6 @@ const WorkspaceFileEditor: React.FC<FileEditorProps> = ({
     isApplyingContentRef.current = false;
   }, [fileContent, fileName]);
 
-  useEffect(() => {
-    setMdxError(null);
-  }, [fileId]);
-
   if (!file) {
     return null;
   }
@@ -302,15 +299,6 @@ const WorkspaceFileEditor: React.FC<FileEditorProps> = ({
       <div className="min-h-0 flex-grow overflow-hidden">
         {isMarkdown ? (
           <div className="helpudoc-mdxeditor-shell flex h-full min-h-0 flex-col overflow-hidden">
-            {mdxError && (
-              <div className={`border-b px-4 py-2 text-sm ${
-                isDarkMode
-                  ? 'border-rose-500/20 bg-rose-950/25 text-rose-200'
-                  : 'border-rose-200 bg-rose-50 text-rose-700'
-              }`}>
-                {mdxError}
-              </div>
-            )}
             <Suspense fallback={<EditorLoadingState className="min-h-[320px] flex-1" label="Loading rich editor..." />}>
               <MarkdownRichEditor
                 key={fileId ?? resolvedFileName}
@@ -318,11 +306,10 @@ const WorkspaceFileEditor: React.FC<FileEditorProps> = ({
                 markdown={fileContent}
                 onChange={(value) => {
                   if (isApplyingContentRef.current) return;
-                  setMdxError(null);
                   onContentChange(value);
                 }}
-                onError={setMdxError}
                 onImageUpload={handleImageUpload}
+                onWorkspaceImageDrop={handleWorkspaceImageDrop}
                 colorMode={colorMode}
               />
             </Suspense>
