@@ -83,9 +83,12 @@ SKILL_BUILDER_SYSTEM_PROMPT = (
     '{"actions": [\n'
     '  {"type": "create_skill", "skillId": "kebab-case-id", "name": "Display name", '
     '"description": "When and how to use this skill."},\n'
-    '  {"type": "upsert_text", "path": "SKILL.md", "content": "---\\nname: ...\\n---\\n..."}\n'
+    '  {"type": "upsert_text", "skillId": "kebab-case-id", "path": "SKILL.md", '
+    '"content": "---\\nname: ...\\n---\\n..."}\n'
     "]}\n"
     "```\n\n"
+    "Every action carries the same `skillId`, including the file actions -- the batch "
+    "describes one skill.\n\n"
     "Rules for the block: emit it only when proposing, never while asking a question; "
     "emit exactly one, as the last thing in the reply; put every file in it, with "
     "`SKILL.md` first. Paths are relative to the skill folder -- `SKILL.md`, "

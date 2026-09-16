@@ -63,6 +63,35 @@ const builderActionSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
+/**
+ * Carry `skillId` across a batch that only stated it once.
+ *
+ * Every action needs it -- `builderActionsToDraftMutation` requires the batch to name
+ * exactly one skill -- but a model naturally writes it on `create_skill` and treats the
+ * following file actions as belonging to it. Omitting it failed Zod with "expected
+ * string, received undefined", which named neither the field nor the action.
+ *
+ * Only fills a gap, never overrides: a batch that genuinely names two skills still fails
+ * in the adapter, which is the check that matters.
+ */
+const inheritSkillId = (body: unknown): unknown => {
+  if (!body || typeof body !== 'object') return body;
+  const actions = (body as { actions?: unknown }).actions;
+  if (!Array.isArray(actions)) return body;
+  const stated = actions
+    .map((action) => (action && typeof action === 'object' ? (action as { skillId?: unknown }).skillId : undefined))
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  if (!stated) return body;
+  return {
+    ...(body as Record<string, unknown>),
+    actions: actions.map((action) => (
+      action && typeof action === 'object' && !(action as { skillId?: unknown }).skillId
+        ? { ...(action as Record<string, unknown>), skillId: stated }
+        : action
+    )),
+  };
+};
+
 const builderDraftActionsSchema = z.object({
   actions: z.array(builderActionSchema).min(1).max(100),
   expectedDraftRevision: z.number().int().nonnegative(),
@@ -228,7 +257,7 @@ export default function governanceRoutes(service: SkillGovernanceService) {
   router.post('/skills/drafts/:draftId/builder-actions', async (req, res) => {
     try {
       const user = requireUser(req);
-      const payload = builderDraftActionsSchema.parse(req.body);
+      const payload = builderDraftActionsSchema.parse(inheritSkillId(req.body));
       const mutation = await builderActionsToDraftMutation(
         payload.actions as GovernedBuilderAction[],
         getContextFilesForUser(user.userId),

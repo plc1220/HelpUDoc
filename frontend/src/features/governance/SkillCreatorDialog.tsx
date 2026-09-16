@@ -35,6 +35,14 @@ type CreatorMessage = {
   id: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
+  /** Tool activity, kept out of `text`. One short line per call, not its output. */
+  activity?: string[];
+};
+
+/** A tool event as one line, rather than the payload it returned. */
+const activityLine = (raw: string): string => {
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  return flat.length > 140 ? `${flat.slice(0, 140)}…` : flat;
 };
 
 const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -131,12 +139,24 @@ export default function SkillCreatorDialog({
     await streamSkillBuilderRun(activeRunId, (chunk) => {
       const eventId = (chunk as { id?: string }).id;
       if (eventId) lastEventIdRef.current = eventId;
-      if (['token', 'chunk', 'thought', 'tool_start', 'tool_end', 'tool_error'].includes(chunk.type)) {
+      if (['token', 'chunk', 'thought'].includes(chunk.type)) {
         const content = (chunk as { content?: string }).content || '';
         if (!content) return;
         assistantText += content;
         setMessages((current) => current.map((message) => (
           message.id === assistantId ? { ...message, text: assistantText } : message
+        )));
+      } else if (['tool_start', 'tool_end', 'tool_error'].includes(chunk.type)) {
+        // Keep tool activity out of the reply. A directory listing or a file read ran to
+        // hundreds of lines in the transcript, and -- worse -- `parseActions` read the
+        // same string, so a file containing a json block could be taken for a proposal.
+        const content = (chunk as { content?: string }).content || '';
+        if (!content) return;
+        const line = activityLine(content);
+        setMessages((current) => current.map((message) => (
+          message.id === assistantId
+            ? { ...message, activity: [...(message.activity || []), line] }
+            : message
         )));
       } else if (chunk.type === 'interrupt') {
         setAwaitingApproval(true);
@@ -280,8 +300,24 @@ export default function SkillCreatorDialog({
               {messages.map((message) => (
                 <div key={message.id} className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : ''}`}>
                   {message.role !== 'user' ? <span className="mt-1 rounded-full bg-blue-100 p-2 text-blue-700"><Bot size={16} /></span> : null}
-                  <div className={`max-w-[82%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${message.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800'}`}>
-                    {message.text || <Loader2 size={16} className="animate-spin" />}
+                  <div className="max-w-[82%] min-w-0">
+                    {message.activity?.length ? (
+                      // Collapsed by default: what it did is occasionally useful, the
+                      // output it read almost never is.
+                      <details className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        <summary className="cursor-pointer select-none">
+                          {message.activity.length} tool {message.activity.length === 1 ? 'call' : 'calls'}
+                        </summary>
+                        <ul className="mt-1.5 space-y-1">
+                          {message.activity.map((line, index) => (
+                            <li key={index} className="truncate font-mono">{line}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                    <div className={`whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${message.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800'}`}>
+                      {message.text || <Loader2 size={16} className="animate-spin" />}
+                    </div>
                   </div>
                   {message.role === 'user' ? <span className="mt-1 rounded-full bg-slate-200 p-2 text-slate-700"><UserRound size={16} /></span> : null}
                 </div>
