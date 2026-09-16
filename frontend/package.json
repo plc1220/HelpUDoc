@@ -17,6 +17,9 @@
   "dependencies": {
     "@astryxdesign/core": "^0.1.7",
     "@astryxdesign/theme-neutral": "^0.1.7",
+    "@docx-editor.dev/core": "2.19.0",
+    "@docx-editor.dev/fonts": "2.19.0",
+    "@docx-editor.dev/react": "2.19.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@helpudoc/contracts": "file:../packages/contracts",

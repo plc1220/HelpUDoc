@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import test from 'node:test';
 import express from 'express';
 import { AxiosError } from 'axios';
+import JSZip from 'jszip';
 import createFileRouter from '../src/api/files';
 import { AccessDeniedError, ConflictError, HttpError } from '../src/errors';
 import { FileService } from '../src/services/fileService';
@@ -72,6 +73,26 @@ function fixture() {
     setCanEdit: (value: boolean) => { canEdit = value; },
     setAllowed: (value: boolean) => { allowed = value; },
   };
+}
+
+const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+async function docx(text = 'Original text', parts: Record<string, string> = {}) {
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+  zip.file('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  zip.file('word/document.xml', `<w:document xmlns:w="${WORD_NS}"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`);
+  Object.entries(parts).forEach(([name, value]) => zip.file(name, value));
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+async function nativeFixture(parts: Record<string, string> = {}) {
+  const f = fixture();
+  const nativeSource = await docx('Original text', parts);
+  f.files.getFileDownloadStream = async (...args: unknown[]) => {
+    f.calls.download.push(args);
+    return { stream: Readable.from([nativeSource]), sizeBytes: nativeSource.length };
+  };
+  return { ...f, nativeSource };
 }
 
 test('Office previews read an immutable version and send a workspace-scoped signed token', async () => {
@@ -211,4 +232,160 @@ test('strict commits reject changed team files while holding the database row lo
   service.objectStore = { delete: async (key: string) => { deleted.push(key); } };
   await assert.rejects(service.commitFileBuffer(12, updated, 'user', 3, { strictVersion: true }), httpStatus(409));
   assert.deepEqual(deleted, ['immutable']);
+});
+
+test('native DOCX source returns exact immutable bytes and access state without invoking Office conversion', async () => {
+  const f = await nativeFixture();
+  f.agent.preview = async () => { throw new Error('Converter must not be called'); };
+  const result = await f.service.nativeDocxSource('workspace', 12, 'user');
+  assert.deepEqual(result, {
+    filename: 'report.docx', content: f.nativeSource.toString('base64'), version: 3,
+    revision: hash(f.nativeSource), canEdit: true, readOnlyReason: null,
+  });
+  assert.deepEqual(f.calls.download, [[12, 'user', 3]]);
+  f.setCanEdit(false);
+  assert.equal((await f.service.nativeDocxSource('workspace', 12, 'user')).canEdit, false);
+  assert.equal(f.calls.preview.length, 0);
+});
+
+test('native saves retain the exact exported package with strict versioning and file history metadata', async () => {
+  const f = await nativeFixture();
+  const exported = await docx('New content', { 'customXml/item1.xml': '<custom>Retained data</custom>' });
+  const result = await f.service.saveNativeDocx('workspace', 12, 'user', {
+    version: 3, revision: hash(f.nativeSource), content: exported.toString('base64'),
+  });
+  assert.equal(result.file.version, 4);
+  assert.equal(result.file.content, exported.toString('base64'));
+  assert.equal(result.previousVersion, 3);
+  assert.equal(result.revision, hash(exported));
+  assert.deepEqual(f.calls.commit[0][1], exported);
+  assert.equal(f.calls.commit[0][3], 3);
+  assert.equal(f.calls.commit[0][4].strictVersion, true);
+  assert.match(f.calls.commit[0][4].operationId, /^office-native-edit:/);
+  assert.equal(f.calls.edit.length, 0);
+});
+
+test('native editing checks membership, workspace identity, extension, version and source SHA', async () => {
+  const f = await nativeFixture();
+  const save = { version: 3, revision: hash(f.nativeSource), content: f.nativeSource.toString('base64') };
+  await assert.rejects(f.service.nativeDocxSource('unrelated', 12, 'user'), httpStatus(404));
+  await assert.rejects(f.service.saveNativeDocx('unrelated', 12, 'user', save), httpStatus(404));
+  assert.equal(f.calls.download.length, 0);
+  f.setCanEdit(false);
+  await assert.rejects(f.service.saveNativeDocx('workspace', 12, 'user', save), httpStatus(403));
+  f.setCanEdit(true);
+  await assert.rejects(f.service.saveNativeDocx('workspace', 12, 'user', { ...save, version: 2 }), httpStatus(409));
+  await assert.rejects(f.service.saveNativeDocx('workspace', 12, 'user', { ...save, revision: 'a'.repeat(64) }), httpStatus(409));
+  f.current.name = 'report.pptx';
+  await assert.rejects(f.service.nativeDocxSource('workspace', 12, 'user'), httpStatus(422));
+  f.current.name = 'report.docx';
+  f.setAllowed(false);
+  await assert.rejects(f.service.nativeDocxSource('workspace', 12, 'user'), httpStatus(403));
+  assert.equal(f.calls.commit.length, 0);
+});
+
+test('native saves cannot overwrite a collaborator revision committed during source validation', async () => {
+  const f = await nativeFixture();
+  const read = f.files.getFileDownloadStream;
+  f.files.getFileDownloadStream = async (...args: unknown[]) => {
+    f.current.version = 4;
+    return read(...args);
+  };
+  await assert.rejects(f.service.saveNativeDocx('workspace', 12, 'user', {
+    version: 3, revision: hash(f.nativeSource), content: f.nativeSource.toString('base64'),
+  }), httpStatus(409));
+  assert.equal(f.current.version, 4);
+  assert.equal(f.calls.commit[0][4].strictVersion, true);
+});
+
+test('signed, protected and tracked documents are readable but source restrictions cannot be removed by an export', async () => {
+  const protectedParts = [
+    { '_xmlsignatures/sig1.xml': '<signature/>' },
+    { 'word/settings.xml': `<s:settings xmlns:s="${WORD_NS}"><s:documentProtection s:enforcement="true"/></s:settings>` },
+    { 'word/settings.xml': `<w:settings xmlns:w="${WORD_NS}"><w:trackRevisions/></w:settings>` },
+    { 'word/document.xml': `<w:document xmlns:w="${WORD_NS}"><w:body><w:p><w:ins><w:r><w:t>Tracked</w:t></w:r></w:ins></w:p></w:body></w:document>` },
+  ];
+  const clean = await docx();
+  for (const parts of protectedParts) {
+    const f = await nativeFixture(parts as Record<string, string>);
+    const result = await f.service.nativeDocxSource('workspace', 12, 'user');
+    assert.equal(result.canEdit, false);
+    assert.ok(result.readOnlyReason);
+    assert.equal(result.content, f.nativeSource.toString('base64'));
+    await assert.rejects(f.service.saveNativeDocx('workspace', 12, 'user', {
+      version: 3, revision: hash(f.nativeSource), content: clean.toString('base64'),
+    }), httpStatus(422));
+    assert.equal(f.calls.commit.length, 0);
+  }
+  const unlocked = await nativeFixture({ 'word/settings.xml': `<w:settings xmlns:w="${WORD_NS}"><w:documentProtection w:enforcement="0"/><w:trackRevisions w:val="off"/></w:settings>` });
+  assert.equal((await unlocked.service.nativeDocxSource('workspace', 12, 'user')).canEdit, true);
+});
+
+test('native saves reject malformed, active, entity-bearing, duplicate, and oversized package content', async () => {
+  const f = await nativeFixture();
+  const invalidXml = await docx('bad', { 'word/document.xml': '<invalid>' });
+  const wrongNamespace = await docx('bad', { 'word/document.xml': '<w:document xmlns:w="wrong"><w:body/></w:document>' });
+  const entity = await docx('bad', { 'customXml/item.xml': '<!DOCTYPE x [<!ENTITY secret SYSTEM "file:///etc/passwd">]><x>&secret;</x>' });
+  const macro = await docx('bad', { 'word/vbaProject.bin': 'active' });
+  const signature = await docx('bad', { '_xmlsignatures/sig.xml': '<signature/>' });
+  const originalDuplicate = await docx('bad', { 'word/aaaa.xml': '<a/>', 'word/bbbb.xml': '<b/>' });
+  const duplicate = Buffer.from(originalDuplicate.toString('latin1').replaceAll('word/bbbb.xml', 'word/aaaa.xml'), 'latin1');
+  const corruptChecksum = Buffer.from(f.nativeSource);
+  const directoryStart = corruptChecksum.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  corruptChecksum.writeUInt32LE(corruptChecksum.readUInt32LE(directoryStart + 16) ^ 1, directoryStart + 16);
+  for (const bytes of [source, invalidXml, wrongNamespace, entity, macro, signature, duplicate, corruptChecksum]) {
+    await assert.rejects(f.service.saveNativeDocx('workspace', 12, 'user', {
+      version: 3, revision: hash(f.nativeSource), content: bytes.toString('base64'),
+    }), httpStatus(422));
+  }
+  const bomb = await docx('bad', { 'customXml/item.xml': `<item>${'a'.repeat(2 * 1024 * 1024)}</item>` });
+  await assert.rejects(f.service.saveNativeDocx('workspace', 12, 'user', {
+    version: 3, revision: hash(f.nativeSource), content: bomb.toString('base64'),
+  }), httpStatus(413));
+  await assert.rejects(f.service.saveNativeDocx('workspace', 12, 'user', {
+    version: 3, revision: hash(f.nativeSource), content: 'not base64',
+  }), httpStatus(400));
+  assert.equal(f.calls.commit.length, 0);
+});
+
+test('native editor permits normal web hyperlinks but prevents external linked document content', async () => {
+  const relation = (type: string, target: string) => ({
+    'word/_rels/document.xml.rels': `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}" TargetMode="External"/></Relationships>`,
+  });
+  const hyperlink = await nativeFixture(relation('hyperlink', 'https://example.com'));
+  assert.equal((await hyperlink.service.nativeDocxSource('workspace', 12, 'user')).canEdit, true);
+  for (const [type, target] of [['image', 'https://example.com/image.png'], ['hyperlink', 'file:///etc/passwd']]) {
+    const f = await nativeFixture(relation(type, target));
+    const result = await f.service.nativeDocxSource('workspace', 12, 'user');
+    assert.equal(result.canEdit, false);
+    assert.match(result.readOnlyReason!, /external linked content/);
+  }
+});
+
+test('native DOCX HTTP endpoints require authentication and valid IDs, return bytes, and save with no-store caching', async () => {
+  const f = await nativeFixture();
+  const app = express(); app.use(express.json());
+  app.use((req, _res, next) => { if (!req.headers['x-no-user']) (req as any).userContext = { userId: 'user' }; next(); });
+  app.use('/workspaces/:workspaceId/files', createFileRouter(f.files, f.workspaces, {} as any, f.service));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const root = `http://127.0.0.1:${(server.address() as AddressInfo).port}/workspaces/workspace/files`;
+    const put = (body: object, headers = {}) => fetch(`${root}/12/docx-content`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
+    });
+    const body = { version: 3, revision: hash(f.nativeSource), content: f.nativeSource.toString('base64') };
+    assert.equal((await fetch(`${root}/12/docx-content`, { headers: { 'x-no-user': '1' } })).status, 401);
+    assert.equal((await fetch(`${root}/12junk/docx-content`)).status, 400);
+    assert.equal((await put(body, { 'x-no-user': '1' })).status, 401);
+    assert.equal((await put({ content: body.content })).status, 400);
+    const sourceResponse = await fetch(`${root}/12/docx-content`);
+    assert.equal(sourceResponse.status, 200);
+    assert.equal(sourceResponse.headers.get('cache-control'), 'no-store');
+    assert.equal((await sourceResponse.json() as any).content, body.content);
+    const saved = await put(body);
+    assert.equal(saved.status, 200);
+    assert.equal(saved.headers.get('cache-control'), 'no-store');
+    assert.equal((await saved.json() as any).revision, body.revision);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });

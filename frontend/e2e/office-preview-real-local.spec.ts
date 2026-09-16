@@ -24,8 +24,8 @@ test('real Office conversion keeps document pages inside Astryx light and dark c
   await expect(title).toBeVisible({ timeout: 30000 });
   await expect(page.locator('[data-annotation-surface]')).toHaveCount(2);
   await title.evaluate(el => { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range); el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); });
-  await expect(page.getByRole('region', { name: 'Quick edit' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Bold', exact: true })).toBeEnabled();
+  await expect(page.getByRole('region', { name: 'Annotate selection' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Annotate selection' }).getByRole('button', { name: 'Annotate', exact: true })).toBeEnabled();
   await page.screenshot({ path: test.info().outputPath('office-preview-light.png'), animations: 'disabled' });
   await page.evaluate(() => { localStorage.setItem('helpudoc-color-mode', 'dark'); window.dispatchEvent(new CustomEvent('helpudoc-color-mode-change', { detail: 'dark' })); });
   await expect(page.locator('[data-theme="dark"]').first()).toBeVisible();
@@ -34,7 +34,7 @@ test('real Office conversion keeps document pages inside Astryx light and dark c
   await expect.poll(async () => page.locator('[data-annotation-surface]').first().evaluate(el => el.getBoundingClientRect().width)).toBeLessThan(390);
   await expect(title).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('office-preview-mobile.png'), animations: 'disabled' });
-  await page.getByRole('button', { name: 'Close quick edit', exact: true }).click();
+  await page.getByRole('button', { name: 'Close annotation selection', exact: true }).click();
   await page.setViewportSize({ width: 1100, height: 720 });
   await expect.poll(async () => page.locator('[data-annotation-surface]').first().evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(800);
   const secondPage = page.locator('[data-annotation-surface="document:docx:page:2"]');

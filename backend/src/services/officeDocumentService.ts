@@ -2,6 +2,9 @@ import { createHash, randomUUID } from 'crypto';
 import path from 'path';
 import axios from 'axios';
 import { z } from 'zod';
+import { fromBuffer, type ZipFile, type Entry } from 'yauzl';
+import type { Readable } from 'stream';
+import { crc32 } from 'zlib';
 import { ConflictError, HttpError, NotFoundError } from '../errors';
 import { FileService } from './fileService';
 import { WorkspaceService } from './workspaceService';
@@ -11,6 +14,7 @@ import { editOfficeDocument, previewOfficeDocument } from './agentService';
 const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 const QUICK_EDIT_OPERATION_PREFIX = 'office-quick-edit:';
+const NATIVE_EDIT_OPERATION_PREFIX = 'office-native-edit:';
 const sha256 = (value: Buffer) => createHash('sha256').update(value).digest('hex');
 
 const selection = {
@@ -38,6 +42,146 @@ export const officePreviewSchema = z.object({
   filename: z.string().min(1).max(1024),
   content: z.string().min(1).max(Math.ceil(MAX_SOURCE_BYTES / 3) * 4),
 });
+export const nativeDocxSaveSchema = z.object({
+  version: z.number().int().positive(),
+  revision: z.string().regex(/^[a-f0-9]{64}$/),
+  content: z.string().min(1).max(Math.ceil(MAX_SOURCE_BYTES / 3) * 4),
+});
+
+const WORD_NAMESPACE = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const REL_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/relationships';
+const CONTENT_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/content-types';
+const DOCUMENT_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml';
+
+type XmlTag = { uri: string; local: string; attributes: Record<string, { uri: string; local: string; value: string }> };
+interface NativeXmlParser {
+  on(event: 'opentag', callback: (tag: XmlTag) => void): void;
+  on(event: 'xmldecl', callback: (declaration: { encoding?: string }) => void): void;
+  on(event: 'doctype' | 'error' | 'closetag', callback: () => void): void;
+  write(xml: string): NativeXmlParser;
+  close(): void;
+}
+// Saxes 6's distributed generic declarations do not compile under TypeScript 5.9.
+// Keep a narrow typed adapter to its public streaming API rather than suppressing project-wide library checks.
+const SaxesParser = (require('saxes') as { SaxesParser: new (options: { xmlns: true }) => NativeXmlParser }).SaxesParser;
+
+/** Inspect the package without running Office or trusting file extensions. Decompression is bounded. */
+async function inspectNativeDocx(bytes: Buffer): Promise<{ readOnlyReason: string | null }> {
+  const invalid = () => new HttpError(422, 'The file is not a valid supported DOCX package');
+  if (!bytes.length || bytes.length > MAX_SOURCE_BYTES) throw new HttpError(413, 'Office documents must be 25 MiB or smaller');
+  let zip: ZipFile;
+  try {
+    zip = await new Promise<ZipFile>((resolve, reject) => fromBuffer(bytes, {
+      lazyEntries: true, validateEntrySizes: true, strictFileNames: true,
+    }, (error, value) => error || !value ? reject(error || invalid()) : resolve(value)));
+  } catch { throw invalid(); }
+  let readOnlyReason: string | null = null;
+  let expanded = 0;
+  let documentRoot = false;
+  let documentBody = false;
+  let documentType = false;
+  let rootRelationship = false;
+  const names = new Set<string>();
+  const restrict = (reason: string) => { readOnlyReason ||= reason; };
+  const attribute = (tag: XmlTag, local: string, uri = '') => Object.values(tag.attributes)
+    .find(value => value.local === local && value.uri === uri)?.value;
+  try {
+    if (zip.entryCount > 4096) throw new HttpError(413, 'DOCX contains too many package parts');
+    await new Promise<void>((resolve, reject) => {
+      let failed = false;
+      const fail = (error: unknown) => { if (!failed) { failed = true; reject(error); } };
+      zip.on('error', fail);
+      zip.on('end', resolve);
+      zip.on('entry', (entry: Entry) => {
+        void (async () => {
+          const name = entry.fileName;
+          if (!name || name.startsWith('/') || /[\\:\u0000]/.test(name)
+            || name.split('/').some(segment => segment === '.' || segment === '..') || names.has(name)
+            || ((entry.externalFileAttributes >>> 16) & 0o170000) === 0o120000
+            || entry.isEncrypted() || ![0, 8].includes(entry.compressionMethod)) throw invalid();
+          names.add(name);
+          expanded += entry.uncompressedSize;
+          if (entry.uncompressedSize > 32 * 1024 * 1024 || expanded > 100 * 1024 * 1024
+            || (entry.uncompressedSize > 1024 * 1024 && entry.uncompressedSize > 200 * Math.max(1, entry.compressedSize))) {
+            throw new HttpError(413, 'DOCX expanded content exceeds editing limits');
+          }
+          if (name.toLowerCase().startsWith('_xmlsignatures/')) restrict('Digitally signed documents are read-only in this editor.');
+          if (/^(?:word\/)?(?:activeX\/|embeddings\/.*\.(?:bin|docm|xlsm)$)|vbaProject\.bin$/i.test(name)) {
+            restrict('Documents containing macros or embedded active content are read-only in this editor.');
+          }
+          if (name.endsWith('/')) return;
+          const stream = await new Promise<Readable>((resolveStream, rejectStream) => zip.openReadStream(entry,
+            (error, value) => error ? rejectStream(error) : resolveStream(value)));
+          let length = 0;
+          let checksum = 0;
+          const isXml = /\.(?:xml|rels)$/i.test(name);
+          const chunks: Buffer[] = [];
+          for await (const chunk of stream) {
+            const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            length += data.length;
+            checksum = crc32(data, checksum);
+            if (length > entry.uncompressedSize || length > 32 * 1024 * 1024) { stream.destroy(); throw invalid(); }
+            if (isXml) chunks.push(data);
+          }
+          if (length !== entry.uncompressedSize || checksum !== entry.crc32) throw invalid();
+          if (!isXml) return;
+          const xml = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+          const parser = new SaxesParser({ xmlns: true });
+          let depth = 0;
+          parser.on('doctype', () => { throw invalid(); });
+          parser.on('error', () => { throw invalid(); });
+          parser.on('xmldecl', declaration => {
+            if (declaration.encoding && !/^(?:utf-8|utf8|us-ascii|ascii)$/i.test(declaration.encoding)) throw invalid();
+          });
+          parser.on('opentag', tag => {
+            depth += 1;
+            if (name === 'word/document.xml') {
+              if (depth === 1) documentRoot = tag.uri === WORD_NAMESPACE && tag.local === 'document';
+              if (depth === 2 && tag.uri === WORD_NAMESPACE && tag.local === 'body') documentBody = true;
+            }
+            if (tag.uri === WORD_NAMESPACE) {
+              if (tag.local === 'documentProtection' && !/^(?:0|false|off)$/i.test(attribute(tag, 'enforcement', WORD_NAMESPACE) || 'false')) {
+                restrict('This document has editing protection. Remove protection in Word before editing here.');
+              }
+              if (tag.local === 'writeProtection') restrict('This document is marked read-only. Remove protection in Word before editing here.');
+              if ((tag.local === 'trackRevisions' && !/^(?:0|false|off)$/i.test(attribute(tag, 'val', WORD_NAMESPACE) || 'true'))
+                || ['ins', 'del', 'moveFrom', 'moveTo', 'pPrChange', 'rPrChange', 'sectPrChange', 'tblPrChange', 'trPrChange', 'tcPrChange'].includes(tag.local)) {
+                restrict('Documents with tracked changes are read-only in this editor. Accept or reject changes in Word first.');
+              }
+              if (tag.local === 'altChunk') restrict('Documents with embedded document content are read-only in this editor.');
+            }
+            if (name === '[Content_Types].xml' && tag.uri === CONTENT_NAMESPACE) {
+              const contentType = attribute(tag, 'ContentType') || '';
+              if (tag.local === 'Override' && attribute(tag, 'PartName') === '/word/document.xml' && contentType === DOCUMENT_CONTENT_TYPE) documentType = true;
+              if (/digital-signature/i.test(contentType)) restrict('Digitally signed documents are read-only in this editor.');
+              if (/macroEnabled|vbaProject|activeX|oleObject/i.test(contentType)) restrict('Documents containing macros or embedded active content are read-only in this editor.');
+            }
+            if (name.endsWith('.rels') && tag.uri === REL_NAMESPACE && tag.local === 'Relationship') {
+              const type = attribute(tag, 'Type') || '';
+              const target = attribute(tag, 'Target') || '';
+              const external = attribute(tag, 'TargetMode') === 'External';
+              if (name === '_rels/.rels' && type === 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
+                && !external && ['word/document.xml', '/word/document.xml'].includes(target)) rootRelationship = true;
+              if (/digital-signature/i.test(type)) restrict('Digitally signed documents are read-only in this editor.');
+              if (/\/(?:vbaProject|oleObject|activeX|control)$/i.test(type)) {
+                restrict('Documents containing macros or embedded active content are read-only in this editor.');
+              }
+              if (external && (!type.endsWith('/hyperlink') || !/^(?:https?:|mailto:)/i.test(target))) {
+                restrict('Documents with external linked content are read-only in this editor.');
+              }
+            }
+          });
+          parser.on('closetag', () => { depth -= 1; });
+          parser.write(xml).close();
+        })().then(() => { if (!failed) zip.readEntry(); }, fail);
+      });
+      zip.readEntry();
+    });
+    if (!documentRoot || !documentBody || !documentType || !rootRelationship) throw invalid();
+    return { readOnlyReason };
+  } catch (error) { throw error instanceof HttpError ? error : invalid(); }
+  finally { zip.close(); }
+}
 
 type AgentOfficeClient = { preview: typeof previewOfficeDocument; edit: typeof editOfficeDocument };
 
@@ -150,6 +294,40 @@ export class OfficeDocumentService {
     const source = await this.source(file, userId);
     const result = await this.render(workspaceId, file.name, source, userId);
     return { ...result, version: Number(file.version), canEdit: Boolean(membership.canEdit) && path.extname(file.name).toLowerCase() === '.docx' };
+  }
+
+  async nativeDocxSource(workspaceId: string, fileId: number, userId: string) {
+    const file = await this.file(workspaceId, fileId, userId);
+    this.assertOfficeType(file, true);
+    const { membership } = await this.workspaces.ensureMembership(workspaceId, userId);
+    const source = await this.source(file, userId);
+    const { readOnlyReason } = await inspectNativeDocx(source);
+    return {
+      filename: path.basename(file.name), content: source.toString('base64'),
+      version: Number(file.version), revision: sha256(source),
+      canEdit: Boolean(membership.canEdit) && !readOnlyReason, readOnlyReason,
+    };
+  }
+
+  async saveNativeDocx(workspaceId: string, fileId: number, userId: string, input: unknown) {
+    const payload = nativeDocxSaveSchema.parse(input);
+    const file = await this.file(workspaceId, fileId, userId, true);
+    this.assertOfficeType(file, true);
+    if (Number(file.version) !== payload.version) throw new ConflictError('The document changed. Reopen it before saving your edits');
+    const source = await this.source(file, userId);
+    if (sha256(source) !== payload.revision) throw new ConflictError('The document changed. Reopen it before saving your edits');
+    // Check the immutable source too: a client cannot bypass locks by removing them from its export.
+    const original = await inspectNativeDocx(source);
+    if (original.readOnlyReason) throw new HttpError(422, original.readOnlyReason);
+    let updated: Buffer;
+    try { updated = this.decodeResult(payload.content, MAX_SOURCE_BYTES); }
+    catch { throw new HttpError(400, 'Invalid DOCX document content'); }
+    const result = await inspectNativeDocx(updated);
+    if (result.readOnlyReason) throw new HttpError(422, result.readOnlyReason);
+    const saved = await this.files.commitFileBuffer(fileId, updated, userId, payload.version, {
+      strictVersion: true, operationId: `${NATIVE_EDIT_OPERATION_PREFIX}${randomUUID()}`,
+    });
+    return { file: { ...saved, content: payload.content }, previousVersion: payload.version, revision: sha256(updated) };
   }
 
   async quickEdit(workspaceId: string, fileId: number, userId: string, input: unknown) {

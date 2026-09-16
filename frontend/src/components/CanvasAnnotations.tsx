@@ -6,6 +6,7 @@ import { TextArea } from '@astryxdesign/core/TextArea';
 import { Text } from '@astryxdesign/core/Text';
 import { Card } from '@astryxdesign/core/Card';
 import { ClickableCard } from '@astryxdesign/core/ClickableCard';
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 import { MessageSquarePlus, MessageSquare, ArrowLeft, X, Send, Check } from 'lucide-react';
 import type { Workspace } from '../types';
 import {
@@ -13,19 +14,23 @@ import {
   getWorkspaceCollaborationObject, replyToWorkspaceCollaborationObject, updateWorkspaceCollaborationObject,
   type WorkspaceCollaborationObject, type WorkspaceCollaborationMessage,
 } from '../services/workspaceCollaborationApi';
-import { annotationChatPrompt, locateAnnotationText, textRange, documentPin, documentAnchorLabel, type AnnotationAnchor } from '../utils/canvasAnnotations';
+import { annotationThreadsChatPrompt, locateAnnotationText, textRange, documentPin, documentAnchorLabel, type AnnotationAnchor } from '../utils/canvasAnnotations';
 import { CanvasAnnotationContext } from './CanvasAnnotationContext';
+import './CanvasAnnotations.css';
 
 type Props = { workspace: Workspace | null; filePath?: string; onAgentChat: (prompt: string) => void; children: ReactNode };
 
 export default function CanvasAnnotations(props: Props) {
   // Keep annotation state scoped to the current workspace and file.
-  if (props.workspace?.visibility !== 'team' || !props.filePath) return <>{props.children}</>;
+  if (!props.workspace || !props.filePath) return <>{props.children}</>;
   return <AnnotationSurface key={`${props.workspace.id}:${props.filePath}`} {...props} workspace={props.workspace} filePath={props.filePath} />;
 }
 
 function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props & { workspace: Workspace; filePath: string }) {
   const openedNotificationRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+  const agentChatRef = useRef(onAgentChat);
+  agentChatRef.current = onAgentChat;
   const [active, setActive] = useState(false);
   const [panel, setPanel] = useState(false);
   const [objects, setObjects] = useState<WorkspaceCollaborationObject[]>([]);
@@ -36,11 +41,20 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
   const [busy, setBusy] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [error, setError] = useState('');
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [drafting, setDrafting] = useState(false);
+  const [draftNotice, setDraftNotice] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
   const [marks, setMarks] = useState<Array<{ id: string; x: number; y: number; width: number; height: number; pin?: boolean }>>([]);
   const canComment = ['owner', 'editor', 'contributor', 'commenter'].includes(workspace.role || '');
   const selected = objects.find(item => item.id === selectedId);
   const annotations = useMemo(() => objects.filter(item => item.status !== 'resolved' && item.status !== 'addressed'), [objects]);
+  const checkedObjects = objects.filter(item => checkedIds.includes(item.id));
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const load = useCallback(async () => {
     const items = await listWorkspaceCollaborationObjects(workspace.id);
@@ -131,7 +145,7 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
         setMessages(detail.messages);
       } else if (anchor) {
         const created = await createWorkspaceCollaborationObject(workspace.id, {
-          type: 'annotation', visibility: 'workspace_audience', filePath, body: body.trim(), ...anchor,
+          type: 'annotation', visibility: workspace.visibility === 'team' ? 'workspace_audience' : 'private', filePath, body: body.trim(), ...anchor,
         });
         setSelectedId(created.id); setAnchor(null);
       }
@@ -145,6 +159,19 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
     try { await updateWorkspaceCollaborationObject(workspace.id, selected.id, { status: selected.status === 'resolved' ? 'open' : 'resolved' }); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Unable to update comment'); }
     finally { setBusy(false); }
+  };
+  const draftThreads = async (ids: string[]) => {
+    if (!ids.length || drafting) return;
+    setDrafting(true); setError(''); setDraftNotice('');
+    try {
+      // Fetch every selected thread afresh, including replies. If any request
+      // fails, leave the selection intact and never send an incomplete batch.
+      const threads = await Promise.all(ids.map(id => getWorkspaceCollaborationObject(workspace.id, id)));
+      if (!mountedRef.current) return;
+      agentChatRef.current(annotationThreadsChatPrompt(filePath, threads));
+      setDraftNotice(`${threads.length === 1 ? 'Comment' : `${threads.length} comments`} added to the agent chat draft. Review it before sending.`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Unable to add comments to agent chat'); }
+    finally { setDrafting(false); }
   };
 
   return <CanvasAnnotationContext.Provider value={context}>
@@ -194,6 +221,7 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
             <IconButton label="Close comments" icon={<X size={16}/>} variant="ghost" size="sm" onClick={() => setPanel(false)} />
           </header>
           {error && <div role="alert" className="canvas-annotations-error"><Text type="supporting">{error}</Text></div>}
+          {draftNotice && <div role="status"><Text type="supporting">{draftNotice}</Text></div>}
           {anchor || selected ? <>
             <div><Button label="All comments" icon={<ArrowLeft size={14}/>} variant="ghost" size="sm" onClick={() => { setAnchor(null); setSelectedId(null); setBody(''); }} /></div>
             {documentAnchorLabel((anchor || selected)!) && <Text type="supporting">{documentAnchorLabel((anchor || selected)!)}</Text>}
@@ -219,24 +247,36 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
                 <Text type="body" display="block" className="canvas-annotations-message-body">{message.body}</Text>
               </div>)}
               <div className="canvas-annotations-actions">
-                <Button label="Add to agent chat" icon={<Send size={13}/>} variant="secondary" size="sm" isDisabled={loadingThread} onClick={() => onAgentChat(annotationChatPrompt(filePath, selected, selected.body, messages.map(m => `${m.authorName}: ${m.body}`)))} />
+                <Button label={drafting ? 'Adding…' : 'Add to agent chat'} icon={<Send size={13}/>} variant="secondary" size="sm" isDisabled={loadingThread || drafting} onClick={() => void draftThreads([selected.id])} />
                 {canComment && <Button label={selected.status === 'resolved' ? 'Reopen' : 'Resolve'} icon={<Check size={13}/>} variant="ghost" size="sm" isDisabled={busy} onClick={() => void resolve()} />}
               </div>
             </>}
             {canComment && <form className="canvas-annotations-composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
               <TextArea label={selected ? 'Reply to annotation' : 'Annotation comment'} isLabelHidden placeholder={selected ? 'Write a reply…' : 'Leave a comment…'} value={body} maxLength={20000} onChange={setBody} rows={3} size="sm" width="100%" />
-              <Text type="supporting" display="block">{selected?.visibility === 'private' ? 'Private comment. Only you can see this thread.' : 'Visible to this workspace. Other members will be notified.'}</Text>
+              <Text type="supporting" display="block">{workspace.visibility !== 'team' || selected?.visibility === 'private' ? 'Private comment. Only you can see this thread.' : 'Visible to this workspace. Other members will be notified.'}</Text>
               <div className="canvas-annotations-submit"><Button type="submit" label={busy ? 'Saving…' : selected ? 'Reply' : 'Post comment'} variant="primary" size="sm" isDisabled={busy || !body.trim()} /></div>
             </form>}
           </> : <>
             {!objects.length && <Text type="supporting" display="block">No comments on this file yet. Turn on Annotate to select a passage or place a pin.</Text>}
-            {objects.map(item => <ClickableCard key={item.id} label={item.body} padding={3} onClick={() => open(item.id)}>
+            {!!objects.length && <div className="canvas-annotations-batch">
+              <div className="canvas-annotations-batch-selection">
+                <CheckboxInput label="Select all comments" value={checkedObjects.length === objects.length ? true : checkedObjects.length ? 'indeterminate' : false} isDisabled={drafting} onChange={checked => { setCheckedIds(checked ? objects.map(item => item.id) : []); setDraftNotice(''); }} />
+                <Text type="supporting">{checkedObjects.length} selected</Text>
+              </div>
+              <Button label={drafting ? 'Adding comments…' : checkedObjects.length ? `Add ${checkedObjects.length} comment${checkedObjects.length === 1 ? '' : 's'} to agent chat` : 'Add comments to agent chat'} icon={<Send size={13}/>} variant="secondary" size="sm" isDisabled={!checkedObjects.length || drafting} onClick={() => void draftThreads(checkedObjects.map(item => item.id))} />
+              <Text type="supporting">Add selected comments and replies to one chat draft.</Text>
+            </div>}
+            {objects.map((item, index) => <div className="canvas-annotations-list-row" key={item.id}>
+              <CheckboxInput label={`Select comment ${index + 1}: ${item.body}`} isLabelHidden value={checkedIds.includes(item.id)} isDisabled={drafting} onChange={checked => { setCheckedIds(ids => checked ? [...ids, item.id] : ids.filter(id => id !== item.id)); setDraftNotice(''); }} />
+              <ClickableCard label={item.body} padding={3} onClick={() => open(item.id)}>
               <div className="canvas-annotations-card-content">
                 <Text type="supporting" display="block">{item.authorName} · {item.status}</Text>
+                {!!documentAnchorLabel(item) && <Text type="supporting" display="block">{documentAnchorLabel(item)}</Text>}
                 <Text type="body" display="block" maxLines={3}>{item.body}</Text>
-                <Text type="supporting" display="block">{item.messageCount} replies</Text>
+                <Text type="supporting" display="block">{item.messageCount} {item.messageCount === 1 ? 'reply' : 'replies'}</Text>
               </div>
-            </ClickableCard>)}
+              </ClickableCard>
+            </div>)}
           </>}
         </aside>}
         {!panel && error && <div role="alert" className="canvas-annotations-toast"><Text type="supporting">{error}</Text></div>}

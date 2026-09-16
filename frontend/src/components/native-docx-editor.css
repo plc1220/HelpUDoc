@@ -1,0 +1,17 @@
+.native-docx-editor { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; background: var(--color-background-muted, #f5f5f5); }
+.native-docx-toolbar.docx-toolbar { flex: none; padding: 8px 12px; gap: 6px; border: 0; border-radius: 0; border-bottom: 1px solid var(--color-border-subtle, #e5e7eb); background: var(--color-background-surface, #fff); color: var(--color-text-primary, #20242a); box-shadow: none; }
+.native-docx-toolbar .docx-toolbar__button { border-radius: 8px; min-width: 32px; height: 32px; color: inherit; }
+.native-docx-toolbar .docx-toolbar__button:hover { background: var(--color-background-muted, #f3f4f6); }
+.native-docx-toolbar .docx-toolbar__button[data-active] { background: var(--color-background-muted, #e8ecf1); color: var(--color-text-primary, #20242a); }
+.native-docx-toolbar .docx-toolbar__button:focus-visible { outline: 2px solid var(--color-primary, #4263eb); outline-offset: 2px; }
+.native-docx-toolbar .docx-toolbar__button:disabled { opacity: .4; }
+.native-docx-editor { --doc-text: var(--color-text-primary); --doc-text-muted: var(--color-text-secondary); --doc-surface: var(--color-background-surface); --doc-bg: var(--color-background-surface); --doc-bg-hover: var(--color-background-muted); --doc-border: var(--color-border-subtle); --doc-toggle-active-bg: var(--color-background-card); --doc-toggle-active-fg: var(--color-text-primary); }
+.native-docx-toolbar button, .native-docx-toolbar input { color: var(--color-text-primary) !important; }
+.native-docx-toolbar input { background: var(--color-background-surface) !important; border-color: var(--color-border-subtle) !important; border-radius: var(--radius-element, 8px); }
+.native-docx-toolbar .docx-toolbar__menu { background: var(--color-background-surface); border-color: var(--color-border-subtle); color: var(--color-text-primary); }
+.native-docx-toolbar .docx-toolbar__style-trigger:hover, .native-docx-toolbar .docx-toolbar__style-trigger[aria-expanded="true"], .native-docx-toolbar .docx-toolbar__style-item:hover { background: var(--color-background-muted); }
+.native-docx-toolbar .docx-toolbar__style-item span { color: inherit !important; }
+.native-docx-viewport { flex: 1; min-height: 0; background: var(--color-background-muted, #f5f5f5); }
+.native-docx-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--color-border-subtle, #e5e7eb); background: var(--color-background-surface, #fff); color: var(--color-text-primary, #20242a); }
+.native-docx-loading { flex: 1; display: grid; place-content: center; padding: 24px; }
+@media (max-width: 640px) { .native-docx-toolbar.docx-toolbar { padding: 6px; gap: 3px; } }

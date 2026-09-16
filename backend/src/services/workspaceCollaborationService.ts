@@ -80,6 +80,7 @@ export type UpdateWorkspaceCollaborationInput = {
 type CollaborationAccess = {
   membership: WorkspaceMembershipRecord;
   currentPublishedVersionId: string | null;
+  isShared: boolean;
 };
 
 export type WorkspaceTeamMessageAuthorType = 'user' | 'lumo' | 'system';
@@ -353,7 +354,7 @@ export class WorkspaceCollaborationService {
       filePath?: string;
     } = {},
   ): Promise<WorkspaceCollaborationObject[]> {
-    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
 
     const rows = await this.db('workspace_collaboration_objects as object')
       .leftJoin('users as author', 'author.id', 'object.authorId')
@@ -365,6 +366,7 @@ export class WorkspaceCollaborationService {
           .orWhere('object.authorId', userId);
       })
       .modify((query) => {
+        if (!access.isShared) query.where('object.type', 'annotation').where('object.visibility', 'private');
         if (filters.status) query.where('object.status', filters.status);
         if (filters.type) query.where('object.type', filters.type);
         if (filters.filePath) query.where('object.filePath', filters.filePath);
@@ -399,8 +401,8 @@ export class WorkspaceCollaborationService {
       updatedAt: string;
     }>;
   }> {
-    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
-    const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    const object = await this.ensureObjectAccess(workspaceId, objectId, userId, !access.isShared);
     const messages = await this.db('workspace_collaboration_messages as message')
       .leftJoin('users as author', 'author.id', 'message.authorId')
       .where('message.objectId', objectId)
@@ -417,7 +419,10 @@ export class WorkspaceCollaborationService {
     userId: string,
     input: CreateWorkspaceCollaborationInput,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    if (!access.isShared && (input.type !== 'annotation' || input.visibility !== 'private' || input.sourceTeamMessageId)) {
+      throw new ConflictError('Personal workspaces support private annotations only');
+    }
     if (!canCreateWorkspaceCollaborationObject(access.membership.role, input.type, input.visibility)) {
       throw new AccessDeniedError(
         input.type === 'change_proposal'
@@ -497,8 +502,8 @@ export class WorkspaceCollaborationService {
     userId: string,
     body: string,
   ) {
-    const { membership } = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
-    const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
+    const { membership, isShared } = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    const object = await this.ensureObjectAccess(workspaceId, objectId, userId, !isShared);
     if (
       object.visibility === 'workspace_audience'
       && !getWorkspaceRoleCapabilities(membership.role).canComment
@@ -533,8 +538,8 @@ export class WorkspaceCollaborationService {
     userId: string,
     input: UpdateWorkspaceCollaborationInput,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
-    const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    const object = await this.ensureObjectAccess(workspaceId, objectId, userId, !access.isShared);
     const canModerate = canModerateWorkspaceCollaboration(access.membership.role);
     const canManageItem = canModerate
       || object.authorId === userId
@@ -637,13 +642,23 @@ export class WorkspaceCollaborationService {
     workspaceId: string,
     userId: string,
   ): Promise<CollaborationAccess> {
-    const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
-    if (workspace.visibility !== 'team') {
-      throw new ConflictError('Collaboration items are available only in Shared workspaces');
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    if (!access.isShared) {
+      throw new ConflictError('This collaboration feature is available only in Shared workspaces');
     }
+    return access;
+  }
+
+  private async ensureCollaborationWorkspaceAccess(
+    workspaceId: string,
+    userId: string,
+  ): Promise<CollaborationAccess> {
+    // ensureMembership enforces the owner-only boundary for personal workspaces.
+    const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
     return {
       membership,
       currentPublishedVersionId: workspace.currentPublishedVersionId || null,
+      isShared: workspace.visibility === 'team',
     };
   }
 
@@ -651,6 +666,7 @@ export class WorkspaceCollaborationService {
     workspaceId: string,
     objectId: string,
     userId: string,
+    personalOnly = false,
   ): Promise<WorkspaceCollaborationObject> {
     const object = await this.db('workspace_collaboration_objects as object')
       .leftJoin('users as author', 'author.id', 'object.authorId')
@@ -671,7 +687,8 @@ export class WorkspaceCollaborationService {
     if (!object) {
       throw new NotFoundError('Collaboration item not found');
     }
-    if (object.visibility === 'private' && object.authorId !== userId) {
+    if ((personalOnly && (object.type !== 'annotation' || object.visibility !== 'private'))
+      || (object.visibility === 'private' && object.authorId !== userId)) {
       throw new NotFoundError('Collaboration item not found');
     }
     return object;

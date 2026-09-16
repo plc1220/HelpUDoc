@@ -33,8 +33,10 @@
     "multer": "^2.0.2",
     "pg": "^8.16.3",
     "redis": "^4.7.1",
+    "saxes": "^6.0.0",
     "uuid": "^13.0.0",
     "yaml": "^2.8.2",
+    "yauzl": "^3.4.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -43,6 +45,8 @@
     "@types/express-session": "^1.18.2",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.7.2",
+    "@types/yauzl": "^3.4.0",
+    "jszip": "^3.10.2",
     "nodemon": "^3.0.0",
     "ts-node": "^10.9.1",
     "tsconfig-paths": "^4.2.0",

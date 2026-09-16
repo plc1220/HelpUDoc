@@ -183,6 +183,7 @@ import {
 } from '../../constants/workspace';
 import { isSystemFile, normalizeFilePath } from '../../utils/files';
 import { isBinaryOfficeDocument } from '../../utils/officeFiles';
+import type { NativeDocxEditorHandle, NativeDocxEditorState } from '../../components/NativeDocxEditor';
 import {
   areStructuredClarificationQuestionsComplete,
   buildClarificationDraftStorageKey,
@@ -928,6 +929,9 @@ export default function WorkspacePage() {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [dashboardArtifactsByPath, setDashboardArtifactsByPath] = useState<Record<string, DashboardArtifactInfo>>({});
   const [fileContent, setFileContent] = useState('');
+  const nativeDocxRef = useRef<NativeDocxEditorHandle>(null);
+  const [nativeDocxState, setNativeDocxState] = useState<NativeDocxEditorState>({ dirty: false, saving: false, error: null });
+  const isNativeDocx = /\.docx$/i.test(selectedFile?.name || '');
   const [fileSaveStatus, setFileSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
@@ -2371,7 +2375,7 @@ export default function WorkspacePage() {
 
   const isFileEditable = (fileName: string): boolean => {
     const editableExtensions = [
-      '.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
+      '.docx', '.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
       '.py', '.java', '.c', '.cpp', '.go', '.rs', '.php', '.rb', '.sh', '.yaml', '.yml', '.xml', '.sql', '.csv'
     ];
     const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
@@ -3782,6 +3786,10 @@ export default function WorkspacePage() {
     setSelectedFile(persistedFile);
     setSelectedFileDetails(null);
   }, [files, selectedFile]);
+
+  useEffect(() => {
+    setNativeDocxState({ dirty: false, saving: false, error: null });
+  }, [selectedWorkspace?.id, selectedFile?.id]);
 
   useEffect(() => {
     const name = selectedFile?.name ?? '';
@@ -7041,7 +7049,7 @@ export default function WorkspacePage() {
     targetFile: WorkspaceFile | null,
     content: string,
   ): Promise<boolean> => {
-    if (!selectedWorkspace || !targetFile) return false;
+    if (!selectedWorkspace || !targetFile || isBinaryOfficeDocument(targetFile.name, targetFile.mimeType)) return false;
     if (isPublishedMode) {
       // Published versions are immutable; never write through the snapshot view.
       addLocalSystemMessage(
@@ -7118,7 +7126,7 @@ export default function WorkspacePage() {
   }, [handleUpdateFile]);
 
   useEffect(() => {
-    if (!isEditMode || !selectedWorkspace || !selectedFile || isDraftWorkspaceFile(selectedFile)) return;
+    if (!isEditMode || !selectedWorkspace || !selectedFile || isDraftWorkspaceFile(selectedFile) || isBinaryOfficeDocument(selectedFile.name, selectedFile.mimeType)) return;
 
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
@@ -7144,6 +7152,10 @@ export default function WorkspacePage() {
       || !selectedFile
       || !isEditMode
     ) {
+      return;
+    }
+    if (/\.docx$/i.test(selectedFile.name)) {
+      if (nativeDocxRef.current) await nativeDocxRef.current.save();
       return;
     }
     if (autoSaveTimerRef.current) {
@@ -7750,6 +7762,20 @@ export default function WorkspacePage() {
     },
   };
 
+  const toggleFileEditing = async (editing: boolean) => {
+    const selection = slideSelectionRef.current;
+    if (!editing && isNativeDocx && nativeDocxRef.current) {
+      try { await nativeDocxRef.current.save(); } catch { return; }
+    }
+    if (selection !== slideSelectionRef.current) return;
+    setIsEditMode(editing);
+  };
+
+  const saveActiveFile = () => {
+    if (isNativeDocx) { void nativeDocxRef.current?.save().catch(() => {}); }
+    else if (selectedFile) void runTrackedWorkspaceSave(selectedFile, fileContent);
+  };
+
   const handleMobileSelectFile = (file: WorkspaceFile) => {
     setSelectedDashboardPath(null);
     setSelectedFile(file);
@@ -7791,6 +7817,10 @@ export default function WorkspacePage() {
           </h2>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {isNativeDocx && canMutateContent && !isPublishedMode && <>
+            <ToggleButton label="Edit file" icon={<Edit size={16}/>} size="sm" isPressed={isEditMode} isDisabled={nativeDocxState.saving || !/^\d+$/.test(selectedFile?.id || '')} onPressedChange={value => { void toggleFileEditing(value); }} />
+            {isEditMode && <Button label={nativeDocxState.saving ? 'Saving…' : 'Save'} variant="primary" size="sm" isDisabled={!nativeDocxState.dirty || nativeDocxState.saving} onClick={saveActiveFile} />}
+          </>}
           {!isEditMode ? (
             <>
               <button
@@ -7830,13 +7860,15 @@ export default function WorkspacePage() {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={selectedFile?.name} onAgentChat={handleAnnotationChat}>
+        <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} onAgentChat={handleAnnotationChat}>
         {isEditMode && selectedWorkspace ? (
           <Suspense fallback={editorLoadingFallback}>
             <FileEditor
               file={selectedFileDetails || selectedFile}
               fileContent={fileContent}
               onContentChange={setFileContent}
+              nativeDocxRef={nativeDocxRef}
+              onNativeDocxStateChange={setNativeDocxState}
               workspaceId={selectedWorkspace.id}
               colorMode={colorMode}
             />
@@ -9140,25 +9172,26 @@ export default function WorkspacePage() {
                           icon={<Edit size={16} />}
                           size="sm"
                           isPressed={isEditMode}
-                          isDisabled={!canMutateContent || !selectedFile || !isFileEditable(selectedFile.name)}
+                          isDisabled={!canMutateContent || !selectedFile || !isFileEditable(selectedFile.name) || (isNativeDocx && (nativeDocxState.saving || !/^\d+$/.test(selectedFile.id)))}
                           onPressedChange={(isPressed) => {
                             if (isPressed && !isAgentPaneVisible) {
                               setIsAgentPaneVisible(true);
                             }
-                            setIsEditMode(isPressed);
+                            void toggleFileEditing(isPressed);
                           }}
                         />
                       )}
-                      {isPublishedMode ? null : (
+                      {isPublishedMode || (isNativeDocx && !isEditMode) ? null : (
                         <Button
-                          label={fileSaveStatus === 'saving' ? 'Saving…' : 'Save'}
+                          label={(isNativeDocx ? nativeDocxState.saving : fileSaveStatus === 'saving') ? 'Saving…' : 'Save'}
                           variant="primary"
                           size="sm"
-                          onClick={() => selectedFile && runTrackedWorkspaceSave(selectedFile, fileContent)}
-                          isDisabled={!canMutateContent || !isEditMode || !selectedFile || fileSaveStatus === 'saving' || (fileSaveStatus !== 'error' && !isDraftWorkspaceFile(selectedFile) && fileContent === lastAutoSavedContentRef.current)}
+                          onClick={saveActiveFile}
+                          isDisabled={!canMutateContent || !isEditMode || !selectedFile || (isNativeDocx ? nativeDocxState.saving || !nativeDocxState.dirty : fileSaveStatus === 'saving' || (fileSaveStatus !== 'error' && !isDraftWorkspaceFile(selectedFile) && fileContent === lastAutoSavedContentRef.current))}
                         />
                       )}
-                      {isEditMode && !isPublishedMode && (
+                      {isEditMode && !isPublishedMode && isNativeDocx && <span role="status" className="text-xs text-slate-400">{nativeDocxState.saving ? 'Saving changes…' : nativeDocxState.error ? 'Save failed · edits kept' : nativeDocxState.dirty ? 'Unsaved changes' : 'All changes saved'}</span>}
+                      {isEditMode && !isPublishedMode && !isNativeDocx && (
                         <span role={fileSaveStatus === 'error' ? 'alert' : 'status'} className={`text-xs ${fileSaveStatus === 'error' ? 'text-red-500' : 'text-slate-400'}`}>
                           {fileSaveStatus === 'saving' ? 'Saving changes…' : fileSaveStatus === 'error' ? 'Save failed. Your edits are still open; retry Save.' : selectedFile && isDraftWorkspaceFile(selectedFile) ? 'Save to create this file' : fileContent !== lastAutoSavedContentRef.current ? 'Unsaved changes · autosaves after 2 seconds' : 'All changes saved · autosave on'}
                         </span>
@@ -9192,13 +9225,15 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden min-h-0">
-                    <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={selectedFile?.name} onAgentChat={handleAnnotationChat}>
+                    <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} onAgentChat={handleAnnotationChat}>
                     {isEditMode && !isPublishedMode && selectedWorkspace ? (
                       <Suspense fallback={editorLoadingFallback}>
                         <FileEditor
                           file={selectedFileDetails || selectedFile}
                           fileContent={fileContent}
                           onContentChange={setFileContent}
+                          nativeDocxRef={nativeDocxRef}
+                          onNativeDocxStateChange={setNativeDocxState}
                           workspaceId={selectedWorkspace.id}
                           colorMode={colorMode}
                         />

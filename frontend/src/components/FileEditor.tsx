@@ -3,11 +3,11 @@ import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import type { File as WorkspaceFile } from '../types';
 import { createFile, getFileContent } from '../services/fileApi';
 import { useCanvasAnnotations } from './CanvasAnnotationContext';
-import { useOfficeDocument } from './OfficeDocumentContext';
 import { locateAnnotationText } from '../utils/canvasAnnotations';
 import EditorLoadingState from './EditorLoadingState';
 import type { MarkdownRichEditorHandle } from './MarkdownRichEditor';
 import { isBinaryOfficeDocument } from '../utils/officeFiles';
+import type { NativeDocxEditorHandle, NativeDocxEditorState } from './NativeDocxEditor';
 
 const MonacoEditor = lazy(async () => {
   await import('../config/monaco');
@@ -15,6 +15,7 @@ const MonacoEditor = lazy(async () => {
 });
 const MarkdownRichEditor = lazy(() => import('./MarkdownRichEditor'));
 const FileRenderer = lazy(() => import('./FileRenderer'));
+const NativeDocxEditor = lazy(() => import('./NativeDocxEditor'));
 
 const getLanguage = (fileName: string) => {
   const extension = fileName.split('.').pop()?.toLowerCase();
@@ -73,6 +74,8 @@ interface FileEditorProps {
   onContentChange: (content: string) => void;
   workspaceId: string;
   colorMode: 'light' | 'dark';
+  nativeDocxRef?: React.Ref<NativeDocxEditorHandle>;
+  onNativeDocxStateChange?: (state: NativeDocxEditorState) => void;
 }
 
 const OfficeDocumentPreviewPane: React.FC<{
@@ -82,8 +85,6 @@ const OfficeDocumentPreviewPane: React.FC<{
   colorMode: 'light' | 'dark';
 }> = ({ file, fileContent, workspaceId, colorMode }) => {
   const isDarkMode = colorMode === 'dark';
-  const office = useOfficeDocument();
-  const canQuickEdit = Boolean(office?.canEdit && /\.docx$/i.test(file.name));
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
@@ -93,9 +94,7 @@ const OfficeDocumentPreviewPane: React.FC<{
             : 'border-amber-100 bg-amber-50 text-amber-950'
         }`}
       >
-        {canQuickEdit
-          ? 'Select text in the document preview for quick edits. Use the agent for larger changes.'
-          : 'Document preview. Use the agent to make changes to this file.'}
+        Document preview. Use the agent to make changes to this file.
       </div>
       <div className="min-h-0 flex-1">
         <Suspense fallback={<EditorLoadingState />}>
@@ -362,6 +361,17 @@ const WorkspaceFileEditor: React.FC<FileEditorProps> = ({
 const FileEditor: React.FC<FileEditorProps> = (props) => {
   if (!props.file) {
     return null;
+  }
+  if (/\.docx$/i.test(props.file.name)) {
+    return <Suspense fallback={<EditorLoadingState label="Opening Word editor…" />}>
+      <NativeDocxEditor
+        key={`${props.workspaceId}:${props.file.id}`}
+        ref={props.nativeDocxRef}
+        workspaceId={props.workspaceId}
+        file={props.file}
+        onStateChange={props.onNativeDocxStateChange}
+      />
+    </Suspense>;
   }
   if (isBinaryOfficeDocument(props.file.name ?? '', props.file.mimeType)) {
     return (

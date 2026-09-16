@@ -138,6 +138,27 @@ export default function(
     } catch (error) { handleError(res, error, 'Failed to render Office preview'); }
   });
 
+  router.get('/:fileId/docx-content', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await officeDocuments.nativeDocxSource(req.params.workspaceId, officeFileId(req.params.fileId), user.userId);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) { handleError(res, error, 'Failed to open DOCX document'); }
+  });
+
+  router.put('/:fileId/docx-content', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await officeDocuments.saveNativeDocx(req.params.workspaceId, officeFileId(req.params.fileId), user.userId, req.body);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid DOCX save payload' });
+      handleError(res, error, 'Failed to save DOCX document');
+    }
+  });
+
   router.post('/:fileId/quick-edit', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
     try {
       const user = requireUserContext(req);
