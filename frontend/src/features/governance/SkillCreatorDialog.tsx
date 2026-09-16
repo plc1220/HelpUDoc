@@ -29,6 +29,7 @@ import {
   type SkillDraft,
 } from '../../services/governanceApi';
 import { SettingsNotice } from '../../components/settings/SettingsScaffold';
+import { extractJsonPayloads } from '../../utils/extractJsonPayload';
 
 type CreatorMessage = {
   id: string;
@@ -39,8 +40,11 @@ type CreatorMessage = {
 const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const parseActions = (text: string): SkillBuilderAction[] => {
-  const blocks = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)].map((match) => match[1]);
-  const candidates = [...blocks.reverse(), text.trim()];
+  // Not a fence regex. The Creator proposes skills whose SKILL.md documents how to run
+  // their own scripts, so the json block it emits contains nested ```bash fences inside
+  // string values; a non-greedy fence match ended at the inner fence and produced
+  // truncated JSON, which parsed as nothing and left the panel empty on a good proposal.
+  const candidates = [...extractJsonPayloads(text), text.trim()];
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate);
