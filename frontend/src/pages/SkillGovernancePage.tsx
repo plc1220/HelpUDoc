@@ -797,7 +797,13 @@ const ReviewDialog = ({
           <section className="flex min-h-0 flex-col border-b border-slate-200 lg:border-b-0 lg:border-r">
             <div className="border-b border-slate-200 px-5 py-3 text-sm font-semibold text-slate-800">Submitted SKILL.md</div>
             <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100">
-              {skillFile?.content || 'Binary or missing SKILL.md'}
+              {skillFile?.content
+                // Say which fault this is. A reviewer still has to be able to reject a
+                // candidate whose content was lost, and "missing SKILL.md" reads like the
+                // author forgot to write one rather than a storage failure.
+                || (skillFile?.unavailable
+                  ? `${skillFile.unavailableReason || 'Immutable skill content cannot be read'} The decision below still applies.`
+                  : 'Binary or missing SKILL.md')}
             </pre>
           </section>
           <aside className="overflow-y-auto p-5">
@@ -834,7 +840,12 @@ const ReviewDialog = ({
             </label>
             {!review.permissions.canReview ? (
               <SettingsNotice variant="warning">
-                You cannot review this version. Authors cannot approve their own submissions.
+                {review.permissions.isProposer
+                  // Naming the route out matters most here: the reader is looking at
+                  // their own submission and the buttons are dead, and "authors cannot
+                  // approve their own submissions" alone does not say who can.
+                  ? 'You submitted this version, so you cannot review it. Another Team Lead of the owning Team can approve it.'
+                  : 'You cannot review this version. Only a Team Lead of the owning Team can decide it.'}
               </SettingsNotice>
             ) : null}
             {review.activationStatus === 'failed' ? (
@@ -1427,7 +1438,17 @@ const SkillGovernancePage = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {mine.reviews.map((review) => (
-                      <tr key={review.id}>
+                      // Openable by the proposer. `getReview` already admits them, and the
+                      // dialog decides what to offer from `permissions.canReview`: a
+                      // read-only view of the frozen candidate and the reviewer's notes,
+                      // or the decision buttons when they are allowed to act on it. Until
+                      // now the only way in was the Team reviews tab, so a proposer who
+                      // was not a Lead of the owning Team could never open their own.
+                      <tr
+                        key={review.id}
+                        onClick={() => void openReview(review.id)}
+                        className="cursor-pointer hover:bg-slate-50"
+                      >
                         <td className="px-3 py-3"><span className="font-medium">{review.skillKey}</span><span className="text-slate-500">@{review.semanticVersion}</span></td>
                         <td className="px-3 py-3">{review.ownerTeamName}</td>
                         <td className="px-3 py-3">

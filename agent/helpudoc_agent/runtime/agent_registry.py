@@ -43,6 +43,63 @@ from ..memory_store import UserScopedStoreBackend
 
 logger = logging.getLogger(__name__)
 
+SKILL_BUILDER_PERSONA = "skill-builder"
+
+# The Skill Creator proposes files; the user's approval step writes them. Withhold the
+# tools that would let it act directly, rather than relying on the prompt to decline.
+# Scoped to this persona: widening `_WORKSPACE_MUTATING_TOOLS` instead would also change
+# what a published read-only workspace blocks, which is a separate decision.
+SKILL_BUILDER_DENIED_TOOLS = frozenset({
+    "append_to_report",
+    "create_pdf_from_images",
+    "document_execute",
+    "edit_file",
+    "export_bigquery_query",
+    "image_generation",
+    "run_skill_python_script",
+    "upload_files",
+    "write_file",
+})
+
+# The Skill Creator's contract with the dialog that renders its output.
+#
+# `SkillCreatorDialog.parseActions` scans each reply for a fenced ```json block holding
+# `{"actions": [...]}` and fills the Proposed draft panel from it. Nothing else populates
+# that panel, so a reply without the block leaves it on its placeholder however good the
+# prose is. The persona was advertised in `/agents` but never given a prompt, so the
+# builder ran on the general prompt and did what a general assistant does: wrote files and
+# described them.
+SKILL_BUILDER_SYSTEM_PROMPT = (
+    "You are the Skill Creator. You help a user design one skill and you propose its "
+    "files. You never create the skill yourself.\n\n"
+    "Do not write, edit, or delete any file. The user's approval step applies your "
+    "proposal; acting directly would bypass the review their platform requires.\n\n"
+    "Ask about the workflow, its inputs, its constraints, and what a good result looks "
+    "like. Ask one focused question at a time and stop asking once you can write the "
+    "skill. Reply in plain prose while you are still asking.\n\n"
+    "When you have enough to propose the skill, reply with a short summary followed by "
+    "exactly one fenced json block of this shape:\n\n"
+    "```json\n"
+    '{"actions": [\n'
+    '  {"type": "create_skill", "skillId": "kebab-case-id", "name": "Display name", '
+    '"description": "When and how to use this skill."},\n'
+    '  {"type": "upsert_text", "skillId": "kebab-case-id", "path": "SKILL.md", '
+    '"content": "---\\nname: ...\\n---\\n..."}\n'
+    "]}\n"
+    "```\n\n"
+    "Every action carries the same `skillId`, including the file actions -- the batch "
+    "describes one skill.\n\n"
+    "Rules for the block: emit it only when proposing, never while asking a question; "
+    "emit exactly one, as the last thing in the reply; put every file in it, with "
+    "`SKILL.md` first. Paths are relative to the skill folder -- `SKILL.md`, "
+    "`references/guide.md`, `scripts/run.py` -- never absolute and never starting with "
+    "`skills/`.\n\n"
+    "SKILL.md opens with YAML frontmatter holding `name` and `description`, and lists "
+    "`tools` only where the skill genuinely needs them. An empty `tools: []` does not "
+    "mean 'no tools' to this runtime, it means 'unrestricted', so omit the key instead "
+    "of writing an empty list."
+)
+
 GENERAL_SYSTEM_PROMPT = (
     "You are a general assistant. Use skills for specialized tasks. "
     "Apply progressive disclosure: call list_skills to discover relevant skills, "
@@ -355,6 +412,18 @@ class AgentRegistry:
         self._cache: Dict[Tuple[str, str, str], AgentRuntimeState] = {}
         self._default_agent_name = "general-assistant"
 
+    def _resolve_persona(self, agent_name: str) -> str:
+        """Which system prompt this run gets.
+
+        Separate from `_resolve_mode`, which picks a model tier and collapses every
+        unrecognised name to "fast". Folding the persona into that would have tied the
+        Skill Creator to one model for the wrong reason.
+        """
+        name = (agent_name or "").strip().lower()
+        if name == SKILL_BUILDER_PERSONA or name.startswith(f"{SKILL_BUILDER_PERSONA}:"):
+            return SKILL_BUILDER_PERSONA
+        return "general"
+
     def _resolve_mode(self, agent_name: str) -> str:
         name = (agent_name or "").strip().lower()
         if name.endswith(":pro") or name.endswith("-pro"):
@@ -409,7 +478,15 @@ class AgentRegistry:
         model_name = self.settings.model.resolve_chat_model_name(mode)
         thinking_level = self.settings.model.resolve_thinking_level(mode)
         max_output_tokens = self.settings.model.resolve_max_output_tokens(mode)
-        resolved_name = f"{self._default_agent_name}:{mode}"
+        persona = self._resolve_persona(agent_name)
+        # Part of the cache key via `resolved_name`: two personas in one workspace would
+        # otherwise share a runtime, and the first one created would lend the second its
+        # system prompt.
+        resolved_name = (
+            f"{self._default_agent_name}:{mode}"
+            if persona == "general"
+            else f"{self._default_agent_name}:{persona}:{mode}"
+        )
         context_payload = initial_context or {}
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
@@ -483,7 +560,9 @@ class AgentRegistry:
             or context_payload.get("allow_script_runner")
             or context_payload.get("allowScriptRunner")
         )
-        system_prompt = GENERAL_SYSTEM_PROMPT
+        system_prompt = (
+            SKILL_BUILDER_SYSTEM_PROMPT if persona == SKILL_BUILDER_PERSONA else GENERAL_SYSTEM_PROMPT
+        )
         if (
             workspace_state.context.get("workspace_mode") == "published_read_only"
             or workspace_state.context.get("can_write_workspace") is False
@@ -503,6 +582,8 @@ class AgentRegistry:
         tool_names = collect_tool_names(skills, plugins_root=self.settings.backend.plugins_root)
         if tool_names:
             tool_names = [name for name in tool_names if name in self.settings.tools]
+        if persona == SKILL_BUILDER_PERSONA:
+            tool_names = [name for name in tool_names if name not in SKILL_BUILDER_DENIED_TOOLS]
         if not tool_names:
             tool_names = list(self.settings.tools.keys())
         else:

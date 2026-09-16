@@ -162,7 +162,7 @@ export type TeamReviewDetail = {
       modified: string[];
       deleted: string[];
     };
-    files: SkillDraftFile[];
+    files: Array<SkillDraftFile & { unavailable?: boolean; unavailableReason?: string }>;
   };
   decisions: Array<{
     id: string;

@@ -230,6 +230,11 @@ services:
       SKILLS_ROOT: /app/skills
       PLUGINS_ROOT: /app/plugins
       ENABLE_SKILL_SANDBOX_RUNNER: ${ENABLE_SKILL_SANDBOX_RUNNER:-true}
+      # Skill review separation of duties. This block enumerates every variable the
+      # backend receives, so a flag set in the env file but absent here is silently
+      # dropped and the feature looks broken with the configuration apparently correct.
+      ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL: ${ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL:-false}
+      ALLOW_SINGLE_LEAD_SKILL_SELF_APPROVAL: ${ALLOW_SINGLE_LEAD_SKILL_SELF_APPROVAL:-false}
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@local.com}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}

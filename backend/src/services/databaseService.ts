@@ -327,6 +327,10 @@ export class DatabaseService {
         table.integer('contentRevision').notNullable().defaultTo(0);
         table.boolean('skipPlanApprovals').notNullable().defaultTo(false);
         table.boolean('isSystem').notNullable().defaultTo(false);
+        // The Skill Builder's scratch workspace. Deliberately not `isSystem`: that flag
+        // resolves a platform-admin override to owner/canEdit, which would hand every
+        // admin write access to every user's drafting area, and it blocks deletion.
+        table.boolean('isBuilderScratch').notNullable().defaultTo(false);
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
       });
@@ -341,6 +345,7 @@ export class DatabaseService {
       await this.ensureColumn('workspaces', 'contentRevision', (table) => table.integer('contentRevision').notNullable().defaultTo(0));
       await this.ensureColumn('workspaces', 'skipPlanApprovals', (table) => table.boolean('skipPlanApprovals').notNullable().defaultTo(false));
       await this.ensureColumn('workspaces', 'isSystem', (table) => table.boolean('isSystem').notNullable().defaultTo(false));
+      await this.ensureColumn('workspaces', 'isBuilderScratch', (table) => table.boolean('isBuilderScratch').notNullable().defaultTo(false));
     }
   }
 

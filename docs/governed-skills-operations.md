@@ -135,3 +135,30 @@ while read -r h; do
     test -r "/app/skills/.governed-versions/blobs/${h:0:2}/$h" || echo "MISSING $h"
 done
 ```
+
+## Self-approval
+
+A proposer does not decide their own candidate. Two opt-ins relax that, both off by
+default, and both recorded on `skill_review_decisions.selfApproved` and the audit event:
+
+- `ALLOW_SINGLE_LEAD_SKILL_SELF_APPROVAL=true` lets the sole active Lead of a Team
+  approve their own proposal. It applies only while that Team has exactly one Lead.
+- `ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL=true` lets a Platform Admin approve a
+  candidate **they proposed**, whatever the Team's Lead count.
+
+The second grants no authority over anyone else's proposal: an admin still cannot
+decide a candidate somebody else submitted, and is still not a reviewer. It exists so
+an admin who is the only person able to review a Team is not permanently blocked from
+landing their own skill.
+
+Turning either on removes the second pair of eyes for the cases it covers. Audit for
+them with:
+
+```sql
+select r."id", u.email, d."createdAt"
+from skill_review_decisions d
+join skill_review_requests r on r.id = d."requestId"
+join users u on u.id = d."reviewerUserId"
+where d."selfApproved" = true
+order by d."createdAt" desc;
+```

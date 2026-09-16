@@ -29,18 +29,41 @@ import {
   type SkillDraft,
 } from '../../services/governanceApi';
 import { SettingsNotice } from '../../components/settings/SettingsScaffold';
+import { extractJsonPayloads } from '../../utils/extractJsonPayload';
 
 type CreatorMessage = {
   id: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
+  /** Tool activity, kept out of `text`. One short line per call, not its output. */
+  activity?: string[];
+};
+
+/** A tool event as one line, rather than the payload it returned. */
+const activityLine = (raw: string): string => {
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  return flat.length > 140 ? `${flat.slice(0, 140)}…` : flat;
 };
 
 const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+/**
+ * Did this reply try to propose something?
+ *
+ * A balanced candidate mentioning `actions` that will not parse is a proposal the
+ * creator truncated or malformed -- not conversation. Both used to end as an empty
+ * panel, which is exactly what a question looks like, so the user had no way to tell
+ * "still asking" from "proposed something unreadable".
+ */
+const looksLikeAProposal = (text: string): boolean =>
+  extractJsonPayloads(text).some((candidate) => candidate.includes('"actions"'));
+
 const parseActions = (text: string): SkillBuilderAction[] => {
-  const blocks = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)].map((match) => match[1]);
-  const candidates = [...blocks.reverse(), text.trim()];
+  // Not a fence regex. The Creator proposes skills whose SKILL.md documents how to run
+  // their own scripts, so the json block it emits contains nested ```bash fences inside
+  // string values; a non-greedy fence match ended at the inner fence and produced
+  // truncated JSON, which parsed as nothing and left the panel empty on a good proposal.
+  const candidates = [...extractJsonPayloads(text), text.trim()];
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate);
@@ -116,12 +139,24 @@ export default function SkillCreatorDialog({
     await streamSkillBuilderRun(activeRunId, (chunk) => {
       const eventId = (chunk as { id?: string }).id;
       if (eventId) lastEventIdRef.current = eventId;
-      if (['token', 'chunk', 'thought', 'tool_start', 'tool_end', 'tool_error'].includes(chunk.type)) {
+      if (['token', 'chunk', 'thought'].includes(chunk.type)) {
         const content = (chunk as { content?: string }).content || '';
         if (!content) return;
         assistantText += content;
         setMessages((current) => current.map((message) => (
           message.id === assistantId ? { ...message, text: assistantText } : message
+        )));
+      } else if (['tool_start', 'tool_end', 'tool_error'].includes(chunk.type)) {
+        // Keep tool activity out of the reply. A directory listing or a file read ran to
+        // hundreds of lines in the transcript, and -- worse -- `parseActions` read the
+        // same string, so a file containing a json block could be taken for a proposal.
+        const content = (chunk as { content?: string }).content || '';
+        if (!content) return;
+        const line = activityLine(content);
+        setMessages((current) => current.map((message) => (
+          message.id === assistantId
+            ? { ...message, activity: [...(message.activity || []), line] }
+            : message
         )));
       } else if (chunk.type === 'interrupt') {
         setAwaitingApproval(true);
@@ -129,7 +164,18 @@ export default function SkillCreatorDialog({
         setError(chunk.message || 'Skill Creator failed');
       } else if (chunk.type === 'done') {
         const proposed = parseActions(assistantText);
-        if (proposed.length) setActions(proposed);
+        if (proposed.length) {
+          setActions(proposed);
+        } else if (looksLikeAProposal(assistantText)) {
+          // Balanced, mentions `actions`, will not parse: truncated at the token limit
+          // or malformed. Saying so beats an empty panel, which is indistinguishable
+          // from the creator still asking a question.
+          setError(
+            'The creator proposed a skill but its file list could not be read. It may have '
+            + 'been cut short. Ask it to send the proposal again, or split the skill into '
+            + 'fewer files.',
+          );
+        }
       }
     }, controller.signal, lastEventIdRef.current);
   };
@@ -254,8 +300,24 @@ export default function SkillCreatorDialog({
               {messages.map((message) => (
                 <div key={message.id} className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : ''}`}>
                   {message.role !== 'user' ? <span className="mt-1 rounded-full bg-blue-100 p-2 text-blue-700"><Bot size={16} /></span> : null}
-                  <div className={`max-w-[82%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${message.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800'}`}>
-                    {message.text || <Loader2 size={16} className="animate-spin" />}
+                  <div className="max-w-[82%] min-w-0">
+                    {message.activity?.length ? (
+                      // Collapsed by default: what it did is occasionally useful, the
+                      // output it read almost never is.
+                      <details className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        <summary className="cursor-pointer select-none">
+                          {message.activity.length} tool {message.activity.length === 1 ? 'call' : 'calls'}
+                        </summary>
+                        <ul className="mt-1.5 space-y-1">
+                          {message.activity.map((line, index) => (
+                            <li key={index} className="truncate font-mono">{line}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                    <div className={`whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${message.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800'}`}>
+                      {message.text || <Loader2 size={16} className="animate-spin" />}
+                    </div>
                   </div>
                   {message.role === 'user' ? <span className="mt-1 rounded-full bg-slate-200 p-2 text-slate-700"><UserRound size={16} /></span> : null}
                 </div>

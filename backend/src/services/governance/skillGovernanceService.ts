@@ -710,11 +710,8 @@ export class SkillGovernanceService {
 
   async getReview(userId: string, requestId: string): Promise<JsonRecord> {
     const request = await this.reviewRequest(requestId);
-    const isProposer = request.proposerUserId === userId;
-    const isLead = await this.isTeamLead(userId, request.ownerTeamId);
-    const selfApprovalAllowed = isProposer
-      ? await this.selfApprovalAllowed(userId, request.ownerTeamId)
-      : false;
+    const { canDecide, isLead, isProposer, selfApproval: selfApprovalAllowed } =
+      await this.reviewAuthority(userId, request);
     if (!isProposer && !isLead) {
       governanceError(404, 'SKILL_RESOURCE_NOT_FOUND', 'Skill review not found');
     }
@@ -759,17 +756,36 @@ export class SkillGovernanceService {
         validationSummary: jsonValue(candidate.validationSummary, {}),
         riskSummary: jsonValue(candidate.riskSummary, {}),
         diff,
-        files: await Promise.all(files.map(async (file: any) => ({
-          ...file,
-          content: isTextMime(file.mimeType)
-            ? (await this.packageStore.readBlob(file.contentHash)).toString('utf-8')
-            : undefined,
-        }))),
+        // Degrade per file, as `getSkillDetail` does. A candidate whose blob was lost
+        // still has to open: the decision, the validation evidence and the diff are all
+        // answered from the database, and a reviewer who cannot open the request cannot
+        // reject it either -- the submission would be stuck with no way to clear it.
+        files: await Promise.all(files.map(async (file: any) => {
+          if (!isTextMime(file.mimeType)) {
+            return { ...file, content: undefined, unavailable: false };
+          }
+          try {
+            return {
+              ...file,
+              content: (await this.packageStore.readBlob(file.contentHash)).toString('utf-8'),
+              unavailable: false,
+            };
+          } catch (error) {
+            return {
+              ...file,
+              content: undefined,
+              unavailable: true,
+              unavailableReason: error instanceof SkillGovernanceError
+                ? error.message
+                : 'Immutable skill content cannot be read',
+            };
+          }
+        })),
       } : null,
       decisions,
       permissions: {
-        canReview: isLead && (!isProposer || selfApprovalAllowed),
-        canRetryActivation: isLead && request.status === 'approved' && request.activationStatus === 'failed',
+        canReview: canDecide,
+        canRetryActivation: canDecide && request.status === 'approved' && request.activationStatus === 'failed',
         isProposer,
         isTeamLead: isLead,
         selfApprovalAllowed,
@@ -790,7 +806,12 @@ export class SkillGovernanceService {
   ): Promise<JsonRecord> {
     const decision = normalizeDecision(input.decision);
     const request = await this.reviewRequest(requestId);
-    await this.requireTeamLead(userId, request.ownerTeamId);
+    const authority = await this.reviewAuthority(userId, request);
+    if (!authority.canDecide) {
+      // A proposer who is not permitted to self-approve still gets the Team Lead error
+      // when they hold no lead role, so the message names the role they actually lack.
+      if (!authority.isLead) await this.requireTeamLead(userId, request.ownerTeamId);
+    }
     const retryingActivation = input.retryActivation === true;
     if (retryingActivation && (
       decision !== 'approve'
@@ -799,9 +820,7 @@ export class SkillGovernanceService {
     )) {
       governanceError(409, 'SKILL_REVISION_CONFLICT', 'Only a failed approved activation can be retried');
     }
-    if (!retryingActivation
-      && request.proposerUserId === userId
-      && !await this.selfApprovalAllowed(userId, request.ownerTeamId)) {
+    if (!retryingActivation && authority.isProposer && !authority.selfApproval) {
       governanceError(403, 'SKILL_ACTION_FORBIDDEN', 'A proposer cannot approve or decide their own candidate');
     }
     if ((!retryingActivation && request.status !== 'submitted')
@@ -3145,6 +3164,16 @@ export class SkillGovernanceService {
   }
 
   private async selfApprovalAllowed(userId: string, teamId: string): Promise<boolean> {
+    // A Platform Admin may clear their own proposal when the platform opts in. Scoped to
+    // their own candidate on purpose: it removes the second pair of eyes from their work
+    // only, and grants no say over anybody else's. Without it an admin who is the sole
+    // active reviewer of a Team has no way to land a skill at all.
+    if (
+      String(process.env.ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL || '').toLowerCase() === 'true'
+      && await this.isPlatformAdmin(userId)
+    ) {
+      return true;
+    }
     if (String(process.env.ALLOW_SINGLE_LEAD_SKILL_SELF_APPROVAL || '').toLowerCase() !== 'true') {
       return false;
     }
@@ -3156,6 +3185,28 @@ export class SkillGovernanceService {
       .select('role.userId')
       .where({ 'role.teamId': teamId, 'role.role': 'lead' });
     return activeLeads.length === 1 && activeLeads[0].userId === userId;
+  }
+
+  /**
+   * May *userId* decide on this review request?
+   *
+   * Normally a Team Lead of the owning Team, and never the proposer. The exception is a
+   * Platform Admin acting on their own candidate while
+   * `ALLOW_PLATFORM_ADMIN_SKILL_SELF_APPROVAL` is set; an admin still has no authority
+   * over a proposal somebody else wrote, which is the boundary that keeps this from
+   * becoming general review authority.
+   */
+  private async reviewAuthority(
+    userId: string,
+    request: { ownerTeamId: string; proposerUserId: string },
+  ): Promise<{ canDecide: boolean; isLead: boolean; isProposer: boolean; selfApproval: boolean }> {
+    const isProposer = request.proposerUserId === userId;
+    const isLead = await this.isTeamLead(userId, request.ownerTeamId);
+    const selfApproval = isProposer
+      ? await this.selfApprovalAllowed(userId, request.ownerTeamId)
+      : false;
+    const canDecide = isProposer ? selfApproval : isLead;
+    return { canDecide, isLead, isProposer, selfApproval };
   }
 
   private async notifyTeamLeads(
