@@ -3,7 +3,7 @@ import { Database } from '@hocuspocus/extension-database';
 import type { Knex } from 'knex';
 import { DatabaseService } from '../services/databaseService';
 import { UserService, isUserDeactivated } from '../services/userService';
-import { WorkspaceService } from '../services/workspaceService';
+import { WorkspaceService, isWorkspaceContentLocked } from '../services/workspaceService';
 
 const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'Local User';
 const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || '';
@@ -16,6 +16,30 @@ const parseDocumentName = (documentName: string): { workspaceId: string; fileId:
   return { workspaceId, fileId };
 };
 
+/**
+ * Recently resolved workspace lock states, so `store` — which fires on every
+ * debounced keystroke — does not query per change.
+ *
+ * Module scope rather than an instance field on purpose: the test suite builds
+ * services with `Object.create(prototype)`, which skips field initializers and
+ * would leave an instance-level cache `undefined` (`LEARNINGS.md` §6).
+ */
+const workspaceLockCache = new Map<string, { locked: boolean; at: number }>();
+const WORKSPACE_LOCK_CACHE_MS = 5_000;
+
+const isWorkspaceLockedForCollab = async (db: Knex, workspaceId: string): Promise<boolean> => {
+  const cached = workspaceLockCache.get(workspaceId);
+  const now = Date.now();
+  if (cached && now - cached.at < WORKSPACE_LOCK_CACHE_MS) return cached.locked;
+  const workspace = await db('workspaces')
+    .select('visibility', 'workspaceType', 'currentPublishedVersionId')
+    .where({ id: workspaceId })
+    .first();
+  const locked = Boolean(workspace) && isWorkspaceContentLocked(workspace as any);
+  workspaceLockCache.set(workspaceId, { locked, at: now });
+  return locked;
+};
+
 class PostgresCollabExtension extends Database {
   constructor(private readonly db: Knex) {
     super({
@@ -24,6 +48,11 @@ class PostgresCollabExtension extends Database {
         return row?.state ?? null;
       },
       store: async ({ documentName, state }) => {
+        // `onAuthenticate` sets `readOnly` once, at the handshake. A session that
+        // was already open when the workspace was locked would otherwise keep
+        // persisting, so the authority has to sit here, where the write happens.
+        const { workspaceId } = parseDocumentName(documentName);
+        if (await isWorkspaceLockedForCollab(this.db, workspaceId)) return;
         const buffer = Buffer.isBuffer(state) ? state : Buffer.from(state);
         await this.db('collab_documents')
           .insert({
