@@ -37,6 +37,7 @@ from ..skills_registry import (
     load_skills,
     sync_skills_to_workspace,
 )
+from ..bigquery_export_tools import load_bigquery_defaults
 from ..mcp_manager import MCPServerManager
 from ..tool_guard import GuardedTool
 from ..memory_store import UserScopedStoreBackend
@@ -143,6 +144,46 @@ GENERAL_SYSTEM_PROMPT = (
 )
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
+
+
+def build_bigquery_defaults_prompt() -> str:
+    """State the deployment's BigQuery project and location in the system prompt.
+
+    The `bigquery-managed` tools take `projectId` as a model-supplied argument, and
+    `list_dataset_ids` has no location parameter at all. Nothing in the transport can
+    fill either one: `X-goog-user-project` only attributes quota, and MCPServerConfig
+    carries no default-args field. Without this block the model has no project in
+    context and reaches for `bigquery-public-data`, which is world-readable and sits in
+    the US multi-region, so every answer looked like a wrong-region default.
+
+    Read from `load_bigquery_defaults()` rather than written into `skills/*/SKILL.md` so
+    dev and prod each state their own project without re-seeding skills-pvc.
+
+    This steers defaults; it is not an access control. Every call carries the end user's
+    delegated OAuth token, so BigQuery IAM still decides what they may read.
+    """
+    defaults = load_bigquery_defaults()
+    project = defaults["project"]
+    location = defaults["location"]
+    return (
+        "\n\nBigQuery defaults for this deployment:\n"
+        f"- Default project is `{project}`. Pass `projectId: \"{project}\"` on every "
+        "`bigquery-managed` call unless the user names a different project.\n"
+        "- If the user supplies their own project ID, use theirs for that request and keep "
+        "using it for follow-up calls in the same thread.\n"
+        "- Never query `bigquery-public-data` unless the user names it or asks for public "
+        "sample data. It is not this deployment's data and must not be used to answer a "
+        "question about \"my datasets\" or \"our tables\".\n"
+        f"- Default job location is `{location}`. `list_dataset_ids` returns every dataset "
+        "in a project regardless of region; to list datasets for one region, run "
+        f"`execute_sql` against "
+        f"`<project>.region-{location}.INFORMATION_SCHEMA.SCHEMATA`.\n"
+        "- Use `execute_sql` when the user wants to read results. Use "
+        "`export_bigquery_query` only when the user asked for a file, or when the result is "
+        "too large to read in chat; it always writes a workspace file and never returns "
+        "rows, so it cannot answer \"show me N rows\"."
+    )
+
 ALWAYS_AVAILABLE_TOOL_GROUPS = (
     "load_skill",
     "list_skills",
@@ -573,6 +614,7 @@ class AgentRegistry:
                 "content changes or generated artifacts, explain that an owner must grant edit access "
                 "or review the proposed change."
             )
+        system_prompt += build_bigquery_defaults_prompt()
         skills_root = self.settings.backend.skills_root
         if skills_root is not None:
             skills_root.mkdir(parents=True, exist_ok=True)
