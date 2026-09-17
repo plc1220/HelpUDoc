@@ -36,7 +36,7 @@ charts and a structured report.
 ## Connector selection
 
 - **BigQuery (warehouse)**: target = named warehouse tables or large managed datasets.
-  Use `bq_list_datasets` → `bq_list_tables` → `bq_get_table_info` → `bq_execute_sql`.
+  Use `list_dataset_ids` → `list_table_ids` → `get_table_info` → `execute_sql`.
   If the answer will require iterative follow-up, create or use a workspace snapshot
   and continue with the local `data_workspace` script.
 - **Local files (CSV / Parquet / JSON in workspace)**: use `data_workspace` for schema,

@@ -15,8 +15,8 @@ quality, content, and join potential before diving into analysis.
 ## Connector selection
 
 - **BigQuery (warehouse)**: use when the user references managed datasets or named
-  warehouse tables. Use `bq_list_datasets` → `bq_list_tables` → `bq_get_table_info`
-  to navigate metadata, then `bq_execute_sql` for profiling queries. If profiling
+  warehouse tables. Use `list_dataset_ids` → `list_table_ids` → `get_table_info`
+  to navigate metadata, then `execute_sql` for profiling queries. If profiling
   turns into deeper iterative analysis, create or use a scoped workspace snapshot
   and continue locally.
 - **Local files (CSV / Parquet / JSON)**: call `run_skill_python_script` with

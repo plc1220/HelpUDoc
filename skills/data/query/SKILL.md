@@ -39,7 +39,7 @@ Identify from the user's description:
   explicit column names for durable queries.
 
 ### 3. Discover schema
-- **BigQuery**: `bq_list_datasets` → `bq_list_tables` → `bq_get_table_info`
+- **BigQuery**: `list_dataset_ids` → `list_table_ids` → `get_table_info`
   for the relevant tables. Check partition keys, clustering, and views.
 - **DuckDB**: call `run_skill_python_script` with
   `script_name="data_workspace"` and `{"action":"schema"}` before writing local SQL.
@@ -77,7 +77,7 @@ Provide:
 4. How to adjust for common variations (different time range, different grouping).
 
 ### 6. Offer to execute
-- BigQuery: offer `bq_execute_sql` on the written query.
+- BigQuery: offer `execute_sql` on the written query.
 - If the user will likely iterate on the result, create or use a workspace snapshot
   before continuing locally.
 - DuckDB/local: call `data_workspace` with `{"action":"query","sql":"...","row_limit":1000}`

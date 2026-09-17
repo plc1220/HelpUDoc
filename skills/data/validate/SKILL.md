@@ -65,7 +65,7 @@ Examine:
   different query path).
 - Validate subtotals sum correctly.
 - Confirm filters are applied consistently.
-- For warehouse queries: run a sanity-check `bq_execute_sql`; for local queries:
+- For warehouse queries: run a sanity-check `execute_sql`; for local queries:
   cross-check with `data_workspace`. When validation will require several follow-up
   checks against warehouse data, use a scoped workspace snapshot and validate in DuckDB.
 

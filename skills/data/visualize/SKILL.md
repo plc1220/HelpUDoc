@@ -23,7 +23,7 @@ Determine:
 - **Audience**: technical team, executives, external stakeholders.
 
 ### 2. Get the data
-- **If data warehouse is connected and data needs querying**: use `bq_execute_sql`.
+- **If data warehouse is connected and data needs querying**: use `execute_sql`.
   If the charting task will involve multiple refinements, use a scoped workspace
   dataset and chart from local rows.
 - **If local workspace files**: call `data_workspace` schema, then a bounded
