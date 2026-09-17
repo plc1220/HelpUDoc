@@ -35,6 +35,10 @@ const formatDateTime = (value?: string | null): string => {
 };
 
 const statusLabel = (schedule: WorkspaceSchedule) => {
+  // Checked before the stored status: the schedule is still "active", it is the
+  // locked workspace holding it. Saying "Active" would promise runs that a
+  // locked workspace will not take.
+  if (schedule.blockedByWorkspaceLock) return 'Paused · workspace locked';
   if (schedule.status === 'active') return 'Active';
   if (schedule.status === 'paused') return 'Paused';
   return 'Needs attention';
@@ -124,9 +128,11 @@ export default function WorkspaceSchedulesPanel({
               {schedules.map((schedule) => {
                 const isBusy = busyScheduleId === schedule.id;
                 const isActive = schedule.status === 'active';
-                const statusClassName = schedule.status === 'active'
+                // Held by the lock reads as paused, not active — the chip must
+                // not stay green while nothing is firing.
+                const statusClassName = schedule.status === 'active' && !schedule.blockedByWorkspaceLock
                   ? isDarkMode ? 'bg-emerald-500/15 text-emerald-200' : 'bg-emerald-50 text-emerald-700'
-                  : schedule.status === 'paused'
+                  : schedule.status === 'paused' || schedule.blockedByWorkspaceLock
                     ? isDarkMode ? 'bg-amber-500/15 text-amber-200' : 'bg-amber-50 text-amber-700'
                     : isDarkMode ? 'bg-red-500/15 text-red-200' : 'bg-red-50 text-red-700';
                 return (

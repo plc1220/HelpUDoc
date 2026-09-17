@@ -409,6 +409,13 @@ export interface WorkspaceSchedule {
   nextRunAt?: string | null;
   lastRunAt?: string | null;
   lastRunStatus?: WorkspaceScheduleRunStatus | null;
+  /**
+   * The schedule is held because its Shared workspace is locked, not because
+   * anyone paused it. Derived per request from the workspace rather than stored
+   * on the row, so withdrawing the lock resumes the schedule with nothing to
+   * reconcile and no way to resume one its owner paused by hand.
+   */
+  blockedByWorkspaceLock?: boolean;
   lastError?: string | null;
   createdBy?: string | null;
   runAsUserId?: string | null;

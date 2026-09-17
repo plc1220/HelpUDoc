@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { Knex } from 'knex';
 import { DatabaseService } from './databaseService';
-import { WorkspaceService } from './workspaceService';
+import { WorkspaceService, isWorkspaceContentLocked } from './workspaceService';
 import { ConversationService, type ConversationRecord } from './conversationService';
 import { GoogleOAuthService } from './googleOAuthService';
 import { UserService } from './userService';
@@ -310,11 +310,16 @@ export class ScheduleService {
   }
 
   async listSchedulesForWorkspace(userId: string, workspaceId: string): Promise<WorkspaceSchedule[]> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    const { workspace } = await this.workspaceService.ensureMembership(
+      workspaceId,
+      userId,
+      { requireEditRole: true },
+    );
+    const contentLocked = isWorkspaceContentLocked(workspace);
     const rows = await this.db<WorkspaceScheduleRow>('workspace_schedules')
       .where({ workspaceId })
       .orderBy('createdAt', 'desc');
-    const schedules = rows.map((row) => this.serializeSchedule(row));
+    const schedules = rows.map((row) => this.serializeSchedule(row, contentLocked));
     await Promise.all(
       schedules.map(async (schedule) => {
         schedule.recentRuns = await this.listRunsForSchedule(userId, workspaceId, schedule.id, 5);
@@ -324,20 +329,24 @@ export class ScheduleService {
   }
 
   async getSchedule(userId: string, workspaceId: string, scheduleId: string): Promise<WorkspaceSchedule> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    const { workspace } = await this.workspaceService.ensureMembership(
+      workspaceId,
+      userId,
+      { requireEditRole: true },
+    );
     const row = await this.db<WorkspaceScheduleRow>('workspace_schedules')
       .where({ id: scheduleId, workspaceId })
       .first();
     if (!row) {
       throw new NotFoundError('Schedule not found');
     }
-    const schedule = this.serializeSchedule(row);
+    const schedule = this.serializeSchedule(row, isWorkspaceContentLocked(workspace));
     schedule.recentRuns = await this.listRunsForSchedule(userId, workspaceId, scheduleId, 10);
     return schedule;
   }
 
   async createSchedule(userId: string, workspaceId: string, payload: WorkspaceScheduleDraft): Promise<WorkspaceSchedule> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEditRole: true });
     if (payload.sourceConversationId) {
       await this.conversationService.ensureConversationAccess(userId, workspaceId, payload.sourceConversationId);
     }
@@ -383,7 +392,7 @@ export class ScheduleService {
     scheduleId: string,
     payload: ScheduleUpdatePayload,
   ): Promise<WorkspaceSchedule> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEditRole: true });
     const existing = await this.db<WorkspaceScheduleRow>('workspace_schedules')
       .where({ id: scheduleId, workspaceId })
       .first();
@@ -436,7 +445,7 @@ export class ScheduleService {
   }
 
   async deleteSchedule(userId: string, workspaceId: string, scheduleId: string): Promise<boolean> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEditRole: true });
     const deleted = await this.db('workspace_schedules').where({ id: scheduleId, workspaceId }).del();
     if (deleted) {
       await this.workspaceService.touchWorkspace(workspaceId, userId);
@@ -450,7 +459,7 @@ export class ScheduleService {
     scheduleId: string,
     limit = 20,
   ): Promise<WorkspaceScheduleRun[]> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEditRole: true });
     const rows = await this.db<WorkspaceScheduleRunRow>('workspace_schedule_runs')
       .where({ scheduleId, workspaceId })
       .orderBy('createdAt', 'desc')
@@ -459,7 +468,7 @@ export class ScheduleService {
   }
 
   async triggerScheduleNow(userId: string, workspaceId: string, scheduleId: string): Promise<WorkspaceScheduleRun> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEditRole: true });
     const schedule = await this.db<WorkspaceScheduleRow>('workspace_schedules')
       .where({ id: scheduleId, workspaceId })
       .first();
@@ -515,7 +524,14 @@ export class ScheduleService {
           this.select(trx.raw('1'))
             .from('workspaces as scheduleWorkspace')
             .whereRaw('"scheduleWorkspace"."id" = "workspace_schedules"."workspaceId"')
-            .whereNotIn('scheduleWorkspace.status', ['trashed', 'purged']);
+            .whereNotIn('scheduleWorkspace.status', ['trashed', 'purged'])
+            // A locked Shared workspace takes no content changes, and a schedule
+            // whose whole job is producing a file would otherwise fire and
+            // silently write nothing. Held rather than failed: `nextRunAt` stays
+            // put, so withdrawing the lock resumes the schedule with no stored
+            // paused state to reconcile — and no way to wrongly resume one its
+            // owner paused by hand.
+            .whereNull('scheduleWorkspace.currentPublishedVersionId');
         })
         .whereNotNull('nextRunAt')
         .andWhere('nextRunAt', '<=', trx.fn.now())
@@ -681,7 +697,7 @@ export class ScheduleService {
         userId,
         schedule.workspaceId,
         schedule.targetConversationId,
-        { requireEdit: true },
+        { requireEditRole: true },
       );
     }
 
@@ -781,8 +797,12 @@ export class ScheduleService {
       });
   }
 
-  private serializeSchedule(row: WorkspaceScheduleRow): WorkspaceSchedule {
+  private serializeSchedule(
+    row: WorkspaceScheduleRow,
+    workspaceContentLocked = false,
+  ): WorkspaceSchedule {
     return {
+      blockedByWorkspaceLock: workspaceContentLocked,
       id: row.id,
       workspaceId: row.workspaceId,
       name: row.name,
