@@ -4,7 +4,7 @@ import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
 import { UserContext } from '../types/user';
-import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
+import { AccessDeniedError, ConflictError, NotFoundError, WorkspaceContentLockedError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { legacyWorkspaceRoleToNamedGrant } from './workspaceAudiencePolicy';
 import { isPlatformAdmin } from './governance/teamRoles';
@@ -135,6 +135,60 @@ export const isPurgedWorkspaceRecord = (workspace: Pick<WorkspaceRecord, 'status
 );
 
 /**
+ * A Shared workspace holding a current locked version is read-only for direct
+ * content edits — for everyone, its owner included.
+ *
+ * Locking used to be a pure bookkeeping act: it wrote an immutable snapshot and
+ * moved `currentPublishedVersionId`, while the live workspace stayed as writable
+ * as it had been a moment earlier. Users read "locked" as "locked", edited
+ * anyway, and then had nowhere to send the result — the review flow only
+ * submits a diff between a private copy and Shared Working, and editing Shared
+ * directly is precisely what empties that diff.
+ *
+ * So the lock is now a real state: the only way into a locked workspace is a
+ * private copy, a review submission, and a publisher applying it. Withdrawing
+ * the lock reopens direct editing.
+ */
+export const isWorkspaceContentLocked = (workspace: Pick<WorkspaceRecord,
+  'visibility' | 'workspaceType' | 'currentPublishedVersionId'>): boolean => (
+  isSharedWorkspaceRecord(workspace) && Boolean(workspace.currentPublishedVersionId)
+);
+
+/**
+ * The single definition of "may this member change workspace content".
+ *
+ * Three call sites answered this question independently — `ensureMembership`,
+ * `listWorkspacesForUser` and `listCollaborators` — and they disagreed: the list
+ * query ignored `editingPolicy` entirely, so a Review-mode contributor was told
+ * they could edit and then refused on save. Deriving it once is what stops the
+ * UI and the server from contradicting each other again (see `LEARNINGS.md` §12).
+ *
+ * The two results are deliberately distinct:
+ * - `canEditRole` — would this role be allowed to edit, ignoring the lock.
+ * - `canEdit` — may they edit *right now*.
+ *
+ * Callers that gate genuine content writes want `canEdit`. Callers that only
+ * need "more than a viewer" — reading a schedule, listing knowledge sources —
+ * want `canEditRole`, because a lock must not turn a read into an error.
+ */
+export const resolveWorkspaceContentEditAccess = (input: {
+  isShared: boolean;
+  status?: WorkspaceRecord['status'];
+  role: WorkspaceRole;
+  editingPolicy?: 'direct' | 'review' | null;
+  contentLocked: boolean;
+}): { canEditRole: boolean; canEdit: boolean } => {
+  if (input.status === 'trashed' || input.status === 'purged') {
+    return { canEditRole: false, canEdit: false };
+  }
+  const editingPolicy = input.editingPolicy || 'review';
+  const canEditRole = !input.isShared
+    || input.role === 'owner'
+    || (editingPolicy === 'direct' && (input.role === 'editor' || input.role === 'contributor'));
+  return { canEditRole, canEdit: canEditRole && !input.contentLocked };
+};
+
+/**
  * Moves ownership of a Shared workspace onto `toUserId` inside an existing
  * transaction: the `workspaces.ownerId` column, the owner membership row, and
  * the publisher grant, with the outgoing owner demoted to editor.
@@ -251,7 +305,23 @@ export interface WorkspaceMembershipRecord {
 }
 
 interface MembershipCheckOptions {
+  /**
+   * Assert the caller may change workspace *content* right now. Refused when the
+   * role does not permit editing, and also when the Shared workspace holds a
+   * current locked version.
+   */
   requireEdit?: boolean;
+  /**
+   * Assert only that the caller's role would permit editing, ignoring the
+   * content lock.
+   *
+   * For callers that were using `requireEdit` to mean "more than a viewer" on a
+   * path that reads rather than writes — listing schedules, reading a knowledge
+   * source. Locking a workspace must not turn those into errors. Kept as a
+   * separate, narrower option rather than widening those routes to viewers,
+   * which would be a product change smuggled in under a bug fix.
+   */
+  requireEditRole?: boolean;
   /**
    * Lets a platform admin resolve access to a workspace they hold no membership
    * in, for oversight and support. What that grant is worth is derived from the
@@ -536,11 +606,17 @@ export class WorkspaceService {
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         role: effectiveRole,
-        canEdit: (row.status || 'active') !== 'trashed'
-          && (visibility === 'private'
-            || effectiveRole === 'owner'
-            || effectiveRole === 'editor'
-            || effectiveRole === 'contributor'),
+        // Same resolver the access check uses. This expression used to ignore
+        // `editingPolicy` altogether, so a Review-mode contributor was handed an
+        // editable canvas and then refused on save; it would have ignored the
+        // content lock the same way.
+        canEdit: resolveWorkspaceContentEditAccess({
+          isShared: visibility === 'team',
+          status: row.status || 'active',
+          role: effectiveRole,
+          editingPolicy: visibility === 'team' ? (row.editingPolicy || 'review') : null,
+          contentLocked: visibility === 'team' && Boolean(row.currentPublishedVersionId),
+        }).canEdit,
         canPublish: (row.status || 'active') === 'active'
           && visibility === 'team'
           && (row.directRole === 'owner' || row.directRole === 'editor'),
@@ -835,10 +911,15 @@ export class WorkspaceService {
   }
 
   async renameWorkspace(workspaceId: string, userId: string, name: string): Promise<WorkspaceRecord> {
+    // Role check only, so a locked workspace can still be renamed. The published
+    // manifest carries file names, hashes and object keys — never the workspace
+    // name — so a rename provably cannot alter what was locked, and blocking it
+    // would mean withdrawing the lock and burning a version number to fix a typo
+    // in a title.
     const { workspace: currentWorkspace, membership } = await this.ensureMembership(
       workspaceId,
       userId,
-      { requireEdit: true },
+      { requireEditRole: true },
     );
     if (currentWorkspace.visibility === 'team' && membership.role !== 'owner') {
       throw new AccessDeniedError('Only the owner can rename a Shared workspace');
@@ -900,18 +981,19 @@ export class WorkspaceService {
     // A workspace owner always has full access to their own workspace, regardless of
     // visibility or team membership (owners should never be locked out of what they own).
     // This is resolved before any override so an owner is never recorded as one.
+    //
+    // Returns through `finalizeMembership` rather than constructing its own
+    // membership: this exit used to hard-code `canEdit: true`, which is how an
+    // owner silently escaped every rule the other exit applied.
     if (normalizedWorkspace.ownerId === userId) {
-      return {
-        workspace: normalizedWorkspace,
-        membership: {
-          workspaceId,
-          userId,
-          role: 'owner',
-          canEdit: true,
-          createdAt: normalizedWorkspace.createdAt,
-          updatedAt: normalizedWorkspace.updatedAt,
-        },
-      };
+      return this.finalizeMembership(normalizedWorkspace, {
+        workspaceId,
+        userId,
+        role: 'owner',
+        canEdit: true,
+        createdAt: normalizedWorkspace.createdAt,
+        updatedAt: normalizedWorkspace.updatedAt,
+      }, options);
     }
 
     // `isPlatformAdmin` rather than a bare `users.isAdmin` lookup: the governance
@@ -969,26 +1051,78 @@ export class WorkspaceService {
       await this.recordAdminOverrideAccess(normalizedWorkspace, userId);
     }
 
-    const editingPolicy = normalizedWorkspace.editingPolicy || 'review';
-    const roleCanEditShared = membership.role === 'owner'
-      || (
-        editingPolicy === 'direct'
-        && (membership.role === 'editor' || membership.role === 'contributor')
-      );
+    // The admin override is read-only by construction, so it keeps its own
+    // verdict rather than being re-derived from a role it does not really hold.
+    return this.finalizeMembership(
+      normalizedWorkspace,
+      { ...membership, role: membership.role as WorkspaceRole },
+      options,
+      usingAdminOverride ? adminOverride!.canEdit : undefined,
+    );
+  }
+
+  /**
+   * The one exit every `ensureMembership` path returns through.
+   *
+   * Both exits used to decide `canEdit` for themselves, and the owner exit
+   * decided `true` unconditionally — so any rule added to the general path
+   * silently did not apply to owners. Everything that resolves an edit right now
+   * happens here, once.
+   */
+  private finalizeMembership(
+    workspace: WorkspaceRecord,
+    membership: WorkspaceMembershipRecord,
+    options: MembershipCheckOptions,
+    overrideCanEdit?: boolean,
+  ): { workspace: WorkspaceRecord; membership: WorkspaceMembershipRecord } {
+    const isShared = workspace.visibility === 'team';
+    const editingPolicy = workspace.editingPolicy || 'review';
+    const contentLocked = isWorkspaceContentLocked(workspace);
+    const { canEditRole, canEdit } = resolveWorkspaceContentEditAccess({
+      isShared,
+      status: workspace.status,
+      role: membership.role,
+      editingPolicy,
+      contentLocked,
+    });
+
     const normalizedMembership: WorkspaceMembershipRecord = {
       ...membership,
-      role: membership.role as WorkspaceRole,
-      canEdit: usingAdminOverride ? adminOverride!.canEdit : roleCanEditShared,
+      canEdit: overrideCanEdit !== undefined ? overrideCanEdit : canEdit,
     };
+    const effectiveCanEditRole = overrideCanEdit !== undefined ? overrideCanEdit : canEditRole;
 
-    if (options.requireEdit && !normalizedMembership.canEdit) {
-      if (normalizedWorkspace.visibility === 'team' && editingPolicy === 'review') {
+    // Role before lock, deliberately. A viewer in a locked workspace must be
+    // told they are a viewer — pointing them at a private copy they may not
+    // create would send them down a path that dead-ends.
+    if ((options.requireEdit || options.requireEditRole) && !effectiveCanEditRole) {
+      if (isShared && editingPolicy === 'review') {
         throw new AccessDeniedError('This Shared workspace uses Review mode. Submit changes for review.');
       }
       throw new AccessDeniedError('Workspace is read-only for this user');
     }
+    if (options.requireEdit && !normalizedMembership.canEdit) {
+      throw new WorkspaceContentLockedError(workspace.id);
+    }
 
-    return { workspace: normalizedWorkspace, membership: normalizedMembership };
+    return { workspace, membership: normalizedMembership };
+  }
+
+  /**
+   * Whether this user may change workspace content right now, as a plain answer
+   * rather than a thrown refusal.
+   *
+   * For callers that must decide whether to *attempt* a write at all — an agent
+   * run deciding whether to commit its artifacts. The write itself stays behind
+   * `requireEdit`, so a missed check still fails closed.
+   */
+  async canWriteWorkspaceContent(workspaceId: string, userId: string): Promise<boolean> {
+    try {
+      const { membership } = await this.ensureMembership(workspaceId, userId);
+      return membership.canEdit;
+    } catch {
+      return false;
+    }
   }
 
   async getMcpServerPolicy(
@@ -1536,10 +1670,13 @@ export class WorkspaceService {
           userId: row.userId,
           displayName: row.displayName,
           role,
-          canEdit: role === 'owner' || (
-            workspace.editingPolicy === 'direct'
-            && (role === 'editor' || role === 'contributor')
-          ),
+          canEdit: resolveWorkspaceContentEditAccess({
+            isShared: true,
+            status: workspace.status,
+            role,
+            editingPolicy: workspace.editingPolicy,
+            contentLocked: isWorkspaceContentLocked(workspace),
+          }).canEdit,
         });
       });
     }

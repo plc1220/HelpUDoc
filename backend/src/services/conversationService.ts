@@ -35,6 +35,8 @@ interface AppendMessageOptions {
 
 interface EnsureConversationAccessOptions {
   requireEdit?: boolean;
+  /** Role check only; ignores a workspace content lock. See `MembershipCheckOptions`. */
+  requireEditRole?: boolean;
 }
 
 const metadataString = (metadata: unknown, key: string): string => {
@@ -192,6 +194,7 @@ export class ConversationService {
 
     await this.workspaceService.ensureMembership(workspaceId, userId, {
       requireEdit: options.requireEdit,
+      requireEditRole: options.requireEditRole,
     });
     if (conversation.createdBy && conversation.createdBy !== userId) {
       throw new NotFoundError('Conversation not found');

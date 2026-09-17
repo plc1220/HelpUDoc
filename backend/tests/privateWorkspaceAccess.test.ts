@@ -156,6 +156,8 @@ test('a purged workspace is unreachable even for its owner', async () => {
 function workspaceServiceForSharedWorkspace(
   editingPolicy: 'direct' | 'review',
   role: 'owner' | 'editor' | 'contributor' | 'viewer',
+  /** A current locked version makes the workspace read-only for content. */
+  currentPublishedVersionId: string | null = null,
 ) {
   const sharedWorkspace = {
     ...privateWorkspace,
@@ -165,6 +167,7 @@ function workspaceServiceForSharedWorkspace(
     visibility: 'team' as const,
     workspaceType: 'team' as const,
     editingPolicy,
+    currentPublishedVersionId,
   };
   const membership = {
     workspaceId: sharedWorkspace.id,
@@ -176,10 +179,17 @@ function workspaceServiceForSharedWorkspace(
   };
   const db = ((table: string) => {
     if (table === 'workspaces') {
-      return { where: () => ({ first: async () => sharedWorkspace }) };
+      return {
+        where: () => ({ first: async () => sharedWorkspace }),
+        // `getMcpServerPolicy` re-reads a narrow column set of its own.
+        select: () => ({ where: () => ({ first: async () => sharedWorkspace }) }),
+      };
     }
     if (table === 'workspace_members') {
       return { where: () => ({ first: async () => membership }) };
+    }
+    if (table === 'mcp_server_grants') {
+      return { select: () => ({ where: async () => [] }) };
     }
     throw new Error(`Unexpected query for ${table}`);
   }) as any;
@@ -212,6 +222,78 @@ test('Shared workspace owners retain direct edit access in Review mode', async (
     { requireEdit: true },
   );
   assert.equal(membership.canEdit, true);
+});
+
+// ─── Locked Shared workspaces ────────────────────────────────────────────────
+//
+// Locking used to be pure bookkeeping — it wrote a snapshot and left the live
+// workspace as writable as before, which is how a contributor could edit a
+// "locked" workspace and then find nothing would accept the result.
+
+test('a locked Shared workspace refuses a content write from its own owner', async () => {
+  const service = workspaceServiceForSharedWorkspace('direct', 'owner', 'version-1');
+  await assert.rejects(
+    service.ensureMembership('workspace-shared', 'owner-user', { requireEdit: true }),
+    (error: any) => error.statusCode === 409
+      && error.details?.code === 'WORKSPACE_CONTENT_LOCKED',
+  );
+});
+
+test('a locked Shared workspace refuses a Freeflow contributor', async () => {
+  const service = workspaceServiceForSharedWorkspace('direct', 'contributor', 'version-1');
+  await assert.rejects(
+    service.ensureMembership('workspace-shared', 'collaborator-user', { requireEdit: true }),
+    (error: any) => error.details?.code === 'WORKSPACE_CONTENT_LOCKED',
+  );
+});
+
+test('a viewer in a locked workspace is told they are a viewer, not that it is locked', async () => {
+  // Guard order matters: pointing a viewer at a private copy they may not
+  // create would send them down a path that dead-ends.
+  const service = workspaceServiceForSharedWorkspace('direct', 'viewer', 'version-1');
+  await assert.rejects(
+    service.ensureMembership('workspace-shared', 'collaborator-user', { requireEdit: true }),
+    /read-only for this user/,
+  );
+});
+
+test('requireEditRole ignores the lock so reads keep working', async () => {
+  const service = workspaceServiceForSharedWorkspace('direct', 'contributor', 'version-1');
+  const { membership } = await service.ensureMembership(
+    'workspace-shared',
+    'collaborator-user',
+    { requireEditRole: true },
+  );
+  // The role would permit editing; the lock is why it cannot happen right now.
+  assert.equal(membership.canEdit, false);
+});
+
+test('requireEditRole still refuses a viewer', async () => {
+  const service = workspaceServiceForSharedWorkspace('direct', 'viewer', 'version-1');
+  await assert.rejects(
+    service.ensureMembership('workspace-shared', 'collaborator-user', { requireEditRole: true }),
+    /read-only for this user/,
+  );
+});
+
+test('withdrawing the lock restores direct editing', async () => {
+  const service = workspaceServiceForSharedWorkspace('direct', 'contributor', null);
+  const { membership } = await service.ensureMembership(
+    'workspace-shared',
+    'collaborator-user',
+    { requireEdit: true },
+  );
+  assert.equal(membership.canEdit, true);
+});
+
+test('a locked workspace reports canWriteWorkspace false to the agent', async () => {
+  const service = workspaceServiceForSharedWorkspace('direct', 'owner', 'version-1');
+  const policy = await service.getMcpServerPolicy('workspace-shared', 'owner-user');
+  assert.equal(policy.canWriteWorkspace, false);
+  // Deliberately still `shared_live`: `published_read_only` additionally
+  // collapses the runtime skill list to pinned-only, which would silently strip
+  // every skill from a locked workspace that has no pins.
+  assert.equal(policy.workspaceMode, 'shared_live');
 });
 
 test('workspace object bucket denies anonymous download in the GKE deployment', () => {

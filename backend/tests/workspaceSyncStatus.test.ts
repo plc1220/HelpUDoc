@@ -132,6 +132,7 @@ function sharedWorkspaceHarness(options: {
   unsharedAt?: string | null;
   trashedAt?: string | null;
   purgeAfter?: string | null;
+  currentPublishedVersionId?: string | null;
 } = {}) {
   const {
     contentRevision = 4,
@@ -141,6 +142,7 @@ function sharedWorkspaceHarness(options: {
     unsharedAt = null,
     trashedAt = null,
     purgeAfter = null,
+    currentPublishedVersionId = 'version-1',
   } = options;
 
   const userId = 'user-1';
@@ -158,7 +160,7 @@ function sharedWorkspaceHarness(options: {
     trashedAt,
     purgeAfter,
     teamId: 'team-1',
-    currentPublishedVersionId: 'version-1',
+    currentPublishedVersionId,
     contentRevision,
     createdAt: '2026-08-01T00:00:00.000Z',
     updatedAt,
@@ -475,13 +477,30 @@ test('owner lifecycle rows are read-only and expose trash metadata', async () =>
 });
 
 test('an unshared owner can keep editing but cannot publish until reshare', async () => {
+  // No current locked version: unshare is an access state, and this asserts it
+  // does not by itself make the workspace read-only.
   const { service, userId } = sharedWorkspaceHarness({
     status: 'unshared',
     unsharedAt: '2026-08-07T10:00:00.000Z',
+    currentPublishedVersionId: null,
   });
   const workspaces = await service.listWorkspacesForUser(userId);
   assert.equal(workspaces[0].canEdit, true);
   assert.equal(workspaces[0].canPublish, false);
+});
+
+test('a locked Shared workspace reports canEdit false to its own owner', async () => {
+  const { service, userId } = sharedWorkspaceHarness({ currentPublishedVersionId: 'version-1' });
+  const workspaces = await service.listWorkspacesForUser(userId);
+  assert.equal(workspaces[0].canEdit, false);
+  // Still publishable: locking blocks content edits, not the release actions.
+  assert.equal(workspaces[0].canPublish, true);
+});
+
+test('withdrawing the lock returns canEdit to the owner', async () => {
+  const { service, userId } = sharedWorkspaceHarness({ currentPublishedVersionId: null });
+  const workspaces = await service.listWorkspacesForUser(userId);
+  assert.equal(workspaces[0].canEdit, true);
 });
 
 // ─── File-level timestamp drift (direct file insertion without workspace bump) ─
