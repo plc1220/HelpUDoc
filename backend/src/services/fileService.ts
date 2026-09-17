@@ -876,12 +876,33 @@ export class FileService {
       }]));
   }
 
+  /**
+   * Delegate to the workspace service so the agent-run worker can ask whether a
+   * commit is worth attempting without taking a dependency on that service —
+   * it already holds a `FileService` and nothing else workspace-shaped.
+   */
+  async canWriteWorkspaceContent(workspaceId: string, userId: string): Promise<boolean> {
+    return this.workspaceService.canWriteWorkspaceContent(workspaceId, userId);
+  }
+
   async reconcileWorkspaceMirror(
     workspaceId: string,
     userId: string,
     assertLeaseOwned?: () => Promise<void>,
   ): Promise<void> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    // Role check only. This runs at the *start* of every agent run to materialise
+    // the sandbox, so requiring a live edit right would kill every run in a
+    // locked workspace before the agent could so much as read a file — and a
+    // read-only run legitimately needs its files on disk.
+    const { membership } = await this.workspaceService.ensureMembership(
+      workspaceId,
+      userId,
+      { requireEditRole: true },
+    );
+    // The one part of this that touches the database rather than the disk
+    // mirror. Derived here rather than passed by callers, so it cannot be set
+    // wrongly at a call site (`LEARNINGS.md` §12).
+    const mayWriteDatabase = membership.canEdit;
     const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
     await fs.mkdir(workspacePath, { recursive: true });
     const liveFiles = await this.db('files')
@@ -892,7 +913,7 @@ export class FileService {
       await assertLeaseOwned?.();
       const relativeName = this.normalizeRelativePath(String(file.name));
       if (this.isInternalWorkspacePath(relativeName)) continue;
-      await this.ensureCanonicalVersion(file, userId);
+      if (mayWriteDatabase) await this.ensureCanonicalVersion(file, userId);
       const canonicalFile = await this.db('files').where({ id: file.id }).first();
       if (!canonicalFile || canonicalFile.deletedAt) continue;
       const canonicalName = this.normalizeRelativePath(String(canonicalFile.name));

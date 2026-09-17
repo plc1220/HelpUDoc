@@ -3370,9 +3370,21 @@ async function runAgentRunWorker(
   let artifactsCommitted = false;
   let artifactBaseline: WorkspaceArtifactBaseline | null = null;
   let agentStreamEstablished = false;
+  // Resolved once per run, not per commit: a workspace locked mid-run should not
+  // change what this run is allowed to do half way through.
+  const workspaceWritable = fileService && params.userId
+    ? await fileService.canWriteWorkspaceContent(params.workspaceId, params.userId)
+    : false;
 
   const commitRunArtifacts = async () => {
     if (artifactsCommitted || !fileService || !params.userId) return;
+    // A locked workspace refuses the commit anyway; skipping it turns what would
+    // be a failed run into a run that simply wrote nothing, which is what the
+    // agent was told to expect via `canWriteWorkspace`.
+    if (!workspaceWritable) {
+      artifactsCommitted = true;
+      return;
+    }
     // A failed connection cannot have generated workspace artifacts. Skipping
     // this commit also keeps a secondary lease failure from masking the real
     // transport error during stale-run recovery.
