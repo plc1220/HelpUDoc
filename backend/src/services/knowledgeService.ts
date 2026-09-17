@@ -1696,7 +1696,7 @@ export class KnowledgeService {
   }
 
   async list(workspaceId: string, userId: string) {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEditRole: true });
     const rows = await this.baseQuery()
       .where('knowledge_sources.workspaceId', workspaceId)
       .andWhere('knowledge_sources.isGlobal', false)
@@ -1731,7 +1731,7 @@ export class KnowledgeService {
 
   async getById(workspaceId: string, id: number, userId: string, options: KnowledgeOperationOptions = {}) {
     await this.workspaceService.ensureMembership(workspaceId, userId, {
-      requireEdit: true,
+      requireEditRole: true,
       allowSystemAdmin: options.allowSystemAdmin,
     });
     const row = await this.baseQuery()

@@ -59,7 +59,7 @@ export default function meMemoryRoutes(
         if (!payload.workspaceId) {
           return res.status(400).json({ error: 'workspaceId is required for workspace memory' });
         }
-        await workspaceService.ensureMembership(payload.workspaceId, user.userId, { requireEdit: true });
+        await workspaceService.ensureMembership(payload.workspaceId, user.userId, { requireEditRole: true });
       }
       const updated = await userMemoryService.updateMemorySection({
         userId: user.userId,
