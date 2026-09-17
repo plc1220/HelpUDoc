@@ -37,6 +37,7 @@ import {
   normalizeUserFacingSummary,
   stripOperationalThinkingBlocks,
 } from '../../utils/toolActivitySummary';
+import { getAgentDurationBounds } from '../../utils/agentDuration';
 import { buildApiUrl } from '../../services/apiClient';
 import LumoMarkdown from '../markdown/LumoMarkdown';
 import { stripDeadFrontendSlidesUiReferences } from '../../utils/chatMarkdown';
@@ -1822,8 +1823,9 @@ export default function ChatMessageBubble({
           || (latestToolEvent ? getFriendlyToolName(latestToolEvent.name) : '')
           || toolDigest.currentLabel
           || 'Agent activity';
-  const activityDuration = latestToolEvent?.finishedAt
-    ? formatElapsedTime(latestToolEvent.startedAt, now, latestToolEvent.finishedAt)
+  const durationBounds = getAgentDurationBounds(message, effectiveStatus === 'running', now);
+  const activityDuration = durationBounds
+    ? formatElapsedTime(durationBounds.startedAt, now, durationBounds.finishedAt)
     : undefined;
   const activityMetaLabel = [
     `${activityEventCount} recorded ${activityEventCount === 1 ? 'step' : 'steps'}`,
