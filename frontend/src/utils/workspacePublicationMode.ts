@@ -24,13 +24,32 @@ export const isPublishedVersionMode = (
 ): boolean => Boolean(selection && workspace && selection.workspaceId === workspace.id);
 
 /**
+ * A Shared workspace holding a current locked version is read-only for direct
+ * content edits — for everyone, its owner included. Changes reach it only
+ * through a private copy, a review submission, and a publisher applying it.
+ *
+ * The server is the authority (`canEdit` already carries this), but the state is
+ * derived here too so the UI can say *why* the canvas is read-only and offer the
+ * private-copy route, rather than just greying controls out.
+ */
+export const isWorkspaceContentLocked = (
+  workspace: Pick<Workspace, 'visibility' | 'currentPublishedVersionId'> | null | undefined,
+): boolean => workspace?.visibility === 'team' && Boolean(workspace.currentPublishedVersionId);
+
+/**
  * Single source of truth for "may the user mutate what is currently on the canvas?".
- * Workspace permissions still apply; published mode is an additional, stricter gate.
+ * Workspace permissions still apply; published mode and the workspace lock are
+ * additional, stricter gates.
  */
 export const canMutateWorkspaceContent = (
-  workspace: Pick<Workspace, 'id' | 'canEdit'> | null | undefined,
+  workspace:
+    | Pick<Workspace, 'id' | 'canEdit' | 'visibility' | 'currentPublishedVersionId'>
+    | null
+    | undefined,
   selection: Pick<PublishedVersionSelection, 'workspaceId'> | null | undefined,
-): boolean => Boolean(workspace?.canEdit) && !isPublishedVersionMode(selection, workspace);
+): boolean => Boolean(workspace?.canEdit)
+  && !isWorkspaceContentLocked(workspace)
+  && !isPublishedVersionMode(selection, workspace);
 
 export const publishedVersionLabel = (
   selection: Pick<PublishedVersionSelection, 'versionNumber' | 'isCurrent'>,

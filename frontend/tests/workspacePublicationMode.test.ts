@@ -10,6 +10,7 @@ import {
   canMutateWorkspaceContent,
   isPublishedVersionFileId,
   isPublishedVersionMode,
+  isWorkspaceContentLocked,
   publishedVersionLabel,
   type PublishedVersionSelection,
 } from '../src/utils/workspacePublicationMode.ts';
@@ -102,4 +103,64 @@ test('snapshot file ids are distinguishable from Working-version file ids', () =
   assert.equal(isPublishedVersionFileId(1421), false);
   assert.equal(isPublishedVersionFileId(null), false);
   assert.equal(isPublishedVersionFileId(undefined), false);
+});
+
+// ─── Locked workspaces ───────────────────────────────────────────────────────
+//
+// Locking a Shared workspace makes it read-only for direct edits, for everyone
+// including its owner. It used to save a snapshot and leave the live workspace
+// as writable as before, which is how a contributor could edit a "locked"
+// workspace and then find nothing would accept the result.
+
+const lockedWorkspace: Workspace = {
+  ...sharedWorkspace,
+  currentPublishedVersionId: 'version-2',
+};
+
+test('a Shared workspace holding a current version is locked', () => {
+  assert.equal(isWorkspaceContentLocked(lockedWorkspace), true);
+});
+
+test('a Shared workspace with no current version is not locked', () => {
+  assert.equal(isWorkspaceContentLocked({ ...sharedWorkspace, currentPublishedVersionId: null }), false);
+});
+
+test('a private workspace is never locked, even carrying a version id', () => {
+  assert.equal(isWorkspaceContentLocked({
+    ...sharedWorkspace,
+    visibility: 'private',
+    currentPublishedVersionId: 'version-2',
+  }), false);
+});
+
+test('a missing workspace is not locked', () => {
+  assert.equal(isWorkspaceContentLocked(null), false);
+  assert.equal(isWorkspaceContentLocked(undefined), false);
+});
+
+test('the canvas is read-only in a locked workspace even for an owner who can edit', () => {
+  // `canEdit` arrives from the server already lock-aware; this asserts the
+  // client reaches the same verdict rather than depending on that alone.
+  assert.equal(canMutateWorkspaceContent(lockedWorkspace, null), false);
+});
+
+test('withdrawing the lock returns the canvas to editable', () => {
+  assert.equal(
+    canMutateWorkspaceContent({ ...sharedWorkspace, currentPublishedVersionId: null }, null),
+    true,
+  );
+});
+
+test('a locked workspace stays read-only with a snapshot open', () => {
+  assert.equal(canMutateWorkspaceContent(lockedWorkspace, selection()), false);
+});
+
+test('the lock does not grant edit rights the role never had', () => {
+  assert.equal(
+    canMutateWorkspaceContent(
+      { ...sharedWorkspace, canEdit: false, currentPublishedVersionId: null },
+      null,
+    ),
+    false,
+  );
 });

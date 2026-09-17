@@ -43,6 +43,7 @@ import {
   isDraftReviewChangesActionable,
   isDraftSyncActionable,
 } from '../utils/workspaceDraftSync';
+import { isWorkspaceContentLocked } from '../utils/workspacePublicationMode';
 import {
   getPrivateWorkspaceStatusLabel,
   getSharedWorkspaceStatusDetails,
@@ -65,6 +66,7 @@ interface WorkspaceListProps {
   onHistoryWorkspace?: (workspace: Workspace) => void;
   onWithdrawWorkspace?: (workspace: Workspace) => void;
   onManageTeamAccess?: (workspace: Workspace) => void;
+  onOpenPrivateCopy?: (workspace: Workspace) => void;
   onSyncDraftWorkspace?: (workspace: Workspace) => void;
   onReviewDraftChanges?: (workspace: Workspace) => void;
   onLifecycleWorkspace?: (workspace: Workspace, action: WorkspaceLifecycleAction) => void;
@@ -83,6 +85,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   onHistoryWorkspace,
   onWithdrawWorkspace,
   onManageTeamAccess,
+  onOpenPrivateCopy,
   onSyncDraftWorkspace,
   onReviewDraftChanges,
   onLifecycleWorkspace,
@@ -142,6 +145,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     const isWithdrawn = workspace.publicationStatus === 'withdrawn';
     const hasPublishedVersions = Number(workspace.publishedVersionCount || 0) > 0
       || workspace.currentPublishedVersionNumber != null;
+    const isContentLocked = isWorkspaceContentLocked(workspace);
+    // Contributors and above may propose. A viewer has nowhere to take a copy,
+    // so offering one would dead-end them.
+    const canProposeChanges = workspace.role === 'owner'
+      || workspace.role === 'editor'
+      || workspace.role === 'contributor';
     const canSyncDraft = isDraftSyncActionable(workspace) && Boolean(onSyncDraftWorkspace);
     const canReviewDraftChanges = isDraftReviewChangesActionable(workspace)
       && Boolean(onReviewDraftChanges);
@@ -207,6 +216,15 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         label: 'Lock current changes',
         icon: <Publish fontSize="small" />,
         onClick: () => onPublishWorkspace(workspace),
+      } : null,
+      isSharedWorkspace
+        && lifecycleStatus === 'active'
+        && isContentLocked
+        && canProposeChanges
+        && onOpenPrivateCopy ? {
+        label: 'Work in a private copy',
+        icon: <Difference fontSize="small" />,
+        onClick: () => onOpenPrivateCopy(workspace),
       } : null,
       isSharedWorkspace && lifecycleStatus !== 'trashed' && hasPublishedVersions && onHistoryWorkspace ? {
         label: `View locked versions`,

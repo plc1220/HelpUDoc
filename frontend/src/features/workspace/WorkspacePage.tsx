@@ -138,6 +138,7 @@ import {
   canMutateWorkspaceContent,
   isPublishedVersionFileId,
   isPublishedVersionMode,
+  isWorkspaceContentLocked,
   publishedVersionLabel,
   type PublishedVersionSelection,
 } from '../../utils/workspacePublicationMode';
@@ -1002,6 +1003,9 @@ export default function WorkspacePage() {
    */
   const isPublishedMode = isPublishedVersionMode(publishedVersionView, selectedWorkspace);
   const canMutateContent = canMutateWorkspaceContent(selectedWorkspace, publishedVersionView);
+  // Shown while the live Working version is open. The snapshot strip already
+  // says "Read-only", so the two are deliberately mutually exclusive.
+  const isSelectedWorkspaceLocked = isWorkspaceContentLocked(selectedWorkspace) && !isPublishedMode;
   const canSyncSelectedDraft = isDraftSyncActionable(selectedWorkspace);
   /**
    * A sync is rewriting this workspace's files right now.
@@ -3870,6 +3874,25 @@ export default function WorkspacePage() {
   const handleExitPublishedVersion = useCallback(() => {
     resetWorkspaceArtifactState();
   }, [resetWorkspaceArtifactState]);
+
+  /**
+   * Open (or create) the caller's private copy of a Shared workspace named by a
+   * sidebar row, which is not necessarily the workspace currently open.
+   */
+  const handleOpenPrivateCopyForWorkspace = useCallback(async (workspace: Workspace) => {
+    if (workspace.visibility !== 'team') return;
+    try {
+      const created = hydrateWorkspace(await createPrivateWorkspaceCopy(workspace.id));
+      const refreshed = await refreshWorkspaceList();
+      const privateCopy = refreshed.find((candidate) => candidate.id === created.id) || created;
+      handleSelectWorkspace(privateCopy);
+    } catch (error) {
+      console.error('Failed to open private working copy', error);
+      addLocalSystemMessage(
+        error instanceof Error ? error.message : 'Failed to open private working copy.',
+      );
+    }
+  }, [addLocalSystemMessage, handleSelectWorkspace, refreshWorkspaceList]);
 
   const handleOpenPrivateWorkingCopy = useCallback(async () => {
     if (!selectedWorkspace || selectedWorkspace.visibility !== 'team') {
@@ -8713,6 +8736,7 @@ export default function WorkspacePage() {
           onPublishWorkspace={setPublishWorkspaceTarget}
           onHistoryWorkspace={setHistoryWorkspaceTarget}
           onWithdrawWorkspace={setWithdrawWorkspaceTarget}
+          onOpenPrivateCopy={handleOpenPrivateCopyForWorkspace}
           onManageTeamAccess={handleManageTeamAccess}
           onSyncDraftWorkspace={handleSyncDraftWorkspace}
           onReviewDraftChanges={handleReviewDraftChanges}
@@ -9278,6 +9302,52 @@ export default function WorkspacePage() {
                   >
                     Return to Working version
                   </button>
+                </div>
+              ) : null}
+              {isSelectedWorkspaceLocked && selectedWorkspace ? (
+                <div
+                  role="status"
+                  className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs ${
+                    isDarkMode
+                      ? 'border-b border-amber-900/60 bg-amber-950/40 text-amber-200'
+                      : 'border-b border-amber-200 bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  <span className="font-semibold">
+                    {selectedWorkspace.currentPublishedVersionNumber != null
+                      ? `Locked v${selectedWorkspace.currentPublishedVersionNumber}`
+                      : 'Locked'}
+                  </span>
+                  <span>
+                    Direct editing is off for everyone. Work in a private copy and submit your
+                    changes for review.
+                  </span>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { void handleOpenPrivateWorkingCopy(); }}
+                      className={`inline-flex h-7 items-center rounded-lg px-2.5 font-semibold ${
+                        isDarkMode
+                          ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                          : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                      }`}
+                    >
+                      Work in a private copy
+                    </button>
+                    {selectedWorkspace.canPublish ? (
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawWorkspaceTarget(selectedWorkspace)}
+                        className={`inline-flex h-7 items-center rounded-lg px-2.5 font-semibold ${
+                          isDarkMode
+                            ? 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        Withdraw lock
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
               <div className="flex-1 flex min-h-0">

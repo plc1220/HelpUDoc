@@ -316,7 +316,12 @@ export default function WorkspaceReviewChangesDialog({
         <Typography variant="caption" color="text.secondary">
           {changes?.proposal
             ? 'This draft already has an open submission for review.'
-            : 'Submitting creates an immutable snapshot for publisher review.'}
+            : changes && !changes.hasChanges
+              // The button was simply disabled here, which is how someone who
+              // had edited the Shared workspace directly — and so had an empty
+              // diff — ended up with no way forward and no explanation.
+              ? 'No changes to submit yet. Edit files in this private copy, then submit.'
+              : 'Submitting creates an immutable snapshot for publisher review.'}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button label="Close" variant="ghost" onClick={onClose} />
