@@ -1,4 +1,4 @@
-import type { Workspace } from '../types';
+import type { File, Workspace } from '../types';
 
 /**
  * A published version is an immutable snapshot (spec section 3.2). When one is selected the
@@ -37,9 +37,25 @@ export const isWorkspaceContentLocked = (
 ): boolean => workspace?.visibility === 'team' && Boolean(workspace.currentPublishedVersionId);
 
 /**
+ * A file that has been signed off is read-only for content, so that the approval
+ * describes what is actually there. The way back in is to move the status —
+ * *Send back to review* or *Return to draft* — which is an approver's call and
+ * demands a written reason.
+ *
+ * Only in a Shared workspace. A private copy inherits the status from sync but
+ * not the published artifact, and exists precisely to draft changes to a
+ * signed-off document.
+ */
+export const isFileContentProtected = (
+  file: Pick<File, 'status'> | null | undefined,
+  workspace: Pick<Workspace, 'visibility'> | null | undefined,
+): boolean => workspace?.visibility === 'team'
+  && (file?.status === 'approved' || file?.status === 'published');
+
+/**
  * Single source of truth for "may the user mutate what is currently on the canvas?".
- * Workspace permissions still apply; published mode and the workspace lock are
- * additional, stricter gates.
+ * Workspace permissions still apply; published mode, the workspace lock and a
+ * signed-off file are additional, stricter gates.
  */
 export const canMutateWorkspaceContent = (
   workspace:
@@ -47,8 +63,10 @@ export const canMutateWorkspaceContent = (
     | null
     | undefined,
   selection: Pick<PublishedVersionSelection, 'workspaceId'> | null | undefined,
+  file?: Pick<File, 'status'> | null,
 ): boolean => Boolean(workspace?.canEdit)
   && !isWorkspaceContentLocked(workspace)
+  && !isFileContentProtected(file, workspace)
   && !isPublishedVersionMode(selection, workspace);
 
 export const publishedVersionLabel = (

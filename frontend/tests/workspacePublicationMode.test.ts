@@ -10,6 +10,7 @@ import {
   canMutateWorkspaceContent,
   isPublishedVersionFileId,
   isPublishedVersionMode,
+  isFileContentProtected,
   isWorkspaceContentLocked,
   publishedVersionLabel,
   type PublishedVersionSelection,
@@ -163,4 +164,41 @@ test('the lock does not grant edit rights the role never had', () => {
     ),
     false,
   );
+});
+
+// ─── Signed-off files ────────────────────────────────────────────────────────
+//
+// Status used to be a record rather than a lock: approval pinned a version,
+// editing bumped past it, and the only trace was a drift badge.
+
+const openWorkspace: Workspace = { ...sharedWorkspace, currentPublishedVersionId: null };
+
+test('approved and published files are read-only; earlier states are not', () => {
+  assert.equal(isFileContentProtected({ status: 'approved' }, openWorkspace), true);
+  assert.equal(isFileContentProtected({ status: 'published' }, openWorkspace), true);
+  assert.equal(isFileContentProtected({ status: 'in_review' }, openWorkspace), false);
+  assert.equal(isFileContentProtected({ status: 'draft' }, openWorkspace), false);
+});
+
+test('a private workspace never protects a file, whatever status it inherited', () => {
+  // Sync copies the status but leaves the published artifact behind, and a
+  // private copy exists to draft changes to a signed-off document.
+  const privateCopy: Workspace = { ...openWorkspace, visibility: 'private' };
+  assert.equal(isFileContentProtected({ status: 'published' }, privateCopy), false);
+  assert.equal(isFileContentProtected({ status: 'approved' }, privateCopy), false);
+});
+
+test('a missing file or workspace is not protected', () => {
+  assert.equal(isFileContentProtected(null, openWorkspace), false);
+  assert.equal(isFileContentProtected({ status: 'approved' }, null), false);
+});
+
+test('the canvas refuses an approved file even in an editable workspace', () => {
+  assert.equal(canMutateWorkspaceContent(openWorkspace, null, { status: 'approved' }), false);
+  assert.equal(canMutateWorkspaceContent(openWorkspace, null, { status: 'draft' }), true);
+});
+
+test('omitting the file leaves the workspace-level answer unchanged', () => {
+  // Callers that ask about the canvas without a file open must not be refused.
+  assert.equal(canMutateWorkspaceContent(openWorkspace, null), true);
 });

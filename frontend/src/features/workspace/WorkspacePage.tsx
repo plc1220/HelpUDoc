@@ -18,7 +18,7 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History } from 'lucide-react';
+import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History, Lock } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -137,6 +137,7 @@ import {
 import {
   canMutateWorkspaceContent,
   isPublishedVersionFileId,
+  isFileContentProtected,
   isPublishedVersionMode,
   isWorkspaceContentLocked,
   publishedVersionLabel,
@@ -1002,7 +1003,6 @@ export default function WorkspacePage() {
    * independently of the workspace permissions that normally drive editability.
    */
   const isPublishedMode = isPublishedVersionMode(publishedVersionView, selectedWorkspace);
-  const canMutateContent = canMutateWorkspaceContent(selectedWorkspace, publishedVersionView);
   // Shown while the live Working version is open. The snapshot strip already
   // says "Read-only", so the two are deliberately mutually exclusive.
   const isSelectedWorkspaceLocked = isWorkspaceContentLocked(selectedWorkspace) && !isPublishedMode;
@@ -1316,6 +1316,18 @@ export default function WorkspacePage() {
   const visibleFiles = useMemo(
     () => (showSystemFiles ? files : files.filter((file) => !isSystemFile(file))),
     [files, showSystemFiles],
+  );
+
+  // The open file is part of the question now: a signed-off document is
+  // read-only even in a workspace the user may otherwise edit.
+  const canMutateContent = canMutateWorkspaceContent(
+    selectedWorkspace,
+    publishedVersionView,
+    selectedFile ? fileStatusById[String(selectedFile.id)] : null,
+  );
+  const isSelectedFileProtected = isFileContentProtected(
+    selectedFile ? fileStatusById[String(selectedFile.id)] : null,
+    selectedWorkspace,
   );
   const visibleFolderPaths = useMemo(
     () => (showSystemFiles ? folderPaths : folderPaths.filter((path) => !isSystemFile({ id: `folder:${path}`, name: path }))),
@@ -9622,6 +9634,23 @@ export default function WorkspacePage() {
                   }`}>
                     <div className="flex items-center gap-3">
                       <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
+                      {/* The chip beside it already names the status; this says
+                          what the status *does*, which is the part a user hits
+                          when the editor will not take their typing. */}
+                      {isSelectedFileProtected ? (
+                        <span
+                          role="status"
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                            isDarkMode
+                              ? 'bg-amber-500/15 text-amber-200'
+                              : 'bg-amber-50 text-amber-700'
+                          }`}
+                          title="Send it back to review or return it to draft before editing."
+                        >
+                          <Lock size={11} />
+                          Read-only
+                        </span>
+                      ) : null}
                       {selectedFile && selectedWorkspace && fileStatusById[String(selectedFile.id)] && (
                         <FileStatusChip
                           // The chip's identity is the file it describes. The
