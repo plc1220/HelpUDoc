@@ -185,6 +185,30 @@ export const hasDrifted = (file: {
   return false;
 };
 
+/**
+ * A signed-off file in a Shared workspace is read-only for content.
+ *
+ * Status used to be a record rather than a lock: approval pinned
+ * `approvedAtVersion`, editing bumped `files.version`, and the only trace was a
+ * drift badge somebody had to notice. Nothing refused the write — an agent run
+ * would overwrite a document a publisher signed off an hour earlier.
+ *
+ * Deliberately scoped to Shared workspaces. Sync copies `files.status` into a
+ * private copy but leaves the published artifact behind, so a private row can
+ * say `published` while owning nothing in the bucket. `allowedTransitionsFor`
+ * already strips every route out of that state there, so freezing the content
+ * too would leave the file with no writes *and* no way back — and a private copy
+ * exists precisely to draft changes to a signed-off document.
+ */
+export const isFileContentProtected = (
+  file: { status?: unknown },
+  workspace: Pick<WorkspaceRecord, 'visibility' | 'workspaceType'>,
+): boolean => {
+  if (!isSharedWorkspaceRecord(workspace)) return false;
+  const status = normalizeFileStatus(file.status);
+  return status === 'approved' || status === 'published';
+};
+
 export const allowedTransitionsFor = (
   status: FileStatus,
   role: WorkspaceRole,

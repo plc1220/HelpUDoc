@@ -38,6 +38,24 @@ export class ConflictError extends HttpError {
  * the id, and joining for a number would add a query to the hottest
  * authorization path in the service for something the client already knows.
  */
+/**
+ * A write was refused because the file itself is signed off — approved or
+ * published — not because the caller lacks permission. An owner hits this too.
+ *
+ * 409 for the same reason as `WorkspaceContentLockedError`, and it names the way
+ * out: the status has to move back before the content can change, which is a
+ * Publisher-or-Owner action that already demands a written reason.
+ */
+export class FileContentProtectedError extends ConflictError {
+  constructor(fileId: number, status: string, fileName?: string) {
+    super(
+      `${fileName ? `"${fileName}"` : 'This file'} is ${status}. `
+      + 'Send it back to review or return it to draft before editing.',
+      { code: 'FILE_CONTENT_PROTECTED', fileId, status },
+    );
+  }
+}
+
 export class WorkspaceContentLockedError extends ConflictError {
   constructor(workspaceId: string) {
     super(

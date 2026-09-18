@@ -4,6 +4,7 @@ import type { Knex } from 'knex';
 import { DatabaseService } from '../services/databaseService';
 import { UserService, isUserDeactivated } from '../services/userService';
 import { WorkspaceService, isWorkspaceContentLocked } from '../services/workspaceService';
+import { isFileContentProtected } from '../services/fileStatusService';
 
 const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'Local User';
 const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || '';
@@ -40,6 +41,33 @@ const isWorkspaceLockedForCollab = async (db: Knex, workspaceId: string): Promis
   return locked;
 };
 
+/**
+ * Whether the document's own file is signed off, cached on the same terms as the
+ * workspace lock and for the same reason: `store` fires per debounced change.
+ */
+const fileProtectedCache = new Map<string, { protectedFile: boolean; at: number }>();
+
+const isFileProtectedForCollab = async (
+  db: Knex,
+  workspaceId: string,
+  fileId: string,
+): Promise<boolean> => {
+  const key = `${workspaceId}:${fileId}`;
+  const cached = fileProtectedCache.get(key);
+  const now = Date.now();
+  if (cached && now - cached.at < WORKSPACE_LOCK_CACHE_MS) return cached.protectedFile;
+  const numericId = Number(fileId);
+  if (!Number.isFinite(numericId)) return false;
+  const [file, workspace] = await Promise.all([
+    db('files').select('status').where({ id: numericId, workspaceId }).whereNull('deletedAt').first(),
+    db('workspaces').select('visibility', 'workspaceType').where({ id: workspaceId }).first(),
+  ]);
+  const protectedFile = Boolean(file) && Boolean(workspace)
+    && isFileContentProtected(file as any, workspace as any);
+  fileProtectedCache.set(key, { protectedFile, at: now });
+  return protectedFile;
+};
+
 class PostgresCollabExtension extends Database {
   constructor(private readonly db: Knex) {
     super({
@@ -51,8 +79,11 @@ class PostgresCollabExtension extends Database {
         // `onAuthenticate` sets `readOnly` once, at the handshake. A session that
         // was already open when the workspace was locked would otherwise keep
         // persisting, so the authority has to sit here, where the write happens.
-        const { workspaceId } = parseDocumentName(documentName);
+        const { workspaceId, fileId } = parseDocumentName(documentName);
         if (await isWorkspaceLockedForCollab(this.db, workspaceId)) return;
+        // Same reasoning one level down: the file may have been approved after
+        // this session opened, and `onAuthenticate` resolved that once.
+        if (await isFileProtectedForCollab(this.db, workspaceId, fileId)) return;
         const buffer = Buffer.isBuffer(state) ? state : Buffer.from(state);
         await this.db('collab_documents')
           .insert({
@@ -120,12 +151,15 @@ export function startCollabServer(databaseService: DatabaseService, userService:
       }
 
       const file = await db('files')
-        .select('id', 'workspaceId')
+        .select('id', 'workspaceId', 'status')
         .where({ id: fileIdNumber })
         .first();
 
       if (!file || file.workspaceId !== workspaceId) {
         throw new Error('File not found');
+      }
+      if (isFileContentProtected(file, membership.workspace)) {
+        connectionConfig.readOnly = true;
       }
 
       return {

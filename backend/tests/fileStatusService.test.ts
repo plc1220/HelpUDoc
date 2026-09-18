@@ -10,6 +10,7 @@ import {
   allowedTransitionsFor,
   hasDrifted,
   normalizeFileStatus,
+  isFileContentProtected,
 } from '../src/services/fileStatusService';
 import { readPayload } from './helpers/auditHarness';
 
@@ -605,4 +606,30 @@ test('one lookup covers every actor in a flush', async () => {
   // repeated actor is asked for once.
   assert.equal(lookups.length, 1);
   assert.deepEqual(lookups[0].sort(), ['user-1', 'user-2']);
+});
+
+// ─── Signed-off files are read-only ──────────────────────────────────────────
+//
+// Status used to be a record rather than a lock: approval pinned a version,
+// editing bumped past it, and the only trace was a drift badge. An agent run
+// would overwrite a document a publisher had signed off.
+
+const shared = { visibility: 'team' as const, workspaceType: 'team' as const };
+const privateWs = { visibility: 'private' as const, workspaceType: 'private' as const };
+
+test('approved and published refuse content writes; draft and in_review do not', () => {
+  assert.equal(isFileContentProtected({ status: 'approved' }, shared), true);
+  assert.equal(isFileContentProtected({ status: 'published' }, shared), true);
+  assert.equal(isFileContentProtected({ status: 'in_review' }, shared), false);
+  assert.equal(isFileContentProtected({ status: 'draft' }, shared), false);
+  assert.equal(isFileContentProtected({}, shared), false, 'a missing status reads as draft');
+});
+
+test('a private copy is never protected, whatever status it inherited', () => {
+  // Sync copies the status but leaves the artifact behind, so a private row can
+  // say `published` while owning nothing in the bucket. Freezing it would leave
+  // the file with no writes and no transitions out — see the read-only
+  // assertion above — and a private copy exists to draft changes.
+  assert.equal(isFileContentProtected({ status: 'published' }, privateWs), false);
+  assert.equal(isFileContentProtected({ status: 'approved' }, privateWs), false);
 });

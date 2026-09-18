@@ -7,8 +7,10 @@ import type { ObjectStore } from './objectStore';
 import { getObjectStore } from './objectStoreFactory';
 import { DatabaseService } from './databaseService';
 import { Knex } from 'knex';
-import { WorkspaceService } from './workspaceService';
-import { ConflictError, NotFoundError } from '../errors';
+import { WorkspaceService, isSharedWorkspaceRecord } from './workspaceService';
+import type { WorkspaceRecord } from './workspaceService';
+import { isFileContentProtected, normalizeFileStatus } from './fileStatusService';
+import { ConflictError, FileContentProtectedError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { isInternalWorkspacePath as isInternalPath } from '../lib/workspacePaths';
 import type { FileProvenanceDocument } from '@helpudoc/contracts/types';
@@ -881,8 +883,76 @@ export class FileService {
    * commit is worth attempting without taking a dependency on that service —
    * it already holds a `FileService` and nothing else workspace-shaped.
    */
+  /**
+   * Workspace-relative paths of the files that will refuse a content write.
+   *
+   * Sent to the agent so it plans around them. Empty for a private workspace,
+   * which is where the protection deliberately does not apply.
+   */
+  async listProtectedFilePaths(workspaceId: string): Promise<string[]> {
+    const workspace = await this.db('workspaces')
+      .select('visibility', 'workspaceType')
+      .where({ id: workspaceId })
+      .first();
+    if (!workspace || !isSharedWorkspaceRecord(workspace)) return [];
+    const rows = await this.db('files')
+      .where({ workspaceId })
+      .whereNull('deletedAt')
+      .whereIn('status', ['approved', 'published'])
+      .select('name')
+      .orderBy('name', 'asc');
+    return rows
+      .map((row: any) => this.normalizeRelativePath(String(row.name)))
+      .filter((name: string) => name && !this.isInternalWorkspacePath(name));
+  }
+
   async canWriteWorkspaceContent(workspaceId: string, userId: string): Promise<boolean> {
     return this.workspaceService.canWriteWorkspaceContent(workspaceId, userId);
+  }
+
+  /**
+   * Refuse a content change to a file that has been signed off.
+   *
+   * Callers pass the workspace they already resolved from `ensureMembership`, so
+   * this costs no extra query. The scope rule lives in `isFileContentProtected`
+   * rather than here, so every call site cannot disagree about it.
+   */
+  /**
+   * Refuse a folder operation that would move or remove signed-off files.
+   *
+   * A folder rename rewrites `files.name` for everything beneath it, and a
+   * folder delete tombstones them, so the per-file guard would never see the
+   * change — the operation names a folder, not a file.
+   */
+  private async assertFolderContentUnprotected(
+    workspaceId: string,
+    normalizedFolder: string,
+    workspace: WorkspaceRecord,
+  ): Promise<void> {
+    if (!isSharedWorkspaceRecord(workspace)) return;
+    const blocked = await this.db('files')
+      .where({ workspaceId })
+      .whereNull('deletedAt')
+      .whereIn('status', ['approved', 'published'])
+      .andWhere('name', 'like', `${normalizedFolder}/%`)
+      .select('id', 'name', 'status')
+      .orderBy('name', 'asc')
+      .first();
+    if (!blocked) return;
+    throw new FileContentProtectedError(
+      Number(blocked.id),
+      normalizeFileStatus(blocked.status),
+      String(blocked.name),
+    );
+  }
+
+  private assertFileContentUnprotected(file: any, workspace: WorkspaceRecord): void {
+    if (!isFileContentProtected(file, workspace)) return;
+    throw new FileContentProtectedError(
+      Number(file.id),
+      normalizeFileStatus(file.status),
+      String(file.name ?? ''),
+    );
   }
 
   async reconcileWorkspaceMirror(
@@ -969,6 +1039,13 @@ export class FileService {
       assertLeaseOwned?: () => Promise<void>;
       /** Recorded on the audit event so a file links straight to its turn. */
       runContext?: FileAuditRunContext;
+      /**
+       * Called for each signed-off file the run tried to overwrite. The commit
+       * continues without it, so one protected file cannot throw away every
+       * other artifact the run produced — but the caller must tell the user,
+       * or they are left believing the change landed.
+       */
+      onProtectedFileSkipped?: (relativeName: string) => void;
     },
   ) {
     // Held only for the duration of the commit; always cleared so the map
@@ -989,6 +1066,7 @@ export class FileService {
       baseline?: WorkspaceArtifactBaseline | null;
       assertLeaseOwned?: () => Promise<void>;
       runContext?: FileAuditRunContext;
+      onProtectedFileSkipped?: (relativeName: string) => void;
     },
   ) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
@@ -1064,6 +1142,14 @@ export class FileService {
           },
         ));
       } catch (error) {
+        // Checked before the generic branch: `FileContentProtectedError` extends
+        // `ConflictError`, and this one is not a concurrency failure to retry —
+        // the file is signed off and the run simply may not have it.
+        if (error instanceof FileContentProtectedError) {
+          await this.restoreDurableWorkspaceMirror(workspaceId, relativeName);
+          options?.onProtectedFileSkipped?.(relativeName);
+          continue;
+        }
         if (error instanceof ConflictError || error instanceof NotFoundError) {
           await this.restoreDurableWorkspaceMirror(workspaceId, relativeName);
           if (error instanceof NotFoundError) {
@@ -1373,7 +1459,10 @@ export class FileService {
   ) {
     const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
     if (!file) throw new NotFoundError('File not found');
-    await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
+    const { workspace } = await this.workspaceService.ensureMembership(
+      file.workspaceId, userId, { requireEdit: true },
+    );
+    this.assertFileContentUnprotected(file, workspace);
     await this.ensureCanonicalVersion(file, userId);
     const source = await this.db('file_versions').where({ id: versionId, fileId }).first();
     if (!source) throw new NotFoundError('File version not found');
@@ -1549,6 +1638,7 @@ export class FileService {
       requireEdit: true,
       allowSystemAdmin: options?.allowSystemAdmin,
     });
+    this.assertFileContentUnprotected(file, workspace);
     const freeflow = workspace.visibility === 'team' && workspace.editingPolicy === 'direct';
     await this.ensureCanonicalVersion(file, userId);
 
@@ -1726,10 +1816,11 @@ export class FileService {
       return;
     }
 
-    await this.workspaceService.ensureMembership(file.workspaceId, userId, {
+    const { workspace } = await this.workspaceService.ensureMembership(file.workspaceId, userId, {
       requireEdit: true,
       allowSystemAdmin: options?.allowSystemAdmin,
     });
+    this.assertFileContentUnprotected(file, workspace);
 
     const current = await this.ensureCanonicalVersion(file, userId);
     const versionId = randomUUID();
@@ -1786,12 +1877,15 @@ export class FileService {
   }
 
   async deleteFolder(workspaceId: string, folderPath: string, userId: string) {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    const { workspace } = await this.workspaceService.ensureMembership(
+      workspaceId, userId, { requireEdit: true },
+    );
 
     const normalizedFolder = this.normalizeRelativeFolderPath(folderPath);
     if (!normalizedFolder) {
       throw new ConflictError('Folder path is required');
     }
+    await this.assertFolderContentUnprotected(workspaceId, normalizedFolder, workspace);
 
     const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
     const absoluteFolderPath = path.resolve(workspaceRoot, normalizedFolder);
@@ -1865,6 +1959,11 @@ export class FileService {
     if (destinationFolder === normalizedFolder) {
       return { path: destinationFolder, files: [] };
     }
+    // Both rename and move land here, so one guard covers both.
+    const { workspace } = await this.workspaceService.ensureMembership(
+      workspaceId, userId, { requireEdit: true },
+    );
+    await this.assertFolderContentUnprotected(workspaceId, normalizedFolder, workspace);
     if (this.isInternalWorkspacePath(destinationFolder)) {
       throw new ConflictError('System workspace paths are reserved');
     }
@@ -1961,7 +2060,10 @@ export class FileService {
       throw new NotFoundError('File not found');
     }
 
-    await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
+    const { workspace } = await this.workspaceService.ensureMembership(
+      file.workspaceId, userId, { requireEdit: true },
+    );
+    this.assertFileContentUnprotected(file, workspace);
     const currentRelativePath = this.normalizeRelativePath(file.name);
     const destinationRelativePath = target.path !== undefined
       ? (() => {
