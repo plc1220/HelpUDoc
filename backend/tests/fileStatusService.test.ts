@@ -40,6 +40,12 @@ test('the transition menu reflects the role', () => {
   const asContributor = allowedTransitionsFor('draft', 'contributor', false, true);
   assert.deepEqual(asContributor.map((t) => t.toStatus), ['in_review']);
 
+  // An editor may also sign a draft off directly, skipping review.
+  assert.deepEqual(
+    allowedTransitionsFor('draft', 'editor', false, true).map((t) => t.toStatus).sort(),
+    ['approved', 'in_review'],
+  );
+
   // A contributor may submit but must not approve.
   assert.deepEqual(allowedTransitionsFor('in_review', 'contributor', false, true), []);
   assert.deepEqual(
@@ -52,24 +58,31 @@ test('the author of a file in review may pull it back', () => {
   // Not an approver, but it is their own submission.
   const menu = allowedTransitionsFor('in_review', 'contributor', true, true);
   assert.deepEqual(menu.map((t) => t.toStatus), ['draft']);
-  assert.equal(menu[0].requiresReason, true);
+  assert.equal(menu[0].promptsForReason, true);
   assert.equal(menu[0].isRevert, true);
 });
 
 test('reverts are flagged and require a reason; forward moves do not', () => {
-  const submit = allowedTransitionsFor('draft', 'editor', false, true)[0];
+  const fromDraft = allowedTransitionsFor('draft', 'editor', false, true);
+  const submit = fromDraft.find((t) => t.toStatus === 'in_review')!;
   assert.equal(submit.isRevert, false);
-  assert.equal(submit.requiresReason, false);
+  assert.equal(submit.promptsForReason, false);
+
+  // The one forward move that asks for a reason: it reaches a signed-off,
+  // read-only state without anybody having reviewed it.
+  const approveDirect = fromDraft.find((t) => t.toStatus === 'approved')!;
+  assert.equal(approveDirect.isRevert, false);
+  assert.equal(approveDirect.promptsForReason, true);
 
   // From approved there is one forward move (publish) and the rest go back.
   for (const t of allowedTransitionsFor('approved', 'editor', false, true)) {
     if (t.toStatus === 'published') {
       assert.equal(t.isRevert, false, 'publishing moves the file forward');
-      assert.equal(t.requiresReason, false);
+      assert.equal(t.promptsForReason, false);
       continue;
     }
     assert.equal(t.isRevert, true, `${t.toStatus} must be marked a revert`);
-    assert.equal(t.requiresReason, true, `${t.toStatus} must require a reason`);
+    assert.equal(t.promptsForReason, true, `${t.toStatus} must require a reason`);
   }
 });
 
@@ -85,8 +98,8 @@ test('a private workspace stops at approved', () => {
   // Publishing exports an immutable artifact to the shared release bucket, so
   // it is a team act. Everything up to approval still works privately.
   assert.deepEqual(
-    allowedTransitionsFor('draft', 'owner', false, false).map((t) => t.toStatus),
-    ['in_review'],
+    allowedTransitionsFor('draft', 'owner', false, false).map((t) => t.toStatus).sort(),
+    ['approved', 'in_review'],
   );
   assert.deepEqual(
     allowedTransitionsFor('approved', 'owner', false, false).map((t) => t.toStatus).sort(),
@@ -214,12 +227,32 @@ test('submitting for review records both the trail and the governance row', asyn
 });
 
 test('illegal transitions are refused', async () => {
-  // Skipping review entirely would defeat the point of the workflow.
+  // `published` is the one state that is not freely reachable: it exports an
+  // immutable artifact, so a status flag alone would claim something shipped.
+  // Publishing is configured here so the rule table is what refuses, not the
+  // server-configuration check that fires ahead of it.
   const { service } = makeService(baseFile({ status: 'draft' }), 'owner');
+  (service as any).publicationService = { publishArtifact: async () => { throw new Error('unreachable'); } };
   await assert.rejects(
-    () => service.transition(412, 'u-bob', { toStatus: 'approved' }),
-    (e: unknown) => e instanceof ConflictError && /Cannot move a file from draft to approved/.test((e as Error).message),
+    () => service.transition(412, 'u-bob', { toStatus: 'published' }),
+    (e: unknown) => e instanceof ConflictError && /Cannot move a file from draft to published/.test((e as Error).message),
   );
+});
+
+test('a draft can be approved directly, with or without a reason', async () => {
+  // The reason is recorded when given, never demanded: the transition is
+  // already an audited decision carrying actor, time and from/to.
+  const withoutReason = makeService(baseFile({ status: 'draft' }), 'owner');
+  const bare = await withoutReason.service.transition(412, 'u-bob', { toStatus: 'approved' });
+  assert.equal(bare.status, 'approved');
+
+  const { service, files } = makeService(baseFile({ status: 'draft', version: 5 }), 'owner');
+  const state = await service.transition(412, 'u-bob', {
+    toStatus: 'approved',
+    reason: 'Signed off without review; agreed at standup',
+  });
+  assert.equal(state.status, 'approved');
+  assert.equal(files[0].approvedAtVersion, 5, 'the decision pins the version it applies to');
 });
 
 test('a no-op transition is refused rather than silently accepted', async () => {
@@ -238,14 +271,17 @@ test('a contributor cannot approve', async () => {
   );
 });
 
-test('you cannot approve a file you last edited', async () => {
-  const { service } = makeService(
+test('a publisher may approve a file they last edited, and it is recorded', async () => {
+  // The old guard could only ever catch a Publisher: `canApprove` belongs to
+  // `editor` and `owner` alone, everyone else is refused by the capability
+  // check first, and the owner was already exempt. Approval authority now
+  // includes vouching for your own work — but the trail still says so.
+  const { service, governanceEvents } = makeService(
     baseFile({ status: 'in_review', updatedBy: 'u-editor' }), 'editor',
   );
-  await assert.rejects(
-    () => service.transition(412, 'u-editor', { toStatus: 'approved' }),
-    (e: unknown) => e instanceof AccessDeniedError && /you last edited/.test((e as Error).message),
-  );
+  const state = await service.transition(412, 'u-editor', { toStatus: 'approved' });
+  assert.equal(state.status, 'approved');
+  assert.equal(governanceEvents[0].selfApproved, true);
 });
 
 test('an owner may override self-approval', async () => {
@@ -275,14 +311,9 @@ test('editing after approval shows as drift', async () => {
   assert.equal(state.status, 'approved', 'status must not silently change');
 });
 
-test('a revert requires a reason and records the version it applied to', async () => {
+test('a revert records its reason and the version it applied to', async () => {
   const { service, auditEvents, governanceEvents, files } = makeService(
     baseFile({ status: 'approved', version: 7, approvedAtVersion: 4 }), 'editor',
-  );
-
-  await assert.rejects(
-    () => service.transition(412, 'u-bob', { toStatus: 'draft' }),
-    (e: unknown) => e instanceof ConflictError && /reason is required/.test((e as Error).message),
   );
 
   const state = await service.transition(412, 'u-bob', {
@@ -301,6 +332,19 @@ test('a revert requires a reason and records the version it applied to', async (
   assert.equal(payload.fileVersion ?? auditEvents[0].fileVersion, 7);
   assert.equal(auditEvents[0].fileVersionId, 'fv-4');
   assert.equal(governanceEvents[0].reason, 'Figure 3 changed after sign-off');
+});
+
+test('a revert without a reason still goes through, recording none', async () => {
+  // The move is already an audited decision with an actor, a time and a
+  // from/to pair. Refusing it over a missing note gated the work without
+  // adding a fact.
+  const { service, governanceEvents, files } = makeService(
+    baseFile({ status: 'approved', version: 7, approvedAtVersion: 4 }), 'editor',
+  );
+  const state = await service.transition(412, 'u-bob', { toStatus: 'draft' });
+  assert.equal(state.status, 'draft');
+  assert.equal(files[0].approvedAtVersion, null, 'the stale approval still clears');
+  assert.equal(governanceEvents[0].reason, null);
 });
 
 test('publishing is refused when no publication target is configured', async () => {

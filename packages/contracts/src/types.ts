@@ -749,8 +749,13 @@ export type FileStatus = 'draft' | 'in_review' | 'approved' | 'published';
 /** A transition the calling user is currently permitted to make. */
 export interface FileStatusTransition {
   toStatus: FileStatus;
-  /** True when the server will reject the call without a reason. */
-  requiresReason: boolean;
+  /**
+   * The UI should offer a reason box for this move, and a reason is worth
+   * having — but the server accepts the transition without one. The decision
+   * itself is already on the audit trail, so refusing the move over a missing
+   * note blocked the work without adding a fact.
+   */
+  promptsForReason: boolean;
   /** Moves the file backwards; restricted to privileged roles. */
   isRevert: boolean;
   label: string;

@@ -132,7 +132,7 @@ export const FileStatusChip: React.FC<{
     // Close the menu before the dialog opens, so it is not left hanging behind
     // the modal once focus moves.
     setIsOpen(false);
-    if (transition.requiresReason || transition.toStatus === 'published') {
+    if (transition.promptsForReason || transition.toStatus === 'published') {
       setPending(transition);
       setNote('');
       setError('');
@@ -224,12 +224,12 @@ export const FileStatusChip: React.FC<{
           {pending?.toStatus === 'published' && (
             <Text type="supporting">{PUBLISH_NOTICE}</Text>
           )}
-          {pending?.requiresReason && (
+          {pending?.promptsForReason && (
             <TextArea
-              label="Reason"
               value={note}
               onChange={setNote}
               rows={3}
+              label="Reason (optional)"
               placeholder="Why is this going back?"
               // Something above this dialog cancels space at the body level —
               // the usual "stop the page scrolling behind a modal" guard, which
@@ -246,7 +246,9 @@ export const FileStatusChip: React.FC<{
             <Button
               variant="primary"
               label={pending?.label ?? 'Confirm'}
-              isDisabled={Boolean(pending?.requiresReason) && note.trim().length < 3}
+              // The reason is welcome, not required — the server records it when
+              // given and accepts the move without it.
+              isDisabled={false}
               clickAction={() => (pending ? apply(pending, note.trim()) : Promise.resolve())}
             />
           </HStack>

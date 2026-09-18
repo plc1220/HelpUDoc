@@ -44,7 +44,7 @@ interface TransitionRule {
   capability: Capability;
   /** The file's author may also make this move, regardless of capability. */
   authorMayAct?: boolean;
-  requiresReason?: boolean;
+  promptsForReason?: boolean;
   isRevert?: boolean;
   label: string;
   action: string;
@@ -58,34 +58,48 @@ const TRANSITIONS: TransitionRule[] = [
   { from: 'draft', to: 'in_review', capability: 'canPropose', label: 'Submit for review', action: 'file.status.submitted' },
   { from: 'in_review', to: 'approved', capability: 'canApprove', label: 'Approve', action: 'file.status.approved' },
   {
+    // `draft`, `in_review` and `approved` are reachable from any other status, so
+    // a file can sit wherever it actually is rather than marching through the
+    // whole cycle. This was the only pair missing.
+    //
+    // The lone forward move that prompts for a reason: it is the one way to
+    // reach a signed-off, read-only state without anybody reviewing it, so the
+    // trail is worth a note. Reuses `file.status.approved` — the previous status
+    // is already on the event, so a separate action would add a type without
+    // adding fact.
+    from: 'draft', to: 'approved', capability: 'canApprove',
+    promptsForReason: true,
+    label: 'Approve without review', action: 'file.status.approved',
+  },
+  {
     from: 'in_review', to: 'draft', capability: 'canApprove', authorMayAct: true,
-    requiresReason: true, isRevert: true,
+    promptsForReason: true, isRevert: true,
     label: 'Request changes', action: 'file.status.changes_requested',
   },
   {
     from: 'approved', to: 'in_review', capability: 'canApprove',
-    requiresReason: true, isRevert: true,
+    promptsForReason: true, isRevert: true,
     label: 'Send back to review', action: 'file.status.reverted',
   },
   {
     from: 'approved', to: 'draft', capability: 'canApprove',
-    requiresReason: true, isRevert: true,
+    promptsForReason: true, isRevert: true,
     label: 'Return to draft', action: 'file.status.reverted',
   },
   { from: 'approved', to: 'published', capability: 'canPublish', label: 'Publish', action: 'file.status.published' },
   {
     from: 'published', to: 'approved', capability: 'canPublish',
-    requiresReason: true, isRevert: true,
+    promptsForReason: true, isRevert: true,
     label: 'Unpublish', action: 'file.status.unpublished',
   },
   {
     from: 'published', to: 'in_review', capability: 'canPublish',
-    requiresReason: true, isRevert: true,
+    promptsForReason: true, isRevert: true,
     label: 'Unpublish and review', action: 'file.status.unpublished',
   },
   {
     from: 'published', to: 'draft', capability: 'canPublish',
-    requiresReason: true, isRevert: true,
+    promptsForReason: true, isRevert: true,
     label: 'Unpublish and return to draft', action: 'file.status.unpublished',
   },
 ];
@@ -229,7 +243,7 @@ export const allowedTransitionsFor = (
     .filter((rule) => capabilities[rule.capability] || (rule.authorMayAct && isAuthor))
     .map((rule) => ({
       toStatus: rule.to,
-      requiresReason: Boolean(rule.requiresReason),
+      promptsForReason: Boolean(rule.promptsForReason),
       isRevert: Boolean(rule.isRevert),
       label: rule.label,
     }));
@@ -489,16 +503,18 @@ export class FileStatusService {
         throw new AccessDeniedError(`Your role cannot ${rule.label.toLowerCase()}`);
       }
 
-      // Whoever last changed the content should not also sign it off.
+      // Recorded, not enforced. This used to refuse when the approver was the
+      // last editor, but only `editor` and `owner` hold `canApprove` and the
+      // capability check above rejects everyone else first — so the only person
+      // it could ever catch was a Publisher signing off their own work, which is
+      // now allowed. The fact stays on the audit rows because it is still true
+      // and still worth being able to search for.
       const selfApproval = rule.to === 'approved' && String(locked.updatedBy ?? locked.createdBy) === userId;
-      if (selfApproval && role !== 'owner') {
-        throw new AccessDeniedError('You cannot approve a file you last edited');
-      }
 
+      // Recorded when given, never demanded. The transition is already an
+      // audited decision with an actor, a timestamp and a from/to pair; refusing
+      // it over a missing note gated the work without adding a fact.
       const reason = input.reason?.trim() || '';
-      if (rule.requiresReason && !reason) {
-        throw new ConflictError(`A reason is required to ${rule.label.toLowerCase()}`);
-      }
       if (typeof input.expectedVersion === 'number' && input.expectedVersion !== version) {
         throw new ConflictError(
           `File changed since you loaded it (expected v${input.expectedVersion}, now v${version})`,
