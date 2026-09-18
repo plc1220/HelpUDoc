@@ -605,6 +605,11 @@ def register_chat_routes(
     def _seed_initial_skill_context(initial_context: Dict[str, Any], message: ChatRequest) -> Dict[str, Any]:
         seeded = _merge_trace_gate_context(initial_context, message.langfuseTraceContext)
         seeded["internet_search_enabled"] = bool(message.internetSearchEnabled)
+        seeded["protected_file_paths"] = [
+            str(item).strip().lstrip("/")
+            for item in (message.protectedFilePaths or [])
+            if str(item).strip()
+        ]
         seeded["knowledge_refs"] = [dict(item) for item in message.knowledgeRefs if isinstance(item, dict)]
         payload = _prepare_payload(message)
         saw_directive = False
@@ -1815,6 +1820,11 @@ def register_chat_routes(
                 _merge_trace_gate_context(runtime.workspace_state.context, message.langfuseTraceContext)
             )
             runtime.workspace_state.context["internet_search_enabled"] = bool(message.internetSearchEnabled)
+            runtime.workspace_state.context["protected_file_paths"] = [
+                str(item).strip().lstrip("/")
+                for item in (message.protectedFilePaths or [])
+                if str(item).strip()
+            ]
             runtime.workspace_state.context["knowledge_refs"] = [
                 dict(item) for item in message.knowledgeRefs if isinstance(item, dict)
             ]

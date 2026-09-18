@@ -74,6 +74,14 @@ type RunAgentOptions = {
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
   knowledgeRefs?: AgentKnowledgeRef[];
+  /**
+   * Workspace-relative paths of files that are signed off and will refuse a
+   * write. Sent so the agent declines up front instead of producing work the
+   * commit then throws away. A hint, not the boundary — `commitWorkspaceArtifacts`
+   * is what actually refuses, which is why this travels in the request body
+   * rather than the signed token: the set moves whenever a status does.
+   */
+  protectedFilePaths?: string[];
   traceContext?: AgentTraceContext;
   interruptId?: string;
   originalPrompt?: string;
@@ -189,6 +197,9 @@ export async function runAgent(
   if (options?.knowledgeRefs?.length) {
     payload.knowledgeRefs = options.knowledgeRefs;
   }
+  if (options?.protectedFilePaths?.length) {
+    payload.protectedFilePaths = options.protectedFilePaths;
+  }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;
   }
@@ -226,6 +237,9 @@ export async function runAgentStream(
   }
   if (options?.knowledgeRefs?.length) {
     payload.knowledgeRefs = options.knowledgeRefs;
+  }
+  if (options?.protectedFilePaths?.length) {
+    payload.protectedFilePaths = options.protectedFilePaths;
   }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;

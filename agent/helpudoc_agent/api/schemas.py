@@ -13,6 +13,9 @@ class ChatRequest(BaseModel):
     messageContent: List[Dict[str, Any]] | None = None
     internetSearchEnabled: bool = False
     knowledgeRefs: List[Dict[str, Any]] = Field(default_factory=list)
+    # Workspace-relative paths that are signed off and will refuse a write. A
+    # hint so the agent declines up front; the backend commit is the boundary.
+    protectedFilePaths: List[str] = Field(default_factory=list)
     langfuseTraceContext: Dict[str, Any] | None = None
 
 

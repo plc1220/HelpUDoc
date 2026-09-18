@@ -220,6 +220,15 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
                 f"Cannot {operation} '{file_path}' because this research run has no verified Google Search sources. "
                 "Stop and report that live web research is unavailable; do not create a sourced report from model memory."
             )
+        protected = context.get("protected_file_paths")
+        if isinstance(protected, (list, tuple, set)) and protected:
+            relative = str(virtual_path).lstrip("/")
+            if relative in {str(item).strip().lstrip("/") for item in protected}:
+                return (
+                    f"Cannot {operation} '{file_path}' because it is approved or published. "
+                    "Signed-off files are read-only. Say so and leave it unchanged, or ask an "
+                    "owner or publisher to send it back to review first."
+                )
         is_published = context.get("workspace_mode") == "published_read_only"
         write_denied = context.get("can_write_workspace") is False
         if not (is_published or write_denied):
@@ -613,6 +622,16 @@ class AgentRegistry:
                 "but you must not create, edit, upload, or generate workspace files. If the user wants "
                 "content changes or generated artifacts, explain that an owner must grant edit access "
                 "or review the proposed change."
+            )
+        protected_paths = workspace_state.context.get("protected_file_paths")
+        if isinstance(protected_paths, (list, tuple)) and protected_paths:
+            listed = ", ".join(str(item) for item in list(protected_paths)[:20])
+            more = "" if len(protected_paths) <= 20 else f" (and {len(protected_paths) - 20} more)"
+            system_prompt += (
+                "\n\nThese workspace files are approved or published and are read-only: "
+                f"{listed}{more}. Do not create, edit or overwrite them. If the user asks for a "
+                "change to one, explain that it is signed off and an owner or publisher must send "
+                "it back to review first, then stop."
             )
         system_prompt += build_bigquery_defaults_prompt()
         skills_root = self.settings.backend.skills_root

@@ -3375,6 +3375,12 @@ async function runAgentRunWorker(
   const workspaceWritable = fileService && params.userId
     ? await fileService.canWriteWorkspaceContent(params.workspaceId, params.userId)
     : false;
+  // Sent to the agent so it declines a signed-off file up front rather than
+  // producing work the commit then refuses. Only meaningful when it could write
+  // at all.
+  const protectedFilePaths = fileService && workspaceWritable
+    ? await fileService.listProtectedFilePaths(params.workspaceId)
+    : [];
 
   const commitRunArtifacts = async () => {
     if (artifactsCommitted || !fileService || !params.userId) return;
@@ -3398,6 +3404,7 @@ async function runAgentRunWorker(
     // outputFiles remain useful UI metadata, but must never decide durability:
     // tools such as image generators can write valid files without returning a
     // structured artifact response.
+    const protectedSkips: string[] = [];
     await fileService.commitWorkspaceArtifacts(params.workspaceId, params.userId, runId, {
       runContext: {
         conversationId: params.conversationId,
@@ -3406,7 +3413,22 @@ async function runAgentRunWorker(
       },
       baseline: artifactBaseline,
       assertLeaseOwned: () => workspaceRunLease.assertOwned(runId),
+      onProtectedFileSkipped: (relativeName) => protectedSkips.push(relativeName),
     });
+    // The agent is told which files are signed off before it starts, so reaching
+    // here means it wrote anyway. Saying nothing would leave the user believing
+    // the change landed. `tool_error` rather than `error`: the run itself is
+    // fine, one write was refused.
+    if (protectedSkips.length) {
+      console.warn('Run %s wrote to signed-off files; the writes were refused: %s', runId, protectedSkips.join(', '));
+      await appendStreamEvent(runId, JSON.stringify({
+        type: 'tool_error',
+        name: 'workspace_write',
+        content: `Not saved — ${protectedSkips.join(', ')} `
+          + `${protectedSkips.length === 1 ? 'is' : 'are'} approved or published. `
+          + 'Send it back to review before changing it.',
+      }));
+    }
     artifactsCommitted = true;
   };
 
@@ -4314,6 +4336,7 @@ async function runAgentRunWorker(
           messageContent: params.messageContent,
           internetSearchEnabled: params.internetSearchEnabled,
           knowledgeRefs: params.knowledgeRefs,
+          protectedFilePaths,
           traceContext,
         });
     agentStreamEstablished = true;
