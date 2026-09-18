@@ -84,6 +84,42 @@ Service URL: `http://localhost:8001`
 - Run `PYTHONPATH=agent agent/.venv/bin/python -m pytest agent/tests/test_document_quick_edit.py agent/tests/test_office_preview.py` from the repo root. Real rendering tests run when LibreOffice is available. `python agent/scripts/smoke_office_preview.py` exercises real DOCX/PPTX rendering and native edit/refresh without model credentials. Both CI and deployment image builds run this smoke before rollout.
 - Shipping this feature requires rebuilding the agent image together with backend and frontend; no database migration is needed.
 
+## MCP discovery during chat
+
+Ordinary Fast/Pro chats expose `list_mcp_servers` and `load_mcp_tools` through
+`MCPDiscoveryMiddleware`. The model can discover permitted services, choose one,
+and call its operations in the same run without a `/mcp` tag. The harness does
+not route by keywords or add MCP instructions to the system prompt.
+
+The catalog reads configured names/descriptions without connecting. Loading
+discovers actual schemas through `MCPServerManager`, applies Gemini preflight,
+and makes the tools available through LangChain's model/tool middleware hooks.
+An explicit `/mcp` selection or a skill's declared servers still works; a skill
+loaded mid-run also makes its servers eligible at the next model step.
+
+Only selected server IDs enter conversation checkpoints. Clients and credentials
+remain in the existing user/policy/auth-scoped runtime; after a rebuild, selected
+servers are reloaded using current credentials. Permissions and skill scope are
+checked before both exposure and execution. Tools have deterministic server-qualified
+names to avoid collisions. Failed discovery returns an error, never an empty-catalog
+claim; detailed transport errors stay out of model-facing responses. Skill Builder
+does not receive these execution capabilities.
+
+Keep each server's `description` accurate so the model can select it from the
+catalog. Actual operations, OAuth scopes, and file-transfer support depend on the
+connected server. Loading a server only discovers tools; it does not run an upload
+or other external operation.
+
+Regression checks (no provider credentials needed):
+`agent/.venv/bin/python -m pytest tests/test_mcp_discovery.py tests/test_mcp_binding.py tests/test_mcp_configuration.py`.
+Set `HELPUDOC_LIVE_MCP_MODEL_TEST=1` with Gemini credentials to additionally evaluate
+an untagged Drive request against the Fast model and mocked external operations.
+
+Implementation references: [dynamic tool registration](https://docs.langchain.com/oss/python/langchain/tools#dynamic-tool-selection)
+and [MCP integration](https://docs.langchain.com/oss/python/langchain/mcp).
+This uses the pinned LangChain 1.3.2 middleware and existing `langchain-mcp-adapters`;
+it does not require migration to the newer beta `langchain.mcp` API.
+
 ## Running with Docker Compose
 
 From the repo root:

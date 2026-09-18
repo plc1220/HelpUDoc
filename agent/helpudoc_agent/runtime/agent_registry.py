@@ -26,6 +26,7 @@ from langchain_quickjs.middleware import CodeInterpreterMiddleware
 from helpudoc_agent.middleware.interaction_contract import InteractionContractMiddleware
 from helpudoc_agent.middleware.slide_style_preview import SlideStylePreviewMiddleware
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
+from helpudoc_agent.middleware.mcp_discovery import MCPDiscoveryMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from ..configuration import Settings
@@ -574,16 +575,6 @@ class AgentRegistry:
             normalized_preferred and normalized_preferred in bound_servers
         )
         workspace_state.context["_bound_mcp_candidates"] = list(candidate_mcp_servers)
-        mcp_tools = []
-        for server_name, server_tools in mcp_manager.get_tools_by_server().items():
-            for tool in server_tools:
-                mcp_tools.append(
-                    GuardedTool.from_tool(
-                        tool,
-                        workspace_state=workspace_state,
-                        tool_mcp_server=server_name,
-                    )
-                )
 
         logger.info(
             "MCP bind results (workspace=%s active_skill=%s allowed_by_rbac=%s accepted=%s rejected=%s)",
@@ -593,7 +584,9 @@ class AgentRegistry:
             list(mcp_manager.get_tools_by_server().keys()),
             mcp_manager.get_rejected_servers(),
         )
-        tools = builtin_tools + mcp_tools
+        # MCP schemas/execution are registered by MCPDiscoveryMiddleware. Do not
+        # also register raw names here: they can shadow builtins or each other.
+        tools = builtin_tools
         def make_backend(runtime) -> CompositeBackend:
             routes = {
                 "/memories/": UserScopedStoreBackend(
@@ -638,6 +631,8 @@ class AgentRegistry:
             ),
             PatchToolCallsMiddleware(),
         ]
+        if not builder_mode:
+            middleware.append(MCPDiscoveryMiddleware(mcp_manager))
         code_interpreter = self.settings.backend.code_interpreter
         if code_interpreter.enabled and not builder_mode:
             middleware.append(
