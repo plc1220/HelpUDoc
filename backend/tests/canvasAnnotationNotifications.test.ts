@@ -10,7 +10,8 @@ function harness(role = 'commenter', visibility = 'team') {
       insert(value: any) { inserted = value; (rows[table] ||= []).push(value); return query; },
       onConflict() { return query; }, ignore() { return Promise.resolve(); },
       returning() { return Promise.resolve([inserted]); },
-      where() { return query; }, update() { return Promise.resolve(); },
+      where() { return query; }, whereNull() { return query; }, update() { return Promise.resolve(); },
+      first() { return Promise.resolve(undefined); },
       then(resolve: any) { return Promise.resolve(undefined).then(resolve); },
     };
     return query;

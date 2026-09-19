@@ -55,7 +55,7 @@ for (const format of ['pdf', 'pptx', 'docx']) {
       </script></head><body><div id="root"></div><script type="module">
       import React from '/node_modules/.vite/deps/react.js';import ReactDOM from '/node_modules/.vite/deps/react-dom_client.js';
       import { AppThemeRoot } from '/src/AppThemeRoot.tsx';import CanvasAnnotations from '/src/components/CanvasAnnotations.tsx';import FileRenderer from '/src/components/FileRenderer.tsx';import '/src/index.css';
-      function Harness(){const [prompt,setPrompt]=React.useState('');return React.createElement(AppThemeRoot,{},React.createElement('pre',{'data-testid':'prompt'},prompt),React.createElement('div',{style:{height:640}},React.createElement(CanvasAnnotations,{workspace:{id:'qc',visibility:'team',role:'owner'},filePath:'review.${format}',onAgentChat:setPrompt},React.createElement(FileRenderer,{file:{id:'12',name:'review.${format}'},fileContent:'${data}',workspaceId:'qc'}))));}
+      function Harness(){const [prompt,setPrompt]=React.useState('');return React.createElement(AppThemeRoot,{},React.createElement('pre',{'data-testid':'prompt'},prompt),React.createElement('div',{style:{height:640}},React.createElement(CanvasAnnotations,{workspace:{id:'qc',visibility:'team',role:'owner'},filePath:'review.${format}',anchorVersionId:'anchor-fixture-uuid',fileId:12,onAgentChat:setPrompt},React.createElement(FileRenderer,{file:{id:'12',name:'review.${format}'},fileContent:'${data}',workspaceId:'qc'}))));}
       ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Harness));</script></body></html>` }));
     await page.goto('/__document-annotations');
     const surface = page.locator(`[data-annotation-surface="${scope}"]`);

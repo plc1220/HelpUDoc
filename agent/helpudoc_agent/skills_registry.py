@@ -876,6 +876,12 @@ ALWAYS_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "request_human_action",
         "request_interaction",
         "workflow_action",
+        # Team Chat (F3) authenticated thread-history reader. Its data access is
+        # independently authenticated and bound (workspace/user/thread/cutoff) by
+        # the signed context token, so it is safe under any skill scope and must
+        # remain usable for selected-skill invocations. Allowing it here widens
+        # neither data access nor any unrelated tool.
+        "team_thread_history",
     }
 )
 

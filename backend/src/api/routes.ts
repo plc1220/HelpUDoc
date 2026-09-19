@@ -5,7 +5,7 @@ import agentRoutes from './agent';
 import authRoutes from './auth';
 import workspaceRoutes from './workspaces';
 import workspaceCollaborationRoutes from './workspaceCollaboration';
-import fileRoutes from './files';
+import internalAgentRoutes from './internalAgent';import fileRoutes from './files';
 import conversationRoutes from './conversations';
 import scheduleRoutes from './schedules';
 import settingsRoutes from './settings';
@@ -44,12 +44,13 @@ export default function(
   const router = Router();
   const workspaceService = new WorkspaceService(dbService);
   const workspacePublicationService = new WorkspacePublicationService(dbService, workspaceService);
+  const fileService = new FileService(dbService, workspaceService);
   const workspaceCollaborationService = new WorkspaceCollaborationService(
     dbService,
     workspaceService,
     workspacePublicationService,
+    fileService,
   );
-  const fileService = new FileService(dbService, workspaceService);
   const conversationService = new ConversationService(dbService, workspaceService);
   const notificationService = new NotificationService(dbService.getDb());
   configureAgentRunServices({ conversationService, fileService, notificationService });
@@ -95,6 +96,10 @@ export default function(
     '/workspaces/:workspaceId/collaboration',
     workspaceCollaborationRoutes(workspaceCollaborationService, workspaceTeamChatAgentService),
   );
+  // Agent-JWT-authenticated internal callbacks (spec F3.4). Not gated by the
+  // browser userContext middleware; each route verifies the signed agent token
+  // and its bound scope itself.
+  router.use('/internal/agent', internalAgentRoutes(workspaceCollaborationService));
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));

@@ -121,6 +121,18 @@ spec:
               value: production
             - name: PORT
               value: "3000"
+            - name: TEAM_CHAT_THREADS_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: TEAM_CHAT_THREADS_ENABLED
+                  optional: true
+            - name: TEAM_CHAT_RELEASE_B_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: TEAM_CHAT_RELEASE_B_ENABLED
+                  optional: true
             - name: KNOWLEDGE_DEDICATED_WORKER
               value: "true"
             - name: KNOWLEDGE_RETRIEVAL_MODE
@@ -425,6 +437,12 @@ spec:
           env:
             - name: REDIS_URL
               value: redis://redis:6379
+            - name: BACKEND_INTERNAL_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: BACKEND_INTERNAL_URL
+                  optional: true
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
             - name: KNOWLEDGE_MARKITDOWN_MODE

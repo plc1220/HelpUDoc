@@ -31,7 +31,7 @@ for (const mode of ['text', 'html', 'source']) {
       import '/src/index.css';
       function Harness(){const [prompt,setPrompt]=React.useState('');const [content,setContent]=React.useState('Selected passage');return React.createElement('div',{},
         React.createElement('pre',{'data-testid':'prompt'},prompt),
-        React.createElement('div',{style:{height:600}},React.createElement(CanvasAnnotations,{workspace:{id:'qc',visibility:'team',role:'owner'},filePath:'${filePath}',onAgentChat:setPrompt},
+        React.createElement('div',{style:{height:600}},React.createElement(CanvasAnnotations,{workspace:{id:'qc',visibility:'team',role:'owner'},filePath:'${filePath}',anchorVersionId:'anchor-fixture-uuid',fileId:101,onAgentChat:setPrompt},
           ${mode === 'source' ? "React.createElement(FileEditor,{file:{id:'101',name:'notes.txt'},fileContent:content,onContentChange:setContent,workspaceId:'qc',colorMode:'light'})" : mode === 'html' ? "React.createElement(WorkspaceHtmlPreviewFrame,{html:'<html><body style=\"background:white;color:black\"><h1 id=\"title\">Selected passage</h1></body></html>',title:'Preview',className:'w-full h-full'})" : "React.createElement('p',{'data-testid':'passage'},'Selected passage')"}
         )));}
       ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(AppThemeRoot,{},React.createElement(Harness)));

@@ -12,6 +12,15 @@ data:
   S3_BUCKET_NAME: helpudoc
   S3_FORCE_PATH_STYLE: "true"
   WORKSPACE_ROOT: /app/workspaces
+  # In-cluster backend Service URL the agent uses for authenticated internal
+  # callbacks (e.g. the scoped Team Chat thread-history reader). Backend and agent
+  # share the helpudoc-app pod, but naming the Service is explicit and robust.
+  BACKEND_INTERNAL_URL: http://backend:3000
+  # Team Chat threads UI/context gate (Release A). Default OFF; enable per workspace
+  # cohort only AFTER the backfill verification reports full readiness.
+  TEAM_CHAT_THREADS_ENABLED: "false"
+  # Release B work-history gate (separate, default-off; does not affect Release A).
+  TEAM_CHAT_RELEASE_B_ENABLED: "false"
   AWS_REGION: us-east-1
   AWS_PRICING_MCP_LOG_LEVEL: ERROR
   ENABLE_SKILL_SANDBOX_RUNNER: "true"

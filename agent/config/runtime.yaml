@@ -108,6 +108,10 @@ tools:
   - name: run_skill_python_script
     kind: builtin
     description: Run an active skill's declared Python script in a Kubernetes sandbox
+  - name: team_thread_history
+    kind: builtin
+    description: Retrieve exact authorized text of omitted or truncated messages
+      from the current Team Chat thread, scoped by the run's signed context
 mcp_servers:
   - name: toolbox-bq-demo
     transport: http

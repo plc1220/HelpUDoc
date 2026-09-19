@@ -16,6 +16,13 @@ data:
   S3_BUCKET_NAME: helpudoc
   S3_FORCE_PATH_STYLE: "true"
   WORKSPACE_ROOT: /app/workspaces
+  # In-cluster backend Service URL for the agent's authenticated internal callbacks.
+  BACKEND_INTERNAL_URL: http://backend:3000
+  # Team Chat threads UI/context gate (Release A). Default OFF; enable per workspace
+  # cohort only AFTER the backfill verification reports full readiness.
+  TEAM_CHAT_THREADS_ENABLED: "false"
+  # Release B work-history gate (separate, default-off; does not affect Release A).
+  TEAM_CHAT_RELEASE_B_ENABLED: "false"
   SESSION_COOKIE_DOMAIN: .lc-demo.com
   GOOGLE_OAUTH_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
   GOOGLE_OAUTH_REDIRECT_URI: https://lc-demo.com/api/auth/google/callback

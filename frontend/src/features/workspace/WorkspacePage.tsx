@@ -1,6 +1,6 @@
 import NotificationCenter from '../../components/NotificationCenter';
 import WorkspaceNavigator from '../../components/WorkspaceNavigator';
-import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, type ChangeEvent } from 'react';
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -67,6 +67,16 @@ import {
   renameFolder,
   renameFile,
 } from '../../services/fileApi';
+import {
+  subscribeThreadAssociation,
+  getThreadAssociationSnapshot,
+} from '../../services/teamThreadAssociation';
+import {
+  subscribePrivateWorkOrigin,
+  getPrivateWorkOriginSnapshot,
+  clearPrivateWorkOrigin,
+} from '../../services/privateWorkOrigin';
+import { getReleaseBReadiness, isReleaseBReady } from '../../services/teamThreadWorkApi';
 import {
   cancelRun,
   fetchSlashMetadata,
@@ -924,6 +934,49 @@ export default function WorkspacePage() {
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
+  // Release B (F6/F8): the current explicit future-edit thread association for
+  // this workspace, so a new workspace-audience annotation links to it (F8) and
+  // the editor can show/clear it. Referentially stable snapshot avoids loops.
+  const activeThreadAssociation = useSyncExternalStore(
+    subscribeThreadAssociation,
+    () => (selectedWorkspace ? getThreadAssociationSnapshot(selectedWorkspace.id) : null),
+  );
+  // Release B readiness gate for host surfaces (annotations sharing + linking,
+  // collaboration dialog submit/review). Fail-safe false; fetched per workspace.
+  const [releaseBReady, setReleaseBReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setReleaseBReady(false);
+    if (!selectedWorkspace) return;
+    const wid = selectedWorkspace.id;
+    void getReleaseBReadiness(wid)
+      .then((r) => { if (!cancelled) setReleaseBReady(isReleaseBReady(r)); })
+      .catch(() => { if (!cancelled) setReleaseBReady(false); });
+    return () => { cancelled = true; };
+  }, [selectedWorkspace]);
+
+  // Release B (F7): private-work origin for the CURRENT workspace, if it is a
+  // private working copy the user entered from a Shared thread. Drives the
+  // "Return to thread" banner. Stable snapshot avoids loops.
+  const privateWorkOrigin = useSyncExternalStore(
+    subscribePrivateWorkOrigin,
+    () => (selectedWorkspace ? getPrivateWorkOriginSnapshot(selectedWorkspace.id) : null),
+  );
+  const [bannerReturnError, setBannerReturnError] = useState('');
+
+  // Release B (F7): keep the collaboration dialog's workspace object FRESH from
+  // the loaded workspaces list by id. Without this, after refreshWorkspaceList
+  // the dialog would keep a stale contentRevision and a moved-Shared-revision
+  // conflict could never recover (round45). Only updates identity when the
+  // revision/content actually changed, avoiding needless renders.
+  useEffect(() => {
+    setCollaborationWorkspace((current) => {
+      if (!current) return current;
+      const fresh = workspaces.find((w) => w.id === current.id);
+      if (fresh && fresh.contentRevision !== current.contentRevision) return fresh;
+      return current;
+    });
+  }, [workspaces]);
   const [openSlideStylesToken, setOpenSlideStylesToken] = useState(0);
   const [slideStyleChoice, setSlideStyleChoice] = useState<BrowseSlideStylesRequest | null>(null);
   const slideSelectionRef = useRef('');
@@ -944,6 +997,9 @@ export default function WorkspacePage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [shareWorkspace, setShareWorkspace] = useState<Workspace | null>(null);
   const [collaborationWorkspace, setCollaborationWorkspace] = useState<Workspace | null>(null);
+  // Release B (F8): open the collaboration dialog focused on a specific object
+  // (proposal or annotation on any file) when a thread's linked item is opened.
+  const [collaborationObjectId, setCollaborationObjectId] = useState<string | null>(null);
   const [publishWorkspaceTarget, setPublishWorkspaceTarget] = useState<Workspace | null>(null);
   const [historyWorkspaceTarget, setHistoryWorkspaceTarget] = useState<Workspace | null>(null);
   const [withdrawWorkspaceTarget, setWithdrawWorkspaceTarget] = useState<Workspace | null>(null);
@@ -965,6 +1021,23 @@ export default function WorkspacePage() {
   const isPublishedMode = isPublishedVersionMode(publishedVersionView, selectedWorkspace);
   const canMutateContent = canMutateWorkspaceContent(selectedWorkspace, publishedVersionView);
   const canSyncSelectedDraft = isDraftSyncActionable(selectedWorkspace);
+
+  // Release B (F8): a thread's linked-items panel asks to open the ORIGINAL
+  // collaboration object (proposal or annotation on any file) via this event.
+  // We open the collaboration dialog focused on that object, which loads the
+  // authorized object + its existing discussion without duplicating replies.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ objectId?: string; workspaceId?: string }>).detail;
+      if (!detail?.objectId || !selectedWorkspace) return;
+      // Ignore an event meant for a different workspace (stale context).
+      if (detail.workspaceId && detail.workspaceId !== selectedWorkspace.id) return;
+      setCollaborationObjectId(detail.objectId);
+      setCollaborationWorkspace(selectedWorkspace);
+    };
+    window.addEventListener('helpudoc-open-collaboration-object', handler as EventListener);
+    return () => window.removeEventListener('helpudoc-open-collaboration-object', handler as EventListener);
+  }, [selectedWorkspace]);
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -1015,6 +1088,15 @@ export default function WorkspacePage() {
   const autoSaveTimerRef = useRef<number | null>(null);
   const pendingAutoSaveRef = useRef<Promise<boolean> | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
+  // Release B (F8): unsaved-canvas guard for anchored annotations, derived
+  // INDEPENDENTLY of edit mode — switching a dirty text buffer to preview must
+  // still block a false exact-version pin (round42). Dirty when the native docx
+  // editor is dirty/saving, or the text buffer differs from the exact
+  // last-successfully-saved baseline.
+  const canvasDirty =
+    nativeDocxState.dirty ||
+    nativeDocxState.saving ||
+    (selectedFile !== null && !isNativeDocx && fileContent !== lastAutoSavedContentRef.current);
   const fileContentRequestIdRef = useRef(0);
   const workspaceFilesRequestIdRef = useRef(0);
   const workspaceFileRefreshTimerRef = useRef<number | null>(null);
@@ -3387,6 +3469,58 @@ export default function WorkspacePage() {
     }
   }, [publishedVersionView, resetWorkspaceArtifactState]);
 
+  // Release B (F7): return from a private working copy to its origin Shared
+  // workspace + thread/proposal. Uses deterministic host state (no event-timing
+  // race): switch to the origin workspace, deep-link the origin thread, and open
+  // the proposal directly via dialog state. The origin is cleared ONLY after a
+  // successful switch; if the origin workspace is not in the current list we
+  // surface a recoverable error instead of silently losing it.
+  const handleReturnFromPrivateWork = useCallback(() => {
+    if (!privateWorkOrigin) return;
+    const origin = workspaces.find((w) => w.id === privateWorkOrigin.originWorkspaceId);
+    if (!origin) {
+      setDraftSyncError('');
+      setBannerReturnError('The original workspace is not loaded. Refresh your workspaces and try Return again.');
+      void refreshWorkspaceList?.();
+      return;
+    }
+    handleSelectWorkspace(origin);
+    // Deep-link the origin thread (team channel) so the conversation opens, and
+    // open the proposal's discussion + author submit panel via dialog state.
+    navigate(
+      `${notificationLocation.pathname}?workspaceId=${origin.id}&channel=team&threadId=${privateWorkOrigin.threadId}`,
+      { replace: false },
+    );
+    setCollaborationObjectId(privateWorkOrigin.proposalId);
+    setCollaborationWorkspace(origin);
+    setBannerReturnError('');
+    clearPrivateWorkOrigin(privateWorkOrigin.privateWorkspaceId);
+  }, [privateWorkOrigin, workspaces, handleSelectWorkspace, navigate, notificationLocation.pathname, refreshWorkspaceList]);
+
+  // Shared private-work return banner, rendered in BOTH desktop and mobile
+  // canvas hosts (F7). Visible whenever the current workspace is a private copy
+  // the user entered from a Shared thread, even with no file open.
+  const privateWorkBanner = privateWorkOrigin ? (
+    <div
+      role="status"
+      data-testid="private-work-return-banner"
+      className={`flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs ${isDarkMode ? 'border-amber-400/30 bg-amber-400/10 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-800'}`}
+    >
+      <span className="min-w-0 truncate">
+        Working privately for thread “{privateWorkOrigin.threadTitle}”. Return to submit the selected changes.
+        {bannerReturnError ? ` — ${bannerReturnError}` : ''}
+      </span>
+      <button
+        type="button"
+        data-testid="private-work-return-button"
+        onClick={handleReturnFromPrivateWork}
+        className="shrink-0 rounded-lg border border-current px-2 py-1 font-semibold"
+      >
+        Return to thread
+      </button>
+    </div>
+  ) : null;
+
   useEffect(() => {
     const query = new URLSearchParams(notificationLocation.search);
     const notificationId = query.get('notificationId');
@@ -3612,6 +3746,14 @@ export default function WorkspacePage() {
             workspaceId: file.workspaceId,
             storageType: file.storageType,
             mimeType: file.mimeType,
+            // Preserve the EXACT immutable file-version UUID for this published
+            // file so an annotation pins the version actually viewed (F8,
+            // round34/37). NEVER fall back to publishedVersionId — that is the
+            // whole-publication UUID, not a file_versions UUID. When the
+            // snapshot omits fileVersionId (legacy), leave it null so the
+            // annotation UI honestly disables exact-version pinning rather than
+            // pinning a wrong id or silently letting the backend choose Working.
+            currentVersionId: file.fileVersionId ?? null,
           })));
           setWorkspaceKnowledge([]);
         } catch (error) {
@@ -7861,8 +8003,9 @@ export default function WorkspacePage() {
           ) : null}
         </div>
       </div>
+      {privateWorkBanner}
       <div className="min-h-0 flex-1 overflow-hidden">
-        <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} onAgentChat={handleAnnotationChat}>
+        <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} fileId={selectedFile && Number.isFinite(Number(selectedFile.id)) ? Number(selectedFile.id) : undefined} anchorVersionId={(selectedFileDetails && selectedFile && selectedFileDetails.id === selectedFile.id ? selectedFileDetails.currentVersionId : selectedFile?.currentVersionId) || undefined} sourceThreadId={releaseBReady ? activeThreadAssociation?.threadId : undefined} releaseBReady={releaseBReady} canvasDirty={canvasDirty} onAgentChat={handleAnnotationChat}>
         {isEditMode && selectedWorkspace ? (
           <Suspense fallback={editorLoadingFallback}>
             <FileEditor
@@ -9227,7 +9370,8 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden min-h-0">
-                    <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} onAgentChat={handleAnnotationChat}>
+                    {privateWorkBanner}
+                    <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} fileId={selectedFile && Number.isFinite(Number(selectedFile.id)) ? Number(selectedFile.id) : undefined} anchorVersionId={(selectedFileDetails && selectedFile && selectedFileDetails.id === selectedFile.id ? selectedFileDetails.currentVersionId : selectedFile?.currentVersionId) || undefined} sourceThreadId={releaseBReady ? activeThreadAssociation?.threadId : undefined} releaseBReady={releaseBReady} canvasDirty={canvasDirty} onAgentChat={handleAnnotationChat}>
                     {isEditMode && !isPublishedMode && selectedWorkspace ? (
                       <Suspense fallback={editorLoadingFallback}>
                         <FileEditor
@@ -9586,7 +9730,9 @@ export default function WorkspacePage() {
         open={collaborationWorkspace !== null}
         workspace={collaborationWorkspace}
         filePath={selectedFile?.name || selectedDashboardPath}
-        onClose={() => setCollaborationWorkspace(null)}
+        initialObjectId={collaborationObjectId}
+        releaseBReady={releaseBReady}
+        onClose={() => { setCollaborationWorkspace(null); setCollaborationObjectId(null); }}
         onWorkspaceListChanged={refreshWorkspaceList}
       />
       <WorkspaceReviewChangesDialog

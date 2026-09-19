@@ -2606,3 +2606,313 @@ test('team runs commit outputs before completion, dedupe terminal retries, and s
     if (redisClient.isOpen) await redisClient.quit();
   }
 });
+
+// --- Durable runner dispatch/recovery (F3 / A-07) -------------------------------
+//
+// These exercise the REAL startAgentRun against REAL Redis. Only the external AI
+// stream (agentStreamClient.runAgentStream) is stubbed with token/done NDJSON, so
+// the actual dedupe/identity/launch-lease/recovery paths execute. Gated so the
+// default `npm test` stays green without Redis:
+//   RUN_RUNNER_DISPATCH_INTEGRATION=1 REDIS_URL=redis://127.0.0.1:56389 \
+//     node -r ts-node/register/transpile-only -r tsconfig-paths/register \
+//     --test tests/agentRunService.test.ts
+const runnerDispatchEnabled = process.env.RUN_RUNNER_DISPATCH_INTEGRATION === '1';
+
+// A one-token + done stream that records each real external launch.
+const countingStream = (counter: { n: number }) => async () => {
+  counter.n += 1;
+  return makeStreamResponse([
+    { type: 'token', content: 'Fixture response' },
+    { type: 'done', status: 'completed' },
+  ]);
+};
+
+const cleanupRun = async (runId: string, workspaceId: string, persona: string, turnId: string, userId?: string) => {
+  await redisClient.del(`agent:run:${runId}`);
+  await redisClient.del(`agent:run:${runId}:meta`);
+  await redisClient.del(`agent:run:${runId}:launch`);
+  await redisClient.del(`agent:run:key:${workspaceId}:${userId || 'anonymous'}:${persona}:${turnId}`);
+};
+
+test('runner dispatch: a crash before worker launch (telemetry) recovers the SAME run and executes exactly once', {
+  skip: runnerDispatchEnabled ? false : 'set RUN_RUNNER_DISPATCH_INTEGRATION=1 with Redis available',
+}, async () => {
+  if (!redisClient.isOpen) await redisClient.connect();
+  const executions = { n: 0 };
+  const workspaceId = `ws-runner-crash-telemetry-${Date.now()}`;
+  const persona = 'fast';
+  const turnId = `turn-${Date.now()}`;
+  const userId = `user-${Date.now()}`;
+  let queuedRunId = '';
+  let recoveredRunId = '';
+  try {
+    // Telemetry throws AFTER queued metadata is registered but BEFORE the worker
+    // is launched. The first dispatch must reject; the queued work must survive.
+    configureAgentRunServices({
+      telemetryService: {
+        recordQueuedRun: async ({ runId }: { runId: string }) => {
+          queuedRunId = runId;
+          throw new Error('CRASH_BEFORE_LAUNCH');
+        },
+      } as any,
+      userMemoryService: null, skillEvolutionService: null, conversationService: null, fileService: null,
+      agentStreamClient: { runAgentStream: countingStream(executions) },
+    });
+    const params = { workspaceId, userId, persona, prompt: 'Fixture only', turnId, sharedTeamChannel: true, readOnlyWorkspace: true };
+    await assert.rejects(() => startAgentRun(params), /CRASH_BEFORE_LAUNCH/);
+
+    // Retry the SAME turn with telemetry restored. Recovery must relaunch the
+    // SAME runId and drive it to a single terminal completion.
+    configureAgentRunServices({ telemetryService: null });
+    const retried = await startAgentRun(params);
+    recoveredRunId = retried.runId;
+    const terminal = await waitForRunStatus(retried.runId, (status) => status === 'completed' || status === 'failed', 3_000);
+    assert.equal(retried.runId, queuedRunId, 'recovery reuses the durable run identity');
+    assert.equal(terminal?.status, 'completed', 'recovered run reaches a single terminal completion');
+    assert.equal(executions.n, 1, 'the external stream launched exactly once');
+  } finally {
+    if (queuedRunId) await cleanupRun(queuedRunId, workspaceId, persona, turnId, userId);
+    if (recoveredRunId && recoveredRunId !== queuedRunId) await cleanupRun(recoveredRunId, workspaceId, persona, turnId, userId);
+    configureAgentRunServices({ telemetryService: null, agentStreamClient: null });
+    if (redisClient.isOpen) await redisClient.quit();
+  }
+});
+
+test('runner dispatch: two concurrent identical dispatches converge on ONE run and ONE execution', {
+  skip: runnerDispatchEnabled ? false : 'set RUN_RUNNER_DISPATCH_INTEGRATION=1 with Redis available',
+}, async () => {
+  if (!redisClient.isOpen) await redisClient.connect();
+  const executions = { n: 0 };
+  const workspaceId = `ws-runner-concurrent-${Date.now()}`;
+  const persona = 'fast';
+  const turnId = `turn-${Date.now()}`;
+  const userId = `user-${Date.now()}`;
+  const runIds = new Set<string>();
+  try {
+    configureAgentRunServices({
+      telemetryService: null, userMemoryService: null, skillEvolutionService: null, conversationService: null, fileService: null,
+      agentStreamClient: { runAgentStream: countingStream(executions) },
+    });
+    const params = { workspaceId, userId, persona, prompt: 'Fixture only', turnId, sharedTeamChannel: true, readOnlyWorkspace: true };
+    const results = await Promise.all([startAgentRun(params), startAgentRun(params)]);
+    for (const r of results) runIds.add(r.runId);
+    const terminal = await waitForRunStatus(results[0].runId, (status) => status === 'completed' || status === 'failed', 3_000);
+    assert.equal(runIds.size, 1, 'concurrent identical dispatch shares a single run identity');
+    assert.equal(terminal?.status, 'completed');
+    assert.equal(executions.n, 1, 'the external stream launched exactly once');
+  } finally {
+    for (const id of runIds) await cleanupRun(id, workspaceId, persona, turnId, userId);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) await redisClient.quit();
+  }
+});
+
+test('runner dispatch: a crash right after claiming the launch lease recovers the SAME run and executes exactly once', {
+  skip: runnerDispatchEnabled ? false : 'set RUN_RUNNER_DISPATCH_INTEGRATION=1 with Redis available',
+}, async () => {
+  if (!redisClient.isOpen) await redisClient.connect();
+  const executions = { n: 0 };
+  const workspaceId = `ws-runner-launch-claim-${Date.now()}`;
+  const persona = 'fast';
+  const turnId = `turn-${Date.now()}`;
+  const userId = `user-${Date.now()}`;
+  let queuedRunId = '';
+  // Short launch-lease TTL so the crashed launcher's lease lapses quickly and the
+  // bounded recovery poll can reclaim launch ownership within the test window.
+  const priorTtl = process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS;
+  process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS = '400';
+  // Inject the crash at the durable launch-claim boundary: the launch lease is
+  // claimed via a Lua eval that returns 'LAUNCH'. We let that durable write
+  // commit, then throw before the worker launches (models process death right
+  // after claiming ownership). This is the equivalent seam to a monkeypatched
+  // SET; semantics, not spelling, are what matter.
+  const originalEval = redisClient.eval.bind(redisClient);
+  let injected = false;
+  try {
+    (redisClient as any).eval = async (script: string, options: any) => {
+      const result = await originalEval(script, options);
+      if (!injected && result === 'LAUNCH') {
+        injected = true;
+        const leaseKey = String(options.keys[0]);
+        queuedRunId = leaseKey.slice('agent:run:'.length, -':launch'.length);
+        throw new Error('CRASH_AFTER_LAUNCH_CLAIM');
+      }
+      return result;
+    };
+    configureAgentRunServices({
+      telemetryService: null, userMemoryService: null, skillEvolutionService: null, conversationService: null, fileService: null,
+      agentStreamClient: { runAgentStream: countingStream(executions) },
+    });
+    const params = { workspaceId, userId, persona, prompt: 'Fixture only', turnId, sharedTeamChannel: true, readOnlyWorkspace: true };
+    await assert.rejects(() => startAgentRun(params), /CRASH_AFTER_LAUNCH_CLAIM/);
+    (redisClient as any).eval = originalEval;
+
+    // Retry the SAME turn. The crashed launcher never renewed its short-TTL lease;
+    // with status still queued, recovery reclaims ownership for the SAME runId.
+    const retried = await startAgentRun(params);
+    const terminal = await waitForRunStatus(retried.runId, (status) => status === 'completed' || status === 'failed', 4_000);
+    assert.equal(retried.runId, queuedRunId, 'recovery reuses the durable run identity, never a new one');
+    assert.equal(terminal?.status, 'completed', 'recovered run reaches a single terminal completion');
+    assert.equal(executions.n, 1, 'the external stream launched exactly once after crash-after-claim');
+  } finally {
+    (redisClient as any).eval = originalEval;
+    if (priorTtl === undefined) delete process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS;
+    else process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS = priorTtl;
+    if (queuedRunId) await cleanupRun(queuedRunId, workspaceId, persona, turnId, userId);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) await redisClient.quit();
+  }
+});
+
+test('runner dispatch: a live queued worker renews launch ownership while waiting for the workspace lease (short TTL)', {
+  skip: runnerDispatchEnabled ? false : 'set RUN_RUNNER_DISPATCH_INTEGRATION=1 with Redis available',
+}, async () => {
+  if (!redisClient.isOpen) await redisClient.connect();
+  const priorTtl = process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS;
+  // Short launch TTL so the renewal must actively fire to keep ownership alive.
+  process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS = '150';
+  const executions = { n: 0 };
+  const workspaceId = `ws-runner-queued-owner-${Date.now()}`;
+  const persona = 'fast';
+  const turnId = `turn-${Date.now()}`;
+  const userId = `user-${Date.now()}`;
+  const leaseKey = `agent-run:workspace-mutation:${workspaceId}`;
+  let runId = '';
+  try {
+    // Block the workspace mutation lease so the launched worker stays queued,
+    // waiting — exactly the window where launch ownership must be renewed.
+    await redisClient.set(leaseKey, 'fixture-holder', { PX: 5_000 });
+    configureAgentRunServices({
+      telemetryService: null, userMemoryService: null, skillEvolutionService: null, conversationService: null, fileService: null,
+      agentStreamClient: { runAgentStream: countingStream(executions) },
+    });
+    const started = await startAgentRun({ workspaceId, userId, persona, prompt: 'Fixture only', turnId, sharedTeamChannel: true, readOnlyWorkspace: true });
+    runId = started.runId;
+    const owner0 = await redisClient.get(`agent:run:${runId}:launch`);
+    assert.ok(owner0, 'launch lease is held by the live worker');
+
+    // Wait well beyond the 150ms TTL. Without renewal the lease would lapse.
+    await new Promise((r) => setTimeout(r, 600));
+    const ownerAfter = await redisClient.get(`agent:run:${runId}:launch`);
+    assert.equal(ownerAfter, owner0, 'a live queued worker renews and keeps the SAME launch ownership token');
+
+    // A concurrent retry cannot reclaim ownership while the worker is alive.
+    const retry = await startAgentRun({ workspaceId, userId, persona, prompt: 'Fixture only', turnId, sharedTeamChannel: true, readOnlyWorkspace: true });
+    assert.equal(retry.runId, runId, 'retry dedupes to the same run identity');
+    const ownerAfterRetry = await redisClient.get(`agent:run:${runId}:launch`);
+    assert.equal(ownerAfterRetry, owner0, 'a concurrent retry does not steal a live launch ownership');
+
+    // Release the workspace lease; the single original worker proceeds and runs once.
+    await redisClient.del(leaseKey);
+    const terminal = await waitForRunStatus(runId, (status) => status === 'completed' || status === 'failed', 5_000);
+    assert.equal(terminal?.status, 'completed');
+    assert.equal(executions.n, 1, 'exactly one execution — launch ownership was never stolen');
+  } finally {
+    if (priorTtl === undefined) delete process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS;
+    else process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS = priorTtl;
+    await redisClient.del(leaseKey).catch(() => undefined);
+    if (runId) await cleanupRun(runId, workspaceId, persona, turnId, userId);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) await redisClient.quit();
+  }
+});
+
+test('runner dispatch: launch ownership is preserved across slow workspace preparation before the running transition (short TTL)', {
+  skip: runnerDispatchEnabled ? false : 'set RUN_RUNNER_DISPATCH_INTEGRATION=1 with Redis available',
+}, async () => {
+  if (!redisClient.isOpen) await redisClient.connect();
+  const priorTtl = process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS;
+  process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS = '150';
+  const executions = { n: 0 };
+  const workspaceId = `ws-runner-preparing-owner-${Date.now()}`;
+  const persona = 'fast';
+  const turnId = `turn-${Date.now()}`;
+  const userId = `user-${Date.now()}`;
+  let runId = '';
+  // Gate the workspace mirror preparation, which runs AFTER the workspace lease is
+  // acquired but BEFORE the running transition is persisted — the window the
+  // reviewer flagged where the run is still `queued`.
+  let signalPreparing: () => void; let releasePreparing: () => void;
+  const preparingReached = new Promise<void>((r) => { signalPreparing = r; });
+  const preparingGate = new Promise<void>((r) => { releasePreparing = r; });
+  try {
+    configureAgentRunServices({
+      telemetryService: null, userMemoryService: null, skillEvolutionService: null, conversationService: null,
+      fileService: {
+        reconcileWorkspaceMirror: async () => { signalPreparing(); await preparingGate; },
+        captureWorkspaceArtifactBaseline: async () => ({}),
+        commitWorkspaceArtifacts: async () => [],
+      } as any,
+      agentStreamClient: { runAgentStream: countingStream(executions) },
+    });
+    // readOnlyWorkspace false so reconcileWorkspaceMirror is invoked.
+    const started = await startAgentRun({ workspaceId, userId, persona, prompt: 'Fixture only', turnId, sharedTeamChannel: true, readOnlyWorkspace: false });
+    runId = started.runId;
+    await preparingReached; // worker is now inside mirror prep, status still queued
+    const owner0 = await redisClient.get(`agent:run:${runId}:launch`);
+    assert.ok(owner0, 'launch lease held while preparing');
+    assert.equal((await getRunMeta(runId))?.status, 'queued', 'status is still queued during preparation');
+
+    // Wait beyond the 150ms TTL: renewal must keep ownership through preparation.
+    await new Promise((r) => setTimeout(r, 600));
+    const ownerAfter = await redisClient.get(`agent:run:${runId}:launch`);
+    assert.equal(ownerAfter, owner0, 'launch ownership is preserved across slow preparation');
+
+    // A concurrent retry during preparation cannot steal ownership or double-run.
+    const retry = await startAgentRun({ workspaceId, userId, persona, prompt: 'Fixture only', turnId, sharedTeamChannel: true, readOnlyWorkspace: false });
+    assert.equal(retry.runId, runId, 'retry dedupes to the same run identity');
+    assert.equal(await redisClient.get(`agent:run:${runId}:launch`), owner0, 'retry did not steal preparing launch ownership');
+
+    releasePreparing!();
+    const terminal = await waitForRunStatus(runId, (status) => status === 'completed' || status === 'failed', 5_000);
+    assert.equal(terminal?.status, 'completed');
+    assert.equal(executions.n, 1, 'exactly one execution across the preparation window');
+  } finally {
+    releasePreparing!();
+    if (priorTtl === undefined) delete process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS;
+    else process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS = priorTtl;
+    if (runId) await cleanupRun(runId, workspaceId, persona, turnId, userId);
+    configureAgentRunServices({ fileService: null, agentStreamClient: null });
+    if (redisClient.isOpen) await redisClient.quit();
+  }
+});
+
+test('runner dispatch: retry of a QUEUED RESUMPTION (startedAt present) does not re-run the original prompt', {
+  skip: runnerDispatchEnabled ? false : 'set RUN_RUNNER_DISPATCH_INTEGRATION=1 with Redis available',
+}, async () => {
+  if (!redisClient.isOpen) await redisClient.connect();
+  const executions = { n: 0 };
+  const workspaceId = `ws-runner-resume-${Date.now()}`;
+  const persona = 'fast';
+  const turnId = `turn-${Date.now()}`;
+  const userId = `user-${Date.now()}`;
+  let queuedRunId = '';
+  try {
+    // Crash before launch to leave a registered queued run without a worker.
+    configureAgentRunServices({
+      telemetryService: { recordQueuedRun: async ({ runId }: { runId: string }) => { queuedRunId = runId; throw new Error('CRASH_BEFORE_LAUNCH'); } } as any,
+      userMemoryService: null, skillEvolutionService: null, conversationService: null, fileService: null,
+      agentStreamClient: { runAgentStream: countingStream(executions) },
+    });
+    const params = { workspaceId, userId, persona, prompt: 'Fixture only', turnId, sharedTeamChannel: true, readOnlyWorkspace: true };
+    await assert.rejects(() => startAgentRun(params), /CRASH_BEFORE_LAUNCH/);
+
+    // Mark the queued run as a RESUMPTION by stamping startedAt (as the resume
+    // path does when re-queuing after human input).
+    await redisClient.hSet(`agent:run:${queuedRunId}:meta`, { startedAt: new Date().toISOString() });
+
+    // Retry the SAME identity. It must NOT re-run the original prompt: a queued
+    // resumption's continuation is owned by the resume path, not startAgentRun.
+    configureAgentRunServices({ telemetryService: null });
+    const retried = await startAgentRun(params);
+    await new Promise((r) => setTimeout(r, 800));
+    const meta = await getRunMeta(retried.runId);
+    assert.equal(retried.runId, queuedRunId, 'retry keeps the same identity');
+    assert.equal(executions.n, 0, 'a queued resumption is not restarted by a retry of the original request');
+    assert.equal(meta?.status, 'queued', 'the resumption remains queued for its own resume path');
+  } finally {
+    if (queuedRunId) await cleanupRun(queuedRunId, workspaceId, persona, turnId, userId);
+    configureAgentRunServices({ telemetryService: null, agentStreamClient: null });
+    if (redisClient.isOpen) await redisClient.quit();
+  }
+});

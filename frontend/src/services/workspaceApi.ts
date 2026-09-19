@@ -226,6 +226,13 @@ export type PublishedVersionFile = {
   mimeType: string | null;
   size: number;
   publishedVersionId: string;
+  /**
+   * The immutable file-version UUID for THIS file within the published
+   * snapshot. Used to pin an annotation to the exact viewed version (F8). The
+   * backend `getVersionSnapshot` already returns it; older snapshots may omit
+   * it, in which case an exact anchor cannot be pinned (shown honestly).
+   */
+  fileVersionId?: string | null;
 };
 
 export type PublishedVersionSnapshot = {

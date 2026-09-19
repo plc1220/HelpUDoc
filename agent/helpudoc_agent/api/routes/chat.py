@@ -471,7 +471,22 @@ def register_chat_routes(
         return payload, latest_user_text
 
     def _extract_request_context(request: Request) -> Dict[str, Any]:
-        return extract_agent_request_context(request, agent_jwt_secret=agent_jwt_secret)
+        context = extract_agent_request_context(request, agent_jwt_secret=agent_jwt_secret)
+        # Retain the raw signed token and backend base URL ONLY when a
+        # thread-history scope is present, so the team_thread_history tool can
+        # authenticate its callback with the exact same signed context. The token
+        # is never exposed to the model; it lives in workspace_state.context.
+        if isinstance(context, dict) and context.get("thread_history_scope"):
+            raw_auth = request.headers.get("authorization") or ""
+            if raw_auth.lower().startswith("bearer "):
+                context["agent_auth_token"] = raw_auth.split(" ", 1)[1].strip()
+            backend_base = (
+                os.getenv("BACKEND_INTERNAL_URL")
+                or os.getenv("HELPUDOC_BACKEND_URL")
+                or "http://localhost:3000"
+            ).rstrip("/")
+            context["backend_base_url"] = backend_base
+        return context
 
     def _merge_trace_gate_context(context: Dict[str, Any], trace_context: Dict[str, Any] | None) -> Dict[str, Any]:
         merged = dict(context or {})

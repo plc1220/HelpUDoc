@@ -513,4 +513,202 @@ export type TeamChatReference =
   | { kind: 'person'; id: string; label: string }
   | { kind: 'agent'; id: 'lumo'; label: string }
   | { kind: 'skill'; id: string; label: string }
-  | { kind: 'file'; id: string; label: string; version?: number; publishedVersionId?: string };
+  | { kind: 'file'; id: string; label: string; version?: number; publishedVersionId?: string }
+  | { kind: 'annotation'; id: string; label: string; anchorVersionId?: string };
+
+/** Team Chat threads (docs/team-chat-threads-spec.md). */
+export type TeamThreadStatus = 'open' | 'resolved';
+
+export type TeamThreadRunStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting_input'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface TeamThreadParticipant {
+  userId: string;
+  displayName: string;
+}
+
+export interface TeamThreadSummary {
+  id: string;
+  workspaceId: string;
+  title: string;
+  status: TeamThreadStatus;
+  rootMessageId: string | null;
+  rootPreview: string;
+  createdBy: string | null;
+  replyCount: number;
+  lastActivityAt: string;
+  lastMessageSeq: number;
+  participants: TeamThreadParticipant[];
+  unread: boolean;
+  unreadCount: number;
+  following: boolean;
+  runStatus: TeamThreadRunStatus | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TeamThreadListResponse {
+  threads: TeamThreadSummary[];
+  nextCursor: string | null;
+}
+
+/**
+ * Team Chat threads rollout readiness (docs/team-chat-threads-spec.md section 7).
+ * Returned by GET /workspaces/:workspaceId/collaboration/team-chat/readiness.
+ *  - enabled: the backend TEAM_CHAT_THREADS_ENABLED feature gate is on.
+ *  - ready: this workspace's legacy chat is fully canonicalized — every message
+ *    has a thread and sequence and thread invariants hold. False while any
+ *    message is unmapped, so the frontend must keep the existing flat UI/context
+ *    (new reads must not silently hide unmigrated legacy discussions).
+ *  - unmappedMessageCount: messages in this workspace still lacking a canonical
+ *    thread/sequence (0 when ready).
+ * The threaded UI/context should activate only when BOTH enabled AND ready.
+ */
+export interface TeamThreadReadiness {
+  enabled: boolean;
+  ready: boolean;
+  unmappedMessageCount: number;
+  /**
+   * Separate, default-OFF Release B capability gate (TEAM_CHAT_RELEASE_B_ENABLED).
+   * Gates ONLY the Release B work-history surfaces (Changes tab, submissions
+   * preview/apply UI, annotation linking). It never disables the already-safe
+   * Release A threaded UI/context. Show Release B surfaces only when
+   * enabled && ready && releaseBEnabled.
+   */
+  releaseBEnabled: boolean;
+}
+
+export interface TeamThreadMessagesResponse<TMessage = unknown> {
+  thread: TeamThreadSummary;
+  messages: TMessage[];
+  olderCursor: string | null;
+  newerCursor: string | null;
+  hasOlder: boolean;
+  hasNewer: boolean;
+}
+
+/** A single attributed file operation in the Changes view (Release B, F6). */
+export interface TeamThreadChangeRecord {
+  versionId: string;
+  fileId: number;
+  filePath: string;
+  changeKind: string;
+  actorId: string | null;
+  actorName: string;
+  createdAt: string;
+  sourceRunId: string | null;
+  sourceMessageId: string | null;
+  baseVersionId: string | null;
+  baseVersion: number | null;
+  version: number;
+  superseded: boolean;
+  currentVersion: number | null;
+  /** Originating run status when the op was attributed via a run (e.g. 'failed'). */
+  runStatus: string | null;
+  /** The file is currently deleted; immutable bytes remain retrievable. */
+  fileDeleted: boolean;
+}
+
+/** A frozen, immutable submitted change set (Release B, F7). */
+export interface ProposalChangeSetOperation {
+  path: string;
+  fromPath: string | null;
+  fileId: number | null;
+  changeKind: string;
+  baseVersionId: string | null;
+  proposedVersionId: string | null;
+  sha256: string | null;
+}
+
+export interface ProposalChangeSetReview {
+  id: string;
+  reviewerId: string | null;
+  verdict: string;
+  comment: string | null;
+  createdAt: string;
+}
+
+export interface ProposalChangeSet {
+  id: string;
+  objectId: string;
+  sourceThreadId: string | null;
+  baseSharedRevision: number;
+  operations: ProposalChangeSetOperation[];
+  publicExplanation: string | null;
+  submittedBy: string | null;
+  status: string;
+  createdAt: string;
+  reviews: ProposalChangeSetReview[];
+}
+
+/** Pre-submit candidate (Release B, F7): a differing file the author may select. */
+export interface SubmissionCandidate {
+  path: string;
+  fromPath: string | null;
+  fileId: number | null;
+  changeKind: 'create' | 'content' | 'delete' | 'rename';
+  baseVersionId: string | null;
+  proposedVersionId: string | null;
+  sha256: string | null;
+  size: number | null;
+  mimeType: string | null;
+  /** Changed content references that MUST be submitted together with this file. */
+  requiredDeps: string[];
+}
+
+export interface SubmissionCandidatesResponse {
+  candidates: SubmissionCandidate[];
+  baseSharedRevision: number;
+  basePrivateRevision: number;
+}
+
+/** A submission list row (summary; fetch the full ProposalChangeSet by id for operations). */
+export interface ProposalChangeSetSummary {
+  id: string;
+  status: string;
+  submittedBy: string | null;
+  publicExplanation: string | null;
+  baseSharedRevision: number;
+  operationCount: number;
+  createdAt: string;
+  appliedAt: string | null;
+  reviews: ProposalChangeSetReview[];
+}
+
+export interface ProposalSubmissionsListResponse {
+  submissions: ProposalChangeSetSummary[];
+}
+
+/** Author-only private navigation for a proposal (Release B, F7). */
+export interface ProposalPrivateNavigation {
+  linkedPrivateWorkspaceId: string | null;
+  privateContentRevision: number | null;
+  sourceThreadId: string | null;
+  originThreadIds: string[];
+}
+
+/** A collaboration object linked to a thread (Release B, F8). */
+export interface ThreadLinkedItem {
+  objectId: string;
+  type: string;
+  status: string;
+  title: string | null;
+  fileId: number | null;
+  filePath: string | null;
+  anchorText: string | null;
+  anchorVersionId: string | null;
+  anchorVersionNumber: number | null;
+  currentVersionNumber: number | null;
+  fileDeleted: boolean;
+  anchorChanged: boolean;
+  createdAt: string;
+}
+
+export interface ThreadLinkedItemsResponse {
+  items: ThreadLinkedItem[];
+}

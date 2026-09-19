@@ -227,6 +227,8 @@ services:
       SKILLS_ROOT: /app/skills
       PLUGINS_ROOT: /app/plugins
       ENABLE_SKILL_SANDBOX_RUNNER: ${ENABLE_SKILL_SANDBOX_RUNNER:-true}
+      TEAM_CHAT_THREADS_ENABLED: ${TEAM_CHAT_THREADS_ENABLED:-false}
+      TEAM_CHAT_RELEASE_B_ENABLED: ${TEAM_CHAT_RELEASE_B_ENABLED:-false}
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@local.com}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
@@ -317,6 +319,10 @@ services:
       WORKSPACE_ROOT: /app/workspaces
       SKILLS_ROOT: /app/skills
       PLUGINS_ROOT: /app/plugins
+      # Backend base URL for authenticated agent callbacks (spec F3 team_thread_history
+      # reader). In the container network the agent reaches the backend by service
+      # name, NOT localhost (localhost is the agent container itself).
+      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:3000}
       HELPUDOC_SANDBOX_BACKEND: ${HELPUDOC_SANDBOX_BACKEND:-local}
       KNOWLEDGE_MARKITDOWN_MODE: ${KNOWLEDGE_MARKITDOWN_MODE:-primary}
       KNOWLEDGE_OCR_MODE: ${KNOWLEDGE_OCR_MODE:-auto}

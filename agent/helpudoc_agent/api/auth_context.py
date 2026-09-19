@@ -112,6 +112,28 @@ def extract_agent_request_context(request: Request, *, agent_jwt_secret: str) ->
     # Approval gates are fail-closed. Trusted mode must be explicitly asserted by
     # the signed backend context rather than inferred from a missing claim.
     context["skip_plan_approvals"] = bool(payload.get("skipPlanApprovals", False))
+    # Team Chat (F3) authenticated thread-history reader scope. Bound at sign time
+    # to the run's workspace/user/thread/cutoff. The tool reads ONLY this scope;
+    # the model cannot supply or widen it.
+    raw_scope = payload.get("threadHistoryScope")
+    if isinstance(raw_scope, dict):
+        scope_workspace = str(raw_scope.get("workspaceId") or "").strip()
+        scope_user = str(raw_scope.get("userId") or "").strip()
+        scope_thread = str(raw_scope.get("threadId") or "").strip()
+        raw_cutoff = raw_scope.get("cutoffSeq")
+        try:
+            scope_cutoff = int(raw_cutoff)
+        except (TypeError, ValueError):
+            scope_cutoff = None
+        if scope_workspace and scope_user and scope_thread and scope_cutoff is not None:
+            source_message_id = str(raw_scope.get("sourceMessageId") or "").strip()
+            context["thread_history_scope"] = {
+                "workspace_id": scope_workspace,
+                "user_id": scope_user,
+                "thread_id": scope_thread,
+                "cutoff_seq": scope_cutoff,
+                "source_message_id": source_message_id or None,
+            }
     return context
 
 

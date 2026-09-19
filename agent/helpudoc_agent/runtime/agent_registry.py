@@ -530,6 +530,17 @@ class AgentRegistry:
             tool_names = list(self.settings.tools.keys())
         else:
             tool_names = _include_always_available_tool_groups(tool_names, self.settings.tools)
+        # The authenticated Team Chat history reader must be available for any run
+        # that carries a signed thread-history scope, even when a selected skill
+        # otherwise narrows the tool set (spec F3.4). Its scope is enforced by the
+        # signed token, so exposing the tool cannot widen access.
+        if (
+            isinstance(workspace_state.context, dict)
+            and workspace_state.context.get("thread_history_scope")
+            and "team_thread_history" in self.settings.tools
+            and "team_thread_history" not in tool_names
+        ):
+            tool_names.append("team_thread_history")
         if not allow_skill_sandbox:
             tool_names = [name for name in tool_names if name != "run_skill_python_script"]
         if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:

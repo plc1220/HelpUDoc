@@ -36,6 +36,7 @@ export function getAuthUser(): AuthUser | null {
 }
 
 export function setAuthUser(user: AuthUser | null): void {
+  const previous = cachedUser;
   cachedUser = user;
   if (!isBrowser || !window.localStorage) {
     return;
@@ -48,5 +49,22 @@ export function setAuthUser(user: AuthUser | null): void {
     }
   } catch (error) {
     console.warn('Failed to persist auth user', error);
+  }
+  // Notify same-tab listeners of a sign-out or account switch. The native
+  // `storage` event does NOT fire in the tab that made the change, so features
+  // that must clear per-user in-memory state (Team Chat thread drafts, thread
+  // associations) rely on this explicit event (Release A spec: drafts clear on
+  // sign-out / lost access; team-chat-threads-spec §F2/F5).
+  const changed = (previous?.id ?? null) !== (user?.id ?? null);
+  if (changed && isBrowser) {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('helpudoc-auth-changed', {
+          detail: { previousUserId: previous?.id ?? null, userId: user?.id ?? null },
+        }),
+      );
+    } catch {
+      /* ignore environments without CustomEvent */
+    }
   }
 }

@@ -10,6 +10,7 @@ import { Knex } from 'knex';
 import { WorkspaceService } from './workspaceService';
 import { ConflictError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
+import { withWorkspaceMirrorLock } from './workspaceMirrorLock';
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
 const TEXT_MIME_TYPES = [
@@ -128,12 +129,13 @@ export class FileService {
       mimeType: string;
     },
     userId: string,
-    options?: { allowSystemAdmin?: boolean },
+    options?: { allowSystemAdmin?: boolean; sourceThreadId?: string | null },
   ) {
     await this.workspaceService.ensureMembership(input.workspaceId, userId, {
       requireEdit: true,
       allowSystemAdmin: options?.allowSystemAdmin,
     });
+    const finalizeSourceThreadId = await this.validateSourceThread(input.workspaceId, options?.sourceThreadId);
     const relativePath = await this.resolveUniqueRelativePath(
       input.workspaceId,
       input.requestedFileName,
@@ -174,14 +176,22 @@ export class FileService {
           sizeBytes: metadata.sizeBytes,
           changeKind: 'create',
           createdBy: userId,
+          sourceThreadId: finalizeSourceThreadId,
         }));
         const [current] = await tx('files')
           .where({ id: created.id })
           .update({ currentVersionId: versionId })
           .returning('*');
+        // Bump content revision inside the transaction (see createFile) so a
+        // concurrent submission/apply revision check sees this upload atomically.
+        await tx('workspaces').where({ id: input.workspaceId }).update({
+          contentRevision: tx.raw('COALESCE("contentRevision", 0) + 1'),
+          updatedAt: tx.fn.now(),
+          lastModifiedBy: userId,
+        });
         return current;
       });
-      await this.workspaceService.touchWorkspace(input.workspaceId, userId, { contentChanged: true });
+      await this.workspaceService.touchWorkspace(input.workspaceId, userId, {});
       return newFile;
     } catch (error) {
       if (createdFileId) await this.db('files').where({ id: createdFileId }).del().catch(() => undefined);
@@ -279,6 +289,22 @@ export class FileService {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     return Buffer.concat(chunks);
+  }
+
+  /**
+   * Read the immutable bytes of a specific `file_versions` row (spec F6 Changes
+   * preview). Reads the object store directly by the version's frozen objectKey,
+   * so it works even when the live file has been DELETED (unlike the standard
+   * download path, which filters on files.deletedAt). The caller is responsible
+   * for authorizing the version (e.g. scoping it to a thread's change set).
+   */
+  async readImmutableVersionBytes(version: {
+    objectKey: string;
+    objectProvider?: string | null;
+    providerVersion?: string | null;
+  }): Promise<Buffer> {
+    this.assertObjectProvider(version.objectProvider);
+    return this.readObjectBuffer(String(version.objectKey), version.providerVersion || undefined);
   }
 
   private assertObjectProvider(provider?: string | null): void {
@@ -496,6 +522,8 @@ export class FileService {
     createdBy?: string | null;
     sourceRunId?: string | null;
     operationId?: string | null;
+    sourceThreadId?: string | null;
+    sourceMessageId?: string | null;
   }) {
     return {
       id: input.id,
@@ -514,7 +542,31 @@ export class FileService {
       createdBy: input.createdBy || null,
       sourceRunId: input.sourceRunId || null,
       operationId: input.operationId || null,
+      // Durable provenance (spec F6): the team thread a human/agent operation is
+      // explicitly attributed to, and the source chat message when known. Never
+      // inferred from timestamps — the caller passes a validated thread id.
+      sourceThreadId: input.sourceThreadId || null,
+      sourceMessageId: input.sourceMessageId || null,
     };
+  }
+
+  /**
+   * Validate an explicit human file-operation → thread association (spec F6).
+   * The thread must exist in the SAME workspace as the file; attribution is
+   * explicit, never inferred. Returns the validated thread id, or null when no
+   * association was requested. Throws NotFoundError (non-disclosing) for an
+   * unknown/foreign thread so a forged cross-workspace id cannot attach.
+   */
+  private async validateSourceThread(
+    workspaceId: string,
+    sourceThreadId: string | null | undefined,
+  ): Promise<string | null> {
+    if (!sourceThreadId) return null;
+    const thread = await this.db('workspace_team_threads')
+      .where({ id: sourceThreadId, workspaceId })
+      .first();
+    if (!thread) throw new NotFoundError('Thread not found');
+    return String(thread.id);
   }
 
   private async writeLocalMirror(workspaceId: string, name: string, payload: Buffer): Promise<string> {
@@ -626,12 +678,14 @@ export class FileService {
       sourceRunId?: string | null;
       operationId?: string | null;
       changeKind?: FileVersionChangeKind;
+      sourceThreadId?: string | null;
     },
   ) {
     await this.workspaceService.ensureMembership(workspaceId, userId, {
       requireEdit: true,
       allowSystemAdmin: options?.allowSystemAdmin,
     });
+    const sourceThreadId = await this.validateSourceThread(workspaceId, options?.sourceThreadId);
     const relativePath = this.normalizeRelativePath(fileName);
     if (this.isInternalWorkspacePath(relativePath) && !options?.internal) {
       throw new ConflictError('System workspace paths are reserved');
@@ -677,11 +731,22 @@ export class FileService {
           createdBy: userId,
           sourceRunId: options?.sourceRunId,
           operationId: options?.operationId,
+          sourceThreadId,
         }));
         const [updated] = await tx('files')
           .where({ id: created.id })
           .update({ currentVersionId: versionId })
           .returning('*');
+        // Bump the workspace content revision INSIDE this transaction so a
+        // concurrent submission/apply revision check observes the create
+        // atomically. (Previously this happened post-commit via touchWorkspace,
+        // leaving a window where a create was committed but the revision was not
+        // yet bumped, defeating revision-based staleness checks.)
+        await tx('workspaces').where({ id: workspaceId }).update({
+          contentRevision: tx.raw('COALESCE("contentRevision", 0) + 1'),
+          updatedAt: tx.fn.now(),
+          lastModifiedBy: userId,
+        });
         return updated;
       });
     } catch (error) {
@@ -689,11 +754,21 @@ export class FileService {
       throw error;
     }
 
-    await this.writeLocalMirror(workspaceId, relativePath, fileBuffer).catch((error) => {
+    // Materialize the mirror under the shared lock from the file's canonical
+    // committed version so a concurrent apply/writer that superseded this path
+    // cannot be overwritten by a stale create buffer.
+    await withWorkspaceMirrorLock(this.db, workspaceId, async () => {
+      const canonical = await this.db('files').where({ id: newFile.id }).whereNull('deletedAt').first();
+      if (!canonical) return;
+      await this.materializeCanonicalMirror(canonical);
+    }).catch((error) => {
       console.error('Failed to refresh local file cache after durable create:', error);
     });
 
-    await this.workspaceService.touchWorkspace(workspaceId, userId, { contentChanged: true });
+    // Content revision + updatedAt were already bumped inside the create
+    // transaction above. Touch only to preserve the system-owner lastModifiedBy
+    // override for system workspaces; do NOT bump contentRevision again.
+    await this.workspaceService.touchWorkspace(workspaceId, userId, {});
 
     return newFile;
   }
@@ -720,61 +795,68 @@ export class FileService {
     assertLeaseOwned?: () => Promise<void>,
   ): Promise<void> {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
-    const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
-    await fs.mkdir(workspacePath, { recursive: true });
-    const liveFiles = await this.db('files')
-      .where({ workspaceId })
-      .whereNull('deletedAt');
-    const durableNames = new Set<string>();
-    for (const file of liveFiles) {
-      await assertLeaseOwned?.();
-      const relativeName = this.normalizeRelativePath(String(file.name));
-      if (this.isInternalWorkspacePath(relativeName)) continue;
-      await this.ensureCanonicalVersion(file, userId);
-      const canonicalFile = await this.db('files').where({ id: file.id }).first();
-      if (!canonicalFile || canonicalFile.deletedAt) continue;
-      const canonicalName = this.normalizeRelativePath(String(canonicalFile.name));
-      if (this.isInternalWorkspacePath(canonicalName)) continue;
-      durableNames.add(canonicalName);
-      await this.ensureLocalMirror(canonicalFile);
-    }
-    const latestLiveNames = await this.db('files')
-      .where({ workspaceId })
-      .whereNull('deletedAt')
-      .select('name');
-    for (const row of latestLiveNames) {
-      const latestName = this.normalizeRelativePath(String(row.name));
-      if (!this.isInternalWorkspacePath(latestName)) durableNames.add(latestName);
-    }
-    let diskFiles: string[] = [];
-    try {
-      diskFiles = await this.walkWorkspace(workspacePath);
-    } catch (error: any) {
-      if (error?.code !== 'ENOENT') throw error;
-    }
-    for (const absolutePath of diskFiles) {
-      const relativeName = path.relative(workspacePath, absolutePath).replace(/\\/g, '/');
-      if (this.isInternalWorkspacePath(relativeName) || durableNames.has(relativeName)) continue;
-      await assertLeaseOwned?.();
-      const becameLive = await this.db('files')
-        .where({ workspaceId, name: relativeName })
+    // Hold the shared per-workspace mirror lock for the whole reconcile so its
+    // disk writes/unlinks never interleave with a publication swap/rebuild or a
+    // commitFileBuffer mirror write for the same workspace.
+    await withWorkspaceMirrorLock(this.db, workspaceId, async () => {
+      const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
+      await fs.mkdir(workspacePath, { recursive: true });
+      const liveFiles = await this.db('files')
+        .where({ workspaceId })
+        .whereNull('deletedAt');
+      const durableNames = new Set<string>();
+      for (const file of liveFiles) {
+        await assertLeaseOwned?.();
+        const relativeName = this.normalizeRelativePath(String(file.name));
+        if (this.isInternalWorkspacePath(relativeName)) continue;
+        await this.ensureCanonicalVersion(file, userId);
+        const canonicalFile = await this.db('files').where({ id: file.id }).first();
+        if (!canonicalFile || canonicalFile.deletedAt) continue;
+        const canonicalName = this.normalizeRelativePath(String(canonicalFile.name));
+        if (this.isInternalWorkspacePath(canonicalName)) continue;
+        durableNames.add(canonicalName);
+        await this.ensureLocalMirror(canonicalFile);
+      }
+      const latestLiveNames = await this.db('files')
+        .where({ workspaceId })
         .whereNull('deletedAt')
-        .first();
-      if (becameLive) continue;
-      await fs.unlink(absolutePath);
-    }
+        .select('name');
+      for (const row of latestLiveNames) {
+        const latestName = this.normalizeRelativePath(String(row.name));
+        if (!this.isInternalWorkspacePath(latestName)) durableNames.add(latestName);
+      }
+      let diskFiles: string[] = [];
+      try {
+        diskFiles = await this.walkWorkspace(workspacePath);
+      } catch (error: any) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+      for (const absolutePath of diskFiles) {
+        const relativeName = path.relative(workspacePath, absolutePath).replace(/\\/g, '/');
+        if (this.isInternalWorkspacePath(relativeName) || durableNames.has(relativeName)) continue;
+        await assertLeaseOwned?.();
+        const becameLive = await this.db('files')
+          .where({ workspaceId, name: relativeName })
+          .whereNull('deletedAt')
+          .first();
+        if (becameLive) continue;
+        await fs.unlink(absolutePath);
+      }
+    });
   }
 
   private async restoreDurableWorkspaceMirror(workspaceId: string, relativeName: string): Promise<void> {
-    const localPath = this.getLocalPath(workspaceId, relativeName);
-    await fs.unlink(localPath).catch((error: any) => {
-      if (error?.code !== 'ENOENT') throw error;
+    await withWorkspaceMirrorLock(this.db, workspaceId, async () => {
+      const localPath = this.getLocalPath(workspaceId, relativeName);
+      await fs.unlink(localPath).catch((error: any) => {
+        if (error?.code !== 'ENOENT') throw error;
+      });
+      const current = await this.db('files')
+        .where({ workspaceId, name: relativeName })
+        .whereNull('deletedAt')
+        .first();
+      if (current) await this.ensureLocalMirror(current);
     });
-    const current = await this.db('files')
-      .where({ workspaceId, name: relativeName })
-      .whereNull('deletedAt')
-      .first();
-    if (current) await this.ensureLocalMirror(current);
   }
 
   async commitWorkspaceArtifacts(
@@ -911,7 +993,7 @@ export class FileService {
     content: string,
     userId: string,
     mimeType = 'text/markdown',
-    options?: { internal?: boolean; allowSystemAdmin?: boolean },
+    options?: { internal?: boolean; allowSystemAdmin?: boolean; sourceThreadId?: string | null },
   ) {
     return this.createFile(
       workspaceId,
@@ -919,7 +1001,7 @@ export class FileService {
       Buffer.from(content, 'utf-8'),
       mimeType,
       userId,
-      { forceLocal: true, internal: options?.internal, allowSystemAdmin: options?.allowSystemAdmin },
+      { forceLocal: true, internal: options?.internal, allowSystemAdmin: options?.allowSystemAdmin, sourceThreadId: options?.sourceThreadId },
     );
   }
 
@@ -1033,6 +1115,7 @@ export class FileService {
     versionId: string,
     userId: string,
     expectedVersion?: number,
+    options?: { sourceThreadId?: string | null },
   ) {
     const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
     if (!file) throw new NotFoundError('File not found');
@@ -1040,6 +1123,7 @@ export class FileService {
     await this.ensureCanonicalVersion(file, userId);
     const source = await this.db('file_versions').where({ id: versionId, fileId }).first();
     if (!source) throw new NotFoundError('File version not found');
+    const restoreSourceThreadId = await this.validateSourceThread(String(file.workspaceId), options?.sourceThreadId);
 
     const restoredVersionId = randomUUID();
     let updated: any;
@@ -1065,6 +1149,7 @@ export class FileService {
         changeKind: 'restore',
         baseVersion: Number(source.version),
         createdBy: userId,
+        sourceThreadId: restoreSourceThreadId,
       }));
       [updated] = await tx('files').where({ id: fileId }).update({
         storageType: 's3',
@@ -1142,6 +1227,7 @@ export class FileService {
       sourceRunId?: string | null;
       operationId?: string | null;
       strictVersion?: boolean;
+      sourceThreadId?: string | null;
     },
   ) {
     const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
@@ -1153,6 +1239,9 @@ export class FileService {
     });
     const freeflow = workspace.visibility === 'team' && workspace.editingPolicy === 'direct';
     await this.ensureCanonicalVersion(file, userId);
+    // Validate the optional explicit thread association against THIS file's
+    // workspace before stamping provenance on the new immutable version.
+    const sourceThreadId = await this.validateSourceThread(String(file.workspaceId), options?.sourceThreadId);
 
     if (options?.operationId) {
       const previous = await this.db('file_versions')
@@ -1199,6 +1288,7 @@ export class FileService {
           createdBy: userId,
           sourceRunId: options?.sourceRunId,
           operationId: options?.operationId,
+          sourceThreadId,
         }));
         [updated] = await tx('files')
           .where({ id: fileId })
@@ -1229,10 +1319,50 @@ export class FileService {
       throw error;
     }
 
-    await this.writeLocalMirror(String(file.workspaceId), String(updated.name), payload).catch((error) => {
+    // Refresh the on-disk mirror under the shared per-workspace mirror lock so it
+    // serializes against every other mirror mutation (publication apply swaps,
+    // failure rebuilds, reconciles, and other file writers).
+    //
+    // Crucially, we do NOT blindly write the buffer this call captured. By the
+    // time we acquire the lock a newer write or a proposal apply may have
+    // superseded this file's canonical version; writing our stale buffer would
+    // diverge the mirror from the authoritative DB/object store. Instead we
+    // re-read the file's CURRENT canonical version under the lock and materialize
+    // exactly those bytes, so the last committed version always wins on disk.
+    await withWorkspaceMirrorLock(this.db, String(file.workspaceId), async () => {
+      const canonical = await this.db('files')
+        .where({ id: fileId })
+        .whereNull('deletedAt')
+        .first();
+      if (!canonical) {
+        // The file was deleted after our commit; its removal is materialized by
+        // the delete/replace/reconcile paths, so leave the mirror to them.
+        return;
+      }
+      await this.materializeCanonicalMirror(canonical);
+    }).catch((error) => {
       console.error('Failed to refresh local file cache after restore:', error);
     });
     return { ...updated, staleOverwrite };
+  }
+
+  /**
+   * Write a single file's CURRENT canonical version into the on-disk mirror.
+   * The caller MUST hold the workspace mirror lock. Reads the authoritative
+   * bytes (from the immutable object store, or an already-local path) so a stale
+   * in-flight buffer can never overwrite a newer committed version.
+   */
+  private async materializeCanonicalMirror(file: any): Promise<void> {
+    const relativeName = this.normalizeRelativePath(String(file.name));
+    if (this.isInternalWorkspacePath(relativeName)) return;
+    if (file.storageType === 'local') {
+      // Already backed by a local file; nothing to download. The local path IS
+      // the mirror for local-storage files.
+      return;
+    }
+    // ensureLocalMirror downloads the current canonical version to the mirror
+    // path (skipping when the local bytes already match the canonical sha).
+    await this.ensureLocalMirror(file);
   }
 
   async updateFile(
@@ -1240,7 +1370,7 @@ export class FileService {
     content: string,
     userId: string,
     expectedVersion?: number,
-    options?: { allowSystemAdmin?: boolean; strictVersion?: boolean },
+    options?: { allowSystemAdmin?: boolean; strictVersion?: boolean; sourceThreadId?: string | null },
   ) {
     const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
     if (!file) {
@@ -1307,6 +1437,7 @@ export class FileService {
       strictVersion?: boolean;
       sourceRunId?: string | null;
       operationId?: string | null;
+      sourceThreadId?: string | null;
     },
   ) {
     const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
@@ -1320,6 +1451,7 @@ export class FileService {
     });
 
     const current = await this.ensureCanonicalVersion(file, userId);
+    const sourceThreadId = await this.validateSourceThread(String(file.workspaceId), options?.sourceThreadId);
     const versionId = randomUUID();
     let deleted: any = null;
     await this.db.transaction(async (tx) => {
@@ -1352,6 +1484,7 @@ export class FileService {
         createdBy: userId,
         sourceRunId: options?.sourceRunId,
         operationId: options?.operationId,
+        sourceThreadId,
       }));
       [deleted] = await tx('files').where({ id: fileId }).update({
         currentVersionId: versionId,
@@ -1366,9 +1499,25 @@ export class FileService {
         lastModifiedBy: userId,
       });
     });
-    const localPath = this.getLocalPath(file.workspaceId, file.name);
-    await fs.unlink(localPath).catch((error: any) => {
-      if (error?.code !== 'ENOENT') console.error(`Failed to evict local file cache: ${localPath}`, error);
+    // Reconcile the mirror path under the shared lock. If a concurrent apply
+    // re-created live content at the same path, materialize it; otherwise evict
+    // the mirror. This prevents a delete from clobbering a newer accepted write.
+    await withWorkspaceMirrorLock(this.db, String(file.workspaceId), async () => {
+      const relativeName = this.normalizeRelativePath(String(file.name));
+      const live = await this.db('files')
+        .where({ workspaceId: file.workspaceId, name: relativeName })
+        .whereNull('deletedAt')
+        .first();
+      if (live) {
+        await this.materializeCanonicalMirror(live);
+        return;
+      }
+      const localPath = this.getLocalPath(file.workspaceId, file.name);
+      await fs.unlink(localPath).catch((error: any) => {
+        if (error?.code !== 'ENOENT') console.error(`Failed to evict local file cache: ${localPath}`, error);
+      });
+    }).catch((error) => {
+      console.error('Failed to reconcile local file cache after delete:', error);
     });
     return deleted;
   }
@@ -1543,6 +1692,7 @@ export class FileService {
     target: { name?: string; path?: string },
     userId: string,
     expectedVersion?: number,
+    options?: { sourceThreadId?: string | null },
   ) {
     const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
     if (!file) {
@@ -1581,6 +1731,7 @@ export class FileService {
       .first();
     if (occupied) throw new ConflictError('A file already exists at the destination');
 
+    const renameSourceThreadId = await this.validateSourceThread(String(file.workspaceId), options?.sourceThreadId);
     const current = await this.ensureCanonicalVersion(file, userId);
     const versionId = randomUUID();
     let updated: any;
@@ -1602,6 +1753,7 @@ export class FileService {
         changeKind: target.path !== undefined ? 'move' : 'rename',
         baseVersion: currentVersion,
         createdBy: userId,
+        sourceThreadId: renameSourceThreadId,
       }));
       [updated] = await tx('files').where({ id: fileId }).update({
         name: destinationRelativePath,
@@ -1620,14 +1772,35 @@ export class FileService {
       });
     });
 
-    const currentLocalPath = this.getLocalPath(file.workspaceId, currentRelativePath);
-    const newLocalPath = this.getLocalPath(file.workspaceId, destinationRelativePath);
-    try {
-      await fs.mkdir(path.dirname(newLocalPath), { recursive: true });
-      await fs.rename(currentLocalPath, newLocalPath);
-    } catch (error: any) {
-      if (error?.code !== 'ENOENT') console.error('Failed to move local file cache:', error);
-    }
+    // Move the mirror under the shared lock and reconcile both paths to their
+    // canonical committed state so a concurrent writer/apply cannot be clobbered.
+    await withWorkspaceMirrorLock(this.db, String(file.workspaceId), async () => {
+      const currentLocalPath = this.getLocalPath(file.workspaceId, currentRelativePath);
+      const newLocalPath = this.getLocalPath(file.workspaceId, destinationRelativePath);
+      try {
+        await fs.mkdir(path.dirname(newLocalPath), { recursive: true });
+        await fs.rename(currentLocalPath, newLocalPath);
+      } catch (error: any) {
+        if (error?.code !== 'ENOENT') console.error('Failed to move local file cache:', error);
+      }
+      // Reconcile the destination to the renamed file's canonical version, and
+      // the source path to whatever (if anything) is now live there.
+      const renamed = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
+      if (renamed) await this.materializeCanonicalMirror(renamed).catch(() => undefined);
+      const sourceLive = await this.db('files')
+        .where({ workspaceId: file.workspaceId, name: currentRelativePath })
+        .whereNull('deletedAt')
+        .first();
+      if (sourceLive) {
+        await this.materializeCanonicalMirror(sourceLive).catch(() => undefined);
+      } else {
+        await fs.unlink(currentLocalPath).catch((error: any) => {
+          if (error?.code !== 'ENOENT') console.error('Failed to evict stale rename source cache:', error);
+        });
+      }
+    }).catch((error) => {
+      console.error('Failed to reconcile local file cache after rename:', error);
+    });
     return updated;
   }
 

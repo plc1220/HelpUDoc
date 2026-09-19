@@ -1,0 +1,160 @@
+/* Release B thread work-history / proposal / linked-item surfaces.
+ * Narrow-panel friendly, uses design-system CSS variables so it follows the
+ * active color mode. No hard-coded light/dark colors beyond diff add/remove
+ * tints, which are derived from the theme's semantic tokens where available. */
+
+.team-thread-b {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.team-thread-b__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-thread-b__spacer {
+  flex: 1 1 auto;
+}
+
+.team-thread-b__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.team-thread-b__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.team-thread-b__row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.team-thread-b__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.team-thread-b__path {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  word-break: break-all;
+}
+
+.team-thread-b__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.team-thread-b__diff {
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.3));
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 340px;
+}
+
+.team-thread-b__diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.team-thread-b__diff-table td {
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  vertical-align: top;
+}
+
+.team-thread-b__gutter {
+  width: 1%;
+  text-align: right;
+  user-select: none;
+  color: var(--text-supporting, #94a3b8);
+  background: var(--surface-sunken, rgba(148, 163, 184, 0.08));
+  border-right: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.3));
+}
+
+.team-thread-b__line--insert {
+  background: color-mix(in srgb, #22c55e 16%, transparent);
+}
+
+.team-thread-b__line--delete {
+  background: color-mix(in srgb, #ef4444 16%, transparent);
+}
+
+.team-thread-b__sign {
+  width: 1%;
+  text-align: center;
+  user-select: none;
+}
+
+.team-thread-b__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.team-thread-b__ops {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.team-thread-b__op {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.3));
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.team-thread-b__op-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.team-thread-b__reviews {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.team-thread-b__review {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--border-subtle, rgba(148, 163, 184, 0.4));
+}
+
+.team-thread-b__error {
+  border-radius: 8px;
+}
+
+.team-thread-b__empty {
+  padding: 16px 0;
+  text-align: center;
+}

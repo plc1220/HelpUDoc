@@ -12,6 +12,7 @@ import type { ObjectStore } from './objectStore';
 import { getObjectStore } from './objectStoreFactory';
 import { WorkspaceRecord, WorkspaceRole, WorkspaceService } from './workspaceService';
 import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
+import { withWorkspaceMirrorLock } from './workspaceMirrorLock';
 
 import {
   namedGrantToLegacyWorkspaceRole,
@@ -38,6 +39,7 @@ type ContentFile = {
   buffer: Buffer;
   hash: string;
   size: number;
+  fileId?: number | null;
   fileVersionId?: string | null;
   objectKey?: string | null;
   objectProvider?: string | null;
@@ -605,6 +607,617 @@ export class WorkspacePublicationService {
       });
       return { workspaceId: sharedWorkspaceId, contentRevision: appliedRevision };
     });
+  }
+
+  /**
+   * Extract in-workspace relative file references from a text artifact so the
+   * submission can require a document's CHANGED dependencies explicitly (spec F7:
+   * extracted assets included as a group when required for a valid artifact).
+   * Parses markdown image/link targets and html src/href/url() targets. Only
+   * same-workspace RELATIVE paths are returned (absolute URLs, data:, anchors and
+   * protocol-relative URLs are ignored). This is a conservative dependency graph
+   * derived from ACTUAL content references — not a directory-name guess — so an
+   * unrelated file that merely shares a folder is never pulled in.
+   */
+  private extractContentReferences(relativePath: string, mimeType: string | null, buffer: Buffer): string[] {
+    const lower = relativePath.toLowerCase();
+    const isText = /(text\/|application\/(json|xml|xhtml|javascript)|svg)/i.test(String(mimeType || ''))
+      || /\.(md|markdown|html?|htm|xhtml|css|svg|txt|json|xml|js|mjs)$/i.test(lower);
+    if (!isText) return [];
+    let text: string;
+    try { text = buffer.toString('utf8'); } catch { return []; }
+    if (text.length > 2_000_000) return []; // do not scan enormous blobs
+    const refs = new Set<string>();
+    const baseDir = relativePath.includes('/') ? relativePath.replace(/\/[^/]*$/, '') : '';
+    const consider = (raw: string) => {
+      if (!raw) return;
+      let target = raw.trim().replace(/^['"]|['"]$/g, '');
+      // Ignore absolute URLs, protocol-relative, data:, mailto:, anchors, and
+      // absolute filesystem paths.
+      if (!target || /^([a-z][a-z0-9+.-]*:|\/\/|#|data:|mailto:)/i.test(target) || target.startsWith('/')) return;
+      // Strip query/hash fragments.
+      target = target.split(/[?#]/)[0];
+      if (!target) return;
+      // Resolve relative to the referencing file's directory; reject traversal
+      // that escapes the workspace root.
+      const joined = baseDir ? `${baseDir}/${target}` : target;
+      const parts: string[] = [];
+      for (const seg of joined.split('/')) {
+        if (seg === '' || seg === '.') continue;
+        if (seg === '..') { if (!parts.length) return; parts.pop(); continue; }
+        parts.push(seg);
+      }
+      const normalized = parts.join('/');
+      if (normalized) refs.add(normalized);
+    };
+    // Markdown image/link targets: ![alt](path)  [text](path)
+    for (const m of text.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) consider(m[1]);
+    // HTML/CSS src=, href=, and url(...) targets.
+    for (const m of text.matchAll(/(?:src|href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi)) consider(m[1]);
+    for (const m of text.matchAll(/url\(\s*("[^"]*"|'[^']*'|[^)]+)\s*\)/gi)) consider(m[1]);
+    return [...refs];
+  }
+
+  /**
+   * Compute the full server-derived diff between a private copy and its Shared
+   * base. Detects create/content/delete and pairs a delete+create at different
+   * paths with identical content hash as a RENAME (before/after). Each entry
+   * carries the authoritative fileId (never a client value). Also derives, for
+   * each entry, the set of REQUIRED dependency paths: the entry's content
+   * references that ALSO differ from Shared Working (a changed/new dependency must
+   * be submitted with it; an unchanged shared dependency need not be). This is a
+   * real per-file dependency graph — no directory-name convention.
+   */
+  private computeWorkspaceDiff(
+    privateContent: WorkspaceContent,
+    sharedContent: WorkspaceContent,
+  ): Array<{
+    path: string;
+    fromPath: string | null;
+    fileId: number | null;
+    changeKind: 'create' | 'content' | 'delete' | 'rename';
+    base?: ContentFile;
+    proposed?: ContentFile;
+    requiredDeps: string[];
+  }> {
+    const raw: Array<{ path: string; fileId: number | null; changeKind: 'create' | 'content' | 'delete'; base?: ContentFile; proposed?: ContentFile }> = [];
+    const allPaths = new Set<string>([...privateContent.files.keys(), ...sharedContent.files.keys()]);
+    for (const path of allPaths) {
+      const proposed = privateContent.files.get(path);
+      const base = sharedContent.files.get(path);
+      if (proposed && base) {
+        if (proposed.hash === base.hash) continue; // unchanged
+        raw.push({ path, fileId: base.fileId ?? proposed.fileId ?? null, changeKind: 'content', base, proposed });
+      } else if (proposed && !base) {
+        raw.push({ path, fileId: proposed.fileId ?? null, changeKind: 'create', proposed });
+      } else if (!proposed && base) {
+        raw.push({ path, fileId: base.fileId ?? null, changeKind: 'delete', base });
+      }
+    }
+    // The set of paths that DIFFER from Shared Working (candidates for requirement).
+    const differing = new Set(raw.map((r) => r.path));
+    // Pair a delete + create with identical content hash as a rename.
+    const creates = raw.filter((r) => r.changeKind === 'create');
+    const deletes = raw.filter((r) => r.changeKind === 'delete');
+    const usedDelete = new Set<string>();
+    const usedCreate = new Set<string>();
+    const renames: Array<{ path: string; fromPath: string; fileId: number | null; base: ContentFile; proposed: ContentFile }> = [];
+    for (const created of creates) {
+      const match = deletes.find((d) => !usedDelete.has(d.path) && d.base?.hash === created.proposed?.hash);
+      if (match && created.proposed && match.base) {
+        usedDelete.add(match.path);
+        usedCreate.add(created.path);
+        renames.push({ path: created.path, fromPath: match.path, fileId: match.base.fileId ?? created.proposed.fileId ?? null, base: match.base, proposed: created.proposed });
+      }
+    }
+    // Required deps for an entry: references from its PROPOSED content that also
+    // differ from Shared (must submit together). A rename after a path change also
+    // requires its own changed references. Renamed-away paths are excluded.
+    const requiredFor = (proposed?: ContentFile): string[] => {
+      if (!proposed) return [];
+      const refs = this.extractContentReferences(proposed.name, proposed.mimeType, proposed.buffer);
+      return refs.filter((r) => differing.has(r) && !usedDelete.has(r));
+    };
+    const result: Array<{ path: string; fromPath: string | null; fileId: number | null; changeKind: 'create' | 'content' | 'delete' | 'rename'; base?: ContentFile; proposed?: ContentFile; requiredDeps: string[] }> = [];
+    for (const r of renames) {
+      result.push({ path: r.path, fromPath: r.fromPath, fileId: r.fileId, changeKind: 'rename', base: r.base, proposed: r.proposed, requiredDeps: requiredFor(r.proposed) });
+    }
+    for (const r of raw) {
+      if (r.changeKind === 'create' && usedCreate.has(r.path)) continue;
+      if (r.changeKind === 'delete' && usedDelete.has(r.path)) continue;
+      result.push({ path: r.path, fromPath: null, fileId: r.fileId, changeKind: r.changeKind, base: r.base, proposed: r.proposed, requiredDeps: requiredFor(r.proposed) });
+    }
+    return result;
+  }
+
+  /**
+   * Read a workspace's content snapshot together with a CONSISTENCY guard: the
+   * workspace contentRevision is read before and after the content read, and must
+   * be unchanged AND equal the expected revision. A concurrent write during the
+   * snapshot read (which would otherwise leak unreviewed bytes under an old
+   * expected revision) is rejected. Returns the coherent content + its revision.
+   * All canonical content mutations bump contentRevision inside their own
+   * transaction (see FileService), so this window check is authoritative.
+   */
+  private async readConsistentWorkspaceContent(
+    workspaceId: string,
+    expectedRevision: number,
+    label: 'shared' | 'private',
+  ): Promise<{ content: WorkspaceContent; revision: number }> {
+    const revBefore = Number((await this.db('workspaces').where({ id: workspaceId }).select('contentRevision').first())?.contentRevision || 0);
+    if (revBefore !== Number(expectedRevision)) {
+      throw new ConflictError(
+        label === 'shared' ? 'Shared Working changed; refresh the comparison before submitting' : 'The private copy changed; refresh before submitting',
+        { code: label === 'shared' ? 'PROPOSAL_STALE' : 'PRIVATE_STALE', baseRevision: Number(expectedRevision), currentRevision: revBefore },
+      );
+    }
+    const content = await this.readWorkspaceContent(workspaceId);
+    const revAfter = Number((await this.db('workspaces').where({ id: workspaceId }).select('contentRevision').first())?.contentRevision || 0);
+    if (revAfter !== revBefore) {
+      // A write landed DURING the snapshot read; the content is not coherent with
+      // the expected revision. Reject rather than freeze mixed/unreviewed bytes.
+      throw new ConflictError(
+        label === 'shared' ? 'Shared Working changed during comparison; refresh and retry' : 'The private copy changed during comparison; refresh and retry',
+        { code: label === 'shared' ? 'PROPOSAL_STALE' : 'PRIVATE_STALE', baseRevision: Number(expectedRevision), currentRevision: revAfter },
+      );
+    }
+    return { content, revision: revAfter };
+  }
+
+  /**
+   * Pre-submit candidates (Release B, F7): the server-derived set of files that
+   * differ between the private copy and Shared Working, with rename pairs and
+   * explicit REQUIRED dependency paths (a doc's changed content references), so
+   * the submit UI shows exactly what CAN be selected and which dependencies a
+   * given operation requires. Never trusts a client manifest; private-only ids
+   * are not exposed (only opaque immutable version ids). Reads both sides under a
+   * revision-consistency guard so the returned versions/base revision describe a
+   * single coherent snapshot.
+   */
+  async listSubmissionCandidates(
+    privateWorkspaceId: string,
+    sharedWorkspaceId: string,
+    userId: string,
+    expected: { expectedSharedRevision: number; expectedPrivateRevision?: number },
+  ): Promise<{
+    baseSharedRevision: number;
+    basePrivateRevision: number;
+    candidates: Array<{ path: string; fromPath: string | null; fileId: number | null; changeKind: string; baseVersionId: string | null; proposedVersionId: string | null; sha256: string | null; size: number | null; mimeType: string | null; requiredDeps: string[] }>;
+  }> {
+    const { workspace: shared } = await this.workspaceService.ensureMembership(sharedWorkspaceId, userId);
+    if (shared.visibility !== 'team') throw new ConflictError('Submissions target Shared workspaces');
+    const { workspace: priv } = await this.workspaceService.ensureMembership(privateWorkspaceId, userId, { requireEdit: true });
+    if (priv.visibility !== 'private' || priv.ownerId !== userId) {
+      throw new AccessDeniedError('Only the owner can preview submission candidates');
+    }
+    const link = await this.db<PublicationLinkRecord>('workspace_publication_links')
+      .where({ privateWorkspaceId, teamWorkspaceId: sharedWorkspaceId }).first();
+    if (!link) throw new ConflictError('This private copy is not linked to the Shared workspace');
+    const sharedSnap = await this.readConsistentWorkspaceContent(sharedWorkspaceId, Number(expected.expectedSharedRevision), 'shared');
+    // If the caller pinned an expected private revision, enforce it coherently;
+    // otherwise read the private side and report the revision it was read at.
+    const privRevExpected = expected.expectedPrivateRevision !== undefined
+      ? Number(expected.expectedPrivateRevision)
+      : Number(priv.contentRevision || 0);
+    const privSnap = await this.readConsistentWorkspaceContent(privateWorkspaceId, privRevExpected, 'private');
+    const diff = this.computeWorkspaceDiff(privSnap.content, sharedSnap.content);
+    return {
+      baseSharedRevision: sharedSnap.revision,
+      basePrivateRevision: privSnap.revision,
+      candidates: diff.map((d) => ({
+        path: d.path,
+        fromPath: d.fromPath,
+        fileId: d.fileId,
+        changeKind: d.changeKind,
+        baseVersionId: d.base?.fileVersionId || null,
+        proposedVersionId: d.proposed?.fileVersionId || null,
+        sha256: d.proposed?.hash || d.base?.hash || null,
+        size: d.proposed ? Number(d.proposed.size || 0) : (d.base ? Number(d.base.size || 0) : null),
+        mimeType: d.proposed?.mimeType || d.base?.mimeType || null,
+        requiredDeps: d.requiredDeps,
+      })),
+    };
+  }
+
+  /**
+   * Derive an immutable, server-verified manifest for a selected subset of a
+   * private copy's changes (Release B, F7). The client names the paths it wants
+   * to submit; the server resolves the actual immutable file versions and hashes
+   * from the private copy and the shared base. It never trusts client hashes and
+   * never widens the selection.
+   */
+  async deriveSubmissionManifest(
+    privateWorkspaceId: string,
+    sharedWorkspaceId: string,
+    userId: string,
+    selectedOperations: Array<{ path: string; fileId?: number; changeKind?: string; fromPath?: string }>,
+    expected: { expectedSharedRevision: number; expectedPrivateRevision?: number; snapshotId: string },
+  ): Promise<{
+    baseSharedRevision: number;
+    basePrivateRevision: number;
+    operations: Array<{ path: string; fromPath: string | null; fileId: number | null; changeKind: string; baseVersionId: string | null; proposedVersionId: string | null; sha256: string | null; objectKey: string | null; objectProvider: string | null; providerVersion: string | null; mimeType: string | null; size: number | null }>;
+  }> {
+    const { workspace: shared } = await this.workspaceService.ensureMembership(sharedWorkspaceId, userId);
+    if (shared.visibility !== 'team') throw new ConflictError('Submissions target Shared workspaces');
+    const { workspace: priv } = await this.workspaceService.ensureMembership(privateWorkspaceId, userId, { requireEdit: true });
+    if (priv.visibility !== 'private' || priv.ownerId !== userId) {
+      throw new AccessDeniedError('Only the owner can submit from a private working copy');
+    }
+    // Verify the private-to-shared link exists (no forged cross-workspace submit).
+    const link = await this.db<PublicationLinkRecord>('workspace_publication_links')
+      .where({ privateWorkspaceId, teamWorkspaceId: sharedWorkspaceId }).first();
+    if (!link) throw new ConflictError('This private copy is not linked to the Shared workspace');
+    // expectedPrivateRevision is MANDATORY: the reviewed selection must be pinned
+    // to an exact private revision so a concurrent private edit cannot silently
+    // change what gets frozen (reviewer requirement).
+    if (expected.expectedPrivateRevision === undefined) {
+      throw new ConflictError('expectedPrivateRevision is required to pin the submitted selection');
+    }
+
+    // Read BOTH sides under a revision-consistency guard so the frozen manifest
+    // describes a single coherent snapshot pinned to the expected revisions. A
+    // concurrent private write between the revision check and the snapshot read
+    // (which previously leaked UNREVIEWED bytes under the old expected revision)
+    // is rejected here because the post-read revision would differ. All canonical
+    // mutations bump contentRevision inside their own transaction, so this window
+    // guard is authoritative.
+    const sharedSnap = await this.readConsistentWorkspaceContent(sharedWorkspaceId, Number(expected.expectedSharedRevision), 'shared');
+    const privSnap = await this.readConsistentWorkspaceContent(privateWorkspaceId, Number(expected.expectedPrivateRevision), 'private');
+    const sharedContent = sharedSnap.content;
+    const privateContent = privSnap.content;
+    // Single server-derived diff (create/content/delete/rename + real per-file
+    // dependency references). The client selects by path; the server
+    // authoritatively resolves change kind, fileId, versions and hashes. A
+    // client-supplied fileId is only used to detect a MISMATCH (a forged/
+    // cross-workspace id) and reject it — never trusted.
+    const diff = this.computeWorkspaceDiff(privateContent, sharedContent);
+    const byPath = new Map(diff.map((d) => [d.path, d]));
+
+    const operations: Array<{ path: string; fromPath: string | null; fileId: number | null; changeKind: string; baseVersionId: string | null; proposedVersionId: string | null; sha256: string | null; objectKey: string | null; objectProvider: string | null; providerVersion: string | null; mimeType: string | null; size: number | null }> = [];
+    const seen = new Set<string>();
+    const selectedPaths = new Set<string>();
+    for (const op of selectedOperations) {
+      const path = this.normalizeRelativePath(op.path);
+      if (seen.has(path)) continue;
+      seen.add(path);
+      const entry = byPath.get(path);
+      if (!entry) continue; // path does not differ from Shared Working; never include
+      // Reject a forged/cross-workspace client fileId that does not match the
+      // server-derived identity for this path.
+      if (op.fileId !== undefined && entry.fileId != null && Number(op.fileId) !== Number(entry.fileId)) {
+        throw new ConflictError(`Selected file id does not match the authorized file for ${path}`, { code: 'FILE_ID_MISMATCH' });
+      }
+      selectedPaths.add(path);
+      // Freeze the proposed content into a proposal-owned immutable object so it
+      // survives private-workspace edits/deletion and is a proper GC root, rather
+      // than retaining a raw private object key. Deletions carry no bytes.
+      const proposed = entry.proposed;
+      const base = entry.base;
+      let objectKey: string | null = null;
+      let objectProvider: string | null = null;
+      let providerVersion: string | null = null;
+      if (proposed) {
+        const buffer = proposed.objectKey
+          ? await this.readObjectBuffer(proposed.objectKey, proposed.providerVersion || undefined)
+          : proposed.buffer;
+        objectKey = `proposal-snapshots/${expected.snapshotId}/${proposed.hash}`;
+        const written = await this.objectStore.putStream(objectKey, Readable.from(buffer), {
+          mimeType: proposed.mimeType || undefined,
+          contentLength: buffer.length,
+          sha256: proposed.hash,
+          ifAbsent: true,
+        });
+        objectProvider = this.objectStore.provider;
+        providerVersion = written.providerVersion;
+      }
+      operations.push({
+        path,
+        fromPath: entry.fromPath,
+        fileId: entry.fileId, // server-derived authorized identity
+        changeKind: entry.changeKind,
+        baseVersionId: base?.fileVersionId || null,
+        proposedVersionId: proposed?.fileVersionId || null,
+        sha256: proposed?.hash || null,
+        objectKey,
+        objectProvider,
+        providerVersion,
+        mimeType: proposed?.mimeType || null,
+        size: proposed ? Number(proposed.size || 0) : null,
+      });
+    }
+    if (!operations.length) throw new ConflictError('None of the selected paths differ from Shared Working');
+    // Enforce EXPLICIT per-operation required dependencies: every CHANGED content
+    // reference of a selected file (derived from actual content, not a directory
+    // guess) must also be selected. Unchanged shared dependencies and unrelated
+    // private files are never required. Report the exact missing paths so the UI
+    // is actionable.
+    const missingByOp: Array<{ path: string; missing: string[] }> = [];
+    for (const path of selectedPaths) {
+      const entry = byPath.get(path);
+      if (!entry) continue;
+      const missing = entry.requiredDeps.filter((dep) => !selectedPaths.has(dep));
+      if (missing.length) missingByOp.push({ path, missing });
+    }
+    if (missingByOp.length) {
+      const allMissing = [...new Set(missingByOp.flatMap((m) => m.missing))];
+      throw new ConflictError('This selection is missing required changed dependencies', {
+        code: 'MISSING_REQUIRED_DEPENDENCIES', missing: allMissing, byOperation: missingByOp,
+      });
+    }
+    // Re-verify BOTH revisions have not moved since the coherent snapshot read,
+    // immediately before returning the frozen manifest. Combined with the in-tx
+    // contentRevision bumps on every mutation, this closes the freeze window.
+    const sharedNow = Number((await this.db('workspaces').where({ id: sharedWorkspaceId }).select('contentRevision').first())?.contentRevision || 0);
+    if (sharedNow !== sharedSnap.revision) {
+      throw new ConflictError('Shared Working changed during submission; refresh and retry', { code: 'PROPOSAL_STALE', baseRevision: sharedSnap.revision, currentRevision: sharedNow });
+    }
+    const privNow = Number((await this.db('workspaces').where({ id: privateWorkspaceId }).select('contentRevision').first())?.contentRevision || 0);
+    if (privNow !== privSnap.revision) {
+      throw new ConflictError('The private copy changed during submission; refresh and retry', { code: 'PRIVATE_STALE', baseRevision: privSnap.revision, currentRevision: privNow });
+    }
+    return {
+      baseSharedRevision: sharedSnap.revision,
+      basePrivateRevision: privSnap.revision,
+      operations,
+    };
+  }
+
+  /**
+   * Read the frozen proposal-owned snapshot bytes for ONE selected operation of a
+   * submission (Release B, F7), for an authorized SHARED reviewer. `side='after'`
+   * returns the frozen proposed bytes stored under the proposal snapshot (never a
+   * private/raw object key exposed to the caller); `side='before'` returns the
+   * Shared base version bytes recorded at submission time. A shared viewer reads
+   * frozen selected content WITHOUT private-workspace membership. The operation is
+   * addressed by index into the frozen manifest so the caller cannot request an
+   * arbitrary path. Returns null bytes for a delete's 'after' or a create's
+   * 'before' (no content on that side).
+   */
+  async readSubmissionOperationBytes(
+    op: { changeKind: string; objectKey?: string | null; objectProvider?: string | null; providerVersion?: string | null; baseVersionId?: string | null; mimeType?: string | null; path?: string },
+    side: 'before' | 'after',
+    workspaceId: string,
+  ): Promise<{ buffer: Buffer; mimeType: string; name: string }> {
+    const name = (op.path || 'version').split(/[/\\]/).pop() || 'version';
+    if (side === 'after') {
+      if (op.changeKind === 'delete') throw new NotFoundError('A deletion has no after content');
+      if (!op.objectKey) throw new NotFoundError('No frozen content for this operation');
+      this.assertObjectProvider(op.objectProvider);
+      const buffer = await this.readObjectBuffer(String(op.objectKey), op.providerVersion || undefined);
+      return { buffer, mimeType: op.mimeType || 'application/octet-stream', name };
+    }
+    // before: the Shared base version bytes at submission time. Read the immutable
+    // file_versions row (scoped to the SHARED workspace so no private object is
+    // reachable). A create has no before side.
+    if (op.changeKind === 'create') throw new NotFoundError('A create has no before content');
+    if (!op.baseVersionId) throw new NotFoundError('No base version recorded for this operation');
+    const base = await this.db('file_versions').where({ id: op.baseVersionId, workspaceId }).first();
+    if (!base) throw new NotFoundError('Base version not found in this workspace');
+    this.assertObjectProvider(base.objectProvider);
+    const buffer = await this.readObjectBuffer(String(base.objectKey), base.providerVersion || undefined);
+    return { buffer, mimeType: base.mimeType || op.mimeType || 'application/octet-stream', name };
+  }
+
+  /**
+   * Apply only the frozen selection against the exact expected shared revision.
+   * Reconstructs each selected file from its FROZEN immutable object reference
+   * (never current private content), overlays onto current shared content, and
+   * removes selected deletions, all in ONE transaction. If Shared Working moved,
+   * throws a typed stale conflict; the caller must resubmit, never rebase.
+   */
+  async applySubmittedChangeSet(
+    _privateWorkspaceId: string | null,
+    sharedWorkspaceId: string,
+    userId: string,
+    submission: { submissionId: string; baseSharedRevision: number; operations: Array<{ path: string; fromPath?: string | null; changeKind: string; objectKey?: string | null; objectProvider?: string | null; providerVersion?: string | null; mimeType?: string | null; sha256?: string | null; size?: number | null }> },
+    onApplied?: (tx: Knex.Transaction, appliedRevision: number) => Promise<void>,
+  ): Promise<{ workspaceId: string; contentRevision: number }> {
+    const { workspace: shared, membership } = await this.workspaceService.ensureMembership(sharedWorkspaceId, userId);
+    if (shared.visibility !== 'team') throw new ConflictError('Change proposals can only be applied to Shared workspaces');
+    this.ensurePublisher(membership.role);
+
+    // Materialize frozen bytes BEFORE the transaction from the immutable object
+    // store (independent of the private workspace, which may have changed/been
+    // deleted). A failed transaction leaves no partial applied state. A rename
+    // carries frozen bytes for its NEW path plus a fromPath to remove.
+    const frozen = new Map<string, { buffer: Buffer; op: any }>();
+    for (const op of submission.operations) {
+      if (op.changeKind === 'delete') continue;
+      if (!op.objectKey) throw new ConflictError(`Submission is missing frozen content for ${op.path}`);
+      this.assertObjectProvider(op.objectProvider);
+      const buffer = await this.readObjectBuffer(op.objectKey, op.providerVersion || undefined);
+      frozen.set(this.normalizeRelativePath(op.path), { buffer, op });
+    }
+
+    // The on-disk mirror is a cache of the authoritative DB + object store. This
+    // apply performs an atomic disk swap inside replaceWorkspaceContent. If the
+    // apply fails at any point (callback error OR outer COMMIT-time failure), we
+    // must leave the mirror consistent with whatever ACTUALLY committed — which
+    // may include a concurrent writer's newer accepted revision. Restoring a blind
+    // snapshot would erase that. Instead we REBUILD the mirror from authoritative
+    // state on failure (race-safe), and only when this apply reached the swap.
+    let swapped = false;
+    try {
+      return await this.db.transaction(async (tx) => {
+      const lockedShared = await tx<WorkspaceRecord>('workspaces').where({ id: sharedWorkspaceId }).forUpdate().first();
+      if (!lockedShared) throw new NotFoundError('Shared workspace not found');
+      if (Number(lockedShared.contentRevision || 0) !== Number(submission.baseSharedRevision)) {
+        // Stale: no disk mutation happens; nothing to restore. Any concurrent
+        // accepted edit on disk is left intact.
+        throw new ConflictError('Shared Working changed after this submission; refresh and resubmit', {
+          code: 'PROPOSAL_STALE', baseRevision: Number(submission.baseSharedRevision), currentRevision: Number(lockedShared.contentRevision || 0),
+        });
+      }
+      const target = await this.readWorkspaceContent(sharedWorkspaceId);
+      for (const op of submission.operations) {
+        const path = this.normalizeRelativePath(op.path);
+        if (op.changeKind === 'delete') {
+          target.files.delete(path);
+          continue;
+        }
+        // A rename removes its original path and writes the frozen bytes at the
+        // new path (server-derived fromPath, frozen at submission time).
+        if (op.changeKind === 'rename' && op.fromPath) {
+          target.files.delete(this.normalizeRelativePath(op.fromPath));
+        }
+        const item = frozen.get(path)!;
+        target.files.set(path, {
+          name: path,
+          mimeType: op.mimeType || null,
+          buffer: item.buffer,
+          hash: op.sha256 || this.hashBuffer(item.buffer),
+          size: op.size != null ? Number(op.size) : item.buffer.length,
+          fileVersionId: null,
+          objectKey: op.objectKey || null,
+          objectProvider: op.objectProvider || null,
+          providerVersion: op.providerVersion || null,
+        });
+      }
+      // Route the decision/status write through afterDatabaseUpdate so it runs
+      // inside the same DB work. A callback failure rolls back BOTH the SQL
+      // transaction and (via replaceWorkspaceContent's own backup) the disk swap.
+      let appliedRevision = 0;
+      swapped = true;
+      await this.replaceWorkspaceContent(sharedWorkspaceId, target, userId, tx, async (innerTx, contentRevision) => {
+        appliedRevision = contentRevision;
+        await innerTx('audit_events').insert({
+          id: uuidv4(),
+          actorUserId: userId,
+          actorRole: 'workspace_owner_or_publisher',
+          action: 'workspace.submission_applied',
+          resourceType: 'workspace',
+          resourceId: sharedWorkspaceId,
+          metadata: { submissionId: submission.submissionId, appliedRevision: contentRevision, operationCount: submission.operations.length },
+        });
+        if (onApplied) await onApplied(innerTx, contentRevision);
+      });
+      return { workspaceId: sharedWorkspaceId, contentRevision: appliedRevision };
+      });
+    } catch (error) {
+      // Rebuild the mirror from authoritative committed state ONLY if this apply
+      // actually reached the swap. This reflects whatever truly committed (e.g. a
+      // concurrent writer's newer revision) instead of clobbering it. A stale
+      // rejection never swaps, so we skip the rebuild.
+      if (swapped) {
+        await this.rebuildWorkspaceMirror(sharedWorkspaceId).catch((rebuildError) => {
+          console.error('Failed to rebuild workspace mirror after apply failure', rebuildError);
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Rebuild the on-disk workspace mirror from the authoritative DB + object store
+   * so it reflects exactly what is committed. Used to recover the mirror after a
+   * failed apply without clobbering a concurrently committed revision.
+   */
+  /**
+   * Re-materialize the on-disk mirror from authoritative Postgres + object-store
+   * state after an apply failure, without erasing a writer that was accepted
+   * concurrently.
+   *
+   * The mirror is a cache of the authoritative DB. A naive "read content, then
+   * swap" loses any write that commits between the read and the swap. We instead
+   * use a versioned materialization protocol keyed on workspaces.contentRevision:
+   *
+   *   1. Read the current contentRevision and materialize its content WITHOUT the
+   *      mirror lock (so a concurrent writer can make progress and commit).
+   *   2. Acquire the shared per-workspace mirror lock and re-read contentRevision.
+   *   3. If it changed since step 1, a writer committed newer bytes; release and
+   *      retry from step 1 so we materialize the newest authoritative state.
+   *   4. If it is unchanged, atomically swap the freshly staged directory in while
+   *      still holding the lock, so the swap cannot interleave with a concurrent
+   *      commitFileBuffer mirror write.
+   *
+   * Reading outside the lock is required to avoid deadlock: a concurrent writer
+   * that is awaited to completion by the caller (as the reviewer probe does) must
+   * be able to take the mirror lock for its own mirror write while we read.
+   *
+   * The swap preserves internal runtime directories and restores the previous
+   * directory if the second rename fails, so a failure never leaves the workspace
+   * directory missing.
+   */
+  private async rebuildWorkspaceMirror(workspaceId: string): Promise<void> {
+    const maxAttempts = 8;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const isFinalAttempt = attempt === maxAttempts - 1;
+      const revisionBefore = await this.readWorkspaceContentRevision(workspaceId);
+      const content = await this.readWorkspaceContent(workspaceId);
+
+      const committed = await withWorkspaceMirrorLock(this.db, workspaceId, async () => {
+        const revisionAfter = await this.readWorkspaceContentRevision(workspaceId);
+        if (revisionAfter !== revisionBefore && !isFinalAttempt) {
+          // A writer committed newer bytes between our read and acquiring the
+          // lock. Re-materialize from the newest authoritative state.
+          return false;
+        }
+        await this.materializeWorkspaceMirror(workspaceId, content);
+        return true;
+      });
+
+      if (committed) return;
+    }
+  }
+
+  /** Read the authoritative content revision counter for a workspace. */
+  private async readWorkspaceContentRevision(workspaceId: string): Promise<number> {
+    const row = await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: workspaceId })
+      .select('contentRevision')
+      .first();
+    return Number(row?.contentRevision || 0);
+  }
+
+  /**
+   * Stage the supplied content into a scratch directory and atomically swap it in
+   * as the workspace mirror. Internal runtime directories are preserved and the
+   * previous directory is restored if the swap fails, so the workspace directory
+   * is never left missing. The caller MUST hold the workspace mirror lock.
+   */
+  private async materializeWorkspaceMirror(workspaceId: string, content: WorkspaceContent): Promise<void> {
+    const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
+    const stagePath = path.join(WORKSPACE_DIR, `.workspace-rebuild-${uuidv4()}`);
+    const backupPath = path.join(WORKSPACE_DIR, `.workspace-rebuild-backup-${uuidv4()}`);
+    await fs.mkdir(stagePath, { recursive: true });
+    try {
+      for (const folder of content.folders) {
+        await fs.mkdir(path.join(stagePath, this.normalizeRelativePath(folder)), { recursive: true });
+      }
+      for (const file of content.files.values()) {
+        const destination = path.join(stagePath, this.normalizeRelativePath(file.name));
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        const buffer = file.buffer.length || !file.objectKey
+          ? file.buffer
+          : await this.readObjectBuffer(file.objectKey, file.providerVersion || undefined);
+        await fs.writeFile(destination, buffer);
+      }
+      await this.copyInternalDirectories(workspacePath, stagePath);
+
+      let hadDir = true;
+      try {
+        await fs.rename(workspacePath, backupPath);
+      } catch (e: any) {
+        if (e?.code !== 'ENOENT') throw e;
+        hadDir = false;
+      }
+      try {
+        await fs.rename(stagePath, workspacePath);
+      } catch (swapError) {
+        // The staged directory could not become the workspace. Restore the
+        // previous directory so we never leave the workspace missing.
+        if (hadDir) {
+          await fs.rename(backupPath, workspacePath).catch((restoreError) => {
+            console.error('Failed to restore workspace directory after rebuild swap failure', restoreError);
+          });
+        }
+        throw swapError;
+      }
+      if (hadDir) await fs.rm(backupPath, { recursive: true, force: true });
+    } finally {
+      await fs.rm(stagePath, { recursive: true, force: true });
+      await fs.rm(backupPath, { recursive: true, force: true });
+    }
   }
 
   async sync(
@@ -1851,6 +2464,7 @@ export class WorkspacePublicationService {
         buffer,
         hash: row.versionSha256 || this.hashBuffer(buffer),
         size: Number(row.versionSizeBytes || buffer.length),
+        fileId: row.id != null ? Number(row.id) : null,
         fileVersionId: row.fileVersionId || null,
         objectKey: row.versionObjectKey || (row.storageType === 's3' ? row.path : null),
         objectProvider: row.versionObjectProvider || (row.storageType === 's3' ? this.objectStore.provider : null),
@@ -1915,6 +2529,24 @@ export class WorkspacePublicationService {
   }
 
   private async replaceWorkspaceContent(
+    workspaceId: string,
+    content: WorkspaceContent,
+    userId: string,
+    transaction?: Knex.Transaction,
+    afterDatabaseUpdate?: (transaction: Knex.Transaction, contentRevision: number) => Promise<void>,
+  ): Promise<number> {
+    // Serialize the atomic disk swap + DB update against every other mirror
+    // mutation (file writers materializing canonical bytes, failure rebuilds,
+    // reconciles). The lock is acquired here AFTER any caller-held workspaces row
+    // lock (apply/publish take forUpdate before calling), while file writers take
+    // this lock only AFTER their DB commit (holding no row locks), so the lock
+    // ordering has no cycle and cannot deadlock.
+    return withWorkspaceMirrorLock(this.db, workspaceId, () =>
+      this.replaceWorkspaceContentLocked(workspaceId, content, userId, transaction, afterDatabaseUpdate),
+    );
+  }
+
+  private async replaceWorkspaceContentLocked(
     workspaceId: string,
     content: WorkspaceContent,
     userId: string,
