@@ -1,6 +1,10 @@
 # HelpUDoc
 
 HelpUDoc is a multi-service workspace for research, drafting, and AI-assisted document workflows.
+
+For a user-facing explanation of the product, the problem it solves, and its current feature set, see [Lumo Studio Product Overview](docs/product-overview.md).
+For the engineering view — architecture, data model, API contracts, and operations — see [Technical Design](docs/technical-design.md).
+
 The repo currently combines:
 
 - a React + Vite frontend for the workspace UI, file editing, agent chat, and settings
