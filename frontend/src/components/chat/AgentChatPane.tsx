@@ -27,6 +27,7 @@ import ChatInputArea, { type ChatMentionSuggestion } from './ChatInputArea';
 import ChatMessageList from './ChatMessageList';
 import type { RenderableInterruptAction } from './interruptActions';
 import type { ChatComposerAttachment } from './chatTypes';
+import { isTeamChatFrozen } from '../../utils/workspaceLifecycle';
 import PublishedWorkspaceChatHeader, {
   type SharedChatMode,
 } from './PublishedWorkspaceChatHeader';
@@ -265,20 +266,20 @@ export default function AgentChatPane({
     && onOpenPrivateWorkingCopy,
   );
 
+  const teamChatFrozen = isTeamChatFrozen(sharedWorkspace);
+  // An unshared workspace opens on the pane you can actually use. Its Team Chat
+  // is a frozen reference, so landing there would put the user in a room they
+  // cannot type in.
+  const sharedWorkspaceId = sharedWorkspace?.id;
   useEffect(() => {
-    setSharedMode('team');
-  }, [sharedWorkspace?.id]);
+    setSharedMode(teamChatFrozen ? 'private' : 'team');
+  }, [sharedWorkspaceId, teamChatFrozen]);
 
+  // Switches panes, nothing else. This used to create a private copy and
+  // navigate to a different workspace when none existed, so the same control
+  // either changed a tab or moved you elsewhere with no way to tell which.
+  // Taking a private copy is now only ever a deliberate, labelled action.
   const handleSharedModeChange = (mode: SharedChatMode) => {
-    if (
-      mode === 'private'
-      && !hasPrivateWorkingCopy
-      && canReceivePrivateWorkingCopy
-      && onOpenPrivateWorkingCopy
-    ) {
-      void onOpenPrivateWorkingCopy();
-      return;
-    }
     setSharedMode(mode);
   };
 
