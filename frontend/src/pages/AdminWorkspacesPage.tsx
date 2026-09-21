@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatTeamNames } from '../utils/teamNames';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
@@ -169,7 +170,9 @@ const AdminWorkspacesPage = () => {
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-slate-900">{workspace.name}</p>
             <p className="truncate text-xs text-slate-500">
-              {workspace.visibility === 'private' ? 'Private' : `Shared${workspace.teamName ? ` · ${workspace.teamName}` : ''}`}
+              {workspace.visibility === 'private'
+                ? 'Private'
+                : `Shared${workspace.teamNames.length ? ` · ${formatTeamNames(workspace.teamNames)}` : ''}`}
               {' · '}
               {workspace.fileCount} files
             </p>

@@ -15,6 +15,22 @@ function fakeDb(tables: Record<string, Row[]>) {
     // Knex table names arrive aliased, e.g. 'team_role_bindings as role'.
     const rows = tables[name.split(' as ')[0]] || [];
     let preds: Array<(r: Row) => boolean> = [];
+    const projections: Array<[string, string]> = [];
+    const matching = () => {
+      const kept = rows.filter((r) => preds.every((p) => p(r)));
+      if (!projections.length) return kept;
+      const seen = new Set<string>();
+      const out: Row[] = [];
+      for (const row of kept) {
+        const projected: Row = {};
+        for (const [source, alias] of projections) projected[alias] = row[source];
+        const key = JSON.stringify(projected);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(projected);
+      }
+      return out;
+    };
     const q: any = {
       where(criteria: Row) {
         preds.push((r) => Object.entries(criteria).every(([k, v]) => r[k.split('.').pop()!] === v));
@@ -33,11 +49,17 @@ function fakeDb(tables: Record<string, Row[]>) {
         void cb;
         return q;
       },
-      distinct() { return q; },
+      distinct(projection?: string) {
+        if (projection) {
+          const [source, alias] = projection.split(' as ');
+          projections.push([source.split('.').pop()!, alias || source]);
+        }
+        return q;
+      },
       select() { return q; },
-      first() { return Promise.resolve(rows.filter((r) => preds.every((p) => p(r)))[0]); },
+      first() { return Promise.resolve(matching()[0]); },
       then(onF: any, onR: any) {
-        return Promise.resolve(rows.filter((r) => preds.every((p) => p(r)))).then(onF, onR);
+        return Promise.resolve(matching()).then(onF, onR);
       },
     };
     return q;
@@ -81,14 +103,35 @@ test('a lead is scoped to the workspaces their team owns', async () => {
     platform_role_bindings: [],
     team_role_bindings: [{ teamId: TEAM, userId: LEAD, role: 'lead' }],
     group_members: [{ groupId: TEAM, userId: LEAD }],
-    workspaces: [
-      { id: 'ws-team', teamId: TEAM },
-      { id: 'ws-other', teamId: 'team-2' },
-      { id: 'ws-private', teamId: null },
+    workspace_team_grants: [
+      { workspaceId: 'ws-team', teamId: TEAM },
+      { workspaceId: 'ws-other', teamId: 'team-2' },
     ],
   });
   const scope = await resolveActivityScope(db, LEAD);
   assert.deepEqual(scope, { kind: 'teams', teamIds: [TEAM], workspaceIds: ['ws-team'] });
+});
+
+test('a workspace granted to two teams is listed once per lead', async () => {
+  // Reach, not ownership: both leads see it, and neither sees it twice.
+  const db = fakeDb({
+    users: [{ id: LEAD, isAdmin: false }],
+    platform_role_bindings: [],
+    team_role_bindings: [
+      { teamId: TEAM, userId: LEAD, role: 'lead' },
+      { teamId: 'team-2', userId: LEAD, role: 'lead' },
+    ],
+    group_members: [
+      { groupId: TEAM, userId: LEAD },
+      { groupId: 'team-2', userId: LEAD },
+    ],
+    workspace_team_grants: [
+      { workspaceId: 'ws-shared', teamId: TEAM },
+      { workspaceId: 'ws-shared', teamId: 'team-2' },
+    ],
+  });
+  const scope = await resolveActivityScope(db, LEAD);
+  assert.deepEqual(scope?.workspaceIds, ['ws-shared']);
 });
 
 test('a lead whose team owns no workspace gets an empty set, not a wildcard', async () => {
@@ -98,7 +141,7 @@ test('a lead whose team owns no workspace gets an empty set, not a wildcard', as
     platform_role_bindings: [],
     team_role_bindings: [{ teamId: TEAM, userId: LEAD, role: 'lead' }],
     group_members: [{ groupId: TEAM, userId: LEAD }],
-    workspaces: [{ id: 'ws-other', teamId: 'team-2' }],
+    workspace_team_grants: [{ workspaceId: 'ws-other', teamId: 'team-2' }],
   });
   const scope = await resolveActivityScope(db, LEAD);
   assert.deepEqual(scope, { kind: 'teams', teamIds: [TEAM], workspaceIds: [] });

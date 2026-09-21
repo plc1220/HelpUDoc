@@ -95,7 +95,7 @@ export type AdminWorkspaceSummary = {
   ownerEmail: string | null;
   ownerStatus: string;
   teamId: string | null;
-  teamName: string | null;
+  teamNames: string[];
   fileCount: number;
   memberCount: number;
   contentRevision: number;

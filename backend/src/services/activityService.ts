@@ -50,13 +50,20 @@ export async function resolveActivityScope(
     return null;
   }
 
-  // `workspaces.teamId` is the only marker of team ownership. `visibility` is
-  // NOT a substitute: a workspace shared with selected people also carries
-  // visibility 'team' while belonging to no team, and scoping on it would hand a
-  // lead workspaces their team does not own.
-  const rows = await db('workspaces')
+  // A grant is the marker of team reach. `visibility` is NOT a substitute: a
+  // workspace shared with selected people also carries visibility 'team' while
+  // no team can reach it, and scoping on it would hand a lead workspaces their
+  // team has nothing to do with.
+  //
+  // Note this is reach, not ownership. A workspace granted to two teams appears
+  // in both leads' feeds — which follows from grants being the only source of
+  // truth, and is wider than the single owning team this used to mean.
+  //
+  // `distinct` matters: a lead of two teams both granted the same workspace
+  // would otherwise see it listed twice.
+  const rows = await db('workspace_team_grants')
     .whereIn('teamId', teamIds)
-    .select('id');
+    .distinct('workspaceId as id');
 
   return {
     kind: 'teams',

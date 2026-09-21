@@ -382,7 +382,7 @@ export interface AdminWorkspaceSummary {
   ownerEmail: string | null;
   ownerStatus: string;
   teamId: string | null;
-  teamName: string | null;
+  teamNames: string[];
   fileCount: number;
   memberCount: number;
   contentRevision: number;
@@ -832,7 +832,7 @@ export class WorkspaceService {
     const rows = await applyFilters(
       this.db('workspaces as w')
         .leftJoin('users as owner', 'owner.id', 'w.ownerId')
-        .leftJoin('groups as team', 'team.id', 'w.teamId'),
+,
     )
       .select(
         'w.id', 'w.name', 'w.slug', 'w.visibility', 'w.workspaceType', 'w.status',
@@ -840,7 +840,15 @@ export class WorkspaceService {
         'w.trashedAt', 'w.trashReason', 'w.purgeAfter', 'w.purgedAt',
         'w.createdAt', 'w.updatedAt',
         'owner.displayName as ownerName', 'owner.email as ownerEmail', 'owner.status as ownerStatus',
-        'team.name as teamName',
+        // A subquery, not a join: this query has no DISTINCT and every other
+        // join is by primary key, so a join here would double rows and corrupt
+        // the paging.
+        this.db.raw(`(
+          SELECT array_agg(team.name ORDER BY team.name)
+          FROM workspace_team_grants AS tg
+          JOIN groups AS team ON team.id = tg."teamId"
+          WHERE tg."workspaceId" = w.id
+        ) as "teamNames"`),
         this.db.raw('(SELECT count(*) FROM files WHERE files."workspaceId" = w.id AND files."deletedAt" IS NULL) as "fileCount"'),
         this.db.raw('(SELECT count(*) FROM workspace_members WHERE workspace_members."workspaceId" = w.id) as "memberCount"'),
       )
@@ -862,7 +870,8 @@ export class WorkspaceService {
         ownerEmail: (row.ownerEmail as string | null) ?? null,
         ownerStatus: (row.ownerStatus as string | null) ?? 'active',
         teamId: (row.teamId as string | null) ?? null,
-        teamName: (row.teamName as string | null) ?? null,
+        // `array_agg` yields null, not an empty array, when there are no grants.
+        teamNames: Array.isArray(row.teamNames) ? row.teamNames as string[] : [],
         fileCount: Number(row.fileCount || 0),
         memberCount: Number(row.memberCount || 0),
         contentRevision: Number(row.contentRevision || 0),
