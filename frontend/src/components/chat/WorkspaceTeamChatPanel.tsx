@@ -252,6 +252,16 @@ export default function WorkspaceTeamChatPanel({
   ) => {
     setError('');
     setNotice('');
+    // Submitting for review needs a private copy to hold the edits, and lands
+    // the user in it. That is a workspace being created and a navigation away
+    // from this pane, so say so before it happens rather than after.
+    if (conversion.type === 'change_proposal') {
+      const confirmed = window.confirm(
+        'Submitting for review creates your private copy of this workspace and opens it, '
+        + 'so you can make the changes there. Continue?',
+      );
+      if (!confirmed) return;
+    }
     try {
       const created = await createWorkspaceCollaborationObject(workspace.id, {
         type: conversion.type === 'change_proposal' ? 'sticky_note' : conversion.type,

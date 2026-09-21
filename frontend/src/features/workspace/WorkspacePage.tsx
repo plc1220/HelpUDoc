@@ -1006,7 +1006,18 @@ export default function WorkspacePage() {
   const isPublishedMode = isPublishedVersionMode(publishedVersionView, selectedWorkspace);
   // Shown while the live Working version is open. The snapshot strip already
   // says "Read-only", so the two are deliberately mutually exclusive.
-  const isSelectedWorkspaceLocked = isWorkspaceContentLocked(selectedWorkspace) && !isPublishedMode;
+  //
+  // Also excludes an unshared workspace: its lock is moot while nobody else can
+  // reach it, and the banner's private-copy offer would be pointless there.
+  const isSelectedWorkspaceLocked = isWorkspaceContentLocked(selectedWorkspace)
+    && !isPublishedMode
+    && getWorkspaceLifecycleStatus(selectedWorkspace) === 'active';
+  // Only a role that may actually propose gets offered a private copy; the
+  // sidebar action already gets this right, and `createPrivateCopy` refuses a
+  // viewer, so offering it to one was a dead end.
+  const canTakePrivateCopy = selectedWorkspace?.role === 'owner'
+    || selectedWorkspace?.role === 'editor'
+    || selectedWorkspace?.role === 'contributor';
   const canSyncSelectedDraft = isDraftSyncActionable(selectedWorkspace);
   /**
    * A sync is rewriting this workspace's files right now.
@@ -9334,21 +9345,24 @@ export default function WorkspacePage() {
                       : 'Locked'}
                   </span>
                   <span>
-                    Direct editing is off for everyone. Work in a private copy and submit your
-                    changes for review.
+                    {canTakePrivateCopy
+                      ? 'Direct editing is off for everyone. Work in a private copy and submit your changes for review.'
+                      : 'Direct editing is off for everyone while this version is locked.'}
                   </span>
                   <div className="ml-auto flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => { void handleOpenPrivateWorkingCopy(); }}
-                      className={`inline-flex h-7 items-center rounded-lg px-2.5 font-semibold ${
-                        isDarkMode
-                          ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
-                          : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                      }`}
-                    >
-                      Work in a private copy
-                    </button>
+                    {canTakePrivateCopy ? (
+                      <button
+                        type="button"
+                        onClick={() => { void handleOpenPrivateWorkingCopy(); }}
+                        className={`inline-flex h-7 items-center rounded-lg px-2.5 font-semibold ${
+                          isDarkMode
+                            ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                        }`}
+                      >
+                        Work in a private copy
+                      </button>
+                    ) : null}
                     {selectedWorkspace.canPublish ? (
                       <button
                         type="button"
