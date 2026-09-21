@@ -69,7 +69,7 @@ test('shared workspace with changes shows unlocked changes', () => {
     publicationStatus: 'changes_to_publish',
     currentPublishedVersionNumber: 2,
   };
-  assert.equal(getSharedWorkspacePublicationLabel(ws), 'Locked v2 · Changes not locked');
+  assert.equal(getSharedWorkspacePublicationLabel(ws), 'Locked v2 · Incoming new changes');
 });
 
 test('withdrawn lock shows "No current locked version"', () => {
@@ -196,13 +196,13 @@ test('private draft labels never contain "Private copy" or internal status names
 
 // ─── Edge cases ──────────────────────────────────────────────────────────────
 
-test('changes_to_publish with version 0 shows only "Changes not locked"', () => {
+test('changes_to_publish with version 0 shows only "Incoming new changes"', () => {
   const ws: Workspace = {
     ...baseWorkspace,
     publicationStatus: 'changes_to_publish',
     currentPublishedVersionNumber: 0,
   };
-  assert.equal(getSharedWorkspacePublicationLabel(ws), 'Changes not locked');
+  assert.equal(getSharedWorkspacePublicationLabel(ws), 'Incoming new changes');
 });
 
 test('withdrawn label is independent of version number', () => {
@@ -229,7 +229,7 @@ test('shared details combine publication and proposal count', () => {
   };
   assert.equal(
     getSharedWorkspaceStatusDetails(ws),
-    'Locked v1 · Changes not locked · 2 proposals pending',
+    'Locked v1 · Incoming new changes · 2 proposals pending',
   );
 });
 

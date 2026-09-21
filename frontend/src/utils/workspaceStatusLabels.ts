@@ -53,9 +53,12 @@ export const getSharedWorkspacePublicationLabel = (workspace: SharedWorkspaceLik
   const versionNumber = workspace.currentPublishedVersionNumber;
   if (versionNumber == null) return 'Working version';
   if (workspace.publicationStatus === 'changes_to_publish') {
+    // "Changes not locked" beside "Locked vN" read as though the lock had
+    // lapsed. It has not: the workspace is still read-only, and the only route
+    // in is an approved proposal, so what is waiting is work that arrived.
     return versionNumber > 0
-      ? `Locked v${versionNumber} · Changes not locked`
-      : 'Changes not locked';
+      ? `Locked v${versionNumber} · Incoming new changes`
+      : 'Incoming new changes';
   }
   return `Locked v${versionNumber}`;
 };
