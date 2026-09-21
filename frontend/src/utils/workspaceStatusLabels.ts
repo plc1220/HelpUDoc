@@ -74,8 +74,15 @@ export const getSharedWorkspaceStatusDetails = (workspace: SharedWorkspaceLike):
   }
   if (workspace.status === 'unshared') return 'Unshared · Only you can access it';
   const proposalCount = Number(workspace.pendingProposalCount || 0);
+  // Just the number. The row already carries the workspace name and a lock
+  // state, and "N proposals pending" pushed the line past what fits — the count
+  // is the part that changes, so it is the part worth the characters.
+  //
+  // Still its own segment rather than folded into the label: the label reports
+  // work that has already landed, this reports work still waiting, and a
+  // workspace can have either without the other.
   return [
     getSharedWorkspacePublicationLabel(workspace),
-    proposalCount ? `${proposalCount} proposal${proposalCount > 1 ? 's' : ''} pending` : null,
+    proposalCount ? String(proposalCount) : null,
   ].filter(Boolean).join(' · ');
 };

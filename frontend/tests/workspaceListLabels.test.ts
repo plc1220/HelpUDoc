@@ -89,11 +89,11 @@ test('shared details include proposal count when present', () => {
   };
   assert.equal(
     getSharedWorkspaceStatusDetails({ ...ws, pendingProposalCount: 3 }),
-    'Locked v2 · 3 proposals pending',
+    'Locked v2 · 3',
   );
   assert.equal(
     getSharedWorkspaceStatusDetails({ ...ws, pendingProposalCount: 1 }),
-    'Locked v2 · 1 proposal pending',
+    'Locked v2 · 1',
   );
 });
 
@@ -229,7 +229,7 @@ test('shared details combine publication and proposal count', () => {
   };
   assert.equal(
     getSharedWorkspaceStatusDetails(ws),
-    'Locked v1 · Incoming new changes · 2 proposals pending',
+    'Locked v1 · Incoming new changes · 2',
   );
 });
 

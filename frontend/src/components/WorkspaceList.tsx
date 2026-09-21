@@ -257,6 +257,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
 
     const publicationLabel = getSharedWorkspacePublicationLabel(workspace);
     const sharedDetails = getSharedWorkspaceStatusDetails(workspace);
+    const pendingProposalCount = Number(workspace.pendingProposalCount || 0);
     const draftStatusLabel = getPrivateWorkspaceStatusLabel(workspace);
     const ownerOnlyStatusLabel = 'Unshared · Only you can access it';
     const draftStatusColor = canSyncDraft
@@ -422,6 +423,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
                     lineHeight: 1.25,
                     color: hasChangesToPublish || isWithdrawn ? statusColor : 'text.secondary',
                   }}
+                  // The proposal count is rendered as a bare number to keep the
+                  // row short, which says nothing on its own to a screen reader
+                  // or on hover. The title carries the meaning the glyph drops.
+                  title={pendingProposalCount
+                    ? `${sharedDetails} — ${pendingProposalCount} ${pendingProposalCount === 1 ? 'proposal' : 'proposals'} awaiting review`
+                    : sharedDetails}
                 >
                   {sharedDetails}
                 </Typography>
