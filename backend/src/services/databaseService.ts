@@ -322,6 +322,10 @@ export class DatabaseService {
         table.uuid('ownerId').notNullable().references('id').inTable('users').onDelete('CASCADE');
         table.uuid('lastModifiedBy').references('id').inTable('users');
         table.string('visibility', 16).notNullable().defaultTo('private');
+        // Vestigial: `workspace_team_grants` is the source of truth for team
+        // access. Nothing reads or writes this column. Retained as a rollback
+        // window and dropped in a later deploy; both this declaration and the
+        // `ensureColumn` retrofit below must go together, or a boot re-adds it.
         table.uuid('teamId').references('id').inTable('groups').onDelete('SET NULL');
         table.uuid('currentPublishedVersionId');
         table.integer('contentRevision').notNullable().defaultTo(0);
@@ -340,6 +344,9 @@ export class DatabaseService {
       await this.ensureColumn('workspaces', 'ownerId', (table) => table.uuid('ownerId'));
       await this.ensureColumn('workspaces', 'lastModifiedBy', (table) => table.uuid('lastModifiedBy'));
       await this.ensureColumn('workspaces', 'visibility', (table) => table.string('visibility', 16).notNullable().defaultTo('private'));
+      // Vestigial; see the create branch above. This retrofit is what would
+      // resurrect the column on the next boot if only the other site were
+      // deleted.
       await this.ensureColumn('workspaces', 'teamId', (table) => table.uuid('teamId').references('id').inTable('groups').onDelete('SET NULL'));
       await this.ensureColumn('workspaces', 'currentPublishedVersionId', (table) => table.uuid('currentPublishedVersionId'));
       await this.ensureColumn('workspaces', 'contentRevision', (table) => table.integer('contentRevision').notNullable().defaultTo(0));

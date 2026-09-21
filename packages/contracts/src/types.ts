@@ -37,7 +37,17 @@ export interface Workspace {
    * will be refused.
    */
   canLeave?: boolean;
+  /**
+   * Vestigial. Workspace team access lives in `workspace_team_grants`, and this
+   * mirrors a database column that nothing reads and that is dropped in a later
+   * deploy. Read `teams`.
+   */
   teamId?: string | null;
+  /**
+   * The first team's name, kept so older readers keep rendering something. A
+   * workspace can be shared with several teams, so this cannot describe it —
+   * read `teams`.
+   */
   teamName?: string | null;
   /** Every team that can reach this workspace, each with the role it carries. */
   teams?: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }>;

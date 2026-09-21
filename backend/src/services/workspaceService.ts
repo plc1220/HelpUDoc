@@ -219,6 +219,11 @@ export interface WorkspaceRecord {
   purgeAfter?: string | Date | null;
   purgedAt?: string | Date | null;
   isSystem?: boolean;
+  /**
+   * Vestigial. Team access comes from `workspace_team_grants`; no code reads
+   * this to decide anything. Still selected so the row shape matches the table
+   * while the column exists, and dropped with it in a later deploy.
+   */
   teamId?: string | null;
   currentPublishedVersionId?: string | null;
   contentRevision: number;
@@ -381,6 +386,7 @@ export interface AdminWorkspaceSummary {
   ownerName: string | null;
   ownerEmail: string | null;
   ownerStatus: string;
+  /** Vestigial; see `WorkspaceRecord.teamId`. Read `teamNames` instead. */
   teamId: string | null;
   teamNames: string[];
   fileCount: number;
@@ -517,6 +523,8 @@ export class WorkspaceService {
         'w.trashedAt',
         'w.trashedByUserId',
         'w.purgeAfter',
+        // Vestigial: passed through to keep the row shape, never used to decide
+        // access or to derive `teams`.
         'w.teamId',
         'w.currentPublishedVersionId',
         'w.contentRevision',
@@ -718,6 +726,7 @@ export class WorkspaceService {
         trashedAt: row.trashedAt || null,
         trashedByUserId: row.trashedByUserId || null,
         purgeAfter: row.purgeAfter || null,
+        // Vestigial; `teams` is the answer. Kept only until the column drops.
         teamId: row.teamId,
         currentPublishedVersionId: row.currentPublishedVersionId,
         contentRevision: Number(row.contentRevision || 0),
@@ -836,6 +845,7 @@ export class WorkspaceService {
     )
       .select(
         'w.id', 'w.name', 'w.slug', 'w.visibility', 'w.workspaceType', 'w.status',
+        // 'w.teamId' is vestigial; the admin view reads `teamNames`.
         'w.editingPolicy', 'w.ownerId', 'w.teamId', 'w.contentRevision',
         'w.trashedAt', 'w.trashReason', 'w.purgeAfter', 'w.purgedAt',
         'w.createdAt', 'w.updatedAt',
@@ -869,6 +879,7 @@ export class WorkspaceService {
         ownerName: (row.ownerName as string | null) ?? null,
         ownerEmail: (row.ownerEmail as string | null) ?? null,
         ownerStatus: (row.ownerStatus as string | null) ?? 'active',
+        // Vestigial; `teamNames` is the answer.
         teamId: (row.teamId as string | null) ?? null,
         // `array_agg` yields null, not an empty array, when there are no grants.
         teamNames: Array.isArray(row.teamNames) ? row.teamNames as string[] : [],
