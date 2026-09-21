@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
 import { ConflictError, NotFoundError } from '../errors';
 import { isPlatformAdmin } from './governance/teamRoles';
+import { detachUnreachablePublicationLinks, workspaceIdsGrantedToTeam } from './workspaceTeamReach';
 import {
   applyWorkspaceOwnershipTransfer,
   isSharedWorkspaceRecord,
@@ -839,8 +840,15 @@ export class UserService {
       await tx('skill_grants').where({ principalType: 'group', principalId: groupId }).del();
       await tx('mcp_server_group_grants').where({ groupId }).del();
       await tx('knowledge_source_group_grants').where({ groupId }).del();
-      await this.detachTeamOnlyWorkspaceLinks(tx, groupId);
+      // Captured before the grants go: afterwards there is no way to find which
+      // workspaces this team reached.
+      const affectedWorkspaceIds = await workspaceIdsGrantedToTeam(tx, groupId);
+      // Deleted explicitly rather than left to the `ON DELETE CASCADE` on the
+      // groups row, so the sweep below runs against a database that already
+      // reflects the revocation.
+      await tx('workspace_team_grants').where({ teamId: groupId }).del();
       const deleted = await tx<GroupRecord>('groups').where({ id: groupId }).del();
+      await detachUnreachablePublicationLinks(tx, { teamWorkspaceIds: affectedWorkspaceIds });
       return Number(deleted || 0);
     });
   }
@@ -871,39 +879,18 @@ export class UserService {
 
   async removeGroupMember(groupId: string, userId: string): Promise<number> {
     return this.db.transaction(async (tx) => {
-      await this.detachTeamOnlyWorkspaceLinks(tx, groupId, userId);
+      const affectedWorkspaceIds = await workspaceIdsGrantedToTeam(tx, groupId);
       await tx('team_role_bindings').where({ teamId: groupId, userId }).del();
       const deleted = await tx('group_members').where({ groupId, userId }).del();
+      // After the membership is gone, so the sweep sees the access they have
+      // left rather than the access they had. Another team granting the same
+      // workspace keeps their draft attached.
+      await detachUnreachablePublicationLinks(tx, {
+        teamWorkspaceIds: affectedWorkspaceIds,
+        userId,
+      });
       return Number(deleted || 0);
     });
-  }
-
-  private async detachTeamOnlyWorkspaceLinks(
-    tx: Knex.Transaction,
-    groupId: string,
-    userId?: string,
-  ): Promise<void> {
-    let query = tx('workspace_publication_links as link')
-      .join('workspaces as workspace', 'workspace.id', 'link.teamWorkspaceId')
-      .leftJoin('workspace_members as direct', function joinDirectWorkspaceAccess() {
-        this.on('direct.workspaceId', '=', 'link.teamWorkspaceId')
-          .andOn('direct.userId', '=', 'link.userId');
-      })
-      .where('workspace.teamId', groupId)
-      .whereNull('direct.userId')
-      .select('link.privateWorkspaceId');
-    if (userId) query = query.andWhere('link.userId', userId);
-    const links = await query as Array<{ privateWorkspaceId: string }>;
-    const privateWorkspaceIds = links.map((link) => String(link.privateWorkspaceId));
-    if (!privateWorkspaceIds.length) return;
-    await tx('workspace_publication_links')
-      .whereIn('privateWorkspaceId', privateWorkspaceIds)
-      .update({
-        status: 'detached',
-        detachedAt: tx.fn.now(),
-        reconnectToken: null,
-        updatedAt: tx.fn.now(),
-      });
   }
 
   async getGroupPromptAccess(groupId: string): Promise<GroupPromptAccess | null> {
