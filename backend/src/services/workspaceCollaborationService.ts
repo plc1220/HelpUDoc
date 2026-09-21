@@ -155,7 +155,7 @@ export class WorkspaceCollaborationService {
       mentionedUserIds?: string[];
     },
   ): Promise<WorkspaceTeamMessage> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId, { requireWritable: true });
     if (!canPostWorkspaceTeamMessage(access.membership.role)) {
       throw new AccessDeniedError('Commenter access is required to post in Workspace Chat');
     }
@@ -206,7 +206,7 @@ export class WorkspaceCollaborationService {
     messageId: string,
     userId: string,
   ): Promise<WorkspaceTeamMessage> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId, { requireWritable: true });
     if (!canPostWorkspaceTeamMessage(access.membership.role)) {
       throw new AccessDeniedError('Commenter access is required to invoke Lumo in Workspace Chat');
     }
@@ -240,6 +240,11 @@ export class WorkspaceCollaborationService {
     invokingUserId: string,
     body: string,
   ): Promise<WorkspaceTeamMessage> {
+    // Its own gate rather than relying on the route having called
+    // `getLumoRequestMessage` first: this is the one writer that had no check of
+    // its own, so a future caller reaching it directly would have bypassed the
+    // freeze entirely.
+    await this.ensureSharedWorkspaceAccess(workspaceId, invokingUserId, { requireWritable: true });
     const existing = await this.findLumoReply(workspaceId, sourceMessage.id, invokingUserId);
     if (existing) {
       return existing;
@@ -377,7 +382,7 @@ export class WorkspaceCollaborationService {
     userId: string,
     input: CreateWorkspaceCollaborationInput,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId, { requireWritable: true });
     if (!canCreateWorkspaceCollaborationObject(access.membership.role, input.type, input.visibility)) {
       throw new AccessDeniedError(
         input.type === 'change_proposal'
@@ -448,7 +453,7 @@ export class WorkspaceCollaborationService {
     userId: string,
     body: string,
   ) {
-    const { membership } = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const { membership } = await this.ensureSharedWorkspaceAccess(workspaceId, userId, { requireWritable: true });
     const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
     if (
       object.visibility === 'workspace_audience'
@@ -480,7 +485,7 @@ export class WorkspaceCollaborationService {
     userId: string,
     input: UpdateWorkspaceCollaborationInput,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId, { requireWritable: true });
     const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
     const canModerate = canModerateWorkspaceCollaboration(access.membership.role);
     const canManageItem = canModerate
@@ -522,7 +527,7 @@ export class WorkspaceCollaborationService {
     objectId: string,
     userId: string,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId, { requireWritable: true });
     if (!getWorkspaceRoleCapabilities(access.membership.role).canPropose) {
       throw new AccessDeniedError('Contributor access is required to create a proposal');
     }
@@ -548,7 +553,7 @@ export class WorkspaceCollaborationService {
     objectId: string,
     userId: string,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId, { requireWritable: true });
     if (!canModerateWorkspaceCollaboration(access.membership.role)) {
       throw new AccessDeniedError('Owner or Publisher access is required to apply a proposal');
     }
@@ -580,13 +585,35 @@ export class WorkspaceCollaborationService {
     return this.ensureObjectAccess(workspaceId, objectId, userId);
   }
 
+  /**
+   * The single gate every collaboration method passes through.
+   *
+   * `requireWritable` refuses when the workspace is no longer active. Unsharing
+   * sets `status` but leaves `visibility` at `team`, and this check used to read
+   * only `visibility` — so the owner of an unshared workspace could keep posting
+   * into a Team Chat nobody else could reach, while their collaborators got 403.
+   *
+   * Reads deliberately leave the flag off. The history stays readable as a
+   * frozen reference, and re-sharing reopens it with the thread intact.
+   *
+   * A `ConflictError` rather than a refusal of access: the caller holds the
+   * right, the workspace state forbids the act — the same reasoning as
+   * `WorkspaceContentLockedError`.
+   */
   private async ensureSharedWorkspaceAccess(
     workspaceId: string,
     userId: string,
+    options: { requireWritable?: boolean } = {},
   ): Promise<CollaborationAccess> {
     const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
     if (workspace.visibility !== 'team') {
       throw new ConflictError('Collaboration items are available only in Shared workspaces');
+    }
+    if (options.requireWritable && (workspace.status || 'active') !== 'active') {
+      throw new ConflictError(
+        'This workspace is no longer shared. Workspace Chat is read-only until it is shared again.',
+        { code: 'WORKSPACE_COLLABORATION_FROZEN', workspaceId },
+      );
     }
     return {
       membership,

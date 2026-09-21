@@ -1286,7 +1286,11 @@ export class WorkspaceService {
   ): Promise<McpServerPolicy> {
     const { membership } = await this.ensureMembership(workspaceId, userId, options);
     const workspacePolicy = await this.db('workspaces')
-      .select('skipPlanApprovals', 'visibility', 'editingPolicy')
+      // `status` is selected so an unshared workspace cannot present itself as
+      // live: Team Chat's agent gates on `workspaceMode`, and without this it
+      // resolved to `shared_live` and let the agent keep writing into a chat
+      // nobody else could reach.
+      .select('skipPlanApprovals', 'visibility', 'editingPolicy', 'status')
       .where({ id: workspaceId })
       .first();
     const isAdmin = membership.role === 'owner';
@@ -1309,8 +1313,10 @@ export class WorkspaceService {
       console.warn('Failed to load mcp_server_grants; continuing without explicit allow/deny', error);
     }
 
+    const isActive = (workspacePolicy?.status || 'active') === 'active';
     const isSharedFreeflow = workspacePolicy?.visibility === 'team'
-      && workspacePolicy.editingPolicy === 'direct';
+      && workspacePolicy.editingPolicy === 'direct'
+      && isActive;
 
     return {
       mcpServerAllowIds: Array.from(new Set(allow)).sort(),
