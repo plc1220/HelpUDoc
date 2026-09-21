@@ -108,6 +108,16 @@ type WorkspaceContent = {
   folders: string[];
 };
 
+/**
+ * The apply path refused because Shared Working moved on after the proposal was
+ * drafted. Matched on the code rather than the message so the wording can
+ * change without breaking the retry.
+ */
+const isProposalStaleError = (error: unknown): boolean => (
+  error instanceof ConflictError
+  && (error.details as { code?: string } | undefined)?.code === 'PROPOSAL_STALE'
+);
+
 export class WorkspacePublicationService {
   private readonly db: Knex;
   private readonly workspaceService: WorkspaceService;
@@ -553,6 +563,24 @@ export class WorkspacePublicationService {
     };
   }
 
+  /**
+   * Apply a reviewed proposal to the Shared workspace.
+   *
+   * Applying replaces Shared Working with the private copy wholesale, so a
+   * proposal that was drafted against an older revision would silently revert
+   * whatever landed in between. `PROPOSAL_STALE` exists to stop that, and it
+   * fires for *every* other open proposal the moment one is accepted — even
+   * when they touch entirely different files.
+   *
+   * That left the contributor stuck: their proposal could not be applied
+   * (stale) and could not be resubmitted (one open proposal per copy). The way
+   * out was for them to notice, open their draft and sync by hand.
+   *
+   * So a stale apply now runs that same sync itself and retries once. The sync
+   * is a real three-way merge against the base manifest the link already
+   * stores, so non-overlapping work folds in silently. Genuinely overlapping
+   * edits still come back as `review_needed`, and still need a person.
+   */
   async applyPrivateCopyToShared(
     privateWorkspaceId: string,
     sharedWorkspaceId: string,
@@ -567,6 +595,80 @@ export class WorkspacePublicationService {
     }
     this.ensurePublisher(membership.role);
 
+    try {
+      return await this.attemptProposalApply(privateWorkspaceId, sharedWorkspaceId, userId, membership);
+    } catch (error) {
+      if (!isProposalStaleError(error)) throw error;
+      await this.rebaseProposalOnSharedWorking(privateWorkspaceId, sharedWorkspaceId);
+      // Once only. A second failure is a real race with another apply, and
+      // retrying forever would hide it.
+      return this.attemptProposalApply(privateWorkspaceId, sharedWorkspaceId, userId, membership);
+    }
+  }
+
+  /**
+   * Bring the proposal's private copy up to the current Shared Working version,
+   * using the same merge the contributor's own "Sync latest" runs.
+   *
+   * Attributed to the link's owner rather than the publisher: the sync writes
+   * into that person's private workspace, and `syncFromSharedWorking` matches
+   * the link row on `userId`, so anyone else's id would update nothing and
+   * throw.
+   */
+  private async rebaseProposalOnSharedWorking(
+    privateWorkspaceId: string,
+    sharedWorkspaceId: string,
+  ): Promise<void> {
+    const link = await this.db<PublicationLinkRecord>('workspace_publication_links')
+      .where({ privateWorkspaceId, teamWorkspaceId: sharedWorkspaceId })
+      .first();
+    const privateWorkspace = await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: privateWorkspaceId })
+      .first();
+    const teamWorkspace = await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: sharedWorkspaceId })
+      .first();
+    if (!link || !privateWorkspace || !teamWorkspace) {
+      throw new ConflictError('The proposal is not linked to this Shared workspace');
+    }
+    if (!link.baseWorkingManifest) {
+      // Without an exact base there is nothing to merge against, and guessing
+      // one would risk reverting Shared Working.
+      throw new ConflictError(
+        'This proposal predates the current Shared workspace and cannot be updated automatically. '
+        + 'Ask its author to sync their private copy and submit again.',
+        { code: 'PROPOSAL_STALE_NO_BASE', privateWorkspaceId },
+      );
+    }
+    const result = await this.syncFromSharedWorking(
+      privateWorkspaceId,
+      privateWorkspace,
+      teamWorkspace,
+      link,
+      String(link.userId),
+      {},
+    );
+    if (result.status === 'review_needed') {
+      throw new ConflictError(
+        'The Shared workspace changed in the same files this proposal edits. '
+        + 'Ask its author to sync their private copy and resolve the differences.',
+        {
+          code: 'PROPOSAL_CONFLICT',
+          privateWorkspaceId,
+          conflicts: (result as { conflicts?: unknown[] }).conflicts ?? [],
+        },
+      );
+    }
+  }
+
+  private async attemptProposalApply(
+    privateWorkspaceId: string,
+    sharedWorkspaceId: string,
+    userId: string,
+    membership: { role: string },
+  ) {
+    // Re-read on every attempt: a rebase rewrites the copy and moves the link,
+    // so state captured before it would be stale by definition.
     const link = await this.db<PublicationLinkRecord>('workspace_publication_links')
       .where({ privateWorkspaceId, teamWorkspaceId: sharedWorkspaceId })
       .first();
