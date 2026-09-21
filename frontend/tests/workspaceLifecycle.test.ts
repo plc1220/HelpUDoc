@@ -6,6 +6,7 @@ import {
   getSharedWorkspaceLifecycleActions,
   isLinkedDraftAutoSyncEligible,
   isOwnerOnlyUnsharedWorkspace,
+  isTeamChatFrozen,
 } from '../src/utils/workspaceLifecycle.ts';
 
 const shared = (overrides: Partial<Workspace> = {}): Workspace => ({
@@ -103,4 +104,35 @@ test('detached, unlinked, up-to-date, and orphaned drafts never autosync', () =>
     false,
   );
   assert.equal(isLinkedDraftAutoSyncEligible(draft(), []), false);
+});
+
+// ─── Frozen Team Chat ────────────────────────────────────────────────────────
+//
+// Unsharing leaves `visibility` at 'team' and only moves `status`, so a shared
+// workspace keeps its collaboration surface while nobody but the owner can
+// reach it. The history stays readable; new writes stop.
+
+test('an unshared workspace freezes Team Chat', () => {
+  assert.equal(isTeamChatFrozen({ visibility: 'team', status: 'unshared' }), true);
+});
+
+test('archived is the legacy spelling of unshared and freezes too', () => {
+  assert.equal(isTeamChatFrozen({ visibility: 'team', status: 'archived' } as never), true);
+});
+
+test('a trashed shared workspace is frozen', () => {
+  assert.equal(isTeamChatFrozen({ visibility: 'team', status: 'trashed' }), true);
+});
+
+test('an active shared workspace is not frozen', () => {
+  // The control. A predicate that freezes everything looks the same as one
+  // that works.
+  assert.equal(isTeamChatFrozen({ visibility: 'team', status: 'active' }), false);
+  assert.equal(isTeamChatFrozen({ visibility: 'team' }), false, 'absent status means active');
+});
+
+test('a private workspace has no Team Chat to freeze', () => {
+  assert.equal(isTeamChatFrozen({ visibility: 'private', status: 'unshared' }), false);
+  assert.equal(isTeamChatFrozen(null), false);
+  assert.equal(isTeamChatFrozen(undefined), false);
 });

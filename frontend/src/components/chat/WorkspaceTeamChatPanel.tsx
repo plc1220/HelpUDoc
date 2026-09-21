@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Components } from 'react-markdown';
 
 import type { Workspace } from '../../types';
+import { isTeamChatFrozen } from '../../utils/workspaceLifecycle';
 import {
   createWorkspaceCollaborationObject,
   convertWorkspaceCollaborationObjectToProposal,
@@ -123,9 +124,13 @@ export default function WorkspaceTeamChatPanel({
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const role = workspace.role || 'viewer';
-  const canComment = COMMENT_ROLES.has(role);
-  const canPropose = CONTRIBUTOR_ROLES.has(role);
-  const canLumoWrite = workspace.canEdit === true;
+  // An unshared workspace keeps its history but takes no new writes. Derived
+  // here rather than passed in, so no caller can forget it and the server rule
+  // in `ensureSharedWorkspaceAccess` has exactly one mirror.
+  const frozen = isTeamChatFrozen(workspace);
+  const canComment = !frozen && COMMENT_ROLES.has(role);
+  const canPropose = !frozen && CONTRIBUTOR_ROLES.has(role);
+  const canLumoWrite = !frozen && workspace.canEdit === true;
   const workingContextLabel = 'Shared Working version';
 
   const loadMessages = useCallback(async (showLoading = false) => {
@@ -272,6 +277,9 @@ export default function WorkspaceTeamChatPanel({
   };
 
   const availableConversions = CONVERSIONS.filter((conversion) => {
+    // "Private note" carries no role requirement, so without this a frozen
+    // workspace still offered one conversion and the menu stayed usable.
+    if (frozen) return false;
     if (conversion.requiresContributor && !canPropose) return false;
     if (conversion.requiresCommenter && !canComment) return false;
     if (conversion.requiresFile && !filePath) return false;
@@ -353,13 +361,15 @@ export default function WorkspaceTeamChatPanel({
                   onClick={() => setReplyTo(message)}
                 />
               ) : null}
-              <Button
-                label="Use message"
-                size="sm"
-                variant="ghost"
-                icon={<MoreHorizontal size={14} />}
-                onClick={() => setActionMessageId(isActionsOpen ? null : message.id)}
-              />
+              {!frozen ? (
+                <Button
+                  label="Use message"
+                  size="sm"
+                  variant="ghost"
+                  icon={<MoreHorizontal size={14} />}
+                  onClick={() => setActionMessageId(isActionsOpen ? null : message.id)}
+                />
+              ) : null}
               {message.isMine ? (
                 <span className={`ml-auto text-[10px] ${isDarkMode ? 'text-slate-600' : 'text-slate-400'}`}>
                   Sent
@@ -405,11 +415,20 @@ export default function WorkspaceTeamChatPanel({
               <span># team-chat</span>
             </div>
             <p className={`mt-0.5 text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              {frozen ? (
+                <>
+                  This workspace is no longer shared, so the conversation is read-only.
+                  Share it again to reopen the chat — the history is kept.
+                </>
+              ) : (
+                <>
               Visible to workspace members. Message normally, or tag <strong>@ARIA</strong> for {canLumoWrite
                 ? 'help that can update shared files directly.'
                 : canPropose
                   ? 'read-only guidance. Work privately to make edits.'
                   : 'read-only guidance.'}
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -427,7 +446,7 @@ export default function WorkspaceTeamChatPanel({
         }`}>
           <div className="flex items-center justify-between gap-2">
             <span>{error || notice}</span>
-            {lumoRetryMessageId ? (
+            {lumoRetryMessageId && !frozen ? (
               <Button
                 label="Retry ARIA"
                 size="sm"

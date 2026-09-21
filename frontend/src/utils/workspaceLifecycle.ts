@@ -26,6 +26,22 @@ export const isOwnerOnlyUnsharedWorkspace = (
 ): boolean => workspace?.visibility === 'team' && getWorkspaceLifecycleStatus(workspace) === 'unshared';
 
 /**
+ * Team Chat is frozen: readable history, no new writes.
+ *
+ * Unsharing sets `status` but leaves `visibility` at `team`, so the workspace
+ * keeps its collaboration surface while only the owner can reach it. Rather
+ * than let one person talk into a room nobody can answer, the thread becomes a
+ * reference — and re-sharing reopens it with the history intact.
+ *
+ * Mirrors the server rule in `ensureSharedWorkspaceAccess`; the server is the
+ * authority and this exists so the UI can explain itself.
+ */
+export const isTeamChatFrozen = (
+  workspace: Pick<Workspace, 'visibility' | 'status'> | null | undefined,
+): boolean => workspace?.visibility === 'team'
+  && getWorkspaceLifecycleStatus(workspace) !== 'active';
+
+/**
  * Shared workspaces use reversible lifecycle actions. They are never hard-deleted from the UI.
  * Owners control sharing/trash; members may only leave their own membership.
  */
