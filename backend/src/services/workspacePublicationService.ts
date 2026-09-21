@@ -214,7 +214,7 @@ export class WorkspacePublicationService {
     userId: string,
     input: {
       userIds?: string[];
-      teamId?: string;
+      teamIds?: string[];
       role?: WorkspaceNamedGrantRole;
       name?: string;
       editingPolicy?: 'direct' | 'review';
@@ -232,19 +232,22 @@ export class WorkspacePublicationService {
     }
 
     const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.userIds);
-    if (!selectedUserIds.length && !input.teamId) {
+    const selectedTeamIds = Array.from(new Set((input.teamIds || []).filter(Boolean)));
+    if (!selectedUserIds.length && !selectedTeamIds.length) {
       throw new ConflictError('Choose at least one team or person before sharing');
     }
     if (selectedUserIds.length) {
       await this.ensureRegisteredUsers(selectedUserIds);
     }
-    if (input.teamId) {
-      const team = await this.db('groups').where({ id: input.teamId }).first();
+    // Every team is validated before the transaction opens, so a bad id in the
+    // list cannot leave the workspace half shared.
+    for (const teamId of selectedTeamIds) {
+      const team = await this.db('groups').where({ id: teamId }).first();
       if (!team) {
         throw new NotFoundError('Team not found');
       }
       const teamMembership = await this.db('group_members')
-        .where({ groupId: input.teamId, userId })
+        .where({ groupId: teamId, userId })
         .first();
       if (!teamMembership) {
         throw new AccessDeniedError('You must belong to the team before sharing with it');
@@ -267,7 +270,6 @@ export class WorkspacePublicationService {
       await tx('workspaces').where({ id: workspace.id }).update({
         visibility: 'team',
         workspaceType: 'team',
-        teamId: input.teamId || null,
         editingPolicy,
         updatedAt: tx.fn.now(),
       });
@@ -301,14 +303,14 @@ export class WorkspacePublicationService {
           .onConflict(['workspaceId', 'userId'])
           .merge({ role: selectedRole, grantedByUserId: userId, updatedAt: tx.fn.now() });
       }
-      if (input.teamId) {
+      if (selectedTeamIds.length) {
         await tx('workspace_team_grants')
-          .insert({
+          .insert(selectedTeamIds.map((teamId) => ({
             workspaceId: workspace.id,
-            teamId: input.teamId,
+            teamId,
             role: teamRole,
             grantedByUserId: userId,
-          })
+          })))
           .onConflict(['workspaceId', 'teamId'])
           .merge({ role: teamRole, grantedByUserId: userId, updatedAt: tx.fn.now() });
       }
@@ -319,7 +321,7 @@ export class WorkspacePublicationService {
         action: locked.visibility === 'private' ? 'workspace.shared' : 'workspace.access_granted',
         resourceType: 'workspace',
         resourceId: workspace.id,
-        metadata: { selectedUserIds, selectedRole, editingPolicy, teamId: input.teamId || null },
+        metadata: { selectedUserIds, selectedRole, editingPolicy, teamIds: selectedTeamIds },
       });
     });
 
@@ -333,7 +335,7 @@ export class WorkspacePublicationService {
       privateCopyWorkspaceId: privateCopy?.id || null,
       teamWorkspaceId: workspace.id,
       sharedWithUserIds: selectedUserIds,
-      sharedWithTeamId: input.teamId || null,
+      sharedWithTeamIds: selectedTeamIds,
       editingPolicy,
     };
   }

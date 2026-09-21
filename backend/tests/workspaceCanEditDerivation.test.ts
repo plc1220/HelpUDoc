@@ -12,8 +12,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  TEAM_GRANT_ROLES,
   isWorkspaceContentLocked,
   resolveWorkspaceContentEditAccess,
+  strongestWorkspaceRole,
 } from '../src/services/workspaceService';
 
 type Role = 'owner' | 'editor' | 'contributor' | 'viewer';
@@ -110,4 +112,38 @@ test('a trashed or purged workspace denies both rights regardless of role', () =
     assert.equal(result.canEditRole, false, status);
     assert.equal(result.canEdit, false, status);
   }
+});
+
+// ─── Team grants across several teams ────────────────────────────────────────
+//
+// A workspace can be shared with any number of teams, each carrying its own
+// role. The strongest one a person reaches wins.
+
+test('the SQL rank and the TypeScript rank agree on team grant roles', () => {
+  // `listWorkspacesForUser` picks the strongest grant with
+  // `CASE role WHEN 'contributor' THEN 2 ELSE 1 END DESC`, because joining the
+  // grants in would fan the row out. That ordering has to mean the same thing as
+  // `WORKSPACE_ROLE_RANK`, and nothing but this test holds the two together.
+  const sqlRank = (role: string) => (role === 'contributor' ? 2 : 1);
+  const sorted = [...TEAM_GRANT_ROLES].sort((left, right) => sqlRank(right) - sqlRank(left));
+  assert.deepEqual(sorted, ['contributor', 'viewer'], 'SQL ranks contributor above viewer');
+  assert.equal(strongestWorkspaceRole(...TEAM_GRANT_ROLES), 'contributor');
+});
+
+test('a team grant never outranks a stronger direct grant', () => {
+  assert.equal(strongestWorkspaceRole('editor', 'contributor'), 'editor');
+  assert.equal(strongestWorkspaceRole('owner', 'contributor'), 'owner');
+});
+
+test('the strongest team role wins across several teams', () => {
+  assert.equal(strongestWorkspaceRole('viewer', 'contributor'), 'contributor');
+  assert.equal(strongestWorkspaceRole(null, 'viewer'), 'viewer');
+});
+
+test('a contributor reached through a team may edit a Freeflow workspace', () => {
+  // The point of carrying the role per team rather than one role for the whole
+  // workspace: a viewer grant from one team must not cap a contributor grant
+  // from another.
+  assert.equal(resolve({ role: strongestWorkspaceRole('viewer', 'contributor') }).canEdit, true);
+  assert.equal(resolve({ role: strongestWorkspaceRole('viewer', null) }).canEdit, false);
 });

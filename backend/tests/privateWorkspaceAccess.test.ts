@@ -54,6 +54,17 @@ function workspaceServiceForPrivateWorkspace(options: {
     if (table === 'workspace_members') {
       return { where: () => ({ first: async () => undefined }) };
     }
+    if (table === 'workspace_team_grants as tg') {
+      // `resolveTeamGrantRole`: grants the caller reaches through their teams,
+      // strongest first. No team grants in these fixtures.
+      return {
+        join: () => ({
+          where: () => ({
+            orderByRaw: () => ({ select: () => ({ first: async () => undefined }) }),
+          }),
+        }),
+      };
+    }
     if (table === 'audit_events') {
       return { insert: async (row: any) => { auditRows.push(row); } };
     }
@@ -190,6 +201,17 @@ function workspaceServiceForSharedWorkspace(
     }
     if (table === 'mcp_server_grants') {
       return { select: () => ({ where: async () => [] }) };
+    }
+    if (table === 'workspace_team_grants as tg') {
+      // `resolveTeamGrantRole`: grants the caller reaches through their teams,
+      // strongest first. No team grants in these fixtures.
+      return {
+        join: () => ({
+          where: () => ({
+            orderByRaw: () => ({ select: () => ({ first: async () => undefined }) }),
+          }),
+        }),
+      };
     }
     throw new Error(`Unexpected query for ${table}`);
   }) as any;

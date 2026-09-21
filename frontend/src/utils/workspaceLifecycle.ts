@@ -30,7 +30,7 @@ export const isOwnerOnlyUnsharedWorkspace = (
  * Owners control sharing/trash; members may only leave their own membership.
  */
 export const getSharedWorkspaceLifecycleActions = (
-  workspace: Pick<Workspace, 'visibility' | 'role' | 'status' | 'audienceType'>,
+  workspace: Pick<Workspace, 'visibility' | 'role' | 'status' | 'canLeave'>,
 ): WorkspaceLifecycleAction[] => {
   if (workspace.visibility !== 'team') return [];
   const status = getWorkspaceLifecycleStatus(workspace);
@@ -40,9 +40,14 @@ export const getSharedWorkspaceLifecycleActions = (
     if (status === 'unshared') return ['reshare', 'trash'];
     return ['unshare', 'trash'];
   }
-  // Team-derived access is governed by Team membership; deleting only a
-  // direct workspace grant would not actually make the user leave.
-  return workspace.role && status !== 'trashed' && workspace.audienceType !== 'team' ? ['leave'] : [];
+  // The server answers this, with the same rule the leave endpoint enforces:
+  // team-derived access is governed by Team membership, so deleting only a
+  // direct grant would not actually make the user leave. Absent means no, which
+  // keeps a stale payload from offering an action that will be refused.
+  // The trashed check is local UI logic, not a second copy of the leave rule:
+  // a trashed row offers restore or nothing, and the owner branch above already
+  // covers restore.
+  return status !== 'trashed' && workspace.canLeave ? ['leave'] : [];
 };
 
 /**

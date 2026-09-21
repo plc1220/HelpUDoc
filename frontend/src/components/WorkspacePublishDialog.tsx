@@ -49,7 +49,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
   const [peopleQuery, setPeopleQuery] = useState('');
   const [peopleLoading, setPeopleLoading] = useState(false);
   const [teams, setTeams] = useState<WorkspaceTeam[]>([]);
-  const [teamId, setTeamId] = useState('');
+  const [teamIds, setTeamIds] = useState<string[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [namedRole, setNamedRole] = useState<WorkspaceNamedGrantRole>('contributor');
   const [note, setNote] = useState('');
@@ -63,7 +63,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
       setPeopleOptions([]);
       setPeopleQuery('');
       setTeams([]);
-      setTeamId('');
+      setTeamIds([]);
       setNamedRole('contributor');
       setNote('');
       setError('');
@@ -102,7 +102,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
     void listWorkspaceTeams()
       .then((items) => {
         setTeams(items);
-        if (items.length === 1) setTeamId(items[0].id);
+        if (items.length === 1) setTeamIds([items[0].id]);
       })
       .catch(() => setTeams([]))
       .finally(() => setTeamsLoading(false));
@@ -111,8 +111,8 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
   const canSubmit = useMemo(() => {
     if (!workspace || busy) return false;
     if (!isPrivate) return true;
-    return (Boolean(teamId) || selectedPeople.length > 0) && !peopleLoading && !teamsLoading;
-  }, [busy, isPrivate, peopleLoading, selectedPeople.length, teamId, teamsLoading, workspace]);
+    return (teamIds.length > 0 || selectedPeople.length > 0) && !peopleLoading && !teamsLoading;
+  }, [busy, isPrivate, peopleLoading, selectedPeople.length, teamIds, teamsLoading, workspace]);
 
   const handleSubmit = async () => {
     if (!workspace || !canSubmit) return;
@@ -123,7 +123,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
       if (isPrivate) {
         await shareWorkspaceWithAudience(workspace.id, {
           userIds: selectedPeople.map((person) => person.id),
-          teamId: teamId || undefined,
+          teamIds,
           role: namedRole,
         });
       } else {
@@ -164,26 +164,35 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
               </Box>
             ) : teams.length ? (
               <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-                <InputLabel id="publish-team-label">Team (optional)</InputLabel>
+                <InputLabel id="publish-team-label">Teams (optional)</InputLabel>
                 <Select
+                  multiple
                   labelId="publish-team-label"
-                  label="Team (optional)"
-                  value={teamId}
-                  onChange={(event) => setTeamId(String(event.target.value))}
+                  label="Teams (optional)"
+                  value={teamIds}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setTeamIds(typeof next === 'string' ? next.split(',') : next);
+                  }}
+                  renderValue={(selected) => teams
+                    .filter((team) => (selected as string[]).includes(team.id))
+                    .map((team) => team.name)
+                    .join(', ')}
                 >
-                  <MenuItem value="">No team</MenuItem>
                   {teams.map((team) => <MenuItem key={team.id} value={team.id}>{team.name}</MenuItem>)}
                 </Select>
               </FormControl>
             ) : (
               <Alert severity="info" sx={{ mb: 2 }}>
-                You do not belong to a team yet. You can still share with individual people.
+                You do not belong to any team yet. You can still share with individual people.
               </Alert>
             )}
-            {teamId ? (
+            {teamIds.length ? (
               <Alert severity="info" sx={{ mb: 2 }}>
-                Team members will receive {namedRole === 'viewer' ? 'Viewer' : 'Contributor'} access to the
-                shared workspace, including Workspace Chat and collaboration. Publisher authority remains direct-user only.
+                Members of {teamIds.length === 1 ? 'this team' : `these ${teamIds.length} teams`} will
+                receive {namedRole === 'viewer' ? 'Viewer' : 'Contributor'} access to the shared
+                workspace, including Workspace Chat and collaboration. Publisher authority remains
+                direct-user only.
               </Alert>
             ) : null}
             <Autocomplete
@@ -230,7 +239,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
               Contributors can edit shared content directly or work privately and submit changes for review.
               Publishers can also approve submissions and create immutable locked versions.
             </Alert>
-            {!teamId && selectedPeople.length === 0 ? (
+            {!teamIds.length && selectedPeople.length === 0 ? (
               <Alert severity="warning" sx={{ mt: 2 }}>
                 Choose at least one team or person before sharing.
               </Alert>

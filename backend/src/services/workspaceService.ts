@@ -8,6 +8,7 @@ import { AccessDeniedError, ConflictError, NotFoundError, WorkspaceContentLocked
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { legacyWorkspaceRoleToNamedGrant } from './workspaceAudiencePolicy';
 import { isPlatformAdmin } from './governance/teamRoles';
+import { detachUnreachablePublicationLinks } from './workspaceTeamReach';
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
 
@@ -32,18 +33,124 @@ export const workspacePurgeDeadline = (from: Date = new Date()): Date =>
 const ADMIN_OVERRIDE_AUDIT_WINDOW_MS = 60_000;
 const adminOverrideAuditSeenAt = new Map<string, number>();
 
-export function buildWorkspaceTeamAccessQuery(db: Knex, workspaceId: string, teamId: string) {
-  return db('groups as group')
-    .leftJoin('workspace_team_grants as workspaceTeamGrant', function joinTeamGrant() {
-      this.on('workspaceTeamGrant.teamId', '=', 'group.id')
-        .andOnVal('workspaceTeamGrant.workspaceId', '=', workspaceId);
-    })
-    .where('group.id', teamId)
+/**
+ * Every team that can reach this workspace, with the role each one carries.
+ *
+ * `workspace_team_grants` is keyed `(workspaceId, teamId)` and has always held
+ * as many teams as you like — the single-team limit lived in `workspaces.teamId`,
+ * which this reads in place of.
+ */
+export function buildWorkspaceTeamAccessQuery(db: Knex, workspaceId: string) {
+  return db('workspace_team_grants as workspaceTeamGrant')
+    .join('groups as group', 'group.id', 'workspaceTeamGrant.teamId')
+    .where('workspaceTeamGrant.workspaceId', workspaceId)
+    .orderBy('group.name', 'asc')
     .select(
       'group.id',
       'group.name',
       db.raw(`COALESCE("workspaceTeamGrant"."role", 'viewer') as role`),
     );
+}
+
+/**
+ * Rank a team grant in SQL, for picking the strongest without joining.
+ *
+ * Joining the grants in would fan the row out once per (membership × grant), and
+ * `DISTINCT` cannot collapse that — the columns that differ, the role and the
+ * team name, are the ones being selected. A ranked subquery keeps it one row.
+ *
+ * This duplicates `WORKSPACE_ROLE_RANK` in SQL, so the two are pinned together
+ * by a test. Team grants only ever carry `contributor` or `viewer`.
+ */
+const TEAM_GRANT_RANK_SQL = `CASE "role" WHEN 'contributor' THEN 2 ELSE 1 END`;
+
+/** The roles a team grant may carry, strongest first. */
+export const TEAM_GRANT_ROLES: WorkspaceRole[] = ['contributor', 'viewer'];
+
+/**
+ * The strongest role `userId` holds on `workspaceId` through any of their teams,
+ * or null when no team of theirs holds a grant.
+ */
+export async function resolveTeamGrantRole(
+  db: Knex,
+  workspaceId: string,
+  userId: string,
+): Promise<WorkspaceRole | null> {
+  const grant = await db('workspace_team_grants as tg')
+    .join('group_members as gm', function joinMembership() {
+      this.on('gm.groupId', '=', 'tg.teamId').andOnVal('gm.userId', '=', userId);
+    })
+    .where('tg.workspaceId', workspaceId)
+    .orderByRaw(`${TEAM_GRANT_RANK_SQL} DESC, tg."teamId" ASC`)
+    .select('tg.role')
+    .first();
+  if (!grant) return null;
+  return grant.role === 'contributor' ? 'contributor' : 'viewer';
+}
+
+/**
+ * Whether someone may give up their own access to a workspace, and if not, why.
+ *
+ * Leaving removes a direct grant. If the caller also reaches the workspace
+ * through a team, removing that grant changes nothing — they are still in the
+ * team — so the action is refused rather than offered and silently ignored.
+ *
+ * Returns a reason rather than a bare boolean so the endpoint keeps its four
+ * distinct messages while the sidebar reads one flag. Both go through this
+ * function, which is what stops the button and the endpoint disagreeing: the
+ * client used to read a cached `audienceType` label describing the *workspace*
+ * while the server asked a live question about the *person*.
+ */
+export type WorkspaceLeaveRefusalReason =
+  | 'not_shared'
+  | 'owner'
+  | 'no_direct_access'
+  | 'team_managed';
+
+export type WorkspaceLeaveVerdict =
+  | { canLeave: true }
+  | { canLeave: false; reason: WorkspaceLeaveRefusalReason };
+
+export const resolveWorkspaceLeaveVerdict = (input: {
+  isShared: boolean;
+  status?: WorkspaceRecord['status'];
+  isOwner: boolean;
+  hasDirectMembership: boolean;
+  reachesViaTeam: boolean;
+}): WorkspaceLeaveVerdict => {
+  // Clause order matches `leaveWorkspace`, so the same situation still produces
+  // the same message (`LEARNINGS.md` §13).
+  if (!input.isShared || (input.status || 'active') !== 'active') {
+    return { canLeave: false, reason: 'not_shared' };
+  }
+  if (input.isOwner) return { canLeave: false, reason: 'owner' };
+  if (!input.hasDirectMembership) return { canLeave: false, reason: 'no_direct_access' };
+  if (input.reachesViaTeam) return { canLeave: false, reason: 'team_managed' };
+  return { canLeave: true };
+};
+
+/** The error each refusal has always raised. Wording is deliberately unchanged. */
+export const workspaceLeaveRefusal = (reason: WorkspaceLeaveRefusalReason): Error => {
+  if (reason === 'not_shared') return new ConflictError('Only active Shared workspace access can be left');
+  if (reason === 'owner') return new ConflictError('Transfer ownership before leaving this workspace');
+  if (reason === 'no_direct_access') return new NotFoundError('No direct workspace access to leave');
+  return new ConflictError('Access is managed by your Team. Leave the Team to leave this workspace.');
+};
+
+/**
+ * Whether `userId` still reaches `workspaceId` through any team.
+ *
+ * Used wherever revoking one route must not assume it was the only one — the
+ * detach paths previously asked "is there a direct membership?" and treated its
+ * absence as "team access is gone", which was true only while a workspace could
+ * hold one team.
+ */
+export async function hasTeamDerivedAccess(
+  db: Knex,
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  return Boolean(await resolveTeamGrantRole(db, workspaceId, userId));
 }
 
 export type WorkspaceRole = 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
@@ -364,7 +471,8 @@ export class WorkspaceService {
     canEdit: boolean;
     canPublish: boolean;
     teamName?: string | null;
-    audienceType: 'private' | 'selected_people' | 'team';
+    teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }>;
+    canLeave: boolean;
     publicationStatus: 'private_draft' | 'up_to_date' | 'changes_to_publish' | 'withdrawn' | 'detached' | 'team_updates_available' | 'review_needed';
     linkedTeamWorkspaceId?: string | null;
     privateCopyWorkspaceId?: string | null;
@@ -377,22 +485,11 @@ export class WorkspaceService {
       .leftJoin('workspace_members as wm', function joinDirectMembership() {
         this.on('wm.workspaceId', '=', 'w.id').andOnVal('wm.userId', '=', userId);
       })
-      .leftJoin('group_members as gm', function joinTeamMembership() {
-        this.on('gm.groupId', '=', 'w.teamId').andOnVal('gm.userId', '=', userId);
-      })
-      .leftJoin('workspace_team_grants as wtg', function joinTeamGrant() {
-        this.on('wtg.workspaceId', '=', 'w.id').andOn('wtg.teamId', '=', 'w.teamId');
-      })
-      .leftJoin('groups as g', 'g.id', 'w.teamId')
       .leftJoin('workspace_publication_links as private_link', 'private_link.privateWorkspaceId', 'w.id')
       .leftJoin('workspaces as linked_team', 'linked_team.id', 'private_link.teamWorkspaceId')
       .leftJoin('workspace_members as linked_team_member', function joinLinkedTeamMembership() {
         this.on('linked_team_member.workspaceId', '=', 'private_link.teamWorkspaceId')
           .andOnVal('linked_team_member.userId', '=', userId);
-      })
-      .leftJoin('group_members as linked_team_group_member', function joinLinkedTeamGroupMembership() {
-        this.on('linked_team_group_member.groupId', '=', 'linked_team.teamId')
-          .andOnVal('linked_team_group_member.userId', '=', userId);
       })
       .leftJoin('workspace_publication_links as team_link', function joinPrivateCopy() {
         this.on('team_link.teamWorkspaceId', '=', 'w.id')
@@ -427,11 +524,21 @@ export class WorkspaceService {
         'w.updatedAt',
         'wm.role as directRole',
         'wm.canEdit as directCanEdit',
-        'gm.userId as teamMemberUserId',
-        'wtg.role as teamGrantRole',
-        'g.name as teamName',
+        this.db.raw(`(
+          SELECT tg.role FROM workspace_team_grants AS tg
+          JOIN group_members AS gm ON gm."groupId" = tg."teamId" AND gm."userId" = ?
+          WHERE tg."workspaceId" = w.id
+          ORDER BY CASE tg.role WHEN 'contributor' THEN 2 ELSE 1 END DESC, tg."teamId" ASC
+          LIMIT 1
+        ) as "teamGrantRole"`, [userId]),
+        this.db.raw(`(
+          SELECT jsonb_agg(jsonb_build_object('id', team.id, 'name', team.name, 'role', tg.role)
+                           ORDER BY team.name)
+          FROM workspace_team_grants AS tg
+          JOIN groups AS team ON team.id = tg."teamId"
+          WHERE tg."workspaceId" = w.id
+        ) as "teams"`),
         'private_link.teamWorkspaceId as linkedTeamWorkspaceId',
-        'linked_team.teamId as linkedTeamId',
         'linked_team.currentPublishedVersionId as linkedTeamCurrentPublishedVersionId',
         'linked_team.visibility as linkedTeamVisibility',
         'linked_team.status as linkedTeamStatus',
@@ -444,7 +551,13 @@ export class WorkspaceService {
         'private_link.baseSharedContentRevision',
         'private_link.updatedAt as publicationLinkUpdatedAt',
         'linked_team_member.role as linkedTeamRole',
-        'linked_team_group_member.userId as linkedTeamGroupMemberUserId',
+        this.db.raw(`(
+          SELECT EXISTS (
+            SELECT 1 FROM workspace_team_grants AS tg
+            JOIN group_members AS gm ON gm."groupId" = tg."teamId" AND gm."userId" = ?
+            WHERE tg."workspaceId" = private_link."teamWorkspaceId"
+          )
+        ) as "linkedTeamTeamAccess"`, [userId]),
         'team_link.privateWorkspaceId as privateCopyWorkspaceId',
         'published.versionNumber as currentPublishedVersionNumber',
         'published.sourceContentRevision as publishedContentRevision',
@@ -480,9 +593,11 @@ export class WorkspaceService {
                 accessQuery
                   .whereNotNull('wm.userId')
                   .orWhere('w.ownerId', userId)
-                  .orWhere((groupBackedQuery) => {
-                    groupBackedQuery.whereNotNull('w.teamId').whereNotNull('gm.userId');
-                  });
+                  .orWhereRaw(`EXISTS (
+                    SELECT 1 FROM workspace_team_grants AS tg
+                    JOIN group_members AS gm ON gm."groupId" = tg."teamId" AND gm."userId" = ?
+                    WHERE tg."workspaceId" = w.id
+                  )`, [userId]);
               });
           });
       })
@@ -505,9 +620,12 @@ export class WorkspaceService {
 
     return rows.map((row: any) => {
       const visibility = row.visibility === 'team' ? 'team' : 'private';
-      const teamRole = row.teamMemberUserId
+      const teamRole: WorkspaceRole | null = row.teamGrantRole
         ? row.teamGrantRole === 'contributor' ? 'contributor' : 'viewer'
         : null;
+      // `json_agg` yields null when a workspace has no grants.
+      const teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }> =
+        Array.isArray(row.teams) ? row.teams : [];
       const effectiveRole = visibility === 'private'
         ? 'owner'
         : strongestWorkspaceRole(row.directRole as WorkspaceRole | null, teamRole);
@@ -522,7 +640,7 @@ export class WorkspaceService {
         && (row.linkedTeamVisibility || 'team') === 'team'
         && (row.linkedTeamStatus || 'active') === 'active'
         && (row.publicationLinkStatus || 'active') === 'active'
-        && (Boolean(row.linkedTeamRole) || Boolean(row.linkedTeamGroupMemberUserId));
+        && (Boolean(row.linkedTeamRole) || Boolean(row.linkedTeamTeamAccess));
       const linkedTeamDetached = visibility === 'private'
         && Boolean(row.linkedTeamWorkspaceId)
         && (
@@ -620,8 +738,20 @@ export class WorkspaceService {
         canPublish: (row.status || 'active') === 'active'
           && visibility === 'team'
           && (row.directRole === 'owner' || row.directRole === 'editor'),
-        teamName: row.teamName || null,
-        audienceType: visibility === 'private' ? 'private' : row.teamId ? 'team' : 'selected_people',
+        teams,
+        // Kept until every reader moves to `teams`. Derived from the same list
+        // rather than a second join, so the two cannot disagree.
+        teamName: teams[0]?.name ?? null,
+        // Every input is already on the row, so this costs no extra query. It
+        // replaces `audienceType`, which described the workspace when the
+        // question is about the person reading it.
+        canLeave: resolveWorkspaceLeaveVerdict({
+          isShared: visibility === 'team',
+          status: row.status || 'active',
+          isOwner: row.ownerId === userId,
+          hasDirectMembership: Boolean(row.directRole),
+          reachesViaTeam: Boolean(row.teamGrantRole),
+        }).canLeave,
         publicationStatus,
         linkedTeamWorkspaceId: row.linkedTeamWorkspaceId || null,
         privateCopyWorkspaceId: row.privateCopyWorkspaceId || null,
@@ -1014,28 +1144,32 @@ export class WorkspaceService {
       .first();
 
     let membership = directMembership;
-    if (normalizedWorkspace.teamId) {
-      const groupMembership = await this.db('group_members')
-        .where({ groupId: normalizedWorkspace.teamId, userId })
-        .first();
-      if (!groupMembership && !membership && !adminOverride) {
-        throw new AccessDeniedError('Team membership is required to access this workspace');
-      }
-      if (groupMembership) {
-        const teamGrant = await this.db('workspace_team_grants')
-          .where({ workspaceId, teamId: normalizedWorkspace.teamId })
-          .first();
-        const teamRole: WorkspaceRole = teamGrant?.role === 'contributor' ? 'contributor' : 'viewer';
-        const effectiveRole = strongestWorkspaceRole(membership?.role, teamRole);
-        membership = {
-          workspaceId,
-          userId,
-          role: effectiveRole,
-          canEdit: false,
-          createdAt: membership?.createdAt || groupMembership.createdAt,
-          updatedAt: membership?.updatedAt || groupMembership.updatedAt,
-        };
-      }
+    // Any team the caller belongs to that holds a grant, strongest role first.
+    // This used to ask whether the caller was in the single team named on the
+    // workspace row, which meant a grant for any other team was inert — and it
+    // disagreed with `skillGovernanceService.requireWorkspaceRead`, which has
+    // always asked the question this way.
+    //
+    // Only for Shared workspaces. A private one cannot carry grants, and this is
+    // the hottest authorization path in the service — no reason to spend a query
+    // proving what the discriminator already says.
+    const teamRole = isSharedWorkspaceRecord(normalizedWorkspace)
+      ? await resolveTeamGrantRole(this.db, workspaceId, userId)
+      : null;
+    if (!teamRole && !membership && !adminOverride && isSharedWorkspaceRecord(normalizedWorkspace)) {
+      throw new AccessDeniedError('Team membership is required to access this workspace');
+    }
+    if (teamRole) {
+      const now = new Date().toISOString();
+      membership = {
+        workspaceId,
+        userId,
+        role: strongestWorkspaceRole(membership?.role, teamRole),
+        // Placeholder; `finalizeMembership` derives the real value.
+        canEdit: false,
+        createdAt: membership?.createdAt || now,
+        updatedAt: membership?.updatedAt || now,
+      };
     }
 
     // Only now, with every real route to this workspace exhausted, does the
@@ -1323,23 +1457,17 @@ export class WorkspaceService {
         .forUpdate()
         .first();
       if (!workspace) throw new NotFoundError('Workspace not found');
-      if (!isSharedWorkspaceRecord(workspace) || workspace.status !== 'active') {
-        throw new ConflictError('Only active Shared workspace access can be left');
-      }
-      if (workspace.ownerId === userId) {
-        throw new ConflictError('Transfer ownership before leaving this workspace');
-      }
       const directMembership = await tx('workspace_members').where({ workspaceId, userId }).first();
-      if (!directMembership) throw new NotFoundError('No direct workspace access to leave');
-      if (workspace.teamId) {
-        const teamMembership = await tx('group_members').where({
-          groupId: workspace.teamId,
-          userId,
-        }).first();
-        if (teamMembership) {
-          throw new ConflictError('Access is managed by your Team. Leave the Team to leave this workspace.');
-        }
-      }
+      // The same resolver the sidebar reads, so the button and this endpoint
+      // cannot disagree about whether leaving is possible.
+      const verdict = resolveWorkspaceLeaveVerdict({
+        isShared: isSharedWorkspaceRecord(workspace),
+        status: workspace.status,
+        isOwner: workspace.ownerId === userId,
+        hasDirectMembership: Boolean(directMembership),
+        reachesViaTeam: Boolean(await resolveTeamGrantRole(tx, workspaceId, userId)),
+      });
+      if (!verdict.canLeave) throw workspaceLeaveRefusal(verdict.reason);
       await tx('workspace_members').where({ workspaceId, userId }).del();
       await tx('workspace_user_grants').where({ workspaceId, userId }).del();
       await tx('workspace_publication_links')
@@ -1491,18 +1619,15 @@ export class WorkspaceService {
       throw new AccessDeniedError('Cannot remove workspace owner');
     }
 
-    const retainsTeamAccess = Boolean(workspace?.teamId && await this.db('group_members').where({
-      groupId: workspace.teamId,
-      userId: targetUserId,
-    }).first());
     await this.db.transaction(async (tx) => {
       await tx('workspace_members').where({ workspaceId, userId: targetUserId }).del();
       await tx('workspace_user_grants').where({ workspaceId, userId: targetUserId }).del();
-      if (!retainsTeamAccess) {
-        await tx('workspace_publication_links')
-          .where({ teamWorkspaceId: workspaceId, userId: targetUserId })
-          .update({ status: 'detached', detachedAt: tx.fn.now(), reconnectToken: null, updatedAt: tx.fn.now() });
-      }
+      // Asked after the direct grant is gone, so it answers "can they still get
+      // in by any route?" rather than "did they have a direct row?".
+      await detachUnreachablePublicationLinks(tx, {
+        teamWorkspaceIds: [workspaceId],
+        userId: targetUserId,
+      });
       await tx('audit_events').insert({
         id: uuidv4(),
         actorUserId: actingUserId,
@@ -1540,14 +1665,10 @@ export class WorkspaceService {
     if (!actingTeamMembership) {
       throw new AccessDeniedError('You must belong to the team before sharing with it');
     }
-    if (workspace.teamId && workspace.teamId !== teamId) {
-      throw new ConflictError('A shared workspace can only be connected to one team');
-    }
 
     await this.db.transaction(async (tx) => {
-      await tx('workspaces')
-        .where({ id: workspaceId })
-        .update({ teamId, updatedAt: tx.fn.now() });
+      // No `workspaces.teamId` write: the grant is the record. That column could
+      // hold one value, which is the whole reason a second team was refused.
       await tx('workspace_team_grants')
         .insert({
           workspaceId,
@@ -1578,34 +1699,20 @@ export class WorkspaceService {
     if (membership.role !== 'owner') {
       throw new AccessDeniedError('Only Team owners can manage publishing access');
     }
-    if (workspace.teamId !== teamId) {
+    const existingGrant = await this.db('workspace_team_grants').where({ workspaceId, teamId }).first();
+    if (!existingGrant) {
       throw new NotFoundError('Team access not found');
     }
 
     await this.db.transaction(async (tx) => {
-      const teamOnlyLinks = await tx('workspace_publication_links as link')
-        .leftJoin('workspace_members as direct', function joinDirectWorkspaceAccess() {
-          this.on('direct.workspaceId', '=', 'link.teamWorkspaceId')
-            .andOn('direct.userId', '=', 'link.userId');
-        })
-        .where('link.teamWorkspaceId', workspaceId)
-        .whereNull('direct.userId')
-        .select('link.privateWorkspaceId') as Array<{ privateWorkspaceId: string }>;
-      const detachedPrivateWorkspaceIds = teamOnlyLinks.map((link) => String(link.privateWorkspaceId));
-      if (detachedPrivateWorkspaceIds.length) {
-        await tx('workspace_publication_links')
-          .whereIn('privateWorkspaceId', detachedPrivateWorkspaceIds)
-          .update({
-            status: 'detached',
-            detachedAt: tx.fn.now(),
-            reconnectToken: null,
-            updatedAt: tx.fn.now(),
-          });
-      }
-      await tx('workspaces')
-        .where({ id: workspaceId, teamId })
-        .update({ teamId: null, updatedAt: tx.fn.now() });
+      // Revoke first, then ask who can still reach the workspace. Sweeping
+      // before the delete would force the sweep to know which team was going,
+      // and the old one did not — it detached every draft whose owner held no
+      // direct membership, which with several teams meant the other teams' too.
       await tx('workspace_team_grants').where({ workspaceId, teamId }).del();
+      const detachedPrivateWorkspaceIds = await detachUnreachablePublicationLinks(tx, {
+        teamWorkspaceIds: [workspaceId],
+      });
       await tx('audit_events').insert({
         id: uuidv4(),
         actorUserId: actingUserId,
@@ -1649,23 +1756,28 @@ export class WorkspaceService {
     const effectiveCollaborators = new Map(
       directCollaboratorList.map((collaborator) => [collaborator.userId, collaborator]),
     );
-    const teams = workspace.teamId
-      ? await buildWorkspaceTeamAccessQuery(this.db, workspaceId, workspace.teamId) as Array<{
-          id: string;
-          name: string;
-          role: 'viewer' | 'contributor';
-        }>
-      : [];
-    if (workspace.teamId) {
-      const teamRole: WorkspaceRole = teams[0]?.role === 'contributor' ? 'contributor' : 'viewer';
+    const teams = await buildWorkspaceTeamAccessQuery(this.db, workspaceId) as Array<{
+      id: string;
+      name: string;
+      role: 'viewer' | 'contributor';
+    }>;
+    if (teams.length) {
+      // Each team carries its own role, so members are folded in per team rather
+      // than under one role taken from the first grant. Someone in two granted
+      // teams accumulates the strongest, which is also what `ensureMembership`
+      // gives them.
       const groupMembers = await this.db('group_members')
         .join('users', 'group_members.userId', 'users.id')
-        .select('group_members.userId', 'users.displayName')
-        .where('group_members.groupId', workspace.teamId)
+        .select('group_members.userId', 'users.displayName', 'group_members.groupId')
+        .whereIn('group_members.groupId', teams.map((team) => team.id))
         .orderBy('users.displayName', 'asc');
+      const roleByTeamId = new Map(teams.map((team) => [
+        team.id,
+        (team.role === 'contributor' ? 'contributor' : 'viewer') as WorkspaceRole,
+      ]));
       groupMembers.forEach((row: any) => {
-        const direct = effectiveCollaborators.get(row.userId);
-        const role = strongestWorkspaceRole(direct?.role, teamRole);
+        const existing = effectiveCollaborators.get(row.userId);
+        const role = strongestWorkspaceRole(existing?.role, roleByTeamId.get(String(row.groupId)));
         effectiveCollaborators.set(row.userId, {
           userId: row.userId,
           displayName: row.displayName,

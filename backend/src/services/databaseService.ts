@@ -381,6 +381,53 @@ export class DatabaseService {
     }
   }
 
+  /**
+   * Derive a team grant from `workspaces.teamId` once, for workspaces that
+   * predate grants being the source of truth.
+   *
+   * Keyed through `application_migrations` so it runs a single time. Its
+   * predecessor ran on every boot, which was harmless only while the column was
+   * still maintained — after that it would resurrect revoked access.
+   *
+   * `ON CONFLICT DO NOTHING` is what preserves a real role: a workspace that
+   * already has a grant keeps whatever `addTeamAccess` wrote. One with only the
+   * column has no role to preserve, and `viewer` is the least-privilege answer.
+   */
+  private async backfillWorkspaceTeamGrants(): Promise<void> {
+    const key = '2026-09-workspace-team-grants-from-column';
+    if (await this.db('application_migrations').where({ key }).first()) return;
+
+    const hasColumn = await this.db.schema.hasColumn('workspaces', 'teamId');
+    await this.db.transaction(async (tx) => {
+      if (hasColumn) {
+        const orphaned = await tx.raw(`
+          SELECT count(*)::int AS count
+          FROM workspaces w
+          WHERE w."workspaceType" = 'team' AND w."teamId" IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM workspace_team_grants tg
+              WHERE tg."workspaceId" = w.id AND tg."teamId" = w."teamId")
+        `);
+        const count = Number(orphaned.rows?.[0]?.count || 0);
+        // Expected to be zero: every write path kept the two in step. A non-zero
+        // count means the column was the only record of that team's access, so
+        // say so rather than converting it silently.
+        if (count) {
+          console.warn(`Deriving ${count} workspace team grant(s) from the legacy teamId column.`);
+        }
+        await tx.raw(`
+          INSERT INTO workspace_team_grants
+            ("workspaceId", "teamId", role, "grantedByUserId", "createdAt", "updatedAt")
+          SELECT id, "teamId", 'viewer', "ownerId", NOW(), NOW()
+          FROM workspaces
+          WHERE "workspaceType" = 'team' AND "teamId" IS NOT NULL
+          ON CONFLICT ("workspaceId", "teamId") DO NOTHING
+        `);
+      }
+      await tx('application_migrations').insert({ key }).onConflict('key').ignore();
+    });
+  }
+
   private async migrateLegacyTeamWorkspacesToSharedFreeflow(): Promise<void> {
     if (!await this.db.schema.hasTable('application_migrations')) {
       await this.db.schema.createTable('application_migrations', (table) => {
@@ -2542,14 +2589,13 @@ export class DatabaseService {
       WHERE wm."userId" <> w."ownerId" AND w."workspaceType" = 'team'
       ON CONFLICT ("workspaceId", "userId") DO NOTHING
     `);
-    await this.db.raw(`
-      INSERT INTO workspace_team_grants
-        ("workspaceId", "teamId", role, "grantedByUserId", "createdAt", "updatedAt")
-      SELECT id, "teamId", 'viewer', "ownerId", NOW(), NOW()
-      FROM workspaces
-      WHERE "workspaceType" = 'team' AND "teamId" IS NOT NULL
-      ON CONFLICT ("workspaceId", "teamId") DO NOTHING
-    `);
+    // The team-grant backfill that used to run here is gone, and its removal
+    // belongs to the same change that stopped writing `workspaces.teamId`. It
+    // re-derived grants *from* that column on every boot. With the column no
+    // longer maintained, it would have re-inserted a grant moments after
+    // `removeTeamAccess` deleted one — silently restoring revoked team access on
+    // the next restart. `backfillWorkspaceTeamGrants` does the same work once.
+    await this.backfillWorkspaceTeamGrants();
   }
 
   private async createUnifiedGovernanceConstraints(): Promise<void> {

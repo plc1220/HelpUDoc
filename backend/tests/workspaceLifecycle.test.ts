@@ -168,7 +168,43 @@ function lifecycleHarness() {
     ],
     audit_events: [],
   };
-  const db = ((table: string) => new Query(tables[table] || (tables[table] = []))) as any;
+  const db = ((table: string) => {
+    // `resolveTeamGrantRole` joins grants to the caller's team memberships and
+    // ranks them. The generic `Query` fake has no join, so model that one shape
+    // faithfully rather than stubbing it out — these tests are about team-derived
+    // access, so the resolution has to be real.
+    if (table === 'workspace_team_grants as tg') {
+      let userId: string | undefined;
+      let workspaceId: string | undefined;
+      const api: any = {
+        join: (_joined: string, callback: any) => {
+          const recorder: any = {
+            on: () => recorder,
+            andOnVal: (_column: string, _operator: string, value: string) => {
+              userId = value;
+              return recorder;
+            },
+          };
+          callback.call(recorder);
+          return api;
+        },
+        where: (_column: string, value: string) => { workspaceId = value; return api; },
+        orderByRaw: () => api,
+        select: () => api,
+        first: async () => {
+          const teamIds = (tables.group_members || [])
+            .filter((row) => row.userId === userId)
+            .map((row) => row.groupId);
+          const rank = (role: unknown) => (role === 'contributor' ? 2 : 1);
+          return (tables.workspace_team_grants || [])
+            .filter((row) => row.workspaceId === workspaceId && teamIds.includes(row.teamId))
+            .sort((left, right) => rank(right.role) - rank(left.role))[0];
+        },
+      };
+      return api;
+    }
+    return new Query(tables[table] || (tables[table] = []));
+  }) as any;
   db.fn = { now: () => new Date('2026-08-10T01:00:00.000Z') };
   db.transaction = async (operation: (tx: any) => Promise<unknown>) => operation(db);
   const service = Object.create(WorkspaceService.prototype) as WorkspaceService;
@@ -229,9 +265,11 @@ test('a non-owner can leave direct access without affecting other grants', async
 });
 
 test('team-managed access cannot be left by deleting only the direct membership', async () => {
+  // Reach now comes from a grant rather than a column on the workspace, so the
+  // fixture grants a team the collaborator belongs to.
   const { service, tables, workspaceId, collaboratorId } = lifecycleHarness();
   const teamId = '66666666-6666-4666-8666-666666666666';
-  tables.workspaces[0].teamId = teamId;
+  tables.workspace_team_grants = [{ workspaceId, teamId, role: 'viewer' }];
   tables.group_members = [{ groupId: teamId, userId: collaboratorId }];
 
   await assert.rejects(
@@ -240,6 +278,40 @@ test('team-managed access cannot be left by deleting only the direct membership'
   );
   assert.equal(tables.workspace_members.some((row) => row.userId === collaboratorId), true);
   assert.equal(tables.workspace_user_grants.some((row) => row.userId === collaboratorId), true);
+});
+
+test('a second team keeps access team-managed after the first is revoked', async () => {
+  // The case the single column could not express: two teams grant the same
+  // workspace, and losing one leaves the other holding access.
+  const { service, tables, workspaceId, collaboratorId } = lifecycleHarness();
+  const teamA = '66666666-6666-4666-8666-666666666666';
+  const teamB = '77777777-7777-4777-8777-777777777777';
+  tables.workspace_team_grants = [
+    { workspaceId, teamId: teamA, role: 'viewer' },
+    { workspaceId, teamId: teamB, role: 'contributor' },
+  ];
+  tables.group_members = [
+    { groupId: teamA, userId: collaboratorId },
+    { groupId: teamB, userId: collaboratorId },
+  ];
+
+  tables.workspace_team_grants = tables.workspace_team_grants.filter((row) => row.teamId !== teamA);
+  await assert.rejects(
+    service.leaveWorkspace(workspaceId, collaboratorId),
+    /managed by your Team/,
+    'team B still governs the access',
+  );
+});
+
+test('leaving succeeds once no team grants reach the member', async () => {
+  // The negative control. A refusal that fires for everyone looks identical to
+  // one that works (`LEARNINGS.md` §14).
+  const { service, tables, workspaceId, collaboratorId } = lifecycleHarness();
+  tables.workspace_team_grants = [];
+  tables.group_members = [];
+
+  await service.leaveWorkspace(workspaceId, collaboratorId);
+  assert.equal(tables.workspace_members.some((row) => row.userId === collaboratorId), false);
 });
 
 test('ownership transfer promotes the target and demotes the former owner atomically', async () => {

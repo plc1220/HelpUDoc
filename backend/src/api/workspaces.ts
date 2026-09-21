@@ -25,16 +25,24 @@ const publishWorkspaceSchema = z.object({
 
 const shareWorkspaceSchema = z.object({
   userIds: z.array(z.string().uuid()).max(100).optional(),
+  /** @deprecated Send `teamIds`. Accepted so an older client keeps working. */
   teamId: z.string().uuid().optional(),
+  teamIds: z.array(z.string().uuid()).max(50).optional(),
   role: namedWorkspaceRoleSchema.optional(),
   name: z.string().trim().min(1).max(255).optional(),
   editingPolicy: z.enum(['direct', 'review']).optional(),
+}).transform((data) => {
+  const { teamId, ...rest } = data;
+  // One shape reaches the service, so nothing downstream has to remember the
+  // deprecated field exists.
+  const teamIds = Array.from(new Set([...(data.teamIds || []), ...(teamId ? [teamId] : [])]));
+  return { ...rest, teamIds };
 }).superRefine((data, ctx) => {
-  if (!data.teamId && !data.userIds?.length) {
+  if (!data.teamIds.length && !data.userIds?.length) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'Choose at least one team or person',
-      path: ['teamId'],
+      path: ['teamIds'],
     });
   }
 });

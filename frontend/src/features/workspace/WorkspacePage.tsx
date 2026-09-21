@@ -171,6 +171,7 @@ import ChatInputArea, { type ChatMentionSuggestion } from '../../components/chat
 import ChatMessageList from '../../components/chat/ChatMessageList';
 import LumoPet from '../../components/lumo/LumoPet';
 import { AriaBrandLockup, GovernmentStrip } from '../../components/SkpChrome';
+import { formatTeamNames } from '../../utils/teamNames';
 import lumoSpriteSheet from '../../assets/lumo/lumo-spritesheet.webp';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 import { buildApprovalDraftContent, buildApprovalReview } from '../chat/interrupts/approvalReview';
@@ -8581,7 +8582,9 @@ export default function WorkspacePage() {
                       <span className={`block truncate text-[10px] ${
                         isDarkMode ? 'text-slate-500' : 'text-slate-500'
                       }`}>
-                        {workspace.teamName || 'Shared workspace'}
+                        {workspace.teams?.length
+                          ? formatTeamNames(workspace.teams.map((team) => team.name))
+                          : 'Shared workspace'}
                         {' · '}
                         {workspace.currentPublishedVersionNumber == null
                           ? 'Working version'

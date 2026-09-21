@@ -44,18 +44,27 @@ test('Shared owners use reversible lifecycle actions instead of hard delete', ()
 });
 
 test('Shared members may leave but cannot control sharing or trash', () => {
-  assert.deepEqual(getSharedWorkspaceLifecycleActions(shared({ role: 'viewer' })), ['leave']);
+  assert.deepEqual(getSharedWorkspaceLifecycleActions(shared({ role: 'viewer', canLeave: true })), ['leave']);
   assert.deepEqual(
-    getSharedWorkspaceLifecycleActions(shared({ role: 'contributor', status: 'unshared' })),
+    getSharedWorkspaceLifecycleActions(shared({ role: 'contributor', status: 'unshared', canLeave: true })),
     ['leave'],
   );
   assert.deepEqual(
-    getSharedWorkspaceLifecycleActions(shared({ role: 'viewer', status: 'trashed' })),
+    getSharedWorkspaceLifecycleActions(shared({ role: 'viewer', status: 'trashed', canLeave: true })),
     [],
+    'a trashed workspace offers restore only, whatever the server said about leaving',
   );
+});
+
+test('leaving is offered only when the server says it is possible', () => {
+  // `canLeave` replaced `audienceType`: the question is about the person, not
+  // the workspace. A named collaborator on a team-shared workspace can leave; a
+  // member who is only there through the team cannot.
+  assert.deepEqual(getSharedWorkspaceLifecycleActions(shared({ role: 'viewer', canLeave: false })), []);
   assert.deepEqual(
-    getSharedWorkspaceLifecycleActions(shared({ role: 'viewer', audienceType: 'team' })),
+    getSharedWorkspaceLifecycleActions(shared({ role: 'viewer' })),
     [],
+    'absent means no, so a stale payload cannot offer an action the server will refuse',
   );
 });
 

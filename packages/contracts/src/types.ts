@@ -25,9 +25,22 @@ export interface Workspace {
   workspaceType?: 'private' | 'team';
   editingPolicy?: 'direct' | 'review' | null;
   contentRevision?: number;
-  audienceType?: 'private' | 'selected_people' | 'team';
+  /**
+   * Whether this user may give up their own access.
+   *
+   * Replaces `audienceType`, which labelled the workspace ('team' /
+   * 'selected_people') when the real question is about the person reading it: a
+   * named collaborator on a team-shared workspace can leave, a team member
+   * cannot. The server computes it with the same rule the leave endpoint
+   * enforces, so the button and the endpoint cannot disagree. Absent is treated
+   * as false, so a stale payload hides the action rather than offering one that
+   * will be refused.
+   */
+  canLeave?: boolean;
   teamId?: string | null;
   teamName?: string | null;
+  /** Every team that can reach this workspace, each with the role it carries. */
+  teams?: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }>;
   publicationStatus?:
     | 'private_draft'
     | 'up_to_date'

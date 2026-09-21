@@ -254,7 +254,7 @@ export const publishWorkspace = async (
   workspaceId: string,
   payload: {
     audience?: 'team' | 'selected_people';
-    teamId?: string;
+    teamIds?: string[];
     userIds?: string[];
     role?: WorkspaceNamedGrantRole;
     note?: string;
@@ -295,7 +295,7 @@ export const shareWorkspaceWithAudience = async (
   workspaceId: string,
   payload: {
     userIds?: string[];
-    teamId?: string;
+    teamIds?: string[];
     role?: WorkspaceNamedGrantRole;
     name?: string;
     editingPolicy?: WorkspaceEditingPolicy;
@@ -315,7 +315,7 @@ export const shareWorkspaceWithAudience = async (
     privateWorkspaceId: string | null;
     privateCopyWorkspaceId?: string | null;
     sharedWithUserIds: string[];
-    sharedWithTeamId: string | null;
+    sharedWithTeamIds: string[];
   }>;
 };
 
