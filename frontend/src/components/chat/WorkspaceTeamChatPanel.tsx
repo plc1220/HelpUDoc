@@ -426,10 +426,7 @@ export default function WorkspaceTeamChatPanel({
             </div>
             <p className={`mt-0.5 text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
               {frozen ? (
-                <>
-                  This workspace is no longer shared, so the conversation is read-only.
-                  Share it again to reopen the chat — the history is kept.
-                </>
+                'Shared workspace is read-only in a private workspace.'
               ) : (
                 <>
               Visible to workspace members. Message normally, or tag <strong>@ARIA</strong> for {canLumoWrite
@@ -540,9 +537,13 @@ export default function WorkspaceTeamChatPanel({
             width="100%"
             placeholder={canComment
               ? `Message the team… Use @ARIA for ${canLumoWrite ? 'shared file help' : 'read-only guidance'}`
-              : 'Viewer access is read-only'}
+              : frozen
+                ? 'Read-only'
+                : 'Viewer access is read-only'}
             isDisabled={!canComment || sending}
-            disabledMessage="Commenter access is required to post in Workspace Chat."
+            disabledMessage={frozen
+              ? 'Shared workspace is read-only in a private workspace.'
+              : 'Commenter access is required to post in Workspace Chat.'}
             startIcon={<AtSign size={16} />}
             onChange={(value) => setDraft(value)}
             onKeyDown={(event) => {
@@ -579,7 +580,11 @@ export default function WorkspaceTeamChatPanel({
         </div>
         <div className="mt-2 flex items-center justify-between gap-3">
           <span className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-            {canComment ? 'Enter to send · Shift+Enter for a new line' : 'You can read Workspace Chat with Viewer access.'}
+            {canComment
+              ? 'Enter to send · Shift+Enter for a new line'
+              : frozen
+                ? 'Shared workspace is read-only in a private workspace.'
+                : 'You can read Workspace Chat with Viewer access.'}
           </span>
           <Button
             label={replyTo ? 'Send reply' : 'Send'}
