@@ -158,10 +158,10 @@ test('linked draft with local private changes shows "My draft · Private changes
   );
 });
 
-test('linked draft whose Shared version advanced shows "My draft · Shared changed"', () => {
+test('linked draft whose Shared version advanced shows "My draft · Update ready"', () => {
   assert.equal(
     getPrivateWorkspaceStatusLabel(draft({ publicationStatus: 'team_updates_available' })),
-    'My draft · Shared changed',
+    'My draft · Update ready',
   );
 });
 

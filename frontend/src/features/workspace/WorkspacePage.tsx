@@ -31,6 +31,7 @@ import {
   getPublishedVersionSnapshot,
   syncWorkspaceWithTeam,
   autoSyncWorkspaceWithTeam,
+  getWorkspaceReviewChanges,
   unshareWorkspace,
   reshareWorkspace,
   trashWorkspace,
@@ -122,6 +123,8 @@ import WorkspaceWithdrawPublicationDialog from '../../components/WorkspaceWithdr
 import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
 import WorkspaceReviewChangesDialog from '../../components/WorkspaceReviewChangesDialog';
 import {
+  buildSyncSummary,
+  describeSyncedFiles,
   DRAFT_SYNC_ACTION_LABEL,
   extractSyncConflicts,
   isDraftSyncActionable,
@@ -1000,6 +1003,7 @@ export default function WorkspacePage() {
     sequence: number;
   } | null>(null);
   const [draftSyncError, setDraftSyncError] = useState('');
+  const [incomingDraftFiles, setIncomingDraftFiles] = useState<string[] | null>(null);
   const [publishedVersionView, setPublishedVersionView] = useState<PublishedVersionSelection | null>(null);
   /**
    * Published versions are immutable snapshots. While one is selected the canvas is read-only,
@@ -1031,6 +1035,34 @@ export default function WorkspacePage() {
     ? Number(selectedWorkspace.pendingProposalCount || 0)
     : 0;
   const canSyncSelectedDraft = isDraftSyncActionable(selectedWorkspace);
+  /**
+   * Files waiting in Shared Working for the open draft.
+   *
+   * Only for `team_updates_available`. That status is reached when the Shared
+   * side moved and the draft did not, so a private-versus-shared diff is
+   * exactly the incoming set. Under `review_needed` both sides moved and the
+   * same diff would mix the user's own edits into the count, so the banner
+   * shows without a number rather than showing a wrong one.
+   */
+  const selectedDraftHasCleanUpdate = isLinkedDraftWorkspace(selectedWorkspace)
+    && selectedWorkspace?.publicationStatus === 'team_updates_available';
+  const selectedDraftId = selectedWorkspace?.id;
+
+  useEffect(() => {
+    if (!selectedDraftHasCleanUpdate || !selectedDraftId) {
+      setIncomingDraftFiles(null);
+      return;
+    }
+    let cancelled = false;
+    void getWorkspaceReviewChanges(selectedDraftId)
+      .then((changes) => {
+        if (!cancelled) setIncomingDraftFiles(changes.files.map((file) => file.path));
+      })
+      // The banner still says an update is waiting; it just cannot name the
+      // files. Failing to load a summary must not hide the update itself.
+      .catch(() => { if (!cancelled) setIncomingDraftFiles(null); });
+    return () => { cancelled = true; };
+  }, [selectedDraftHasCleanUpdate, selectedDraftId]);
   /**
    * A sync is rewriting this workspace's files right now.
    *
@@ -3793,7 +3825,7 @@ export default function WorkspacePage() {
       await refreshWorkspaceList();
       addLocalSystemMessage(result?.status === 'up_to_date'
         ? `${workspace.name} already matches the Shared Working version.`
-        : `Synced the latest Shared Working version into ${workspace.name}.`);
+        : buildSyncSummary(workspace.name, result?.syncedFiles));
     } catch (error) {
       const conflicts = error instanceof WorkspaceApiError
         ? extractSyncConflicts(error.details) as PublicationConflict[]
@@ -3836,6 +3868,13 @@ export default function WorkspacePage() {
       setDraftSyncConflicts([]);
       setDraftSyncWorkspace(null);
       await refreshWorkspaceList();
+      // Opening a draft rewrites its files without the user asking. Staying
+      // silent about that is how an incoming change becomes indistinguishable
+      // from their own work disappearing. The manual path has always said so;
+      // this is the path that did not.
+      if (result.status !== 'up_to_date') {
+        addLocalSystemMessage(buildSyncSummary(workspace.name, result.syncedFiles));
+      }
     } catch (error) {
       const conflicts = error instanceof WorkspaceApiError
         ? extractSyncConflicts(error.details) as PublicationConflict[]
@@ -9404,6 +9443,44 @@ export default function WorkspacePage() {
                         Withdraw lock
                       </button>
                     ) : null}
+                  </div>
+                </div>
+              ) : null}
+              {canSyncSelectedDraft && selectedWorkspace ? (
+                // The sidebar already carries this, but it is one line of grey
+                // text behind a drawer that is often collapsed — which is why
+                // people worked on a stale draft without noticing.
+                <div
+                  role="status"
+                  className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs ${
+                    isDarkMode
+                      ? 'border-b border-amber-900/60 bg-amber-950/40 text-amber-200'
+                      : 'border-b border-amber-200 bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  <span className="font-semibold">
+                    {incomingDraftFiles?.length
+                      ? `${incomingDraftFiles.length} ${incomingDraftFiles.length === 1 ? 'file has' : 'files have'} changed in the Shared workspace`
+                      : 'The Shared workspace has moved on'}
+                  </span>
+                  <span>
+                    {incomingDraftFiles?.length
+                      ? describeSyncedFiles(incomingDraftFiles)
+                      : 'Sync to bring the latest version into this draft.'}
+                  </span>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={syncingDraftWorkspaceId === selectedWorkspace.id}
+                      onClick={() => handleSyncDraftWorkspace(selectedWorkspace)}
+                      className={`inline-flex h-7 items-center rounded-lg px-2.5 font-semibold disabled:opacity-60 ${
+                        isDarkMode
+                          ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                          : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                      }`}
+                    >
+                      {syncingDraftWorkspaceId === selectedWorkspace.id ? 'Syncing…' : DRAFT_SYNC_ACTION_LABEL}
+                    </button>
                   </div>
                 </div>
               ) : null}

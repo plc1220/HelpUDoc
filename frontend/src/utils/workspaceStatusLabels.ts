@@ -35,7 +35,10 @@ export const getPrivateWorkspaceStatusLabel = (
     case 'changes_to_publish':
       return 'My draft · Private changes';
     case 'team_updates_available':
-      return 'My draft · Shared changed';
+      // "Shared changed" reported a fact about somewhere else and left the
+      // reader to work out that it concerned them. This names the thing that
+      // is waiting, and matches the `Sync latest` button beside it.
+      return 'My draft · Update ready';
     case 'review_needed':
       return 'My draft · Needs sync';
     case 'up_to_date':
