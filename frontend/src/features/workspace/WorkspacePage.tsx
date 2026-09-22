@@ -134,6 +134,8 @@ import {
   WORKSPACE_LIFECYCLE_ACTION_LABELS,
   type WorkspaceLifecycleAction,
 } from '../../utils/workspaceLifecycle';
+import { roleCanModerate, roleCanPropose } from '../../utils/workspaceRoles';
+import { getPendingReviewLabel } from '../../utils/workspaceStatusLabels';
 import {
   canMutateWorkspaceContent,
   isPublishedVersionFileId,
@@ -1015,9 +1017,19 @@ export default function WorkspacePage() {
   // Only a role that may actually propose gets offered a private copy; the
   // sidebar action already gets this right, and `createPrivateCopy` refuses a
   // viewer, so offering it to one was a dead end.
-  const canTakePrivateCopy = selectedWorkspace?.role === 'owner'
-    || selectedWorkspace?.role === 'editor'
-    || selectedWorkspace?.role === 'contributor';
+  const canTakePrivateCopy = roleCanPropose(selectedWorkspace?.role);
+  /**
+   * Changes waiting for this person to approve.
+   *
+   * Zero for anyone who cannot approve: a contributor may submit but not apply,
+   * so a review prompt would send them somewhere they have no button. The count
+   * already rides on the workspace payload, so this costs no request.
+   */
+  const pendingReviewCount = selectedWorkspace?.visibility === 'team'
+    && getWorkspaceLifecycleStatus(selectedWorkspace) === 'active'
+    && roleCanModerate(selectedWorkspace?.role)
+    ? Number(selectedWorkspace.pendingProposalCount || 0)
+    : 0;
   const canSyncSelectedDraft = isDraftSyncActionable(selectedWorkspace);
   /**
    * A sync is rewriting this workspace's files right now.
@@ -9281,6 +9293,22 @@ export default function WorkspacePage() {
                     >
                       <MessageSquare size={15} />
                       Discuss
+                      {pendingReviewCount ? (
+                        // The same number as the banner and the sidebar. It
+                        // lives on Discuss because that button already opens
+                        // the queue, so the count sits on the way in.
+                        <span
+                          aria-hidden="true"
+                          className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[0.64rem] font-bold ${
+                            isDarkMode ? 'bg-amber-500/25 text-amber-200' : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {pendingReviewCount > 99 ? '99+' : pendingReviewCount}
+                        </span>
+                      ) : null}
+                      <span className="sr-only">
+                        {pendingReviewCount ? `, ${getPendingReviewLabel(pendingReviewCount)}` : ''}
+                      </span>
                     </button>
                   </div>
                 ) : null}
@@ -9376,6 +9404,36 @@ export default function WorkspacePage() {
                         Withdraw lock
                       </button>
                     ) : null}
+                  </div>
+                </div>
+              ) : null}
+              {pendingReviewCount && selectedWorkspace ? (
+                // A publisher working inside the workspace had no way to learn
+                // that changes were queued for them: the only signal was a
+                // number in the sidebar, which is hidden when the drawer is
+                // collapsed and says nothing about who it is for.
+                <div
+                  role="status"
+                  className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs ${
+                    isDarkMode
+                      ? 'border-b border-sky-900/60 bg-sky-950/40 text-sky-200'
+                      : 'border-b border-sky-200 bg-sky-50 text-sky-800'
+                  }`}
+                >
+                  <span className="font-semibold">{getPendingReviewLabel(pendingReviewCount)}</span>
+                  <span>Waiting for you to approve or decline.</span>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCollaborationWorkspace(selectedWorkspace)}
+                      className={`inline-flex h-7 items-center rounded-lg px-2.5 font-semibold ${
+                        isDarkMode
+                          ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                          : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                      }`}
+                    >
+                      Review changes
+                    </button>
                   </div>
                 </div>
               ) : null}
