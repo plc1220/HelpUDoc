@@ -73,6 +73,21 @@ file_names() {
   as "$1" GET "/workspaces/$2/files" | tail -n +2 \
     | python3 -c 'import sys,json;print(",".join(sorted(f["name"] for f in json.load(sys.stdin))))'
 }
+# pendingProposalCount as the sidebar and the workspace banner read it.
+pending_count() {  # pending_count <user> <workspace>
+  as "$1" GET /workspaces | tail -n +2 | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+# The route returns a bare array; a dict would have no .get on a list.
+rows = d if isinstance(d, list) else d.get("workspaces", [])
+for w in rows:
+    if w.get("id") == sys.argv[1]:
+        print(int(w.get("pendingProposalCount") or 0)); break
+else:
+    print(-1)
+' "$2"
+}
+
 # Submit the caller's private copy for review; echoes the collaboration object id.
 submit() {  # submit <user> <shared> <title>
   # Built into a variable first: nesting a payload with escaped quotes inside
@@ -117,19 +132,38 @@ OB="$(submit "$BOB" "$WS" "Bob change")"
 check "alice's proposal exists" 1 "$([ -n "$OA" ] && echo 1 || echo 0)"
 check "bob's proposal exists"   1 "$([ -n "$OB" ] && echo 1 || echo 0)"
 
-step "3. Apply both in turn — the second used to fail as PROPOSAL_STALE"
+step "3. A publisher can see what is in a proposal before approving it"
+# The review queue shows "N files · +A −R" for the selected proposal. It gets
+# that from this endpoint, called against someone else's private copy, so the
+# whole feature rests on this authorisation path.
+check "the count the sidebar and banner read" 2 "$(pending_count "$OWNER" "$WS")"
+r="$(as "$OWNER" GET "/workspaces/$CA/review-changes")"
+check "publisher reads alice's diff" 200 "$(status "$r")"
+check "  and it lists the changed files" 1 \
+  "$(body "$r" | python3 -c 'import sys,json;print(1 if json.load(sys.stdin).get("files") else 0)' 2>/dev/null || echo 0)"
+check "  and reports staleness" 1 \
+  "$(body "$r" | python3 -c 'import sys,json;print(1 if "isStale" in json.load(sys.stdin) else 0)' 2>/dev/null || echo 0)"
+# NEGATIVE CONTROL. A gate that lets everyone through looks exactly like one
+# that works (LEARNINGS.md §14). Bob is a contributor on the same Shared
+# workspace but does not own Alice's copy, so he must be refused.
+check "another contributor is refused" 403 \
+  "$(status "$(as "$BOB" GET "/workspaces/$CA/review-changes")")"
+
+step "4. Apply both in turn — the second used to fail as PROPOSAL_STALE"
 check "apply alice" 200 "$(status "$(as "$OWNER" POST "/workspaces/$WS/collaboration/objects/$OA/apply" '{}')")"
 check "apply bob (auto-rebased)" 200 \
   "$(status "$(as "$OWNER" POST "/workspaces/$WS/collaboration/objects/$OB/apply" '{}')")"
 
-step "4. Neither contributor's work was lost"
+step "5. Neither contributor's work was lost"
 check "both files present" "bob.md,doc.md" "$(file_names "$OWNER" "$WS")"
 DF="$(file_id "$OWNER" "$WS" doc.md)"
 as "$OWNER" GET "/workspaces/$WS/files/$DF/content" >/dev/null
 check "alice's edit survived bob's apply" 1 \
   "$(as "$OWNER" GET "/workspaces/$WS/files/$DF/content" | tail -n +2 | grep -c 'ALICE EDIT' || true)"
 
-step "5. NEGATIVE CONTROL — overlapping edits still stop for a person"
+check "the review count clears once both are applied" 0 "$(pending_count "$OWNER" "$WS")"
+
+step "6. NEGATIVE CONTROL — overlapping edits still stop for a person"
 # Both change the SAME file differently. A rebase must not silently pick a side.
 CTRL="$(jqr "$(as "$OWNER" POST /workspaces "{\"name\":\"Rebase conflict $STAMP\"}")" "id")"
 curl -sS -o /dev/null -X POST "$API/workspaces/$CTRL/files" -H "x-user-id: $OWNER" \

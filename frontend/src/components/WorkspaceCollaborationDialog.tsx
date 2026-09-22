@@ -25,6 +25,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import type { Workspace } from '../types';
 import WorkspaceReviewChangesDialog from './WorkspaceReviewChangesDialog';
 import { roleCanComment, roleCanModerate, roleCanPropose } from '../utils/workspaceRoles';
+import { getWorkspaceReviewChanges, type WorkspaceReviewChanges } from '../services/workspaceApi';
 import {
   applyWorkspaceCollaborationProposal,
   convertWorkspaceCollaborationObjectToProposal,
@@ -50,11 +51,36 @@ const typeLabel: Record<WorkspaceCollaborationObjectType, string> = {
   annotation: 'Annotation',
   sticky_note: 'Note',
   task: 'Task',
-  change_proposal: 'Submission',
+  // "Submission" here, "proposal" in the tooltip and "Incoming new changes" in
+  // the sidebar all named the same thing. One word now, everywhere.
+  change_proposal: 'Changes for review',
 };
+
+/** A proposal a publisher can still act on. Matches the count SQL and `applyProposal`. */
+const isOpenProposal = (object: WorkspaceCollaborationObject): boolean => (
+  object.type === 'change_proposal'
+  && (object.status === 'proposed' || object.status === 'discussing')
+);
 
 const formatDate = (value: string) =>
   new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+
+/**
+ * How long a reviewer has been sitting on this. An absolute timestamp makes the
+ * reader do the subtraction, and the only thing that matters in a queue is
+ * which item has waited longest.
+ */
+const formatAge = (value: string): string => {
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return '';
+  const minutes = Math.floor((Date.now() - then) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+};
 
 const WorkspaceCollaborationDialog = ({
   open,
@@ -81,11 +107,19 @@ const WorkspaceCollaborationDialog = ({
   const [reply, setReply] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [reviewCopy, setReviewCopy] = useState<{ id: string; name: string } | null>(null);
+  const [summary, setSummary] = useState<WorkspaceReviewChanges | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   const selected = useMemo(
     () => objects.find((object) => object.id === selectedId) || null,
     [objects, selectedId],
   );
+
+  // Open proposals are the only items anyone is waiting on. Mixed into the
+  // notes and annotations they were invisible, and the empty state read "No
+  // notes or annotations yet" even when someone's work was queued.
+  const openProposals = useMemo(() => objects.filter(isOpenProposal), [objects]);
+  const otherObjects = useMemo(() => objects.filter((object) => !isOpenProposal(object)), [objects]);
 
   const loadObjects = useCallback(async () => {
     if (!workspaceId) return;
@@ -94,11 +128,13 @@ const WorkspaceCollaborationDialog = ({
     try {
       const nextObjects = await listWorkspaceCollaborationObjects(workspaceId);
       setObjects(nextObjects);
-      setSelectedId((current) => (
-        current && nextObjects.some((object) => object.id === current)
-          ? current
-          : nextObjects[0]?.id || null
-      ));
+      setSelectedId((current) => {
+        if (current && nextObjects.some((object) => object.id === current)) return current;
+        // Open the queue on the work someone is waiting for, not on whichever
+        // note happened to be touched last.
+        const firstProposal = nextObjects.find(isOpenProposal);
+        return firstProposal?.id || nextObjects[0]?.id || null;
+      });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load collaboration');
     } finally {
@@ -134,6 +170,68 @@ const WorkspaceCollaborationDialog = ({
     if (!open) return;
     void loadMessages();
   }, [loadMessages, open]);
+
+  // Loaded for the selected proposal only, never for the list. The response
+  // reads both workspaces in full and inlines file text up to 100k characters
+  // per file, so one call per row would make opening the dialog expensive.
+  // A publisher may read another person's copy while an open proposal links
+  // them — the server enforces that; see `getPrivateCopyReviewChanges`.
+  const renderObjectRow = (object: WorkspaceCollaborationObject) => {
+    const isProposal = isOpenProposal(object);
+    // A `change_proposal` created directly through `createObject` never gets a
+    // linked copy, so it can never be applied. Say so on the row instead of
+    // offering an Approve button that always fails.
+    const isBroken = isProposal && !object.linkedPrivateWorkspaceId;
+    const facts = [
+      object.authorName,
+      formatAge(object.createdAt),
+      object.messageCount ? `${object.messageCount} replies` : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <Button
+        key={object.id}
+        variant={selectedId === object.id ? 'contained' : 'outlined'}
+        color={selectedId === object.id ? 'primary' : 'inherit'}
+        onClick={() => setSelectedId(object.id)}
+        sx={{ justifyContent: 'flex-start', textAlign: 'left', textTransform: 'none' }}
+      >
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="body2" fontWeight={600} noWrap>
+            {object.title || object.body}
+          </Typography>
+          <Typography variant="caption" sx={{ opacity: 0.8, display: 'block' }}>
+            {isProposal ? facts : `${typeLabel[object.type]} · ${facts}`}
+          </Typography>
+          {isBroken ? (
+            <Typography variant="caption" color="error.main" sx={{ display: 'block' }}>
+              No linked copy — cannot be applied
+            </Typography>
+          ) : null}
+        </Box>
+      </Button>
+    );
+  };
+
+  const selectedPrivateCopyId = selected && isOpenProposal(selected)
+    ? selected.linkedPrivateWorkspaceId
+    : null;
+
+  useEffect(() => {
+    if (!open || !selectedPrivateCopyId || !canModerate) {
+      setSummary(null);
+      return;
+    }
+    let cancelled = false;
+    setSummaryLoading(true);
+    setSummary(null);
+    void getWorkspaceReviewChanges(selectedPrivateCopyId)
+      .then((changes) => { if (!cancelled) setSummary(changes); })
+      // A summary that will not load must not hide the proposal or block the
+      // Approve button. The row stays, just without the file counts.
+      .catch(() => { if (!cancelled) setSummary(null); })
+      .finally(() => { if (!cancelled) setSummaryLoading(false); });
+    return () => { cancelled = true; };
+  }, [canModerate, open, selectedPrivateCopyId]);
 
   const handleCreate = async () => {
     if (!workspaceId || !body.trim()) return;
@@ -298,35 +396,30 @@ const WorkspaceCollaborationDialog = ({
               ) : null}
             </Stack>
             <Divider sx={{ my: 2 }} />
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              Activity ({objects.length})
-            </Typography>
             {loading ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
                 <CircularProgress size={24} />
               </Box>
             ) : (
               <Stack spacing={1}>
-                {objects.map((object) => (
-                  <Button
-                    key={object.id}
-                    variant={selectedId === object.id ? 'contained' : 'outlined'}
-                    color={selectedId === object.id ? 'primary' : 'inherit'}
-                    onClick={() => setSelectedId(object.id)}
-                    sx={{ justifyContent: 'flex-start', textAlign: 'left', textTransform: 'none' }}
-                  >
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="body2" fontWeight={600} noWrap>
-                        {object.title || object.body}
-                      </Typography>
-                      <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                        {typeLabel[object.type]} · {object.authorName} · {object.messageCount || 0} replies
-                      </Typography>
-                    </Box>
-                  </Button>
-                ))}
+                {openProposals.length ? (
+                  <>
+                    <Typography variant="subtitle2" color="warning.main">
+                      Open for review ({openProposals.length})
+                    </Typography>
+                    {openProposals.map(renderObjectRow)}
+                  </>
+                ) : null}
+                {otherObjects.length ? (
+                  <Typography variant="subtitle2" sx={{ pt: openProposals.length ? 1 : 0 }}>
+                    Notes and annotations ({otherObjects.length})
+                  </Typography>
+                ) : null}
+                {otherObjects.map(renderObjectRow)}
                 {!objects.length ? (
-                  <Typography variant="body2" color="text.secondary">No notes or annotations yet.</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Nothing here yet. Submitted changes and notes will appear in this list.
+                  </Typography>
                 ) : null}
               </Stack>
             )}
@@ -348,8 +441,57 @@ const WorkspaceCollaborationDialog = ({
                 <Typography variant="body1" sx={{ mt: 2, whiteSpace: 'pre-wrap' }}>{selected.body}</Typography>
                 {selected.linkedPrivateWorkspaceId ? (
                   <Alert severity="success" sx={{ mt: 2 }}>
-                    A private draft is linked to this submission and is ready in My Workspaces.
+                    A private draft is linked to these changes and is ready in My Workspaces.
                   </Alert>
+                ) : null}
+                {isOpenProposal(selected) && !selected.linkedPrivateWorkspaceId ? (
+                  <Alert severity="error" sx={{ mt: 2 }}>
+                    These changes have no linked private copy, so there is nothing to apply.
+                    Ask the author to submit again from their draft.
+                  </Alert>
+                ) : null}
+                {summaryLoading ? (
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
+                    <CircularProgress size={14} />
+                    <Typography variant="caption" color="text.secondary">Loading what changed…</Typography>
+                  </Stack>
+                ) : null}
+                {summary ? (
+                  <Box sx={{ mt: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="baseline" sx={{ flexWrap: 'wrap' }}>
+                      <Typography variant="subtitle2">
+                        {summary.files.length} changed file{summary.files.length === 1 ? '' : 's'}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'success.main' }}>
+                        +{summary.files.reduce((total, file) => total + file.addedLines, 0)}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'error.main' }}>
+                        −{summary.files.reduce((total, file) => total + file.removedLines, 0)}
+                      </Typography>
+                    </Stack>
+                    <Stack sx={{ mt: 0.5 }}>
+                      {summary.files.slice(0, 8).map((file) => (
+                        <Typography key={file.path} variant="caption" color="text.secondary" noWrap>
+                          {file.status === 'added' ? '+ ' : file.status === 'deleted' ? '− ' : '~ '}
+                          {file.path}
+                        </Typography>
+                      ))}
+                      {summary.files.length > 8 ? (
+                        <Typography variant="caption" color="text.secondary">
+                          …and {summary.files.length - 8} more
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                    {summary.isStale ? (
+                      // Since the auto-rebase landed this merges silently, so
+                      // the reviewer would otherwise never learn their approval
+                      // pulled in work from elsewhere.
+                      <Alert severity="info" sx={{ mt: 1.5 }}>
+                        The Shared workspace has moved on since these changes were submitted.
+                        Approving merges them with the latest version first.
+                      </Alert>
+                    ) : null}
+                  </Box>
                 ) : null}
                 <Stack direction="row" spacing={1} sx={{ my: 2, flexWrap: 'wrap' }}>
                   <Button size="small" variant="outlined" disabled={actionBusy} onClick={() => void handleResolve()}>
