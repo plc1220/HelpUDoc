@@ -63,7 +63,6 @@ export default function AgentChatPane({
   agentPaneStyles,
   isAgentPaneVisible,
   isAgentPaneFullScreen,
-  isEditMode,
   isHistoryOpen,
   personas,
   selectedPersona,
@@ -149,7 +148,6 @@ export default function AgentChatPane({
   agentPaneStyles: CSSProperties;
   isAgentPaneVisible: boolean;
   isAgentPaneFullScreen: boolean;
-  isEditMode: boolean;
   isHistoryOpen: boolean;
   personas: AgentPersona[];
   selectedPersona: string;
@@ -305,7 +303,6 @@ export default function AgentChatPane({
         <ChatHeader
           colorMode={colorMode}
           isAgentPaneVisible={isAgentPaneVisible}
-          isEditMode={isEditMode}
           isHistoryOpen={isHistoryOpen}
           isAgentPaneFullScreen={isAgentPaneFullScreen}
           onToggleVisibility={onToggleAgentPaneVisibility}

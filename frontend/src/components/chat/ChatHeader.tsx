@@ -2,7 +2,6 @@ import { CalendarClock, ChevronRight, History, Maximize2, Minimize2, Plus } from
 export default function ChatHeader({
   colorMode,
   isAgentPaneVisible,
-  isEditMode,
   isHistoryOpen,
   isAgentPaneFullScreen,
   onToggleVisibility,
@@ -13,7 +12,6 @@ export default function ChatHeader({
 }: {
   colorMode: 'light' | 'dark';
   isAgentPaneVisible: boolean;
-  isEditMode: boolean;
   isHistoryOpen: boolean;
   isAgentPaneFullScreen: boolean;
   onToggleVisibility: () => void;
@@ -34,7 +32,6 @@ export default function ChatHeader({
             className={`shrink-0 rounded-xl p-1 transition-all duration-200 sm:p-1.5 ${
               isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
             }`}
-            disabled={isEditMode}
             aria-label={isAgentPaneVisible ? 'Collapse chat pane' : 'Expand chat pane'}
           >
             <ChevronRight

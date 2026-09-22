@@ -9918,7 +9918,6 @@ export default function WorkspacePage() {
               agentPaneStyles={agentPaneStyles}
               isAgentPaneVisible={isAgentPaneVisible}
               isAgentPaneFullScreen={isAgentPaneFullScreen}
-              isEditMode={isEditMode}
               isHistoryOpen={isHistoryOpen}
               personas={personas}
               selectedPersona={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
