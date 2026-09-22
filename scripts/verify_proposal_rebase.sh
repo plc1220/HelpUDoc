@@ -73,6 +73,20 @@ file_names() {
   as "$1" GET "/workspaces/$2/files" | tail -n +2 \
     | python3 -c 'import sys,json;print(",".join(sorted(f["name"] for f in json.load(sys.stdin))))'
 }
+# The locked version number, or "None" while the workspace is on Working.
+locked_version() {  # locked_version <user> <workspace>
+  as "$1" GET /workspaces | tail -n +2 | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+rows = d if isinstance(d, list) else d.get("workspaces", [])
+for w in rows:
+    if w.get("id") == sys.argv[1]:
+        print(w.get("currentPublishedVersionNumber")); break
+else:
+    print("missing")
+' "$2"
+}
+
 # pendingProposalCount as the sidebar and the workspace banner read it.
 pending_count() {  # pending_count <user> <workspace>
   as "$1" GET /workspaces | tail -n +2 | python3 -c '
@@ -183,6 +197,37 @@ check "  and says why" "PROPOSAL_CONFLICT" "$(jqr "$r" "details.code")"
 check "alice's version still stands" 1 \
   "$(as "$OWNER" GET "/workspaces/$CTRL/files/$(file_id "$OWNER" "$CTRL" doc.md)/content" \
      | tail -n +2 | grep -c 'ALICE VERSION' || true)"
+
+step "7. Approving cuts the next locked version by itself"
+# The publisher used to have to lock again by hand, and until they did the
+# workspace reported changes against the version it had just absorbed.
+LK="$(jqr "$(as "$OWNER" POST /workspaces "{\"name\":\"Rebase autolock $STAMP\"}")" "id")"
+curl -sS -o /dev/null -X POST "$API/workspaces/$LK/files" -H "x-user-id: $OWNER" \
+  -F "file=@/tmp/rb-seed.md;type=text/markdown" -F "path=doc.md"
+as "$OWNER" POST "/workspaces/$LK/share" "$SHARE_BODY" >/dev/null
+as "$OWNER" POST "/workspaces/$LK/publish" '{}' >/dev/null
+check "locked at v1" 1 "$(locked_version "$OWNER" "$LK")"
+CA3="$(jqr "$(as "$ALICE" POST "/workspaces/$LK/private-copy" '{}')" "id")"
+AF3="$(file_id "$ALICE" "$CA3" doc.md)"
+as "$ALICE" PUT "/workspaces/$CA3/files/$AF3/content" '{"content":"# shared doc\nAPPROVED EDIT\n"}' >/dev/null
+OA3="$(submit "$ALICE" "$LK" "Alice for autolock")"
+as "$OWNER" POST "/workspaces/$LK/collaboration/objects/$OA3/apply" '{}' >/dev/null
+check "approving advanced it to v2" 2 "$(locked_version "$OWNER" "$LK")"
+check "  and nothing is left pending" 0 "$(pending_count "$OWNER" "$LK")"
+
+step "8. NEGATIVE CONTROL — a Working version is not given a lock"
+# Minting one here would switch the workspace into a mode nobody chose.
+WV="$(jqr "$(as "$OWNER" POST /workspaces "{\"name\":\"Rebase working $STAMP\"}")" "id")"
+curl -sS -o /dev/null -X POST "$API/workspaces/$WV/files" -H "x-user-id: $OWNER" \
+  -F "file=@/tmp/rb-seed.md;type=text/markdown" -F "path=doc.md"
+as "$OWNER" POST "/workspaces/$WV/share" "$SHARE_BODY" >/dev/null
+check "starts with no locked version" "None" "$(locked_version "$OWNER" "$WV")"
+CA4="$(jqr "$(as "$ALICE" POST "/workspaces/$WV/private-copy" '{}')" "id")"
+AF4="$(file_id "$ALICE" "$CA4" doc.md)"
+as "$ALICE" PUT "/workspaces/$CA4/files/$AF4/content" '{"content":"# shared doc\nWORKING EDIT\n"}' >/dev/null
+OA4="$(submit "$ALICE" "$WV" "Alice on working")"
+as "$OWNER" POST "/workspaces/$WV/collaboration/objects/$OA4/apply" '{}' >/dev/null
+check "still has no locked version" "None" "$(locked_version "$OWNER" "$WV")"
 
 printf '\n\033[1mResult: %d passed, %d failed\033[0m\n' "$pass" "$fail"
 echo "Workspaces left for inspection: $WS  $CTRL"

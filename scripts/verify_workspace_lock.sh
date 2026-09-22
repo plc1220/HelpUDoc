@@ -192,8 +192,22 @@ r="$(as "$OWNER" GET "/workspaces/$WS/files/$FILE_ID/content")"
 applied="$(body "$r" | grep -c 'Proposed change from the private copy' || true)"
 check "the Shared file now holds the proposed text" 1 "$applied"
 
+# Approving now cuts the next version itself, so the publisher no longer has
+# to lock again by hand. This used to expect 201 from a manual publish; that
+# call is now refused because the auto-lock already consumed the changes.
+check "approving cut v2 with no second step" 2 \
+  "$(as "$OWNER" GET /workspaces | tail -n +2 | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+rows = d if isinstance(d, list) else d.get("workspaces", [])
+for w in rows:
+    if w.get("id") == sys.argv[1]:
+        print(w.get("currentPublishedVersionNumber")); break
+else:
+    print("missing")
+' "$WS")"
 r="$(as "$OWNER" POST "/workspaces/$WS/publish" '{"note":"v2"}')"
-check "owner re-locks as a new version" 201 "$(status "$r")"
+check "  and a manual re-lock has nothing left to do" 409 "$(status "$r")"
 
 r="$(as "$OWNER" PUT "/workspaces/$WS/files/$FILE_ID/content" '{"content":"still locked"}')"
 check "still read-only after re-locking" 409 "$(status "$r")"

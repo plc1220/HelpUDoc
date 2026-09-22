@@ -580,7 +580,11 @@ export class WorkspaceCollaborationService {
       id: uuidv4(),
       objectId,
       authorId: userId,
-      body: `Applied to working revision ${applied.contentRevision}.`,
+      // Naming the version matters more than the revision when one was cut:
+      // the revision is an internal counter, the version is what members see.
+      body: applied.publishedVersionNumber != null
+        ? `Applied and locked as v${applied.publishedVersionNumber}.`
+        : `Applied to working revision ${applied.contentRevision}.`,
     });
     return this.ensureObjectAccess(workspaceId, objectId, userId);
   }

@@ -595,14 +595,62 @@ export class WorkspacePublicationService {
     }
     this.ensurePublisher(membership.role);
 
+    let applied;
     try {
-      return await this.attemptProposalApply(privateWorkspaceId, sharedWorkspaceId, userId, membership);
+      applied = await this.attemptProposalApply(privateWorkspaceId, sharedWorkspaceId, userId, membership);
     } catch (error) {
       if (!isProposalStaleError(error)) throw error;
       await this.rebaseProposalOnSharedWorking(privateWorkspaceId, sharedWorkspaceId);
       // Once only. A second failure is a real race with another apply, and
       // retrying forever would hide it.
-      return this.attemptProposalApply(privateWorkspaceId, sharedWorkspaceId, userId, membership);
+      applied = await this.attemptProposalApply(privateWorkspaceId, sharedWorkspaceId, userId, membership);
+    }
+    return { ...applied, ...(await this.lockAfterApply(applied, userId)) };
+  }
+
+  /**
+   * Cut the next locked version once approved changes have landed.
+   *
+   * Approving used to leave the workspace reporting changes against the locked
+   * version, and the publisher had to lock again by hand to clear it. Nobody
+   * reads that intermediate state on purpose: approving *is* the decision that
+   * the content should be the new version.
+   *
+   * Only when the workspace was already locked. On a Working version there is
+   * no lock to advance, and minting one would quietly switch the workspace into
+   * a mode its members did not choose.
+   *
+   * Deliberately outside the apply transaction. `createLivePublishedVersion`
+   * writes a snapshot to storage before it opens its own transaction, and
+   * holding a row lock across that is worse than the failure it would prevent.
+   * If the lock step fails the apply still stands, which is exactly the state
+   * every approval left behind before this existed — degraded, never corrupt.
+   */
+  private async lockAfterApply(
+    applied: { workspaceId: string; wasLocked: boolean },
+    userId: string,
+  ): Promise<{ publishedVersionNumber: number | null }> {
+    if (!applied.wasLocked) return { publishedVersionNumber: null };
+    const workspace = await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: applied.workspaceId })
+      .first();
+    if (!workspace) return { publishedVersionNumber: null };
+    try {
+      const version = await this.createLivePublishedVersion(
+        workspace,
+        userId,
+        'Locked automatically when submitted changes were approved.',
+      );
+      return { publishedVersionNumber: version.publishedVersionNumber };
+    } catch (error) {
+      // A concurrent apply or lock moved the revision under us. The approval
+      // succeeded, so reporting a failure here would be a lie about the part
+      // that matters; the publisher can still lock by hand.
+      console.warn(
+        `[publication] approved changes applied to ${applied.workspaceId} but auto-lock failed`,
+        error instanceof Error ? error.message : error,
+      );
+      return { publishedVersionNumber: null };
     }
   }
 
@@ -744,7 +792,14 @@ export class WorkspacePublicationService {
         resourceId: sharedWorkspaceId,
         metadata: { privateWorkspaceId, sourceRevision, appliedRevision },
       });
-      return { workspaceId: sharedWorkspaceId, contentRevision: appliedRevision };
+      return {
+        workspaceId: sharedWorkspaceId,
+        contentRevision: appliedRevision,
+        // Read under the row lock, before anything else can withdraw it, so
+        // the decision to cut the next version reflects the workspace the
+        // publisher actually approved into.
+        wasLocked: Boolean(lockedShared.currentPublishedVersionId),
+      };
     });
   }
 
