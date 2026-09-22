@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  getPendingReviewLabel,
   getPrivateWorkspaceStatusLabel,
   getSharedWorkspacePublicationLabel,
   getSharedWorkspaceStatusDetails,
@@ -81,30 +82,31 @@ test('withdrawn lock shows "No current locked version"', () => {
   assert.equal(getSharedWorkspacePublicationLabel(ws), 'No current locked version');
 });
 
-test('shared details include proposal count when present', () => {
+test('the pending count is no longer folded into the details string', () => {
+  // It used to render as `Locked v2 · 3`: two bare numerals side by side, one a
+  // version and one a count. The count is a badge now, so the string must not
+  // carry it at any value.
   const ws: Workspace = {
     ...baseWorkspace,
     publicationStatus: 'up_to_date',
     currentPublishedVersionNumber: 2,
   };
-  assert.equal(
-    getSharedWorkspaceStatusDetails({ ...ws, pendingProposalCount: 3 }),
-    'Locked v2 · 3',
-  );
-  assert.equal(
-    getSharedWorkspaceStatusDetails({ ...ws, pendingProposalCount: 1 }),
-    'Locked v2 · 1',
-  );
+  for (const pendingProposalCount of [0, 1, 3, 99]) {
+    assert.equal(
+      getSharedWorkspaceStatusDetails({ ...ws, pendingProposalCount }),
+      'Locked v2',
+      `failed for pendingProposalCount=${pendingProposalCount}`,
+    );
+  }
+  assert.equal(getSharedWorkspaceStatusDetails(ws), 'Locked v2');
 });
 
-test('shared details omit proposal count when zero or undefined', () => {
-  const ws: Workspace = {
-    ...baseWorkspace,
-    publicationStatus: 'up_to_date',
-    currentPublishedVersionNumber: null,
-  };
-  assert.equal(getSharedWorkspaceStatusDetails({ ...ws, pendingProposalCount: 0 }), 'Working version');
-  assert.equal(getSharedWorkspaceStatusDetails(ws), 'Working version');
+test('getPendingReviewLabel names the count and agrees in number', () => {
+  // One function because the sidebar tooltip, the workspace banner and the
+  // queue heading must all say the same thing.
+  assert.equal(getPendingReviewLabel(1), '1 change for review');
+  assert.equal(getPendingReviewLabel(2), '2 changes for review');
+  assert.equal(getPendingReviewLabel(0), '0 changes for review');
 });
 
 test('shared workspace labels never contain Freeflow or Review', () => {
@@ -220,17 +222,14 @@ test('withdrawn label is independent of version number', () => {
   }
 });
 
-test('shared details combine publication and proposal count', () => {
+test('shared details report the lock state without the count', () => {
   const ws: Workspace = {
     ...baseWorkspace,
     publicationStatus: 'changes_to_publish',
     currentPublishedVersionNumber: 1,
     pendingProposalCount: 2,
   };
-  assert.equal(
-    getSharedWorkspaceStatusDetails(ws),
-    'Locked v1 · Incoming new changes · 2',
-  );
+  assert.equal(getSharedWorkspaceStatusDetails(ws), 'Locked v1 · Incoming new changes');
 });
 
 test('linked draft with undefined publicationStatus falls back to "My draft · Linked"', () => {

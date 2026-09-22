@@ -45,10 +45,12 @@ import {
 } from '../utils/workspaceDraftSync';
 import { isWorkspaceContentLocked } from '../utils/workspacePublicationMode';
 import {
+  getPendingReviewLabel,
   getPrivateWorkspaceStatusLabel,
   getSharedWorkspaceStatusDetails,
   getSharedWorkspacePublicationLabel,
 } from '../utils/workspaceStatusLabels';
+import { roleCanModerate, roleCanPropose } from '../utils/workspaceRoles';
 import {
   getSharedWorkspaceLifecycleActions,
   getWorkspaceLifecycleStatus,
@@ -148,9 +150,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     const isContentLocked = isWorkspaceContentLocked(workspace);
     // Contributors and above may propose. A viewer has nowhere to take a copy,
     // so offering one would dead-end them.
-    const canProposeChanges = workspace.role === 'owner'
-      || workspace.role === 'editor'
-      || workspace.role === 'contributor';
+    const canProposeChanges = roleCanPropose(workspace.role);
     const canSyncDraft = isDraftSyncActionable(workspace) && Boolean(onSyncDraftWorkspace);
     const canReviewDraftChanges = isDraftReviewChangesActionable(workspace)
       && Boolean(onReviewDraftChanges);
@@ -257,7 +257,13 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
 
     const publicationLabel = getSharedWorkspacePublicationLabel(workspace);
     const sharedDetails = getSharedWorkspaceStatusDetails(workspace);
-    const pendingProposalCount = Number(workspace.pendingProposalCount || 0);
+    // Only a role that can approve sees the review cue. A contributor may
+    // submit changes but cannot apply them, so pointing them at a review queue
+    // sends them somewhere they have no button.
+    const pendingProposalCount = roleCanModerate(workspace.role)
+      ? Number(workspace.pendingProposalCount || 0)
+      : 0;
+    const pendingReviewLabel = getPendingReviewLabel(pendingProposalCount);
     const draftStatusLabel = getPrivateWorkspaceStatusLabel(workspace);
     const ownerOnlyStatusLabel = 'Unshared · Only you can access it';
     const draftStatusColor = canSyncDraft
@@ -423,15 +429,35 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
                     lineHeight: 1.25,
                     color: hasChangesToPublish || isWithdrawn ? statusColor : 'text.secondary',
                   }}
-                  // The proposal count is rendered as a bare number to keep the
-                  // row short, which says nothing on its own to a screen reader
-                  // or on hover. The title carries the meaning the glyph drops.
                   title={pendingProposalCount
-                    ? `${sharedDetails} — ${pendingProposalCount} ${pendingProposalCount === 1 ? 'proposal' : 'proposals'} awaiting review`
+                    ? `${sharedDetails} — ${pendingReviewLabel}`
                     : sharedDetails}
                 >
                   {sharedDetails}
                 </Typography>
+                {pendingProposalCount ? (
+                  // Its own chip rather than another segment in the line above.
+                  // Appended to the label it read as `Locked v2 · 3`: two
+                  // numerals side by side, one a version and one a count, with
+                  // nothing to tell them apart. The text is the accessible
+                  // name; `aria-hidden` on the chip stops it being read twice.
+                  <Chip
+                    size="small"
+                    color="warning"
+                    label={pendingProposalCount > 99 ? '99+' : pendingProposalCount}
+                    aria-hidden="true"
+                    title={pendingReviewLabel}
+                    sx={{
+                      height: 16,
+                      minWidth: 16,
+                      flexShrink: 0,
+                      mt: '0.1em',
+                      fontSize: '0.64rem',
+                      fontWeight: 700,
+                      '& .MuiChip-label': { px: 0.6 },
+                    }}
+                  />
+                ) : null}
               </Box>
             )}
           />

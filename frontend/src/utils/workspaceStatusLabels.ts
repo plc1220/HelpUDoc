@@ -10,7 +10,7 @@ type PrivateWorkspaceLike = Pick<Workspace, 'linkedTeamWorkspaceId' | 'publicati
 
 type SharedWorkspaceLike = Pick<
   Workspace,
-  'status' | 'publicationStatus' | 'currentPublishedVersionNumber' | 'pendingProposalCount' | 'purgeAfter'
+  'status' | 'publicationStatus' | 'currentPublishedVersionNumber' | 'purgeAfter'
 >;
 
 /** Unlinked private workspaces are just private; there is no draft relationship to describe. */
@@ -63,7 +63,15 @@ export const getSharedWorkspacePublicationLabel = (workspace: SharedWorkspaceLik
   return `Locked v${versionNumber}`;
 };
 
-/** Publication state plus the pending-proposal count shown on the Shared workspace row. */
+/**
+ * Publication state shown on the Shared workspace row.
+ *
+ * The pending count used to be appended here as a bare number, which produced
+ * `Locked v2 · 3` — two unlabelled numerals side by side, where one means a
+ * version and the other means work waiting for you. The count now renders as
+ * its own badge so it can carry a colour and a name; see
+ * `getPendingReviewLabel`.
+ */
 export const getSharedWorkspaceStatusDetails = (workspace: SharedWorkspaceLike): string => {
   if (workspace.status === 'trashed') {
     if (!workspace.purgeAfter) return 'In trash';
@@ -73,16 +81,18 @@ export const getSharedWorkspaceStatusDetails = (workspace: SharedWorkspaceLike):
       : `In trash · Deletes ${purgeDate.toLocaleDateString()}`;
   }
   if (workspace.status === 'unshared') return 'Unshared · Only you can access it';
-  const proposalCount = Number(workspace.pendingProposalCount || 0);
-  // Just the number. The row already carries the workspace name and a lock
-  // state, and "N proposals pending" pushed the line past what fits — the count
-  // is the part that changes, so it is the part worth the characters.
-  //
-  // Still its own segment rather than folded into the label: the label reports
-  // work that has already landed, this reports work still waiting, and a
-  // workspace can have either without the other.
-  return [
-    getSharedWorkspacePublicationLabel(workspace),
-    proposalCount ? String(proposalCount) : null,
-  ].filter(Boolean).join(' · ');
+  return getSharedWorkspacePublicationLabel(workspace);
 };
+
+/**
+ * Names the pending count wherever it is shown: the sidebar badge, the
+ * workspace banner and the review queue heading.
+ *
+ * One function because the wording has to match in all three. It previously did
+ * not — the dialog said "Submission", the tooltip said "proposal", the sidebar
+ * label said "Incoming new changes" — and a reader had no way to tell they were
+ * the same thing.
+ */
+export const getPendingReviewLabel = (count: number): string => (
+  `${count} ${count === 1 ? 'change' : 'changes'} for review`
+);

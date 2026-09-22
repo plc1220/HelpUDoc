@@ -24,6 +24,7 @@ import CloseIcon from '@mui/icons-material/Close';
 
 import type { Workspace } from '../types';
 import WorkspaceReviewChangesDialog from './WorkspaceReviewChangesDialog';
+import { roleCanComment, roleCanModerate, roleCanPropose } from '../utils/workspaceRoles';
 import {
   applyWorkspaceCollaborationProposal,
   convertWorkspaceCollaborationObjectToProposal,
@@ -44,14 +45,6 @@ type Props = {
   onClose: () => void;
   onWorkspaceListChanged?: () => Promise<unknown> | void;
 };
-
-const roleCanComment = (role: Workspace['role']) =>
-  role === 'owner' || role === 'editor' || role === 'contributor' || role === 'commenter';
-
-const roleCanPropose = (role: Workspace['role']) =>
-  role === 'owner' || role === 'editor' || role === 'contributor';
-
-const roleCanModerate = (role: Workspace['role']) => role === 'owner' || role === 'editor';
 
 const typeLabel: Record<WorkspaceCollaborationObjectType, string> = {
   annotation: 'Annotation',
