@@ -53,3 +53,27 @@ export const extractSyncConflicts = (details: unknown): Array<{ path: string }> 
       && typeof (conflict as { path?: unknown }).path === 'string',
   );
 };
+
+/**
+ * What a sync just pulled into the draft.
+ *
+ * A sync rewrites the user's files. Saying only that it happened leaves them
+ * unable to tell an incoming change from their own work disappearing, so the
+ * message names the files when the backend reported them. Three paths are
+ * listed in full; beyond that the count carries it.
+ */
+export const describeSyncedFiles = (syncedFiles: string[] | undefined): string => {
+  const paths = (syncedFiles || []).filter(Boolean);
+  if (!paths.length) return '';
+  if (paths.length <= 3) return paths.join(', ');
+  return `${paths.slice(0, 3).join(', ')} and ${paths.length - 3} more`;
+};
+
+/** The one-line result of a sync, used by both the manual and automatic paths. */
+export const buildSyncSummary = (workspaceName: string, syncedFiles: string[] | undefined): string => {
+  const described = describeSyncedFiles(syncedFiles);
+  const count = (syncedFiles || []).length;
+  if (!count) return `Synced the latest Shared Working version into ${workspaceName}.`;
+  return `Synced ${count} ${count === 1 ? 'file' : 'files'} from the Shared workspace into `
+    + `${workspaceName}: ${described}.`;
+};

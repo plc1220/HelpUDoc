@@ -973,6 +973,9 @@ export class WorkspacePublicationService {
     const baseContent = link.baseWorkingManifest
       ? this.workspaceContentFromManifest(link.baseWorkingManifest)
       : null;
+    // Without a base there is nothing to diff against, so the caller is told
+    // nothing rather than something invented.
+    const syncedFiles = baseContent ? this.incomingFilePaths(baseContent, sharedContent) : [];
     const privateChanged = baseContent
       ? !this.workspaceContentsMatch(baseContent, privateContent)
       : Number(privateWorkspace.contentRevision || 0) !== Number(link.basePrivateContentRevision || 0)
@@ -980,17 +983,23 @@ export class WorkspacePublicationService {
 
     if (!baseContent) {
       if (privateChanged) {
-        return this.reviewNeededSyncResult(privateWorkspaceId, teamWorkspace.id, [], {
-          reason: 'BASE_WORKING_MANIFEST_UNAVAILABLE',
-        });
+        return {
+          ...this.reviewNeededSyncResult(privateWorkspaceId, teamWorkspace.id, [], {
+            reason: 'BASE_WORKING_MANIFEST_UNAVAILABLE',
+          }),
+          syncedFiles,
+        };
       }
-      return this.fastForwardSharedWorking(
-        privateWorkspaceId,
-        teamWorkspace,
-        link,
-        sharedContent,
-        userId,
-      );
+      return {
+        ...await this.fastForwardSharedWorking(
+          privateWorkspaceId,
+          teamWorkspace,
+          link,
+          sharedContent,
+          userId,
+        ),
+        syncedFiles,
+      };
     }
 
     const sharedChanged = !this.workspaceContentsMatch(baseContent, sharedContent);
@@ -1010,16 +1019,20 @@ export class WorkspacePublicationService {
         teamWorkspaceId: teamWorkspace.id,
         status: 'up_to_date' as const,
         conflicts: [],
+        syncedFiles,
       };
     }
     if (!privateChanged) {
-      return this.fastForwardSharedWorking(
-        privateWorkspaceId,
-        teamWorkspace,
-        link,
-        sharedContent,
-        userId,
-      );
+      return {
+        ...await this.fastForwardSharedWorking(
+          privateWorkspaceId,
+          teamWorkspace,
+          link,
+          sharedContent,
+          userId,
+        ),
+        syncedFiles,
+      };
     }
 
     const conflicts = findPublicationConflicts(
@@ -1029,11 +1042,14 @@ export class WorkspacePublicationService {
     );
     const unresolved = conflicts.filter((conflict) => !resolutions[conflict.path]);
     if (unresolved.length) {
-      return this.reviewNeededSyncResult(
-        privateWorkspaceId,
-        teamWorkspace.id,
-        this.presentConflicts(unresolved, privateContent, sharedContent),
-      );
+      return {
+        ...this.reviewNeededSyncResult(
+          privateWorkspaceId,
+          teamWorkspace.id,
+          this.presentConflicts(unresolved, privateContent, sharedContent),
+        ),
+        syncedFiles,
+      };
     }
 
     const merged = this.mergeWorkspaceContent(baseContent, privateContent, sharedContent, resolutions);
@@ -1074,6 +1090,7 @@ export class WorkspacePublicationService {
       teamWorkspaceId: teamWorkspace.id,
       status: conflicts.length ? 'reviewed' as const : 'synced' as const,
       conflicts,
+      syncedFiles,
     };
   }
 
@@ -2648,6 +2665,22 @@ export class WorkspacePublicationService {
         files.keys(),
       ),
     };
+  }
+
+  /**
+   * The files a sync is about to bring across from Shared Working.
+   *
+   * Computed from the two manifests the sync already holds, so it costs no
+   * extra read. A sync that rewrites someone's draft without saying what
+   * arrived is indistinguishable from their own work vanishing.
+   */
+  private incomingFilePaths(base: WorkspaceContent, shared: WorkspaceContent): string[] {
+    const baseFiles = this.toHashMap(base);
+    const sharedFiles = this.toHashMap(shared);
+    const paths = new Set([...baseFiles.keys(), ...sharedFiles.keys()]);
+    return [...paths]
+      .filter((filePath) => hasFileChanged(baseFiles.get(filePath), sharedFiles.get(filePath)))
+      .sort((left, right) => left.localeCompare(right));
   }
 
   private toHashMap(content: WorkspaceContent): Map<string, { hash: string }> {

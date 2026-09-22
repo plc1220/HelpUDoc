@@ -378,6 +378,12 @@ export type WorkspaceSyncResult = {
   teamWorkspaceId: string;
   status: 'up_to_date' | 'synced' | 'reviewed' | 'review_needed' | 'detached';
   conflicts: PublicationConflict[];
+  /**
+   * Paths that came across from Shared Working. Optional because the detached
+   * and no-base paths have nothing to diff against, and an older backend does
+   * not send it at all.
+   */
+  syncedFiles?: string[];
 };
 
 export const getWorkspaceReviewChanges = async (
