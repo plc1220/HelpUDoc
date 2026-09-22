@@ -101,6 +101,61 @@ class SandboxConfig:
         )
 
 
+# Interpreters a declared skill script may be run with, keyed on file suffix.
+#
+# Derived from the path in one place rather than decided at each execution site.
+# There are two of those (Kubernetes and local) and they drifted apart trivially
+# easily: before this, both hardcoded Python, so a declared `.js` script was
+# accepted by the registry and then handed to the Python interpreter, which
+# failed with a SyntaxError that named neither the language nor the cause.
+SCRIPT_LANGUAGE_BY_SUFFIX = {
+    ".py": "python",
+    ".js": "javascript",
+    ".cjs": "javascript",
+    ".mjs": "javascript",
+}
+
+
+def resolve_script_language(script_path: str | Path) -> str:
+    """Return the language a declared script must be run as.
+
+    Raises rather than guessing. Falling back to Python is what produced the
+    confusing SyntaxError, and silently running an unknown extension as code is
+    worse than refusing it.
+    """
+    suffix = Path(str(script_path)).suffix.lower()
+    language = SCRIPT_LANGUAGE_BY_SUFFIX.get(suffix)
+    if language is None:
+        supported = ", ".join(sorted(SCRIPT_LANGUAGE_BY_SUFFIX))
+        raise SandboxExecutionError(
+            f"Cannot run '{script_path}': {suffix or 'no extension'} is not a supported "
+            f"sandbox script type. Supported extensions: {supported}."
+        )
+    return language
+
+
+def _local_interpreter(language: str) -> str:
+    """The binary that runs `language` on this host.
+
+    Python is whatever is running the agent, so a virtualenv is honoured.
+    Node is looked up on PATH: the sandbox image ships it, but a developer box
+    running the local backend may not have it.
+    """
+    if language == "python":
+        return sys.executable
+    node = shutil.which("node")
+    if not node:
+        raise SandboxExecutionError(
+            "This script needs Node.js, which is not installed on this host. "
+            "Install Node.js, or run with the Kubernetes sandbox backend."
+        )
+    return node
+
+
+# In the sandbox image both interpreters are on PATH.
+CONTAINER_INTERPRETER_BY_LANGUAGE = {"python": "python", "javascript": "node"}
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -337,6 +392,11 @@ def build_sandbox_job_manifest(
         staged_script_path = f"scripts/{staged_script_path}"
     if not _is_relative_safe(staged_script_path):
         raise SandboxExecutionError("staged_script_name must be a safe relative path.")
+    # Resolved before the Job is submitted, so an unrunnable script is refused
+    # here rather than after a pod has been scheduled and has failed.
+    script_interpreter = CONTAINER_INTERPRETER_BY_LANGUAGE[
+        resolve_script_language(staged_script_path)
+    ]
     manifest = {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -381,13 +441,21 @@ def build_sandbox_job_manifest(
                             "image": sandbox_config.image,
                             "imagePullPolicy": "IfNotPresent",
                             "workingDir": "/sandbox",
-                            "command": ["python", f"/sandbox/{staged_script_path}"],
+                            "command": [script_interpreter, f"/sandbox/{staged_script_path}"],
                             "args": args,
                             "env": [
                                 {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
                                 {"name": "TMPDIR", "value": "/sandbox/tmp"},
                                 {"name": "HOME", "value": "/sandbox/tmp"},
                                 {"name": "PYTHONPATH", "value": "/sandbox/scripts:/sandbox"},
+                                # The Node equivalent of PYTHONPATH, so a
+                                # declared JavaScript script can require its
+                                # staged siblings the same way a Python one
+                                # imports them. Set for every run; an unused
+                                # env var costs nothing and omitting it here
+                                # while the local runner sets it is exactly
+                                # the drift this change exists to remove.
+                                {"name": "NODE_PATH", "value": "/sandbox/scripts:/sandbox"},
                                 {"name": "HELPUDOC_WORKSPACE_ID", "value": safe_workspace_id},
                                 {"name": "HELPUDOC_WORKSPACE_ROOT", "value": "/workspace"},
                                 {"name": "HELPUDOC_WORKSPACE_OUTPUT_ROOT", "value": "/sandbox/workspace-output"},
@@ -626,6 +694,7 @@ def run_skill_python_script_locally(
         ]
         if part
     )
+    env["NODE_PATH"] = os.pathsep.join([str(run_dir / "scripts"), str(run_dir)])
     env.update(
         {
             "PYTHONDONTWRITEBYTECODE": "1",
@@ -639,7 +708,7 @@ def run_skill_python_script_locally(
     )
     safe_args = [str(item) for item in (args or [])]
     completed = subprocess.run(
-        [sys.executable, str(staged_script), *safe_args],
+        [_local_interpreter(resolve_script_language(staged_script)), str(staged_script), *safe_args],
         cwd=str(run_dir),
         env=env,
         text=True,

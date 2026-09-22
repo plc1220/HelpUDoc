@@ -165,14 +165,16 @@ class RunSkillPythonScriptInput(BaseModel):
     script_name: Optional[str] = Field(
         default=None,
         description=(
-            "Declared sandbox script name from the active skill. "
+            "Declared sandbox script name from the active skill. The interpreter follows the "
+            "declared file extension: .py runs on Python, .js/.mjs/.cjs on Node.js. "
             "Mutually exclusive with inline_code."
         ),
     )
     inline_code: Optional[str] = Field(
         default=None,
         description=(
-            "Complete Python source to execute in an isolated sandbox Job. "
+            "Complete Python source to execute in an isolated sandbox Job. Inline runs are Python "
+            "only; declare a script file to use JavaScript. "
             "Mutually exclusive with script_name. Inline code has no /workspace mount: read staged "
             "inputs at their workspace-relative staged paths in the run directory and write every artifact to a declared "
             "output_paths entry."
@@ -436,7 +438,7 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
         timeout_seconds: Optional[int] = None,
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        """Run a declared Python script, or inline Python, from the active skill in the sandbox."""
+        """Run a declared Python or JavaScript script, or inline Python, from the active skill in the sandbox."""
         blocked = tagged_files_mode_guard(workspace_state.context, "run_skill_python_script")
         if blocked:
             return _skill_sandbox_error(
