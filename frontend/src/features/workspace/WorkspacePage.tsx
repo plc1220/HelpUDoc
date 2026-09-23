@@ -516,10 +516,12 @@ const scoreSlashSearchCandidate = (query: string, terms: string[]): number | nul
   return score;
 };
 
+// Ranking decides the order; it no longer decides how much the reader may see.
+// A cap here dropped matching skills a user was entitled to, with nothing in
+// the UI to say more existed.
 const rankSlashSearchCandidates = (
   query: string,
   candidates: RankedCommandSuggestion[],
-  limit = 16,
 ): CommandSuggestion[] => candidates
   .map((candidate, index) => ({
     ...candidate,
@@ -528,7 +530,6 @@ const rankSlashSearchCandidates = (
   }))
   .filter((candidate): candidate is typeof candidate & { score: number } => candidate.score !== null)
   .sort((left, right) => (right.score + (right.boost || 0)) - (left.score + (left.boost || 0)) || left.index - right.index)
-  .slice(0, limit)
   .map(({ suggestion }) => suggestion);
 
 const getCommandCategory = (command: CommandSuggestion) => {
@@ -1670,7 +1671,10 @@ export default function WorkspacePage() {
         // could type.
         detail: 'kb:',
       }));
-    return [...knowledgeBaseSuggestions, ...fileSuggestions].slice(0, 8);
+    // Every file and knowledge base the person may use, not a sample of them.
+    // The list scrolls, so a short cap only hid entitlements from whoever had
+    // the most of them.
+    return [...knowledgeBaseSuggestions, ...fileSuggestions];
   }, [visibleFiles, knowledgeBaseCatalog, isMentionOpen, mentionQuery]);
 
   const availableSkillMap = useMemo(() => {
@@ -1744,10 +1748,12 @@ export default function WorkspacePage() {
     });
     if (!normalized) {
       const rootCommands = SLASH_COMMANDS.map((command) => ({ ...command }));
-      const featuredPlugins = availablePlugins.slice(0, 4).map(toPluginSuggestion);
-      const featuredSkills = availableSkills.slice(0, 5).map(toSkillSuggestion);
-      const featuredMcpServers = availableMcpServers.slice(0, 3).map(toMcpSuggestion);
-      return [...rootCommands, ...featuredPlugins, ...featuredSkills, ...featuredMcpServers];
+      // Opening the menu lists everything granted to this user. Grouping by
+      // category keeps it readable, so there is no reason to truncate it.
+      const allPlugins = availablePlugins.map(toPluginSuggestion);
+      const allSkills = availableSkills.map(toSkillSuggestion);
+      const allMcpServers = availableMcpServers.map(toMcpSuggestion);
+      return [...rootCommands, ...allPlugins, ...allSkills, ...allMcpServers];
     }
     const pluginMatch = rawQuery.match(/^plugin(?:\s+(.*))?$/);
     if (pluginMatch) {
@@ -1757,7 +1763,6 @@ export default function WorkspacePage() {
           || plugin.id.toLowerCase().includes(filter)
           || plugin.displayName.toLowerCase().includes(filter)
           || (plugin.description || '').toLowerCase().includes(filter))
-        .slice(0, 8)
         .map(toPluginSuggestion);
     }
     const skillMatch = rawQuery.match(/^skill(?:\s+(.*))?$/);
@@ -1765,7 +1770,6 @@ export default function WorkspacePage() {
       const filter = (skillMatch[1] || '').trim();
       return availableSkills
         .filter((skill) => !filter || skill.id.toLowerCase().includes(filter) || (skill.name || '').toLowerCase().includes(filter))
-        .slice(0, 8)
         .map(toSkillSuggestion);
     }
     const mcpMatch = rawQuery.match(/^mcp(?:\s+(.*))?$/);
@@ -1773,7 +1777,6 @@ export default function WorkspacePage() {
       const filter = (mcpMatch[1] || '').trim();
       return availableMcpServers
         .filter((server) => !filter || server.name.toLowerCase().includes(filter))
-        .slice(0, 8)
         .map(toMcpSuggestion);
     }
     const candidates: RankedCommandSuggestion[] = [
