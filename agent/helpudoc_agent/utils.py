@@ -157,20 +157,56 @@ def extract_web_url(web_chunk: Any) -> str | None:
     return None
 
 
+# Bounds `SourceTracker._sources` now that its key includes a run id. Keyed by
+# workspace alone the dict could not grow past the workspace count; per run it
+# would grow without limit for the life of the process.
+_MAX_TRACKED_SOURCE_SCOPES = 256
+
+
 class SourceTracker:
-    """Tracks collected sources per workspace so final report can be annotated."""
+    """Tracks collected sources per run so a final report can be annotated.
+
+    Keyed by workspace alone, two people working in one workspace shared a single
+    source list. One user's citations were appended to the other's report, and
+    `_reset_turn_context` clearing the list at the start of a turn wiped sources a
+    concurrent run had already gathered, which then failed that run's research
+    source contract.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._sources: Dict[str, "OrderedDict[str, str]"] = {}
+        self._sources: "OrderedDict[str, OrderedDict[str, str]]" = OrderedDict()
+
+    @staticmethod
+    def scope_key(workspace: WorkspaceState) -> str:
+        """Narrowest identity available for this run's evidence.
+
+        A run id is set from the backend trace context before the turn resets, so
+        normal runs are isolated per run. The user fallback covers the direct
+        `/chat` endpoint, which carries no run id; the bare workspace is the last
+        resort and is the only case that can still be shared.
+        """
+        context = workspace.context if isinstance(workspace.context, dict) else {}
+        run_id = str(context.get("run_id") or "").strip()
+        if run_id:
+            return f"{workspace.workspace_id}:run:{run_id}"
+        user_id = str(context.get("user_id") or "").strip()
+        if user_id:
+            return f"{workspace.workspace_id}:user:{user_id}"
+        return workspace.workspace_id
 
     def record(self, workspace: WorkspaceState, sources: List[Dict[str, str]]) -> None:
         if not sources:
             return
+        key = self.scope_key(workspace)
         with self._lock:
-            if workspace.workspace_id not in self._sources:
-                self._sources[workspace.workspace_id] = OrderedDict()
-            stored = self._sources[workspace.workspace_id]
+            stored = self._sources.get(key)
+            if stored is None:
+                stored = OrderedDict()
+                self._sources[key] = stored
+                while len(self._sources) > _MAX_TRACKED_SOURCE_SCOPES:
+                    self._sources.popitem(last=False)
+            self._sources.move_to_end(key)
             for src in sources:
                 url = src.get("url")
                 if not url or url in stored:
@@ -178,13 +214,13 @@ class SourceTracker:
                 stored[url] = src.get("title", "Untitled")
 
     def reset(self, workspace: WorkspaceState) -> None:
-        """Clear any cached sources for the given workspace."""
+        """Clear cached sources for this run only."""
         with self._lock:
-            self._sources.pop(workspace.workspace_id, None)
+            self._sources.pop(self.scope_key(workspace), None)
 
     def list_sources(self, workspace: WorkspaceState) -> List[Tuple[int, str, str]]:
         with self._lock:
-            stored = self._sources.get(workspace.workspace_id)
+            stored = self._sources.get(self.scope_key(workspace))
             if not stored:
                 return []
             return [

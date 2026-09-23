@@ -868,6 +868,7 @@ def register_chat_routes(
         manager = context.get("data_agent_manager") if isinstance(context, dict) else None
         if manager and hasattr(manager, "reset_session"):
             manager.reset_session()
+        _bind_run_scope(runtime, message)
         payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
         lf = langfuse_langchain_callbacks()
         config = _build_agent_config(runtime, message, callbacks=lf or None)
@@ -1825,6 +1826,25 @@ def register_chat_routes(
             return ""
         return "The run cannot complete before its required plan has been reviewed and approved."
 
+    def _bind_run_scope(runtime: AgentRuntimeState, message: ChatRequest) -> None:
+        """Put this run's id in context before anything keys state on it.
+
+        `_build_agent_config` sets `run_id`, but it runs after `_reset_turn_context`.
+        Anything scoped by run during the reset -- `SourceTracker.scope_key` -- would
+        otherwise read the previous run's id and clear the wrong bucket.
+        """
+        context = getattr(runtime.workspace_state, "context", None)
+        if not isinstance(context, dict):
+            return
+        trace_context = (
+            message.langfuseTraceContext
+            if isinstance(message.langfuseTraceContext, dict)
+            else {}
+        )
+        run_id = _clean_langfuse_value(trace_context.get("runId"))
+        if run_id:
+            context["run_id"] = run_id
+
     def _reset_turn_context(runtime: AgentRuntimeState) -> None:
         context = runtime.workspace_state.context or {}
         skip_plan_approvals = bool(context.get("skip_plan_approvals"))
@@ -1993,6 +2013,7 @@ def register_chat_routes(
         if agent is None:
             yield _json_line({"type": "error", "message": "Agent not initialized"})
             return
+        _bind_run_scope(runtime, message)
         prepare_plan_context_for_explicit_resume(runtime.workspace_state, resume_decisions)
         context = getattr(runtime.workspace_state, "context", None)
         # Document tool caching and loop breaking are scoped to one top-level
