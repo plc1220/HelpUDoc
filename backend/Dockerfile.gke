@@ -16,6 +16,10 @@ RUN --mount=type=cache,target=/root/.npm \
 # Copy the rest of the backend source code
 COPY backend/src ./src
 
+# Operational scripts. Deploy pipelines run `scripts/repair-governed-packages.ts --verify` to prove
+# every active skill version still resolves to a materialized package before traffic is served.
+COPY backend/scripts ./scripts
+
 # Ensure workspaces directory exists
 RUN mkdir -p workspaces
 

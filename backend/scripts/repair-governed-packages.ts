@@ -27,8 +27,13 @@
  * Usage
  * -----
  *   ts-node scripts/repair-governed-packages.ts            # dry run, reports only
+ *   ts-node scripts/repair-governed-packages.ts --verify   # assert healthy; exit 1 if stranded
  *   ts-node scripts/repair-governed-packages.ts --apply    # perform the repair
+ *   ts-node scripts/repair-governed-packages.ts --apply --force   # republish regardless
  *   ts-node scripts/repair-governed-packages.ts --apply --only research
+ *
+ * `--verify` is what deploy pipelines should run: it proves every active default version resolves
+ * to a materialized package, rather than merely proving the package directory exists.
  */
 
 import path from 'path';
@@ -80,6 +85,9 @@ async function main(): Promise<void> {
   // manifest-hash algorithm, where the package exists on disk but its stored digest can no
   // longer be reproduced by the agent.
   const force = process.argv.includes('--force');
+  // --verify never mutates and exits non-zero when any active pin is stranded, so a deploy can
+  // fail loudly instead of leaving the runtime with silently unusable skills.
+  const verify = process.argv.includes('--verify');
   const onlyIndex = process.argv.indexOf('--only');
   const only = onlyIndex >= 0 ? process.argv[onlyIndex + 1] : null;
 
@@ -124,13 +132,24 @@ async function main(): Promise<void> {
   console.log(`skills inspected : ${only ? 1 : skills.length}`);
   console.log(`${force ? 'forced republish' : 'stranded pins   '} : ${stranded.length}`);
   if (!stranded.length) {
-    console.log('Nothing to repair.');
+    console.log(verify ? 'OK: every active default version resolves to a materialized package.' : 'Nothing to repair.');
     await db.destroy();
     return;
   }
 
   for (const skill of stranded) {
     console.log(`  - ${skill.skillKey} (v${skill.semanticVersion ?? '?'}) -> ${skill.materializedPath ?? 'no materializedPath'}`);
+  }
+
+  if (verify) {
+    console.error(
+      `\nFAIL: ${stranded.length} active skill version(s) cannot be resolved by the agent. `
+      + 'Their materialized packages are missing, so those skills will silently fail to load. '
+      + 'Run this script with --apply to republish them.',
+    );
+    await db.destroy();
+    process.exitCode = 1;
+    return;
   }
 
   if (!apply) {
