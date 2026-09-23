@@ -30,6 +30,23 @@ const textFromContent = (content: unknown): string => {
     .trim();
 };
 
+/**
+ * Roles that end the current turn's slice of the transcript.
+ *
+ * `/chat` returns the whole agent state, and Shared Chat sends prior turns in
+ * `history`, so the message list holds earlier assistant replies as well as this
+ * turn's. Everything before the last question belongs to an earlier turn.
+ */
+const TURN_BOUNDARY_ROLES = new Set(['user', 'human', 'humanmessage']);
+const ASSISTANT_ROLES = new Set(['assistant', 'ai', 'aimessage']);
+
+const messageRole = (message: Record<string, unknown>): string => String(
+  message.role
+  || message.type
+  || message._type
+  || '',
+).toLowerCase();
+
 export const extractAgentReplyText = (value: unknown): string => {
   if (typeof value === 'string') return value.trim();
   if (!value || typeof value !== 'object') return '';
@@ -41,17 +58,19 @@ export const extractAgentReplyText = (value: unknown): string => {
   }
 
   if (Array.isArray(record.messages)) {
-    const messages = [...record.messages].reverse();
-    for (const message of messages) {
+    // Stop at the current turn's question. A turn that ends without usable text
+    // -- it stopped on a tool call, or the tool it reached for was denied -- used
+    // to fall through to the previous turn's reply, which then reached the shared
+    // channel as an answer to a question nobody had just asked. Returning nothing
+    // is correct here: the caller raises "Lumo did not return a readable
+    // response", and an honest error beats a confidently stale answer.
+    for (let index = record.messages.length - 1; index >= 0; index -= 1) {
+      const message = record.messages[index];
       if (!message || typeof message !== 'object') continue;
       const messageRecord = message as Record<string, unknown>;
-      const role = String(
-        messageRecord.role
-        || messageRecord.type
-        || messageRecord._type
-        || '',
-      ).toLowerCase();
-      if (role && !['assistant', 'ai', 'aimessage'].includes(role)) continue;
+      const role = messageRole(messageRecord);
+      if (TURN_BOUNDARY_ROLES.has(role)) break;
+      if (role && !ASSISTANT_ROLES.has(role)) continue;
       const content = textFromContent(messageRecord.content ?? messageRecord.text);
       if (content) return content;
     }
