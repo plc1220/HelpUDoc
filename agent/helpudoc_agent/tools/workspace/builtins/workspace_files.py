@@ -206,12 +206,26 @@ def build_get_image_url_tool(workspace_state: WorkspaceState) -> Tool:
             workspace_root = workspace_state.root_path
             metadata_file = workspace_root / ".workspace_metadata.json"
 
+            def _is_product_storage(candidate: Path) -> bool:
+                # This walks `root_path` directly and so bypasses
+                # SkillScopedFilesystemBackend, where the same rule lives. Without
+                # it the tool still reaches file version history and archived packs.
+                try:
+                    parts = candidate.relative_to(workspace_root).parts
+                except ValueError:
+                    return True
+                return ".system" in parts
+
             if not metadata_file.exists():
-                matching_files = list(workspace_root.rglob(file_name))
+                matching_files = [
+                    f for f in workspace_root.rglob(file_name) if not _is_product_storage(f)
+                ]
                 if not matching_files:
                     matching_files = [
                         f for f in workspace_root.rglob("*")
-                        if f.is_file() and file_name.lower() in f.name.lower()
+                        if f.is_file()
+                        and file_name.lower() in f.name.lower()
+                        and not _is_product_storage(f)
                     ]
                 if not matching_files:
                     return f"Error: No file found with name '{file_name}' in the workspace."

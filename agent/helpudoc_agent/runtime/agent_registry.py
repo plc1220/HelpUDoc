@@ -195,6 +195,22 @@ ALWAYS_AVAILABLE_TOOL_GROUPS = (
 _STRUCTURED_DATA_SUFFIXES = frozenset({".csv", ".tsv", ".parquet", ".json"})
 _DATA_ARTIFACT_OUTPUT_DIRS = frozenset({"sandbox-runs", "charts", "dashboards", "reports"})
 
+# Product-managed storage, not documents anyone authored: immutable file versions,
+# upload staging, OKF knowledge bundles, and the archived artifact packs of earlier
+# runs. The backend already keeps this out of the file browser, the artifact commit
+# and the provenance trail (`isInternalWorkspacePath`); the agent had no equivalent
+# rule, so it could list and read every superseded version of every file.
+#
+# `sandbox-runs/` is deliberately not here. The data skill reads its own current
+# run's outputs through this backend, and `_data_path_is_visible` already bounds
+# that to the run's own ids; hiding the directory outright would break it.
+_INTERNAL_AGENT_DIR_NAMES = frozenset({".system"})
+
+
+def _is_internal_agent_path(file_path: Any) -> bool:
+    normalized = str(file_path or "").strip().replace("\\", "/")
+    return any(part in _INTERNAL_AGENT_DIR_NAMES for part in normalized.split("/") if part)
+
 
 class SkillScopedFilesystemBackend(FilesystemBackend):
     """Keep structured source rows out of a Data Analytics model context."""
@@ -244,6 +260,8 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
         )
 
     def write(self, file_path: str, content: str) -> WriteResult:
+        if _is_internal_agent_path(file_path):
+            return WriteResult(error=f"Cannot write '{file_path}': reserved system path.")
         error = self._workspace_write_error("write", file_path)
         if error:
             return WriteResult(error=error)
@@ -300,7 +318,18 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
         return True
 
     def ls(self, path: str) -> LsResult:
+        if _is_internal_agent_path(path):
+            return LsResult(entries=[])
         result = super().ls(path)
+        if result.entries:
+            result = LsResult(
+                error=result.error,
+                entries=[
+                    entry
+                    for entry in result.entries
+                    if not _is_internal_agent_path(entry.get("path"))
+                ],
+            )
         is_data_skill, context = self._data_skill_context()
         if not is_data_skill or not result.entries:
             return result
@@ -317,6 +346,15 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
         result = super().glob(pattern, path=path)
+        if result.matches:
+            result = GlobResult(
+                error=result.error,
+                matches=[
+                    match
+                    for match in result.matches
+                    if not _is_internal_agent_path(match.get("path"))
+                ],
+            )
         is_data_skill, context = self._data_skill_context()
         if not is_data_skill or not result.matches:
             return result
@@ -336,6 +374,15 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
         glob: str | None = None,
     ) -> GrepResult:
         result = super().grep(pattern, path=path, glob=glob)
+        if result.matches:
+            result = GrepResult(
+                error=result.error,
+                matches=[
+                    match
+                    for match in result.matches
+                    if not _is_internal_agent_path(match.get("path"))
+                ],
+            )
         is_data_skill, context = self._data_skill_context()
         if not is_data_skill or not result.matches:
             return result
@@ -354,6 +401,14 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
         return GrepResult(error=result.error, matches=visible_matches)
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        if _is_internal_agent_path(file_path):
+            return ReadResult(
+                error=(
+                    f"Read blocked for '{file_path}'. This path holds product-managed "
+                    "storage (file version history, knowledge bundles, archived packs), "
+                    "not workspace documents."
+                )
+            )
         is_data_skill, context = self._data_skill_context()
         skill_id = str(context.get("active_skill") or "").strip()
         normalized = str(file_path or "").strip().replace("\\", "/")
