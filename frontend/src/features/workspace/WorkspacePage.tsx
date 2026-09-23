@@ -2181,12 +2181,22 @@ export default function WorkspacePage() {
               console.error('Failed to load knowledge for workspace', error);
               return [];
             }),
-        options.includePrivateData === false
-          ? Promise.resolve([] as KnowledgeBaseSummary[])
-          : fetchKnowledgeBaseCatalog().catch((error) => {
-              console.error('Failed to load knowledge bases for workspace', error);
-              return [] as KnowledgeBaseSummary[];
-            }),
+        // Not gated by `includePrivateData`, unlike the knowledge sources above.
+        //
+        // This catalogue is not workspace content. `fetchKnowledgeBaseCatalog`
+        // returns the bases the signed-in person may read, wherever they are, and
+        // access follows the user rather than the workspace: the agent resolves a
+        // tagged base through `resolveAccessibleKnowledgeBaseIds(userId)`, so a
+        // base reaches a turn because that person may read it.
+        //
+        // Skipping it in a team workspace left `knowledgeBaseCatalog` empty, and
+        // with it the `@kb` menu, the composer chips and tag removal, which all
+        // read from this array. Someone could tag a base in a private workspace
+        // and not in a shared one, for no reason they could see.
+        fetchKnowledgeBaseCatalog().catch((error) => {
+          console.error('Failed to load knowledge bases for workspace', error);
+          return [] as KnowledgeBaseSummary[];
+        }),
       ]);
       if (
         workspaceFilesRequestIdRef.current !== requestId

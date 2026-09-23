@@ -6,7 +6,7 @@
  * composer needed it; a second copy would have let the two menus drift apart,
  * which is the whole point of the shared channel matching private chat.
  */
-import { SLASH_COMMANDS } from '../../constants/workspace';
+import { SLASH_COMMANDS } from '../../constants/workspace.ts';
 
 export type CommandSuggestion = {
   id: string;
