@@ -56,6 +56,7 @@ export interface UserDeletionImpact {
   authoredKnowledgeCount: number;
   authoredConversationCount: number;
   authoredMessageCount: number;
+  authoredArtifactCount: number;
 }
 
 interface UserProfileInput {
@@ -713,7 +714,7 @@ export class UserService {
     }
 
     const ownedWorkspaces = await this.listOwnedWorkspaces(userId);
-    const [sharedWorkspaceCount, groupMembershipCount, oauthTokenCount, authoredFileCount, authoredKnowledgeCount, authoredConversationCount, authoredMessageCount] = await Promise.all([
+    const [sharedWorkspaceCount, groupMembershipCount, oauthTokenCount, authoredFileCount, authoredKnowledgeCount, authoredConversationCount, authoredMessageCount, authoredArtifactCount] = await Promise.all([
       this.countSharedWorkspaceMemberships(userId),
       this.countRows('group_members', { userId }),
       this.countRows('user_oauth_tokens', { userId }),
@@ -721,6 +722,7 @@ export class UserService {
       this.countDistinctReferences('knowledge_sources', 'id', ['createdBy', 'updatedBy'], userId),
       this.countDistinctReferences('conversations', 'id', ['createdBy', 'updatedBy'], userId),
       this.countDistinctReferences('conversation_messages', 'id', ['authorId'], userId),
+      this.countDistinctReferences('derived_artifacts', 'id', ['createdBy', 'updatedBy'], userId),
     ]);
 
     return {
@@ -739,6 +741,7 @@ export class UserService {
       authoredKnowledgeCount,
       authoredConversationCount,
       authoredMessageCount,
+      authoredArtifactCount,
     };
   }
 
@@ -784,6 +787,11 @@ export class UserService {
       tx('conversations').where({ createdBy: userId }).update({ createdBy: null, updatedAt: this.db.fn.now() }),
       tx('conversations').where({ updatedBy: userId }).update({ updatedBy: null, updatedAt: this.db.fn.now() }),
       tx('conversation_messages').where({ authorId: userId }).update({ authorId: null, updatedAt: this.db.fn.now() }),
+      // derived_artifacts carries the same nullable authorship FKs with ON DELETE NO ACTION.
+      // Omitting it made any user who had ever produced a derived artifact undeletable, failing
+      // with an opaque 500 from the foreign key rather than a useful message.
+      tx('derived_artifacts').where({ createdBy: userId }).update({ createdBy: null, updatedAt: this.db.fn.now() }),
+      tx('derived_artifacts').where({ updatedBy: userId }).update({ updatedBy: null, updatedAt: this.db.fn.now() }),
     ]);
   }
 

@@ -1010,7 +1010,10 @@ const UsersPage = () => {
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                     <p className="font-semibold">Detached shared references</p>
-                    <p className="mt-1 text-xs">{deletionImpact.authoredFileCount} files, {deletionImpact.authoredKnowledgeCount} knowledge items</p>
+                    <p className="mt-1 text-xs">
+                      {deletionImpact.authoredFileCount} files, {deletionImpact.authoredKnowledgeCount} knowledge items,{' '}
+                      {deletionImpact.authoredArtifactCount} derived artifacts
+                    </p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                     <p className="font-semibold">Detached conversation history</p>

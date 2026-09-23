@@ -28,6 +28,12 @@ export type UserDeletionImpact = {
   authoredKnowledgeCount: number;
   authoredConversationCount: number;
   authoredMessageCount: number;
+  /**
+   * Derived artifacts authored by the user. These carry nullable authorship FKs with
+   * ON DELETE NO ACTION, so omitting them from the detach step made any user who had produced
+   * one undeletable with an opaque 500.
+   */
+  authoredArtifactCount: number;
 };
 
 export type GroupPromptAccess = {
