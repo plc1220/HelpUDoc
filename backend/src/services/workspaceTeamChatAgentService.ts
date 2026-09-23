@@ -11,6 +11,42 @@ import type { UserService } from './userService';
 import type { FileService } from './fileService';
 import type { WorkspaceRunLeaseManager } from './agent-runs/workspaceRunLease';
 
+/**
+ * A `/skill` or `/mcp` a member typed in the shared channel.
+ *
+ * The agent parses these itself, but only from the first non-empty line of the
+ * message it receives. Shared Chat prepends its channel preamble, so a directive
+ * typed by a member never reached line one and was silently dropped. Pulling it
+ * out here and re-emitting it as a `<<<HELPUDOC_DIRECTIVE` block -- which the
+ * agent matches at the start of the text regardless of what follows -- makes it
+ * work without loosening the agent's parser for every caller.
+ */
+export type SharedChatDirective =
+  | { kind: 'skill'; skillId: string }
+  | { kind: 'mcp'; serverId: string };
+
+const DIRECTIVE_LINE = /^\s*\/(skill|mcp)\s+(\S+)\s*(.*)$/i;
+
+export const parseSharedChatDirective = (
+  text: string,
+): { directive: SharedChatDirective | null; question: string } => {
+  const lines = String(text || '').split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index].trim()) continue;
+    const match = DIRECTIVE_LINE.exec(lines[index]);
+    if (!match) break; // Only a leading directive counts, as in private chat.
+    const [, rawKind, target, remainder] = match;
+    const rest = [remainder, ...lines.slice(index + 1)].join('\n').trim();
+    return {
+      directive: rawKind.toLowerCase() === 'skill'
+        ? { kind: 'skill', skillId: target }
+        : { kind: 'mcp', serverId: target },
+      question: rest,
+    };
+  }
+  return { directive: null, question: String(text || '').trim() };
+};
+
 const textFromContent = (content: unknown): string => {
   if (typeof content === 'string') return content.trim();
   if (!Array.isArray(content)) return '';
@@ -153,11 +189,12 @@ export class WorkspaceTeamChatAgentService {
       throw new HttpError(503, 'ARIA shared-channel policy signing is not configured');
     }
 
-    const question = sourceMessage.body
+    const addressed = sourceMessage.body
       // Strip the address so the agent reads the question, not the mention.
       // Both spellings, for the same reason the parser accepts both.
       .replace(/(^|\s)@(aria|lumo)\b[:,]?/ig, '$1')
       .trim();
+    const { directive, question } = parseSharedChatDirective(addressed);
     const workingVersionLabel = 'the current Shared working version';
     const writeInstruction = canWriteSharedWorkspace
       ? 'You may edit Shared workspace files and folders when the request requires it. Apply the same workspace permissions, concurrency, revision-history, attribution, and audit rules as a human Freeflow edit.'
@@ -173,6 +210,12 @@ export class WorkspaceTeamChatAgentService {
         : 'If the team asks for a change, provide a suggested change in your response. In Review mode, the member must use a Private working copy and submit the result through the Review proposal flow.',
       `Question from ${sourceMessage.authorName}: ${question || sourceMessage.body}`,
     ].join('\n\n');
+    // The agent matches this block at the start of the text and treats the rest,
+    // preamble included, as the prompt. That is why the directive survives here
+    // when a bare `/skill` line does not.
+    const directedPrompt = directive
+      ? `<<<HELPUDOC_DIRECTIVE\n${JSON.stringify(directive)}\n>>>\n${prompt}`
+      : prompt;
     const agentHistory = history.map((message) => ({
       role: message.role,
       content: message.role === 'user'
@@ -180,7 +223,7 @@ export class WorkspaceTeamChatAgentService {
         : message.content,
     }));
 
-    const runTurn = () => runAgent('fast', workspaceId, prompt, agentHistory, {
+    const runTurn = () => runAgent('fast', workspaceId, directedPrompt, agentHistory, {
       forceReset: true,
       authToken,
       internetSearchEnabled: false,
