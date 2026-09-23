@@ -203,8 +203,13 @@ import {
   CANVAS_ZOOM_STEP,
   MAX_CANVAS_ZOOM,
   MIN_CANVAS_ZOOM,
-  SLASH_COMMANDS,
 } from '../../constants/workspace';
+import {
+  buildCommandSuggestions,
+  buildMentionSuggestions,
+  getCommandCategory,
+  type CommandSuggestion,
+} from '../../components/chat/composerSuggestions';
 import { isSystemFile, normalizeFilePath } from '../../utils/files';
 import { applyFileStatusState, deriveFileStatusChip } from '../../utils/fileStatusDisplay';
 import { streamFileStatusEvents } from '../../services/fileProvenanceApi';
@@ -437,113 +442,6 @@ function MobileLumoAvatar({
     </span>
   );
 }
-
-type CommandSuggestion = {
-  id: string;
-  command: string;
-  description: string;
-  insertCommand?: string;
-  category?: string;
-};
-
-type RankedCommandSuggestion = {
-  suggestion: CommandSuggestion;
-  searchTerms: string[];
-  boost?: number;
-};
-
-const normalizeSlashSearchText = (value: string) => value
-  .toLowerCase()
-  .replace(/^\/+/, '')
-  .replace(/[_/.-]+/g, ' ')
-  .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
-  .replace(/\s+/g, ' ')
-  .trim();
-
-const slashSearchEditDistance = (left: string, right: string): number => {
-  if (left === right) return 0;
-  if (!left.length) return right.length;
-  if (!right.length) return left.length;
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
-    const current = [leftIndex];
-    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
-      current[rightIndex] = Math.min(
-        current[rightIndex - 1] + 1,
-        previous[rightIndex] + 1,
-        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
-      );
-    }
-    previous.splice(0, previous.length, ...current);
-  }
-  return previous[right.length];
-};
-
-const scoreSlashSearchCandidate = (query: string, terms: string[]): number | null => {
-  const normalizedQuery = normalizeSlashSearchText(query);
-  if (!normalizedQuery) return 0;
-  const queryTokens = normalizedQuery.split(' ').filter(Boolean);
-  const normalizedTerms = terms.map(normalizeSlashSearchText).filter(Boolean);
-  const words = normalizedTerms.flatMap((term) => term.split(' ').filter(Boolean));
-  let score = 0;
-
-  for (const queryToken of queryTokens) {
-    let tokenScore = 0;
-    for (const word of words) {
-      if (word === queryToken) {
-        tokenScore = Math.max(tokenScore, 160);
-      } else if (word.startsWith(queryToken)) {
-        tokenScore = Math.max(tokenScore, 130 - Math.min(30, word.length - queryToken.length));
-      } else if (queryToken.length >= 2 && word.includes(queryToken)) {
-        tokenScore = Math.max(tokenScore, 85);
-      } else if (queryToken.length >= 3) {
-        const distance = slashSearchEditDistance(queryToken, word);
-        const allowedDistance = Math.max(1, Math.floor(queryToken.length * 0.3));
-        if (distance <= allowedDistance) {
-          tokenScore = Math.max(tokenScore, 65 - distance * 10);
-        }
-      }
-    }
-    if (!tokenScore) return null;
-    score += tokenScore;
-  }
-
-  for (const term of normalizedTerms) {
-    if (term === normalizedQuery) score += 500;
-    else if (term.startsWith(normalizedQuery)) score += 300;
-    else if (normalizedQuery.length >= 2 && term.includes(normalizedQuery)) score += 180;
-  }
-  return score;
-};
-
-// Ranking decides the order; it no longer decides how much the reader may see.
-// A cap here dropped matching skills a user was entitled to, with nothing in
-// the UI to say more existed.
-const rankSlashSearchCandidates = (
-  query: string,
-  candidates: RankedCommandSuggestion[],
-): CommandSuggestion[] => candidates
-  .map((candidate, index) => ({
-    ...candidate,
-    index,
-    score: scoreSlashSearchCandidate(query, candidate.searchTerms),
-  }))
-  .filter((candidate): candidate is typeof candidate & { score: number } => candidate.score !== null)
-  .sort((left, right) => (right.score + (right.boost || 0)) - (left.score + (left.boost || 0)) || left.index - right.index)
-  .map(({ suggestion }) => suggestion);
-
-const getCommandCategory = (command: CommandSuggestion) => {
-  if (command.category) {
-    return command.category;
-  }
-  if (command.command.startsWith('/skill')) {
-    return 'Skills';
-  }
-  if (command.command.startsWith('/mcp')) {
-    return 'Data Sources';
-  }
-  return 'Automation';
-};
 
 type ParsedSlashDirective =
   | { kind: 'skill'; skillId: string; prompt: string; raw: string }
@@ -1638,43 +1536,11 @@ export default function WorkspacePage() {
     if (!isMentionOpen) {
       return [];
     }
-    const normalized = mentionQuery.trim().toLowerCase();
-    const kbOnly = normalized.startsWith('kb:');
-    const searchTerm = kbOnly ? normalized.slice('kb:'.length).trimStart() : normalized;
-    const fileSuggestions = kbOnly
-      ? []
-      : visibleFiles
-          .filter((file) => !searchTerm || file.name.toLowerCase().includes(searchTerm))
-          .map((file) => ({
-            id: `file:${file.id}`,
-            kind: 'file' as const,
-            name: file.name,
-            mention: `@${file.name}`,
-            detail: file.mimeType?.split('/').pop() || file.name.split('.').pop() || 'file',
-          }));
-    // Documents are surfaced only through knowledge bases; individual sources
-    // are no longer taggable. Bases use a "kb:" prefix + human-readable name.
-    const knowledgeBaseSuggestions = knowledgeBaseCatalog
-      .filter((kb) => kb.status === 'published')
-      // This picker reads the default `entitled` catalogue scope, so every row is already
-      // usable. Checked anyway: if a caller ever switches this to the discovery scope,
-      // offering a base the agent will refuse is worse than not offering it.
-      .filter((kb) => kb.entitled !== false)
-      .filter((kb) => !searchTerm || kb.name.toLowerCase().includes(searchTerm))
-      .map((kb) => ({
-        id: `kb:${kb.id}`,
-        kind: 'knowledgeBase' as const,
-        name: kb.name,
-        mention: `@kb:${kb.name}`,
-        // Shows the prefix the row actually inserts. "knowledge base" described a
-        // tagging form that no longer exists, so it named nothing the reader
-        // could type.
-        detail: 'kb:',
-      }));
-    // Every file and knowledge base the person may use, not a sample of them.
-    // The list scrolls, so a short cap only hid entitlements from whoever had
-    // the most of them.
-    return [...knowledgeBaseSuggestions, ...fileSuggestions];
+    return buildMentionSuggestions({
+      query: mentionQuery,
+      files: visibleFiles,
+      knowledgeBases: knowledgeBaseCatalog,
+    });
   }, [visibleFiles, knowledgeBaseCatalog, isMentionOpen, mentionQuery]);
 
   const availableSkillMap = useMemo(() => {
@@ -1710,110 +1576,12 @@ export default function WorkspacePage() {
     if (!isCommandOpen) {
       return [] as CommandSuggestion[];
     }
-    const rawQuery = commandQuery.toLowerCase();
-    const normalized = rawQuery.trim();
-    const humanizeEntityName = (value: string) => {
-      const trimmed = value.trim();
-      if (!trimmed || /\s/.test(trimmed) || !/[-_/]/.test(trimmed)) return trimmed;
-      return trimmed
-        .split(/[-_/]+/)
-        .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
-    };
-    const toSkillSuggestion = (skill: SkillDefinition): CommandSuggestion => ({
-      id: `skill:${skill.id}`,
-      command: humanizeEntityName(skill.name || skill.id),
-      insertCommand: `/skill ${skill.id}`,
-      description: skill.description
-        ? `/skill ${skill.id} · ${skill.description}`
-        : `Use the ${skill.name || skill.id} skill`,
-      category: 'Skills',
+    return buildCommandSuggestions({
+      query: commandQuery,
+      skills: availableSkills,
+      plugins: availablePlugins,
+      mcpServers: availableMcpServers,
     });
-    const toMcpSuggestion = (server: { name: string; description?: string }): CommandSuggestion => ({
-      id: `mcp:${server.name}`,
-      command: server.name,
-      insertCommand: `/mcp ${server.name}`,
-      description: server.description
-        ? `/mcp ${server.name} · ${server.description}`
-        : `Prefer tools from ${server.name}`,
-      category: 'Data Sources',
-    });
-    const toPluginSuggestion = (plugin: PluginDefinition): CommandSuggestion => ({
-      id: `plugin:${plugin.id}`,
-      command: plugin.displayName,
-      insertCommand: `/skill ${plugin.defaultSkillId}`,
-      description: plugin.description || `Use the ${plugin.displayName} plugin`,
-      category: 'Plugins',
-    });
-    if (!normalized) {
-      const rootCommands = SLASH_COMMANDS.map((command) => ({ ...command }));
-      // Opening the menu lists everything granted to this user. Grouping by
-      // category keeps it readable, so there is no reason to truncate it.
-      const allPlugins = availablePlugins.map(toPluginSuggestion);
-      const allSkills = availableSkills.map(toSkillSuggestion);
-      const allMcpServers = availableMcpServers.map(toMcpSuggestion);
-      return [...rootCommands, ...allPlugins, ...allSkills, ...allMcpServers];
-    }
-    const pluginMatch = rawQuery.match(/^plugin(?:\s+(.*))?$/);
-    if (pluginMatch) {
-      const filter = (pluginMatch[1] || '').trim();
-      return availablePlugins
-        .filter((plugin) => !filter
-          || plugin.id.toLowerCase().includes(filter)
-          || plugin.displayName.toLowerCase().includes(filter)
-          || (plugin.description || '').toLowerCase().includes(filter))
-        .map(toPluginSuggestion);
-    }
-    const skillMatch = rawQuery.match(/^skill(?:\s+(.*))?$/);
-    if (skillMatch) {
-      const filter = (skillMatch[1] || '').trim();
-      return availableSkills
-        .filter((skill) => !filter || skill.id.toLowerCase().includes(filter) || (skill.name || '').toLowerCase().includes(filter))
-        .map(toSkillSuggestion);
-    }
-    const mcpMatch = rawQuery.match(/^mcp(?:\s+(.*))?$/);
-    if (mcpMatch) {
-      const filter = (mcpMatch[1] || '').trim();
-      return availableMcpServers
-        .filter((server) => !filter || server.name.toLowerCase().includes(filter))
-        .map(toMcpSuggestion);
-    }
-    const candidates: RankedCommandSuggestion[] = [
-      ...SLASH_COMMANDS.map((command) => ({
-        suggestion: { ...command },
-        searchTerms: [command.command, command.description, command.id, 'command automation'],
-      })),
-      ...availablePlugins.map((plugin) => ({
-        suggestion: toPluginSuggestion(plugin),
-        boost: 30,
-        searchTerms: [
-          plugin.id,
-          plugin.displayName,
-          plugin.description || '',
-          plugin.defaultSkillId,
-          'plugin',
-        ],
-      })),
-      ...availableSkills.map((skill) => ({
-        suggestion: toSkillSuggestion(skill),
-        boost: 60,
-        searchTerms: [
-          skill.id,
-          skill.name,
-          skill.description || '',
-          skill.pluginId || '',
-          skill.pluginName || '',
-          'skill workflow',
-        ],
-      })),
-      ...availableMcpServers.map((server) => ({
-        suggestion: toMcpSuggestion(server),
-        boost: 30,
-        searchTerms: [server.name, server.description || '', 'mcp data source connection'],
-      })),
-    ];
-    return rankSlashSearchCandidates(normalized, candidates);
   }, [availableMcpServers, availablePlugins, availableSkills, commandQuery, isCommandOpen]);
 
   const landingCommandGroups = useMemo(() => {

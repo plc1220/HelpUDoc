@@ -3,17 +3,15 @@ import {
   ChatComposerDrawer,
   ChatSendButton,
 } from '@astryxdesign/core/Chat';
-import { Card } from '@astryxdesign/core/Card';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import { Token } from '@astryxdesign/core/Token';
+import { CommandSuggestionList, MentionSuggestionList } from './ComposerSuggestionList';
+import type { ChatMentionSuggestion, CommandSuggestion } from './composerSuggestions';
 import {
-  BookOpen,
   Check,
-  FileIcon,
   Globe2,
   Paperclip,
 } from 'lucide-react';
@@ -41,24 +39,12 @@ import type { AgentPersona } from '../../types';
 const CHAT_INPUT_MIN_HEIGHT = 52;
 const CHAT_INPUT_MAX_HEIGHT = 184;
 
-type CommandSuggestion = {
-  id: string;
-  command: string;
-  description: string;
-};
-
 type CommandTag = {
   id: string;
   label: string;
 };
 
-export type ChatMentionSuggestion = {
-  id: string;
-  kind: 'file' | 'knowledge' | 'knowledgeBase';
-  name: string;
-  mention: string;
-  detail?: string;
-};
+export type { ChatMentionSuggestion, CommandSuggestion } from './composerSuggestions';
 
 export default function ChatInputArea({
   chatMessage,
@@ -299,38 +285,19 @@ export default function ChatInputArea({
         />
 
         {isMentionOpen ? (
-          <Card padding={1} className="lumo-composer-suggestions" role="listbox" aria-label="Files and knowledge">
-            {mentionSuggestions.length ? mentionSuggestions.map((suggestion, index) => (
-              <Item
-                key={suggestion.id}
-                density="compact"
-                label={suggestion.name}
-                description={suggestion.detail}
-                startContent={<Icon icon={suggestion.kind === 'file' ? FileIcon : BookOpen} size="sm" />}
-                isHighlighted={index === mentionSelectedIndex}
-                onClick={() => onSelectMention(suggestion)}
-              />
-            )) : (
-              <div className="lumo-composer-empty-suggestion">No matching files or knowledge bases</div>
-            )}
-          </Card>
+          <MentionSuggestionList
+            suggestions={mentionSuggestions}
+            selectedIndex={mentionSelectedIndex}
+            onSelect={onSelectMention}
+          />
         ) : null}
 
         {isCommandOpen ? (
-          <Card padding={1} className="lumo-composer-suggestions lumo-composer-command-suggestions" role="listbox" aria-label="Commands">
-            {commandSuggestions.length ? commandSuggestions.map((command, index) => (
-              <Item
-                key={command.id}
-                density="compact"
-                label={command.command}
-                description={command.description}
-                isHighlighted={index === commandSelectedIndex}
-                onClick={() => onSelectCommand(command)}
-              />
-            )) : (
-              <div className="lumo-composer-empty-suggestion">No matching commands, skills, or connections</div>
-            )}
-          </Card>
+          <CommandSuggestionList
+            suggestions={commandSuggestions}
+            selectedIndex={commandSelectedIndex}
+            onSelect={onSelectCommand}
+          />
         ) : null}
       </div>
     </div>
