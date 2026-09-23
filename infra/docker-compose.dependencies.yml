@@ -13,7 +13,9 @@ services:
       - ../.postgres-data:/var/lib/postgresql/data
 
   minio:
-    image: minio/minio:latest
+    # MinIO's Docker Hub repository is no longer publicly pullable ("pull access denied"),
+    # so default to their own registry. Override to pin a digest if needed.
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
     container_name: helpudoc-minio
     restart: unless-stopped
     environment:
@@ -26,7 +28,7 @@ services:
       - "9000:9000"
       - "9001:9001"
   minio-setup:
-    image: minio/mc:latest
+    image: ${MINIO_MC_IMAGE:-quay.io/minio/mc:latest}
     depends_on:
       - minio
     environment:
