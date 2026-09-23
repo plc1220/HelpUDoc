@@ -1856,6 +1856,7 @@ def register_chat_routes(
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
         context["google_search_count"] = 0
+        context["google_search_attempts"] = 0
         context["google_search_upstream_attempt_count"] = 0
         context["google_search_consecutive_failures"] = 0
         context["google_search_success_count"] = 0

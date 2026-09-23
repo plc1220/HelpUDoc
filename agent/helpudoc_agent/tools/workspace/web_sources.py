@@ -13,7 +13,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ...state import WorkspaceState
 from ...utils import SourceTracker, extract_web_url, resolve_vertex_redirects
-from .policy import apply_search_policy_guard
+from .policy import apply_search_policy_guard, record_search_success
 from .schemas import StructuredWebAnswer
 from .timeouts import (
     DEFAULT_SEARCH_MAX_ATTEMPTS,
@@ -42,13 +42,61 @@ _TRANSIENT_SEARCH_MARKERS = (
 )
 
 
+# A wrong model name, region or IAM binding fails every call identically and no
+# amount of retrying helps. These used to fall through to the generic SEARCH_FAILED
+# envelope, so an operator error reached the user as "live web research is
+# unavailable" and was logged at no level at all.
+_CONFIG_FAULT_MARKERS = (
+    "404",
+    "not_found",
+    "was not found",
+    "403",
+    "permission_denied",
+    "permission denied",
+    "unauthorized",
+    "unauthenticated",
+)
+
+
 def _is_transient_search_error(error_text: str) -> bool:
     normalized = str(error_text or "").strip().lower()
+    if _is_config_fault(normalized):
+        return False
     return any(marker in normalized for marker in _TRANSIENT_SEARCH_MARKERS)
+
+
+def _is_config_fault(error_text: str) -> bool:
+    normalized = str(error_text or "").strip().lower()
+    return any(marker in normalized for marker in _CONFIG_FAULT_MARKERS)
+
+
+def _response_diagnostics(response: Any) -> dict:
+    """Why a grounded search came back empty.
+
+    None of this was recorded before, so a zero-source result was indistinguishable
+    from the model simply choosing not to ground. `finish_reason` separates the two:
+    MAX_TOKENS means the output budget was spent (thinking tokens count against it)
+    before grounding metadata was attached.
+    """
+    metadata = getattr(response, "response_metadata", None) or {}
+    usage = getattr(response, "usage_metadata", None) or {}
+    grounding = metadata.get("grounding_metadata") or {} if isinstance(metadata, dict) else {}
+    chunk_count = 0
+    if isinstance(grounding, dict):
+        chunks = grounding.get("groundingChunks") or grounding.get("grounding_chunks") or []
+        chunk_count = len(chunks) if isinstance(chunks, list) else 0
+    return {
+        "finish_reason": metadata.get("finish_reason") if isinstance(metadata, dict) else None,
+        "output_tokens": usage.get("output_tokens") if isinstance(usage, dict) else None,
+        "input_tokens": usage.get("input_tokens") if isinstance(usage, dict) else None,
+        "grounding_chunks": chunk_count,
+    }
 
 
 def _search_error_code(error_text: str) -> str:
     normalized = str(error_text or "").strip().lower()
+    if _is_config_fault(normalized):
+        return "SEARCH_CONFIG_ERROR"
     if "timeout" in normalized or "deadline" in normalized:
         return "SEARCH_TIMEOUT"
     if "no grounded sources" in normalized:
@@ -326,7 +374,20 @@ def build_google_search_tool(
                         int(workspace_state.context.get("google_search_source_count", 0) or 0) + len(sources)
                     )
                     workspace_state.context.pop("google_search_terminal_error", None)
+                    # Charge the run budget here, not in the policy guard. Only a call
+                    # that produced evidence should cost the run one of its searches.
+                    record_search_success(workspace_state, tool_name)
                     break
+                diagnostics = _response_diagnostics(response)
+                logger.warning(
+                    "%s attempt=%s returned no grounded sources (finish_reason=%s "
+                    "output_tokens=%s grounding_chunks=%s)",
+                    search_label,
+                    attempt,
+                    diagnostics["finish_reason"],
+                    diagnostics["output_tokens"],
+                    diagnostics["grounding_chunks"],
+                )
                 response = None
                 error = "no grounded sources returned"
 
@@ -337,6 +398,21 @@ def build_google_search_tool(
             terminal = not transient or failures >= DEFAULT_SEARCH_MAX_CONSECUTIVE_FAILURES
             if terminal:
                 workspace_state.context["google_search_terminal_error"] = True
+                if _is_config_fault(error_text):
+                    # Operator-actionable: a bad model name, region or IAM binding
+                    # fails every call. Do not let it read as a transient outage.
+                    logger.error(
+                        "%s disabled for this run by a configuration fault: %s",
+                        search_label,
+                        error_text[:300],
+                    )
+                else:
+                    logger.warning(
+                        "%s circuit opened after %s consecutive failure(s): %s",
+                        search_label,
+                        failures,
+                        error_text[:300],
+                    )
                 break
             if attempt < DEFAULT_SEARCH_MAX_ATTEMPTS:
                 delay = search_retry_delay(attempt)
@@ -414,6 +490,11 @@ def build_url_context_tool(
         )
         if error or response is None:
             return f"URL context failed ({error or 'unknown error'})."
+
+        # The guard no longer charges on attempt, so record the fetch here. Without
+        # this `url_context` stops consuming the pre-plan allowance and a run can
+        # gather unlimited evidence before the plan gate.
+        record_search_success(workspace_state, tool_name)
 
         summary, sources = parse_structured_web_answer(response)
         if sources:

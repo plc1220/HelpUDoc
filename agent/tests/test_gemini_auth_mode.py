@@ -138,7 +138,14 @@ def test_ambient_api_key_env_does_not_disable_vertex(monkeypatch) -> None:
     assert "api_key" not in chat_kwargs
 
 
-def test_web_tool_chat_model_uses_lite_model_and_bounded_output() -> None:
+def test_web_tool_chat_model_uses_lite_model_and_configured_output() -> None:
+    """The web tool gets the whole configured lite output budget.
+
+    It was capped to 1024 on the reasoning that source metadata, not prose, is the
+    payload. Gemini 3.x counts thinking tokens against max_output_tokens, so a
+    thinking-heavy search spent the cap and returned with no grounding metadata --
+    which the search tool reads as a transient "no grounded sources" failure.
+    """
     config = ModelConfig(
         name="gemini-main",
         lite_name="gemini-web-lite",
@@ -158,4 +165,4 @@ def test_web_tool_chat_model_uses_lite_model_and_bounded_output() -> None:
     args, kwargs = create_chat.call_args
     assert args[1] == "gemini-web-lite"
     assert kwargs["thinking_level"] == "low"
-    assert kwargs["max_output_tokens"] == 1024
+    assert kwargs["max_output_tokens"] == 4096

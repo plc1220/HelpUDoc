@@ -84,15 +84,21 @@ class GeminiClientManager:
             # Web tools only need to formulate grounded searches and return a
             # compact evidence summary. Keep the main agent on its configured
             # model, but use the lower-latency Lite variant for this dedicated
-            # client. Cap output because source metadata, not verbosity, is the
-            # useful payload for downstream orchestration.
+            # client.
+            #
+            # Do not re-cap this to 1024. Gemini 3.x counts thinking tokens against
+            # max_output_tokens, and `lite_thinking_level` is not off, so a
+            # thinking-heavy search exhausted the budget and returned with no
+            # grounding metadata at all. That reads as "no grounded sources", which
+            # the tool treats as a transient failure -- the measured cause of ~9% of
+            # searches failing. The configured lite budget already bounds this.
             web_model_name = self._model_cfg.resolve_chat_model_name("lite")
-            configured_output_tokens = self._model_cfg.resolve_max_output_tokens("lite") or 1024
+            configured_output_tokens = self._model_cfg.resolve_max_output_tokens("lite") or 4096
             self._web_tool_chat_model = create_chat_google_generative_ai(
                 self._model_cfg,
                 web_model_name,
                 thinking_level=self._model_cfg.resolve_thinking_level("lite"),
-                max_output_tokens=min(configured_output_tokens, 1024),
+                max_output_tokens=configured_output_tokens,
                 timeout=float(DEFAULT_SEARCH_HTTP_TIMEOUT),
             )
         return self._web_tool_chat_model

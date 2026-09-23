@@ -60,19 +60,26 @@ DEFAULT_SEARCH_TIMEOUT = max(
     ),
     DEFAULT_SEARCH_HTTP_TIMEOUT + 5,
 )
+# At the previous default of 1 the retry loop below never ran a second pass, so
+# `search_retry_delay` was dead code and every recorded production search logged
+# `attempt=1`. A transient failure was handed straight back to the model as
+# `retryable: true`, and the model's own retry spent the run's search budget and
+# showed the user a visible stall. Retrying inside the tool costs neither.
 DEFAULT_SEARCH_MAX_ATTEMPTS = min(
     3,
     clamp_min(
         "GOOGLE_SEARCH_MAX_ATTEMPTS",
-        env_int("GOOGLE_SEARCH_MAX_ATTEMPTS", 1),
+        env_int("GOOGLE_SEARCH_MAX_ATTEMPTS", 2),
         1,
     ),
 )
+# Measured: about 9% of upstream searches come back 200 OK with no grounding
+# metadata. At 2, two independent hits latched the circuit for the whole run.
 DEFAULT_SEARCH_MAX_CONSECUTIVE_FAILURES = min(
     3,
     clamp_min(
         "GOOGLE_SEARCH_MAX_CONSECUTIVE_FAILURES",
-        env_int("GOOGLE_SEARCH_MAX_CONSECUTIVE_FAILURES", 2),
+        env_int("GOOGLE_SEARCH_MAX_CONSECUTIVE_FAILURES", 3),
         1,
     ),
 )

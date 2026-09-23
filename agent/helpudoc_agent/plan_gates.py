@@ -102,6 +102,13 @@ def prepare_plan_context_for_explicit_resume(
     context["plan_approved"] = False
     context["host_plan_approved"] = False
     context["last_plan_decision"] = ""
+    # Reopen the search circuit across the approval gate. Failures while gathering
+    # preliminary evidence latched `google_search_terminal_error` for the rest of the
+    # run, so the evidence gathering the user had just approved could not run at all.
+    # Only a successful search cleared the latch, and the policy guard blocked the
+    # call before it could happen.
+    context.pop("google_search_terminal_error", None)
+    context["google_search_consecutive_failures"] = 0
 
 
 def is_plan_approved(workspace_state: WorkspaceState) -> bool:
