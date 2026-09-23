@@ -192,6 +192,68 @@ def _research_source_contract_error(
     )
 
 
+# How long to keep waiting on an agent task after the response stream closed.
+# Only reached when the task is deliberately left running (see below); long
+# enough for a LangGraph checkpoint commit, short enough that a wedged task
+# cannot pin the generator frame and its workspace runtime indefinitely.
+_AGENT_TASK_SETTLE_TIMEOUT_S = 30.0
+
+
+async def _settle_agent_task(
+    task: "asyncio.Task[None]",
+    *,
+    stream_completed: bool,
+    saw_interrupt: bool,
+    label: str,
+) -> None:
+    """Stop the agent run once nothing is left to read it.
+
+    The only consumer of this task is the HTTP response body. When the client
+    goes away -- the user pressed Stop, `cancelAgentRun` aborted the request, or
+    the backend destroyed the socket -- Starlette cancels the generator and this
+    runs. Cancelling the task here is what makes that stick: without it the run
+    keeps calling Gemini, running tools and writing workspace files for a run the
+    backend has already marked `cancelled` and whose workspace mutation lease it
+    has already released, so those writes can land while the *next* run owns the
+    workspace.
+
+    An emitted interrupt is the one abnormal exit that must not cancel. The
+    backend closes the stream as soon as it parses the interrupt line, and
+    LangGraph may still be committing the checkpoint that makes the approval
+    resumable; cancelling there turns a pending approval into a dead run. Let it
+    finish, but stop waiting after `_AGENT_TASK_SETTLE_TIMEOUT_S`.
+    """
+    if not task.done() and not stream_completed and not saw_interrupt:
+        logger.warning(
+            "Cancelling agent run: response stream closed before completion (%s)",
+            label,
+        )
+        task.cancel()
+    try:
+        # Shielded: a timeout must stop us waiting without cancelling a task we
+        # deliberately left running to commit its checkpoint.
+        await asyncio.wait_for(
+            asyncio.shield(task),
+            timeout=_AGENT_TASK_SETTLE_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "Agent run did not settle within %.0fs of the stream closing (%s)",
+            _AGENT_TASK_SETTLE_TIMEOUT_S,
+            label,
+        )
+    except asyncio.CancelledError:
+        # Either the cancel we just requested, or the outer response task being
+        # torn down. Both are expected; the original exception keeps propagating
+        # once this `finally` returns.
+        pass
+    except Exception:
+        # The runner already reports its own failures on the stream. Anything
+        # still escaping here is teardown noise and must not mask the reason the
+        # stream closed.
+        logger.debug("Agent run raised while settling (%s)", label, exc_info=True)
+
+
 async def _emit_progress(
     handler,
     phase: str,
@@ -843,7 +905,6 @@ def register_chat_routes(
             self._native_dashboard_builder_calls = 0
             self._native_dashboard_builder_run_keys: Set[str] = set()
             self._v3_text_blocks: Dict[Tuple[str, str], str] = {}
-            self._cancel_run: Optional[Callable[[], None]] = None
             self._suppress_interrupt_tool_start = suppress_interrupt_tool_start
             self._should_suppress_assistant_text = should_suppress_assistant_text
 
@@ -890,9 +951,6 @@ def register_chat_routes(
                 if normalized_key:
                     self._native_dashboard_builder_run_keys.add(normalized_key)
                 self._native_dashboard_builder_calls += 1
-
-        def attach_cancel(self, cancel_cb: Callable[[], None]) -> None:
-            self._cancel_run = cancel_cb
 
         async def _emit(self, payload: Dict[str, Any]) -> None:
             if payload.get("type") in {"token", "chunk"}:
@@ -2669,7 +2727,9 @@ def register_chat_routes(
                 await handler.queue.put(sentinel)
 
         task = asyncio.create_task(_agent_runner())
-        handler.attach_cancel(task.cancel)
+        # Set only after the terminal `done` event has been yielded. Any other
+        # exit from this block means the reader went away mid-run.
+        stream_completed = False
         try:
             while True:
                 try:
@@ -2779,8 +2839,17 @@ def register_chat_routes(
                         "timestamp": datetime.utcnow().isoformat() + "Z",
                     })
                     yield _json_line({"type": "done", "status": "completed"})
+            stream_completed = True
         finally:
-            await task
+            await _settle_agent_task(
+                task,
+                stream_completed=stream_completed,
+                saw_interrupt=saw_interrupt,
+                label=(
+                    f"agent={runtime.agent_name} "
+                    f"workspace={runtime.workspace_state.workspace_id}"
+                ),
+            )
 
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat", response_model=ChatResponse)
     async def chat(agent_name: str, workspace_id: str, chat_request: ChatRequest, request: Request):
