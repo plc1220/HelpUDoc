@@ -2706,7 +2706,6 @@ def register_chat_routes(
                 ):
                     stream_error_message = handler.fatal_tool_failure_message
                     task.cancel()
-            source_tracker.update_final_report(runtime.workspace_state)
             if saw_interrupt:
                 yield _json_line({"type": "done", "status": "interrupted"})
             elif stream_error_message:
@@ -2820,7 +2819,6 @@ def register_chat_routes(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         result = await _invoke_agent(runtime, chat_request)
-        source_tracker.update_final_report(runtime.workspace_state)
         return ChatResponse(reply=result)
 
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream")

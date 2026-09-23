@@ -43,15 +43,11 @@ class SourceTrackerStub:
     instance = None
 
     def __init__(self):
-        self.updated_workspaces = []
         self.reset_workspaces = []
         SourceTrackerStub.instance = self
 
     def reset(self, workspace_state):
         self.reset_workspaces.append(workspace_state)
-
-    def update_final_report(self, workspace_state):
-        self.updated_workspaces.append(workspace_state)
 
 
 class GeminiClientManagerStub:  # pragma: no cover - placeholder for dependency
@@ -801,7 +797,6 @@ def test_chat_stream_emits_tokens_and_done(client_with_stubs):
     assert messages[-1]["type"] == "done"
     assert "".join(m["content"] for m in messages if m["type"] == "token") == "Hello world!"
     assert source_tracker.reset_workspaces == [runtime.workspace_state]
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_restores_nonempty_user_contents_before_model_call(client_with_stubs):
@@ -831,7 +826,6 @@ def test_chat_stream_restores_nonempty_user_contents_before_model_call(client_wi
         item.get("role") == "user" and "Low density / speaker-led" in item.get("content", "")
         for item in model_messages
     )
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_force_reset_uses_fresh_thread_id(client_with_stubs):
@@ -853,7 +847,6 @@ def test_chat_stream_force_reset_uses_fresh_thread_id(client_with_stubs):
     assert thread_id.startswith("test-agent:workspace-reset:")
     assert runtime.workspace_state.context["thread_id"] == thread_id
     assert "force-reset" in kwargs["config"]["tags"]
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_resume_with_run_id_uses_stable_thread_id(client_with_stubs):
@@ -875,7 +868,6 @@ def test_chat_stream_resume_with_run_id_uses_stable_thread_id(client_with_stubs)
     _args, kwargs = agent.stream_inputs[0]
     assert kwargs["config"]["configurable"]["thread_id"].endswith(":run:run-resume-123")
     assert runtime.workspace_state.context["thread_id"].endswith(":run:run-resume-123")
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_resume_reuses_run_thread_after_runtime_recreation(client_with_stubs):
@@ -927,7 +919,6 @@ def test_chat_stream_resume_reuses_run_thread_after_runtime_recreation(client_wi
     assert messages[-1]["type"] == "done"
     assert second_thread_id == first_thread_id
     assert second_runtime.workspace_state.context["thread_id"] == first_thread_id
-    assert source_tracker.updated_workspaces == [first_runtime.workspace_state, second_runtime.workspace_state]
 
 
 def test_chat_stream_run_id_replaces_stale_runtime_thread(client_with_stubs):
@@ -953,7 +944,6 @@ def test_chat_stream_run_id_replaces_stale_runtime_thread(client_with_stubs):
     assert thread_id.endswith(":run:run-new-task")
     assert thread_id != "old-task-thread"
     assert runtime.workspace_state.context["thread_id"] == thread_id
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_returns_error_when_agent_missing(client_with_stubs):
@@ -967,7 +957,6 @@ def test_chat_stream_returns_error_when_agent_missing(client_with_stubs):
         messages = _collect_stream_payloads(response)
 
     assert messages == [{"type": "error", "message": "Agent not initialized"}]
-    assert source_tracker.updated_workspaces == []
 
 
 def test_chat_stream_preserves_python_stream_error_on_done(client_with_stubs):
@@ -1043,7 +1032,6 @@ def test_chat_uses_async_invoke_for_async_only_agents(client_with_stubs):
 
     assert response.status_code == 200
     assert response.json()["reply"] == {"messages": [{"role": "assistant", "content": "ok"}]}
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_format_exception_flattens_exception_groups(client_with_stubs):
@@ -1155,7 +1143,6 @@ def test_skill_directive_survives_tagged_file_guidance(client_with_stubs, tmp_pa
     assert "Loaded skill: frontend-slides" in user_text
     assert "Use request_clarification before generating slides." in user_text
     assert "Tagged file guidance:" in user_text
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_trace_skill_context_loads_skill_for_force_reset_continuation(client_with_stubs, tmp_path):
@@ -1207,7 +1194,6 @@ def test_trace_skill_context_loads_skill_for_force_reset_continuation(client_wit
     assert "Purpose: Pitch deck" in user_text
     assert runtime.workspace_state.context["active_skill"] == "frontend-slides"
     assert runtime.workspace_state.context["interaction_gate_ledger"][0]["gate_id"] == "presentation_context"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_reads_v3_message_chunks(client_with_stubs):
@@ -1226,7 +1212,6 @@ def test_chat_stream_reads_v3_message_chunks(client_with_stubs):
     token_text = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
     assert token_text == "Hello"
     assert messages[-1]["type"] == "done"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_emits_one_markdown_document_for_v3_content_block_lifecycle(client_with_stubs):
@@ -1260,7 +1245,6 @@ def test_chat_stream_emits_one_markdown_document_for_v3_content_block_lifecycle(
     assert token_text == expected
     assert token_text.count("## Monthly Sales") == 1
     assert messages[-1]["type"] == "done"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_suppresses_v3_human_message_tuple_events(client_with_stubs):
@@ -1281,7 +1265,6 @@ def test_chat_stream_suppresses_v3_human_message_tuple_events(client_with_stubs)
     assert "HumanMessage" not in token_text
     assert "answersByQuestionId" not in token_text
     assert messages[-1]["type"] == "done"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_reads_v3_interrupt_chunks(client_with_stubs):
@@ -1302,7 +1285,6 @@ def test_chat_stream_reads_v3_interrupt_chunks(client_with_stubs):
     assert interrupt["title"] == "Need detail"
     assert interrupt["interruptId"] == "interrupt-123"
     assert messages[-1]["type"] == "done"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_reads_v3_content_block_tool_call_interrupt(client_with_stubs):
@@ -1326,7 +1308,6 @@ def test_chat_stream_reads_v3_content_block_tool_call_interrupt(client_with_stub
     assert interrupt["displayPayload"]["skill"] == "frontend-slides"
     assert token_text == ""
     assert messages[-1]["type"] == "done"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_defers_tool_error_interrupt_until_event_stream_drains(client_with_stubs):
@@ -1347,7 +1328,6 @@ def test_chat_stream_defers_tool_error_interrupt_until_event_stream_drains(clien
     assert interrupts[0]["kind"] == "approval"
     assert interrupts[0]["interruptId"] == "approval-interrupt-123"
     assert messages[-1] == {"type": "done", "status": "interrupted"}
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_resume_consumes_matching_top_level_interrupt(client_with_stubs):
@@ -1376,7 +1356,6 @@ def test_chat_stream_resume_consumes_matching_top_level_interrupt(client_with_st
         "approval-interrupt-123": {"decisions": [{"type": "approve"}]}
     }
     assert messages[-1] == {"type": "done", "status": "completed"}
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_resume_fails_closed_when_interrupt_is_missing(client_with_stubs):
@@ -1401,7 +1380,6 @@ def test_chat_stream_resume_fails_closed_when_interrupt_is_missing(client_with_s
     assert "could not be matched to a pending approval checkpoint" in contract_error["message"]
     assert agent.stream_inputs == []
     assert messages[-1] == {"type": "done", "status": "failed"}
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_chat_stream_maps_v3_tool_and_custom_events(client_with_stubs):
@@ -1427,7 +1405,6 @@ def test_chat_stream_maps_v3_tool_and_custom_events(client_with_stubs):
     assert dashboard["dashboardArtifact"]["dashboardPath"] == "reports/dashboard.html"
     assert "".join(item.get("content", "") for item in messages if item.get("type") == "token") == "Done"
     assert messages[-1]["type"] == "done"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_extract_directive_from_text_supports_use_mcp_prefix(client_with_stubs):
