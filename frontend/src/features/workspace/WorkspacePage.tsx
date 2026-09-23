@@ -9762,6 +9762,10 @@ export default function WorkspacePage() {
             />
 
             <AgentChatPane
+              composerFiles={visibleFiles}
+              composerKnowledgeBases={knowledgeBaseCatalog}
+              composerSkills={availableSkills}
+              composerPlugins={availablePlugins}
               colorMode={colorMode}
               agentPaneStyles={agentPaneStyles}
               isAgentPaneVisible={isAgentPaneVisible}

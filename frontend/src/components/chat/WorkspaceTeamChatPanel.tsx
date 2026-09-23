@@ -2,6 +2,17 @@ import { Button } from '@astryxdesign/core/Button';
 import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
 import { ChatToolCalls } from '@astryxdesign/core/Chat';
 import { TextArea } from '@astryxdesign/core/TextArea';
+import { CommandSuggestionList, MentionSuggestionList } from './ComposerSuggestionList';
+import {
+  buildCommandSuggestions,
+  buildMentionSuggestions,
+  type ChatMentionSuggestion,
+  type CommandSuggestion,
+  type SuggestionFile,
+  type SuggestionKnowledgeBase,
+  type SuggestionPlugin,
+  type SuggestionSkill,
+} from './composerSuggestions';
 import {
   AtSign,
   Bot,
@@ -102,12 +113,26 @@ export default function WorkspaceTeamChatPanel({
   colorMode,
   markdownComponents,
   onOpenPrivateWorkingCopy,
+  files = [],
+  knowledgeBases = [],
+  skills = [],
+  plugins = [],
 }: {
   workspace: Workspace;
   filePath?: string;
   colorMode: 'light' | 'dark';
   markdownComponents: Components;
   onOpenPrivateWorkingCopy?: () => Promise<void>;
+  /**
+   * The same catalogues the private composer offers, so `/` and `@` list the
+   * same rows here. Connections are deliberately absent: the shared channel
+   * denies every configured MCP server, so offering one would bind a run to
+   * tools it cannot reach.
+   */
+  files?: SuggestionFile[];
+  knowledgeBases?: SuggestionKnowledgeBase[];
+  skills?: SuggestionSkill[];
+  plugins?: SuggestionPlugin[];
 }) {
   const isDarkMode = colorMode === 'dark';
   const [messages, setMessages] = useState<WorkspaceTeamMessage[]>([]);
@@ -184,23 +209,63 @@ export default function WorkspaceTeamChatPanel({
     return match ? match[1].trim().toLowerCase() : null;
   }, [draft]);
 
-  const mentionSuggestions = useMemo(() => {
+  // People, files and knowledge bases in one `@` list, rendered by the same
+  // component the private composer uses so both menus read identically.
+  const mentionSuggestions = useMemo<ChatMentionSuggestion[]>(() => {
     if (mentionQuery === null) return [];
-    const options = [
+    const people: ChatMentionSuggestion[] = [
       { id: 'lumo', displayName: 'ARIA', role: canLumoWrite ? 'AI · can edit shared' : 'AI · read-only' },
       ...collaborators.map((collaborator) => ({
         id: collaborator.userId,
         displayName: collaborator.displayName,
         role: collaborator.role,
       })),
-    ];
-    return options
+    ]
       .filter((option) => option.displayName.toLowerCase().includes(mentionQuery))
-      .slice(0, 8);
-  }, [canLumoWrite, collaborators, mentionQuery]);
+      .map((option) => ({
+        id: `person:${option.id}`,
+        kind: 'person' as const,
+        name: option.displayName,
+        mention: `@${option.displayName}`,
+        detail: option.role,
+      }));
+    return [
+      ...people,
+      ...buildMentionSuggestions({ query: mentionQuery, files, knowledgeBases }),
+    ];
+  }, [canLumoWrite, collaborators, files, knowledgeBases, mentionQuery]);
 
-  const selectMention = (displayName: string) => {
-    setDraft((value) => value.replace(/@[^@\n]*$/, `@${displayName} `));
+  // Matches the private composer's trigger exactly, so the same keystrokes open
+  // the same menu in both places.
+  const commandQuery = useMemo(() => {
+    const match = draft.match(/(^|[\s([{])\/([^\n/]*)$/);
+    return match ? match[2] : null;
+  }, [draft]);
+
+  const commandSuggestions = useMemo<CommandSuggestion[]>(() => {
+    if (commandQuery === null) return [];
+    // No `mcpServers`: the shared channel denies every configured server.
+    return buildCommandSuggestions({
+      query: commandQuery,
+      skills,
+      plugins,
+      mcpServers: [],
+    });
+  }, [commandQuery, plugins, skills]);
+
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
+
+  useEffect(() => { setMentionSelectedIndex(0); }, [mentionQuery]);
+  useEffect(() => { setCommandSelectedIndex(0); }, [commandQuery]);
+
+  const selectMention = (suggestion: ChatMentionSuggestion) => {
+    setDraft((value) => value.replace(/@[^@\n]*$/, `${suggestion.mention} `));
+  };
+
+  const selectCommand = (suggestion: CommandSuggestion) => {
+    const inserted = suggestion.insertCommand || suggestion.command;
+    setDraft((value) => value.replace(/\/[^\n/]*$/, `${inserted} `));
   };
 
   const invokeLumo = async (sourceMessageId: string) => {
@@ -547,35 +612,61 @@ export default function WorkspaceTeamChatPanel({
             startIcon={<AtSign size={16} />}
             onChange={(value) => setDraft(value)}
             onKeyDown={(event) => {
+              // A menu owns the arrows and Enter while it is open, exactly as in
+              // the private composer, so the same keystroke completes rather than
+              // sends.
+              const navigate = (
+                count: number,
+                setIndex: (update: (prev: number) => number) => void,
+              ) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  setIndex((prev) => (prev + 1) % count);
+                  return true;
+                }
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  setIndex((prev) => (prev - 1 + count) % count);
+                  return true;
+                }
+                return false;
+              };
+              if (commandQuery !== null && commandSuggestions.length) {
+                if (navigate(commandSuggestions.length, setCommandSelectedIndex)) return;
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  selectCommand(commandSuggestions[commandSelectedIndex]);
+                  return;
+                }
+              } else if (mentionQuery !== null && mentionSuggestions.length) {
+                if (navigate(mentionSuggestions.length, setMentionSelectedIndex)) return;
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  selectMention(mentionSuggestions[mentionSelectedIndex]);
+                  return;
+                }
+              }
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 void handleSend();
               }
             }}
           />
-          {mentionSuggestions.length ? (
-            <div className={`absolute bottom-full left-0 z-20 mb-2 w-full overflow-hidden rounded-xl border shadow-xl ${
-              isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'
-            }`}>
-              {mentionSuggestions.map((suggestion) => (
-                <button
-                  key={suggestion.id}
-                  type="button"
-                  className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm ${
-                    isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'
-                  }`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => selectMention(suggestion.displayName)}
-                >
-                  <span className={isDarkMode ? 'text-slate-100' : 'text-slate-800'}>
-                    @{suggestion.displayName}
-                  </span>
-                  <span className={isDarkMode ? 'text-slate-500' : 'text-slate-400'}>
-                    {suggestion.role}
-                  </span>
-                </button>
-              ))}
-            </div>
+          {mentionQuery !== null ? (
+            <MentionSuggestionList
+              suggestions={mentionSuggestions}
+              selectedIndex={mentionSelectedIndex}
+              onSelect={selectMention}
+              emptyLabel="No matching people, files or knowledge bases"
+            />
+          ) : null}
+          {commandQuery !== null ? (
+            <CommandSuggestionList
+              suggestions={commandSuggestions}
+              selectedIndex={commandSelectedIndex}
+              onSelect={selectCommand}
+              emptyLabel="No matching commands or skills"
+            />
           ) : null}
         </div>
         <div className="mt-2 flex items-center justify-between gap-3">

@@ -32,6 +32,12 @@ import PublishedWorkspaceChatHeader, {
   type SharedChatMode,
 } from './PublishedWorkspaceChatHeader';
 import WorkspaceTeamChatPanel from './WorkspaceTeamChatPanel';
+import type {
+  SuggestionFile,
+  SuggestionKnowledgeBase,
+  SuggestionPlugin,
+  SuggestionSkill,
+} from './composerSuggestions';
 import { ArrowRight } from 'lucide-react';
 
 type CommandSuggestion = {
@@ -86,6 +92,10 @@ export default function AgentChatPane({
   chatAttachments,
   commandTags,
   isMentionOpen,
+  composerFiles,
+  composerKnowledgeBases,
+  composerSkills,
+  composerPlugins,
   mentionSuggestions,
   mentionSelectedIndex,
   isCommandOpen,
@@ -171,6 +181,11 @@ export default function AgentChatPane({
   chatAttachments: ChatComposerAttachment[];
   commandTags: CommandTag[];
   isMentionOpen: boolean;
+  /** Catalogues the shared composer needs for its own `/` and `@` menus. */
+  composerFiles?: SuggestionFile[];
+  composerKnowledgeBases?: SuggestionKnowledgeBase[];
+  composerSkills?: SuggestionSkill[];
+  composerPlugins?: SuggestionPlugin[];
   mentionSuggestions: ChatMentionSuggestion[];
   mentionSelectedIndex: number;
   isCommandOpen: boolean;
@@ -320,6 +335,10 @@ export default function AgentChatPane({
             colorMode={colorMode}
             markdownComponents={markdownComponents}
             onOpenPrivateWorkingCopy={onOpenPrivateWorkingCopy}
+            files={composerFiles}
+            knowledgeBases={composerKnowledgeBases}
+            skills={composerSkills}
+            plugins={composerPlugins}
           />
         ) : (
           <>
