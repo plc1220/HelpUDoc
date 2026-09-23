@@ -30,7 +30,13 @@ const fileName = (filePath?: string | null): string => {
 };
 
 /** `file.status.approved` -> `Status approved`; the last segment carries the verb. */
-const humanizeAction = (action: string): string => {
+/**
+ * Turns `workspace.proposal_applied` into `Proposal applied`.
+ *
+ * Exported so the activity filter list labels an action the same way the feed
+ * rows do. Two spellings of the same event would read as two different things.
+ */
+export const humanizeAction = (action: string): string => {
   const segments = String(action || '').split('.').filter(Boolean);
   if (!segments.length) return 'Activity';
   const words = segments

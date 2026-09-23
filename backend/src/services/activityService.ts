@@ -1,6 +1,6 @@
 import type { Knex } from 'knex';
 import { isPlatformAdmin, leadTeamIds } from './governance/teamRoles';
-import { describeActivityEvent } from '../lib/activityLabels';
+import { describeActivityEvent, humanizeAction } from '../lib/activityLabels';
 
 export const ACTIVITY_PAGE_SIZE = 20;
 /** The feed reaches back one month. Older events stay in the audit trail. */
@@ -86,6 +86,53 @@ const toIso = (value: Date | string): string => (
   value instanceof Date ? value.toISOString() : new Date(value).toISOString()
 );
 
+/**
+ * Narrowing applied on top of the caller's scope, never instead of it.
+ *
+ * Every filter is an extra predicate inside the already-scoped branch queries.
+ * A lead filtering by actor therefore sees that person's actions *in their
+ * team's workspaces only* — the scope decides what is visible and a filter can
+ * only subtract from it. Widening is not expressible here by construction.
+ */
+export type ActivityFilters = {
+  actorId?: string;
+  workspaceId?: string;
+  action?: string;
+};
+
+export type FilteredWorkspaceScope = {
+  /** Workspace ids the audit branches may query. Empty means: run no branch. */
+  workspaceIds: string[];
+  /** Team events belong to no workspace, so a workspace filter excludes them. */
+  includeTeamBranch: boolean;
+};
+
+/**
+ * Intersect a workspace filter with the scope the gate already resolved.
+ *
+ * The security property of this whole feature lives here: a filter subtracts
+ * and can never add. Naming a workspace outside scope yields an empty list —
+ * which the caller must treat as "run no branch", not as "no predicate" — so
+ * the request returns nothing rather than reaching past the scope.
+ */
+export function resolveFilteredWorkspaceScope(
+  scope: ActivityScope,
+  workspaceFilter: string | null,
+): FilteredWorkspaceScope {
+  const filter = String(workspaceFilter || '').trim() || null;
+  if (scope.kind === 'platform') {
+    return {
+      workspaceIds: filter ? [filter] : [],
+      includeTeamBranch: !filter,
+    };
+  }
+  const inScope = scope.workspaceIds.map(String);
+  return {
+    workspaceIds: filter ? inScope.filter((id) => id === filter) : inScope,
+    includeTeamBranch: !filter,
+  };
+}
+
 export type ActivityPageRequest = {
   /** 1-based. */
   page?: number;
@@ -163,6 +210,7 @@ export async function listRecentActivity(
   db: Knex,
   scope: ActivityScope,
   request: ActivityPageRequest = {},
+  filters: ActivityFilters = {},
 ): Promise<ActivityPage> {
   const pageSize = ACTIVITY_PAGE_SIZE;
   const { page, offset, anchor, since, fetchDepth } = resolveActivityWindow(request);
@@ -185,6 +233,12 @@ export async function listRecentActivity(
   const workspaceIdsAsText = workspaceIds.map((id) => String(id));
   const teamIdsAsText = teamIds.map((id) => String(id));
 
+  // Normalized once. An empty string from a query param must read as "no
+  // filter", not as a filter matching nothing.
+  const actorId = String(filters.actorId || '').trim() || null;
+  const workspaceFilter = String(filters.workspaceId || '').trim() || null;
+  const actionFilter = String(filters.action || '').trim() || null;
+
   const auditBase = () => db('audit_events as a')
     .leftJoin('users as u', 'a.actorUserId', 'u.id')
     .select(
@@ -198,29 +252,53 @@ export async function listRecentActivity(
     )
     .where('a.createdAt', '<=', anchor)
     .andWhere('a.createdAt', '>=', since)
+    // Applied in the base rather than per branch: a branch that forgot one
+    // would quietly return unfiltered rows into the merge.
+    .modify((query) => {
+      if (actorId) query.andWhere('a.actorUserId', actorId);
+      if (actionFilter) query.andWhere('a.action', actionFilter);
+    })
     .orderBy('a.createdAt', 'desc')
     .limit(fetchDepth);
 
   const queries: Array<Promise<RawRow[]>> = [];
 
-  if (isPlatform) {
+  const { workspaceIds: auditWorkspaceIds, includeTeamBranch } =
+    resolveFilteredWorkspaceScope(scope, workspaceFilter);
+  const scopedWorkspaceIds = auditWorkspaceIds;
+
+  if (isPlatform && !workspaceFilter) {
     queries.push(auditBase() as unknown as Promise<RawRow[]>);
+  } else if (isPlatform) {
+    queries.push(
+      auditBase()
+        .where('a.resourceType', 'workspace')
+        .whereIn('a.resourceId', auditWorkspaceIds) as unknown as Promise<RawRow[]>,
+    );
+    queries.push(
+      auditBase()
+        .where('a.resourceType', 'file')
+        .whereRaw("a.metadata->>'workspaceId' = ANY(?::text[])", [auditWorkspaceIds]) as unknown as Promise<RawRow[]>,
+    );
   } else {
-    if (hasWorkspaceScope) {
+    // An empty list here means the filter named a workspace outside scope. The
+    // branches are skipped rather than run with an empty `whereIn`, which some
+    // builders drop entirely and turn into "every row".
+    if (hasWorkspaceScope && auditWorkspaceIds.length) {
       queries.push(
         auditBase()
           .where('a.resourceType', 'workspace')
-          .whereIn('a.resourceId', workspaceIdsAsText) as unknown as Promise<RawRow[]>,
+          .whereIn('a.resourceId', auditWorkspaceIds) as unknown as Promise<RawRow[]>,
       );
       queries.push(
         auditBase()
           .where('a.resourceType', 'file')
           // `whereIn` cannot take a raw column expression, and the jsonb field has
           // to be compared as text, so this uses ANY over an explicit text array.
-          .whereRaw("a.metadata->>'workspaceId' = ANY(?::text[])", [workspaceIdsAsText]) as unknown as Promise<RawRow[]>,
+          .whereRaw("a.metadata->>'workspaceId' = ANY(?::text[])", [auditWorkspaceIds]) as unknown as Promise<RawRow[]>,
       );
     }
-    if (hasTeamScope) {
+    if (hasTeamScope && includeTeamBranch) {
       queries.push(
         auditBase()
           .where('a.resourceType', 'team')
@@ -246,12 +324,19 @@ export async function listRecentActivity(
     )
     .where('f.occurredAt', '<=', anchor)
     .andWhere('f.occurredAt', '>=', since)
+    .modify((query) => {
+      if (actorId) query.andWhere('f.actorUserId', actorId);
+      if (actionFilter) query.andWhere('f.eventType', actionFilter);
+      if (workspaceFilter) query.andWhere('f.workspaceId', workspaceFilter);
+    })
     .orderBy('f.occurredAt', 'desc')
     .limit(fetchDepth);
 
+  // The workspace predicate is already in `fileAudit`'s modify block, so the
+  // platform branch needs no further narrowing.
   if (isPlatform) {
     queries.push(fileAudit as unknown as Promise<RawRow[]>);
-  } else if (hasWorkspaceScope) {
+  } else if (hasWorkspaceScope && (!workspaceFilter || scopedWorkspaceIds.length)) {
     queries.push(fileAudit.whereIn('f.workspaceId', workspaceIds) as unknown as Promise<RawRow[]>);
   }
 
@@ -295,5 +380,117 @@ export async function listRecentActivity(
     hasMore: merged.length > offset + pageSize,
     anchor: anchor.toISOString(),
     since: since.toISOString(),
+  };
+}
+
+export type ActivityFilterOption = { id: string; label: string };
+
+export type ActivityFilterOptions = {
+  actors: ActivityFilterOption[];
+  workspaces: ActivityFilterOption[];
+  actions: ActivityFilterOption[];
+};
+
+/**
+ * The values a caller may filter by, drawn from what their own scope can
+ * already see.
+ *
+ * Derived from the same scope and time window as the feed rather than from the
+ * full tables. A list built from every user would tell a team lead who else
+ * exists on the platform, which the feed itself is careful never to do — an
+ * option list is a disclosure surface just as much as a row is.
+ *
+ * Reads the whole window, not one page. Offering only the names visible on the
+ * current page would make the filter useless for the question people actually
+ * ask, which is what someone did over the past month.
+ */
+export async function listActivityFilterOptions(
+  db: Knex,
+  scope: ActivityScope,
+): Promise<ActivityFilterOptions> {
+  const { anchor, since } = resolveActivityWindow({});
+  const isPlatform = scope.kind === 'platform';
+  const workspaceIds = scope.kind === 'teams' ? scope.workspaceIds : [];
+  const teamIds = scope.kind === 'teams' ? scope.teamIds : [];
+  const workspaceIdsAsText = workspaceIds.map((id) => String(id));
+
+  if (!isPlatform && !workspaceIds.length && !teamIds.length) {
+    return { actors: [], workspaces: [], actions: [] };
+  }
+
+  const scopedAudit = () => {
+    const query = db('audit_events as a')
+      .where('a.createdAt', '<=', anchor)
+      .andWhere('a.createdAt', '>=', since);
+    if (isPlatform) return query;
+    // Mirrors the feed's branch predicates as one OR group. If this drifts from
+    // `listRecentActivity`, the filter list offers a value that returns nothing.
+    return query.andWhere((grouped) => {
+      if (workspaceIdsAsText.length) {
+        grouped
+          .orWhere((branch) => {
+            branch.where('a.resourceType', 'workspace').whereIn('a.resourceId', workspaceIdsAsText);
+          })
+          .orWhere((branch) => {
+            branch
+              .where('a.resourceType', 'file')
+              .whereRaw("a.metadata->>'workspaceId' = ANY(?::text[])", [workspaceIdsAsText]);
+          });
+      }
+      if (teamIds.length) {
+        grouped.orWhere((branch) => {
+          branch.where('a.resourceType', 'team').whereIn('a.resourceId', teamIds.map(String));
+        });
+      }
+    });
+  };
+
+  const scopedFileAudit = () => {
+    const query = db('file_audit_events as f')
+      .where('f.occurredAt', '<=', anchor)
+      .andWhere('f.occurredAt', '>=', since);
+    return isPlatform ? query : query.whereIn('f.workspaceId', workspaceIds);
+  };
+
+  const [auditActors, fileActors, auditActions, fileActions, workspaceRows] = await Promise.all([
+    scopedAudit()
+      .leftJoin('users as u', 'a.actorUserId', 'u.id')
+      .whereNotNull('a.actorUserId')
+      .distinct('a.actorUserId as id', 'u.displayName as label'),
+    scopedFileAudit()
+      .leftJoin('users as fu', 'fu.id', 'f.actorUserId')
+      .whereNotNull('f.actorUserId')
+      .distinct('f.actorUserId as id', 'fu.displayName as label'),
+    scopedAudit().distinct('a.action as id'),
+    scopedFileAudit().distinct('f.eventType as id'),
+    isPlatform
+      ? db('workspaces').whereIn('visibility', ['team']).select('id', 'name').orderBy('name')
+      : db('workspaces').whereIn('id', workspaceIds).select('id', 'name').orderBy('name'),
+  ]);
+
+  const byId = new Map<string, string>();
+  for (const row of [...auditActors, ...fileActors] as Array<{ id: string; label: string | null }>) {
+    const id = String(row.id);
+    // A person with no display name is still a real filter target; naming them
+    // "Unknown user" beats dropping them from the list.
+    if (!byId.has(id) || (!byId.get(id) && row.label)) {
+      byId.set(id, String(row.label || 'Unknown user'));
+    }
+  }
+
+  const actionIds = new Set<string>();
+  for (const row of [...auditActions, ...fileActions] as Array<{ id: string }>) {
+    if (row.id) actionIds.add(String(row.id));
+  }
+
+  return {
+    actors: [...byId.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((left, right) => left.label.localeCompare(right.label)),
+    workspaces: (workspaceRows as Array<{ id: string; name: string }>)
+      .map((row) => ({ id: String(row.id), label: String(row.name) })),
+    actions: [...actionIds]
+      .sort()
+      .map((id) => ({ id, label: humanizeAction(id) })),
   };
 }
