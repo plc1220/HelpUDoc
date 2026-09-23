@@ -207,6 +207,23 @@ Both examples fail because they are not computed integer counts and contain forb
 
 ## Workflow
 
+### 0. Existing Work in This Workspace
+
+A workspace is shared. Its files may have been written by an earlier run or by
+another person.
+
+Before planning, check whether this skill's artifacts are already present. If they
+are, `request_plan_approval` will refuse until you set `pack_disposition`:
+
+- `continue` -- this request extends the existing report. Read the existing
+  artifacts and build on them.
+- `replace` -- this request is a new topic. The existing files are archived and the
+  run starts clean.
+
+Say which you chose, and why, in `plan_summary_markdown`. The human approves that
+choice together with the plan. Never assume an existing report is about the subject
+you were asked to research; check its actual content first.
+
 ### 1. Record the Question
 
 Write the original user question to `/question.txt`.
@@ -911,7 +928,7 @@ If `/final-research-report.md` is below the selected mode minimum:
 
 1. Do not claim completion.
 2. Do not report an estimated word count.
-3. Expand the final report section by section using only existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix.
+3. Expand the final report section by section using only the dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix produced by this run, or those you explicitly chose to continue at step 0. Never expand a report from workspace files whose subject you have not verified.
 4. Preserve citations and evidence confidence.
 5. Re-run the declared `count_words` script after expansion.
 6. Repeat until the computed word count is within the selected mode range, or explicitly downgrade the mode through plan approval before finalizing.

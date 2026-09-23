@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+import time
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from pathlib import Path
 from uuid import uuid4
@@ -20,6 +21,7 @@ from langchain_core.callbacks.base import AsyncCallbackHandler
 from langgraph.errors import GraphInterrupt, GraphRecursionError
 from langgraph.types import Command
 
+from helpudoc_agent.artifact_pack import CONTINUE, pack_disposition
 from helpudoc_agent.configuration import Settings
 from helpudoc_agent.document_tool_guard import (
     LOOP_BREAK_ERROR_CODE,
@@ -1813,6 +1815,65 @@ def register_chat_routes(
                 missing.append(item)
         return missing
 
+    def _unproduced_required_artifacts(runtime: AgentRuntimeState) -> List[str]:
+        """Required artifacts that exist but predate this run.
+
+        `_missing_required_artifacts` only asks whether a path exists. Every user in
+        a workspace shares one directory and the research skill writes fifteen fixed
+        paths into it, so a run that produced nothing satisfied its contract against
+        an earlier run's files and reported that other report as its own result.
+
+        Only a run that wrote none of its required artifacts is rejected. A later
+        turn that legitimately revises one of them still passes, so this cannot fail
+        a run that the existence check would have passed on its own output.
+        """
+        context = runtime.workspace_state.context or {}
+        policy = context.get("active_skill_policy") or {}
+        if not isinstance(policy, dict) or not bool(policy.get("requires_workspace_artifacts", False)):
+            return []
+        required = [
+            str(item).strip()
+            for item in (policy.get("required_artifacts") or [])
+            if str(item).strip()
+        ]
+        if not required:
+            return []
+        if pack_disposition(context) == CONTINUE:
+            # The human was shown the existing pack and chose to build on it, so
+            # untouched artifacts are expected rather than a sign of contamination.
+            return []
+        try:
+            baseline_ns = int(context.get("_turn_started_at_ns") or 0)
+        except (TypeError, ValueError):
+            baseline_ns = 0
+        if baseline_ns <= 0:
+            return []
+        root = runtime.workspace_state.root_path
+
+        def _is_fresh(path: Path) -> bool:
+            try:
+                return path.stat().st_mtime_ns >= baseline_ns
+            except OSError:
+                return True
+
+        produced: List[str] = []
+        stale: List[str] = []
+        for item in required:
+            if item.startswith("pattern:"):
+                pattern = item[len("pattern:"):].lstrip("/")
+                for child in root.rglob("*"):
+                    if child.is_file() and fnmatch.fnmatch(
+                        child.relative_to(root).as_posix(), pattern
+                    ):
+                        (produced if _is_fresh(child) else stale).append(item)
+                        break
+                continue
+            path = root / item.lstrip("/")
+            if not path.exists():
+                continue  # already reported by _missing_required_artifacts
+            (produced if _is_fresh(path) else stale).append(item)
+        return stale if stale and not produced else []
+
     def _completion_plan_contract_error(runtime: AgentRuntimeState) -> str:
         context = runtime.workspace_state.context or {}
         if str(context.get("active_skill") or "").strip() != "data/dashboard":
@@ -1873,6 +1934,10 @@ def register_chat_routes(
         context.pop("_current_sandbox_run_ids", None)
         context.pop("_inline_sandbox_executions", None)
         reset_document_tool_run_state(context)
+        # Marks where this run's output begins. The workspace directory is shared by
+        # everyone in the workspace, so "the file exists" cannot show that this run
+        # wrote it. Set on a fresh turn only, so the run's own resumes keep it.
+        context["_turn_started_at_ns"] = time.time_ns()
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
         context["google_search_count"] = 0
@@ -2800,6 +2865,7 @@ def register_chat_routes(
                 )
                 source_contract_error = _research_source_contract_error(runtime, source_tracker)
                 missing = _missing_required_artifacts(runtime)
+                unproduced = _unproduced_required_artifacts(runtime)
                 if plan_contract_error:
                     yield _json_line({
                         "type": "progress",
@@ -2853,6 +2919,31 @@ def register_chat_routes(
                     )
                     yield _json_line({"type": "done", "status": "failed"})
                 else:
+                    if unproduced:
+                        # Reported, not fatal. A workspace is shared on purpose, and a
+                        # turn that reviews or answers questions about an existing pack
+                        # legitimately writes nothing. Failing it would block exactly
+                        # the collaboration the workspace exists for. This only records
+                        # that the run was credited for files it did not write.
+                        logger.warning(
+                            "Run credited with required artifacts it did not write "
+                            "(workspace=%s user=%s stale=%s)",
+                            runtime.workspace_state.workspace_id,
+                            runtime.workspace_state.context.get("user_id"),
+                            unproduced,
+                        )
+                        yield _json_line(
+                            {
+                                "type": "contract_warning",
+                                "message": (
+                                    "This run did not write the required artifacts. The files at "
+                                    "those paths were left by an earlier run in this shared "
+                                    "workspace."
+                                ),
+                                "errorCode": "ARTIFACTS_NOT_PRODUCED_BY_RUN",
+                                "stale": unproduced,
+                            }
+                        )
                     yield _json_line({
                         "type": "progress",
                         "phase": "completed",
