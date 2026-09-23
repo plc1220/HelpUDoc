@@ -27,26 +27,35 @@
  * Usage
  * -----
  *   ts-node scripts/repair-governed-packages.ts            # dry run, reports only
- *   ts-node scripts/repair-governed-packages.ts --verify   # assert healthy; exit 1 if stranded
+ *   ts-node scripts/repair-governed-packages.ts --verify   # assert loadable; exit 1 otherwise
  *   ts-node scripts/repair-governed-packages.ts --apply    # perform the repair
  *   ts-node scripts/repair-governed-packages.ts --apply --force   # republish regardless
  *   ts-node scripts/repair-governed-packages.ts --apply --only research
  *
- * `--verify` is what deploy pipelines should run: it proves every active default version resolves
- * to a materialized package, rather than merely proving the package directory exists.
+ * `--verify` is what deploy pipelines should run. It proves, for every active default version,
+ * that a package exists at the *runtime* path and that hashing its bytes reproduces the approved
+ * `manifestHash` — the same check the agent performs before honouring a signed pin. Existence
+ * alone is insufficient: a package whose contents drift stays present while the agent rejects it.
+ *
+ * `--verify` performs no writes. It skips `DatabaseService.initialize()` (schema migrations) and
+ * `packageStore.initialize()` (storage-key rewrites, directory creation) for that reason.
  */
 
 import path from 'path';
 import { promises as fs } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import type { Knex } from 'knex';
 import { DatabaseService } from '../src/services/databaseService';
 import { SkillGovernanceService } from '../src/services/governance/skillGovernanceService';
+import { computeOnDiskManifestHash } from '../src/services/governance/packageIntegrity';
 import { skillsRoot } from '../src/services/skills/constants';
 import {
   computePackageManifestHash,
   displayNameFromKey,
   GOVERNANCE_POLICY_VERSION,
 } from '../src/services/governance/skillGovernanceModel';
+
+const GOVERNED_PACKAGES_DIR = path.join(skillsRoot, '.governed-versions', 'packages');
 
 type SkillRow = {
   id: string;
@@ -67,6 +76,83 @@ const pathExists = async (target: string): Promise<boolean> => {
   } catch {
     return false;
   }
+};
+
+type PinProblem = {
+  skillKey: string;
+  semanticVersion: string;
+  reason: string;
+  detail?: string;
+};
+
+/**
+ * Prove every active default version is loadable by the agent, without mutating anything.
+ *
+ * Reads through a bare connection: `DatabaseService.initialize()` runs schema migrations and
+ * `packageStore.initialize()` rewrites `content_blobs.storageKey` and creates directories, so
+ * neither may be called from a verifier that a deploy pipeline runs.
+ */
+const verifyRuntimePins = async (db: Knex, only: string | null): Promise<PinProblem[]> => {
+  const query = db('skills as s')
+    .join('skill_versions as v', 'v.id', 's.defaultVersionId')
+    .select(
+      's.skillKey',
+      'v.id as versionId',
+      'v.semanticVersion',
+      'v.manifestHash',
+      'v.materializedPath',
+      'v.status',
+    )
+    .orderBy('s.skillKey', 'asc');
+  if (only) query.where('s.skillKey', only);
+
+  const rows = await query;
+  const problems: PinProblem[] = [];
+
+  for (const row of rows) {
+    const skillKey = String(row.skillKey);
+    const semanticVersion = String(row.semanticVersion ?? '?');
+    const record = (reason: string, detail?: string) =>
+      problems.push({ skillKey, semanticVersion, reason, ...(detail ? { detail } : {}) });
+
+    if (String(row.status) !== 'active') {
+      record('default version is not active', `status=${row.status}`);
+      continue;
+    }
+
+    // Resolve against the runtime skills root rather than the stored materializedPath: that path
+    // was absolute at publish time and can point outside the current mount after a path change,
+    // while the agent only ever looks under its own skills root.
+    const runtimePackage = path.join(GOVERNED_PACKAGES_DIR, skillKey, String(row.versionId));
+    if (!await pathExists(path.join(runtimePackage, 'SKILL.md'))) {
+      record('package not materialized at the runtime path', runtimePackage);
+      continue;
+    }
+
+    const storedHash = String(row.manifestHash || '').toLowerCase();
+    const computedHash = await computeOnDiskManifestHash(runtimePackage);
+    if (!computedHash) {
+      record('package could not be hashed (unreadable file or symlink)', runtimePackage);
+      continue;
+    }
+    if (computedHash !== storedHash) {
+      record(
+        'manifest hash mismatch: package contents drifted from the approved version',
+        `stored=${storedHash} computed=${computedHash}`,
+      );
+      continue;
+    }
+
+    const stored = String(row.materializedPath || '');
+    if (stored && path.resolve(stored) !== path.resolve(runtimePackage)) {
+      console.log(
+        `  note ${skillKey}: materializedPath differs from the runtime path `
+        + `(db=${stored} runtime=${runtimePackage}); the agent uses the runtime path.`,
+      );
+    }
+  }
+
+  return problems;
 };
 
 /** Bump the patch component so the new version cannot collide with existing rows. */
@@ -92,6 +178,34 @@ async function main(): Promise<void> {
   const only = onlyIndex >= 0 ? process.argv[onlyIndex + 1] : null;
 
   const database = new DatabaseService();
+
+  if (verify) {
+    // The constructor only opens a connection pool. Deliberately skip both
+    // `database.initialize()` (runs schema migrations) and `packageStore.initialize()` (rewrites
+    // content_blobs.storageKey and creates directories) so verification has no side effects.
+    const db = database.getDb();
+    try {
+      const problems = await verifyRuntimePins(db, only);
+      const checked = only ? `skill '${only}'` : 'all active default versions';
+      if (!problems.length) {
+        console.log(`OK: ${checked} resolve to a materialized package whose contents match the approved manifest hash.`);
+        return;
+      }
+      console.error(`FAIL: ${problems.length} active skill version(s) are not loadable by the agent:\n`);
+      for (const problem of problems) {
+        console.error(`  - ${problem.skillKey} (v${problem.semanticVersion}): ${problem.reason}`);
+        if (problem.detail) console.error(`      ${problem.detail}`);
+      }
+      console.error(
+        '\nThese skills will silently fail to load at runtime. Republish them with --apply.',
+      );
+      process.exitCode = 1;
+      return;
+    } finally {
+      await db.destroy();
+    }
+  }
+
   await database.initialize();
   const db = database.getDb();
 
@@ -132,24 +246,13 @@ async function main(): Promise<void> {
   console.log(`skills inspected : ${only ? 1 : skills.length}`);
   console.log(`${force ? 'forced republish' : 'stranded pins   '} : ${stranded.length}`);
   if (!stranded.length) {
-    console.log(verify ? 'OK: every active default version resolves to a materialized package.' : 'Nothing to repair.');
+    console.log('Nothing to repair.');
     await db.destroy();
     return;
   }
 
   for (const skill of stranded) {
     console.log(`  - ${skill.skillKey} (v${skill.semanticVersion ?? '?'}) -> ${skill.materializedPath ?? 'no materializedPath'}`);
-  }
-
-  if (verify) {
-    console.error(
-      `\nFAIL: ${stranded.length} active skill version(s) cannot be resolved by the agent. `
-      + 'Their materialized packages are missing, so those skills will silently fail to load. '
-      + 'Run this script with --apply to republish them.',
-    );
-    await db.destroy();
-    process.exitCode = 1;
-    return;
   }
 
   if (!apply) {
