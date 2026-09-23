@@ -840,6 +840,49 @@ export class KnowledgeService {
    * published build are skipped (not an error), so selecting a base at chat time
    * yields exactly the retrievable documents in it.
    */
+  /**
+   * Knowledge bases a user may use, looked up by the name they typed.
+   *
+   * Shared Workspace Chat carries no structured picker payload -- a team message
+   * is plain text -- so an `@kb:<name>` mention is resolved here. Scoped to the
+   * asker, never the workspace: a base is usable because that person may read it,
+   * and posting in a shared channel must not lend their access to anyone else.
+   *
+   * An ambiguous name resolves to every accessible base carrying it. Silently
+   * picking one would make the answer depend on row order.
+   */
+  async resolveKnowledgeBaseIdsByMention(userId: string, mentions: string[]): Promise<string[]> {
+    const candidates = (mentions || [])
+      .map((mention) => String(mention || '').trim().toLowerCase())
+      .filter(Boolean);
+    if (!candidates.length) return [];
+    const accessible = await this.resolveAccessibleKnowledgeBaseIds(userId);
+    if (accessible !== null && !accessible.length) return [];
+    const query = this.db('knowledge_bases').where('status', 'published').select('id', 'name');
+    if (accessible !== null) {
+      query.whereIn('id', accessible);
+    }
+    const rows: Array<{ id?: string; name?: string }> = await query;
+    // Longest name first, so "Sales Playbook" wins over "Sales" on the same text.
+    const byLength = rows
+      .map((row) => ({ id: String(row.id || ''), name: String(row.name || '').toLowerCase() }))
+      .filter((row) => row.id && row.name)
+      .sort((left, right) => right.name.length - left.name.length);
+    const matched = new Set<string>();
+    for (const candidate of candidates) {
+      for (const row of byLength) {
+        // `@kb:` is followed by free prose, so the typed text runs past the name.
+        // Anchor on a real name and require a word boundary after it, which is
+        // why the boundary is decided here rather than by the message regex.
+        if (candidate === row.name || candidate.startsWith(`${row.name} `)) {
+          matched.add(row.id);
+          break;
+        }
+      }
+    }
+    return Array.from(matched);
+  }
+
   async resolveKnowledgeBaseRefs(userId: string, knowledgeBaseIds: string[]) {
     const ids = Array.from(new Set(
       (knowledgeBaseIds || []).filter((id): id is string => typeof id === 'string' && id.length > 0),

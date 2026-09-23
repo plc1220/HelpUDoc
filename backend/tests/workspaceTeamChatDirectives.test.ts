@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 
-import { parseSharedChatDirective } from '../src/services/workspaceTeamChatAgentService';
+import {
+  parseKnowledgeBaseMentions,
+  parseSharedChatDirective,
+} from '../src/services/workspaceTeamChatAgentService';
 
 /**
  * The agent parses `/skill` and `/mcp` itself, but only from the first non-empty
@@ -53,4 +56,43 @@ test('an ordinary question is untouched', () => {
   const { directive, question } = parseSharedChatDirective('would you list the datasets?');
   assert.strictEqual(directive, null);
   assert.strictEqual(question, 'would you list the datasets?');
+});
+
+test('a kb mention captures the rest of the line as a candidate', () => {
+  // Over-long on purpose: a base name may contain spaces and nothing in the text
+  // marks where it ends, so the resolver picks the longest real name.
+  assert.deepStrictEqual(
+    parseKnowledgeBaseMentions('check @kb:Sales Playbook for pricing'),
+    ['Sales Playbook for pricing'],
+  );
+});
+
+test('each mentioned line yields its own candidate', () => {
+  assert.deepStrictEqual(
+    parseKnowledgeBaseMentions('@kb:Security review\nthen @kb:Sales Playbook'),
+    ['Security review', 'Sales Playbook'],
+  );
+});
+
+test('an identical mention is collected once', () => {
+  assert.deepStrictEqual(
+    parseKnowledgeBaseMentions('@kb:Security\n@kb:Security'),
+    ['Security'],
+  );
+});
+
+test('no kb mention yields nothing', () => {
+  assert.deepStrictEqual(parseKnowledgeBaseMentions('plain question about @someone'), []);
+});
+
+test('the boundary rule the resolver applies', () => {
+  // Mirrors resolveKnowledgeBaseIdsByMention: longest real name that the typed
+  // text equals or starts with, followed by a space.
+  const names = ['sales', 'sales playbook'].sort((a, b) => b.length - a.length);
+  const pick = (candidate: string) => names.find(
+    (name) => candidate === name || candidate.startsWith(`${name} `),
+  );
+  assert.strictEqual(pick('sales playbook for pricing'), 'sales playbook');
+  assert.strictEqual(pick('sales figures please'), 'sales');
+  assert.strictEqual(pick('salesforce notes'), undefined, 'must not match a prefix mid-word');
 });

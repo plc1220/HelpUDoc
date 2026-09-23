@@ -9,6 +9,7 @@ import type {
 import type { WorkspaceService } from './workspaceService';
 import type { UserService } from './userService';
 import type { FileService } from './fileService';
+import type { KnowledgeService } from './knowledgeService';
 import type { WorkspaceRunLeaseManager } from './agent-runs/workspaceRunLease';
 
 /**
@@ -26,6 +27,7 @@ export type SharedChatDirective =
   | { kind: 'mcp'; serverId: string };
 
 const DIRECTIVE_LINE = /^\s*\/(skill|mcp)\s+(\S+)\s*(.*)$/i;
+const KB_MENTION = /@kb:([^\n]+)/gi;
 
 export const parseSharedChatDirective = (
   text: string,
@@ -45,6 +47,23 @@ export const parseSharedChatDirective = (
     };
   }
   return { directive: null, question: String(text || '').trim() };
+};
+
+/**
+ * Text a member tagged with `@kb:<name>`, up to the end of the line.
+ *
+ * A base name may contain spaces and the mention is followed by ordinary prose,
+ * so nothing in the message marks where the name stops. The candidate is
+ * deliberately over-long: `resolveKnowledgeBaseIdsByMention` decides the
+ * boundary by matching the longest base name the person can actually read.
+ */
+export const parseKnowledgeBaseMentions = (text: string): string[] => {
+  const candidates = new Set<string>();
+  for (const match of String(text || '').matchAll(KB_MENTION)) {
+    const candidate = (match[1] || '').trim();
+    if (candidate) candidates.add(candidate);
+  }
+  return Array.from(candidates);
 };
 
 const textFromContent = (content: unknown): string => {
@@ -122,17 +141,20 @@ export class WorkspaceTeamChatAgentService {
   private readonly userService: UserService;
   private readonly fileService: FileService;
   private readonly workspaceRunLease: WorkspaceRunLeaseManager;
+  private readonly knowledgeService: KnowledgeService;
 
   constructor(
     workspaceService: WorkspaceService,
     userService: UserService,
     fileService: FileService,
     workspaceRunLease: WorkspaceRunLeaseManager,
+    knowledgeService: KnowledgeService,
   ) {
     this.workspaceService = workspaceService;
     this.userService = userService;
     this.fileService = fileService;
     this.workspaceRunLease = workspaceRunLease;
+    this.knowledgeService = knowledgeService;
   }
 
   async respond(
@@ -195,6 +217,16 @@ export class WorkspaceTeamChatAgentService {
       .replace(/(^|\s)@(aria|lumo)\b[:,]?/ig, '$1')
       .trim();
     const { directive, question } = parseSharedChatDirective(addressed);
+    // Resolved against the asker, never the workspace: a base is usable because
+    // this person may read it, and asking in a shared channel must not lend their
+    // access to everyone who can see the thread.
+    const knowledgeBaseIds = await this.knowledgeService.resolveKnowledgeBaseIdsByMention(
+      userId,
+      parseKnowledgeBaseMentions(addressed),
+    );
+    const knowledgeRefs = knowledgeBaseIds.length
+      ? await this.knowledgeService.resolveKnowledgeBaseRefs(userId, knowledgeBaseIds)
+      : [];
     const workingVersionLabel = 'the current Shared working version';
     const writeInstruction = canWriteSharedWorkspace
       ? 'You may edit Shared workspace files and folders when the request requires it. Apply the same workspace permissions, concurrency, revision-history, attribution, and audit rules as a human Freeflow edit.'
@@ -208,6 +240,13 @@ export class WorkspaceTeamChatAgentService {
       canWriteSharedWorkspace
         ? 'If you make a change, report what changed and keep the response grounded in the actual tool result.'
         : 'If the team asks for a change, provide a suggested change in your response. In Review mode, the member must use a Private working copy and submit the result through the Review proposal flow.',
+      ...(knowledgeRefs.length
+        ? [[
+          'Tagged Knowledge bundles (the only Knowledge scope for this turn):',
+          ...knowledgeRefs.map((ref) => `- ${ref.title} (knowledge://${ref.id}/index.md)`),
+          'Use knowledge_read or knowledge_search only within these selected bundles.',
+        ].join('\n')]
+        : []),
       `Question from ${sourceMessage.authorName}: ${question || sourceMessage.body}`,
     ].join('\n\n');
     // The agent matches this block at the start of the text and treats the rest,
@@ -227,6 +266,7 @@ export class WorkspaceTeamChatAgentService {
       forceReset: true,
       authToken,
       internetSearchEnabled: false,
+      knowledgeRefs,
       traceContext: {
         userId,
         workspaceId,

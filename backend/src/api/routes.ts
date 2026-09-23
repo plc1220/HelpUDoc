@@ -73,6 +73,7 @@ export default function(
     // Its own manager, but the same Redis key: the lock is one SET NX per
     // workspace, so Shared Chat and agent runs still exclude each other.
     new WorkspaceRunLeaseManager(redisClient),
+    knowledgeService,
   );
   const dailyReflectionService = new DailyReflectionService(dbService);
   const userMemoryService = new UserMemoryService(dbService);
