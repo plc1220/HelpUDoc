@@ -50,6 +50,37 @@ const asRecord = (value: unknown): Record<string, unknown> => (
     : {}
 );
 
+const PLAN_STEP_LABEL_KEYS = [
+  'title', 'label', 'name', 'step', 'action', 'task', 'summary', 'text', 'item', 'description',
+];
+
+/**
+ * Resolve a reviewer-facing label for a plan step.
+ *
+ * The agent normalizes steps to `{title, detail?, state?}`, but this stays defensive: a step with
+ * unrecognized keys must still show its content. Rendering a positional "Step 3" placeholder hid
+ * the actual plan from the approver, which is worse than showing an ugly value.
+ */
+const planStepLabel = (record: Record<string, unknown>, index: number): string => {
+  for (const key of PLAN_STEP_LABEL_KEYS) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  const firstText = Object.values(record).find(
+    (value): value is string => typeof value === 'string' && value.trim().length > 0,
+  );
+  if (firstText) return firstText.trim();
+  const keys = Object.keys(record);
+  if (keys.length) {
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return keys.join(', ');
+    }
+  }
+  return `Step ${index + 1}`;
+};
+
 const asChoices = (value: unknown): Choice[] => (
   Array.isArray(value)
     ? value.filter((item): item is Choice => Boolean(item && typeof item === 'object'))
@@ -361,9 +392,7 @@ export function InteractionSurfaceRenderer({
                 <List>
                   {planSteps.map((step, index) => {
                     const record = asRecord(step);
-                    const label = typeof step === 'string'
-                      ? step
-                      : String(record.title || record.label || record.description || `Step ${index + 1}`);
+                    const label = typeof step === 'string' ? step : planStepLabel(record, index);
                     const detail = typeof step === 'string'
                       ? undefined
                       : String(record.detail || record.description || '');
