@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import Any, Iterable, List
 import hashlib
 import json
+import logging
 import re
 import shutil
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -642,9 +645,26 @@ def _load_governed_pin(
     skill_key: str,
     raw_pin: dict[str, Any],
 ) -> SkillMetadata | None:
+    """Resolve an exact signed version pin, or return None.
+
+    Every rejection is fail-closed on purpose: a pin that cannot be verified must never fall back
+    to the mutable registry, or a published workspace could execute unreviewed content. But a
+    silent None is indistinguishable from "no such skill", which is how a stranded pin once
+    disabled every skill in production for 38 hours without a single error. Each branch therefore
+    logs the specific reason so the condition is greppable in agent logs.
+    """
+    def reject(reason: str, **fields: Any) -> None:
+        detail = " ".join(f"{key}={value}" for key, value in fields.items())
+        logger.warning(
+            "governed skill pin rejected: skill=%s reason=%s %s", skill_key, reason, detail,
+        )
+
     if not re.fullmatch(r"[a-z0-9_-]+(?:/[a-z0-9_-]+)*", skill_key):
+        reject("invalid_skill_key")
         return None
     if any(Path(marker).exists() for marker in skill_block_paths(skills_root, skill_key, str(raw_pin.get("manifestHash") or ""))):
+        # An administrator block is an intended state, so this is informational rather than a fault.
+        logger.info("governed skill pin blocked by administrator: skill=%s", skill_key)
         return None
     version_id = str(raw_pin.get("versionId") or "").strip()
     manifest_hash = str(raw_pin.get("manifestHash") or "").strip().lower()
@@ -655,15 +675,48 @@ def _load_governed_pin(
         )
         or not re.fullmatch(r"[0-9a-f]{64}", manifest_hash)
     ):
+        reject("malformed_pin", versionId=version_id or "<empty>")
         return None
     governed_root = (skills_root / ".governed-versions" / "packages").resolve()
     version_root = (governed_root / skill_key / version_id).resolve()
-    if governed_root not in version_root.parents or not (version_root / "SKILL.md").is_file():
+    if governed_root not in version_root.parents:
+        reject("path_escaped_governed_root", versionId=version_id)
         return None
-    if _compute_governed_manifest_hash(version_root) != manifest_hash:
+    if not (version_root / "SKILL.md").is_file():
+        # Typically the materialized package was destroyed while the database kept the version row,
+        # so the pin points at a directory that no longer exists. Republish to recover.
+        reject("package_not_materialized", versionId=version_id, expected=str(version_root))
+        return None
+    computed = _compute_governed_manifest_hash(version_root)
+    if computed != manifest_hash:
+        reject(
+            "manifest_hash_mismatch",
+            versionId=version_id,
+            expected=manifest_hash,
+            computed=computed or "<unreadable>",
+        )
         return None
     loaded = load_skills(version_root)
-    return replace(loaded[0], skill_id=skill_key) if loaded else None
+    if not loaded:
+        reject("package_has_no_skill", versionId=version_id)
+        return None
+    return replace(loaded[0], skill_id=skill_key)
+
+
+def governed_pin_for(context: dict[str, Any] | None, skill_id_or_name: str) -> dict[str, Any] | None:
+    """Return the signed pin for *skill_id_or_name*, if the turn carries one.
+
+    Lets callers tell "this skill is pinned but unresolvable" apart from "this skill does not
+    exist", which are the same `None` from `find_skill_for_context` but mean opposite things to
+    an operator.
+    """
+    if not isinstance(context, dict):
+        return None
+    pins = context.get("skill_version_pins")
+    if not isinstance(pins, dict):
+        return None
+    pin = pins.get(str(skill_id_or_name or "").strip())
+    return pin if isinstance(pin, dict) else None
 
 
 def _compute_governed_manifest_hash(package_root: Path) -> str | None:
