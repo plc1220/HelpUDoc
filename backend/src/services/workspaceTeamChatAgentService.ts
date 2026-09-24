@@ -1,14 +1,17 @@
 import { parseComposerDirective } from '@helpudoc/contracts/composerDirectives';
 
 import { HttpError } from '../errors';
-import { loadRuntimeMcpServers } from '../api/agent/policy';
+import {
+  loadRuntimeMcpServers,
+  type createAgentPolicyApi,
+  type EffectiveAgentPolicy,
+} from '../api/agent/policy';
 import { runAgent } from './agentService';
-import { signAgentContextToken } from './agentToken';
 import type {
   WorkspaceTeamAgentHistoryMessage,
   WorkspaceTeamMessage,
 } from './workspaceCollaborationService';
-import type { WorkspaceService } from './workspaceService';
+import type { WorkspaceService, WorkspaceRole } from './workspaceService';
 import type { UserService } from './userService';
 import type { FileService } from './fileService';
 import type { KnowledgeService } from './knowledgeService';
@@ -26,6 +29,8 @@ import type { WorkspaceRunLeaseManager } from './agent-runs/workspaceRunLease';
 export type SharedChatDirective =
   | { kind: 'skill'; skillId: string }
   | { kind: 'mcp'; serverId: string };
+
+type AgentPolicyApi = ReturnType<typeof createAgentPolicyApi>;
 
 const KB_MENTION = /@kb:([^\n]+)/gi;
 
@@ -64,6 +69,54 @@ export const parseKnowledgeBaseMentions = (text: string): string[] => {
   }
   return Array.from(candidates);
 };
+
+/**
+ * What Shared Chat asks `buildAgentAuthToken` for.
+ *
+ * Separated from `respond` so the rule can be asserted without standing up an
+ * agent run, because getting it wrong is silent: the `/` menu keeps offering
+ * skills and the channel keeps refusing them.
+ *
+ * The allow-list is the member's entitlement set, exactly as a private run in
+ * the same workspace sends. Shared Chat used to derive its own from workspace
+ * skill pins alone, and a workspace with no pins yields an empty list -- which
+ * `is_skill_allowed` reads as "deny everything", not as "no filter". So every
+ * skill a member picked here was refused.
+ *
+ * Private skill drafts stay out by construction rather than by a check of our
+ * own: `buildAgentAuthToken` merges them only when `workspaceMode` is
+ * `private`, and this is always `shared_live`.
+ */
+export const buildSharedChannelTokenRequest = (input: {
+  entitledSkillIds: string[];
+  workspaceRole: WorkspaceRole;
+  canWriteSharedWorkspace: boolean;
+  deniedMcpServerIds: string[];
+}): {
+  policy: EffectiveAgentPolicy;
+  skipPlanApprovals: true;
+  sharedTeamChannel: true;
+} => ({
+  policy: {
+    isAdmin: false,
+    skillAllowIds: input.entitledSkillIds,
+    // The shared channel reaches no connection, so every configured server is
+    // denied outright rather than merely left un-allowed.
+    mcpServerAllowIds: [],
+    mcpServerDenyIds: input.deniedMcpServerIds,
+    workspaceMode: 'shared_live',
+    workspaceRole: input.workspaceRole,
+    // Narrower than the workspace policy's own answer: Freeflow only.
+    canWriteWorkspace: input.canWriteSharedWorkspace,
+  },
+  // A plan gate has nowhere to ask here. There is no interrupt surface in the
+  // channel, so a gated skill would run, write its plan, stop on
+  // `request_plan_approval` and surface as a 502 with the work half done.
+  // Skipping the gate is what makes those skills usable at all; a member who
+  // wants to review the plan asks in private chat.
+  skipPlanApprovals: true,
+  sharedTeamChannel: true,
+});
 
 const textFromContent = (content: unknown): string => {
   if (typeof content === 'string') return content.trim();
@@ -141,6 +194,7 @@ export class WorkspaceTeamChatAgentService {
   private readonly fileService: FileService;
   private readonly workspaceRunLease: WorkspaceRunLeaseManager;
   private readonly knowledgeService: KnowledgeService;
+  private readonly policyApi: AgentPolicyApi;
 
   constructor(
     workspaceService: WorkspaceService,
@@ -148,12 +202,14 @@ export class WorkspaceTeamChatAgentService {
     fileService: FileService,
     workspaceRunLease: WorkspaceRunLeaseManager,
     knowledgeService: KnowledgeService,
+    policyApi: AgentPolicyApi,
   ) {
     this.workspaceService = workspaceService;
     this.userService = userService;
     this.fileService = fileService;
     this.workspaceRunLease = workspaceRunLease;
     this.knowledgeService = knowledgeService;
+    this.policyApi = policyApi;
   }
 
   async respond(
@@ -173,9 +229,6 @@ export class WorkspaceTeamChatAgentService {
     if (!promptAccess) {
       throw new HttpError(401, 'User not found');
     }
-    const workspacePins = await this.userService.getWorkspaceSkillRuntimePins(workspaceId);
-    const entitledSkills = new Set(promptAccess.skillIds);
-    const authorizedPins = workspacePins.filter((pin) => pin.available && entitledSkills.has(pin.skillKey));
 
     const configuredServers = await loadRuntimeMcpServers();
     const deniedMcpServerIds = Array.from(new Set(
@@ -183,28 +236,15 @@ export class WorkspaceTeamChatAgentService {
         .map((server) => String(server.name || '').trim())
         .filter(Boolean),
     )).sort();
-    const authToken = signAgentContextToken({
-      sub: userId,
+    const authToken = await this.policyApi.buildAgentAuthToken({
       userId,
       workspaceId,
-      isAdmin: false,
-      skillAllowIds: authorizedPins.map((pin) => pin.skillKey),
-      skillVersionPins: Object.fromEntries(authorizedPins.map((pin) => [
-        pin.skillKey,
-        {
-          skillId: pin.skillId,
-          versionId: pin.versionId,
-          semanticVersion: pin.semanticVersion,
-          manifestHash: pin.manifestHash,
-        },
-      ])),
-      mcpServerAllowIds: [],
-      mcpServerDenyIds: deniedMcpServerIds,
-      workspaceMode: 'shared_live',
-      workspaceRole: workspacePolicy.workspaceRole,
-      canWriteWorkspace: canWriteSharedWorkspace,
-      skipPlanApprovals: false,
-      sharedTeamChannel: true,
+      ...buildSharedChannelTokenRequest({
+        entitledSkillIds: promptAccess.skillIds,
+        workspaceRole: workspacePolicy.workspaceRole,
+        canWriteSharedWorkspace,
+        deniedMcpServerIds,
+      }),
     });
     if (!authToken) {
       throw new HttpError(503, 'ARIA shared-channel policy signing is not configured');

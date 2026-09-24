@@ -24,6 +24,7 @@ import { WorkspaceService } from '../services/workspaceService';
 import { WorkspacePublicationService } from '../services/workspacePublicationService';
 import { WorkspaceCollaborationService } from '../services/workspaceCollaborationService';
 import { WorkspaceTeamChatAgentService } from '../services/workspaceTeamChatAgentService';
+import { createAgentPolicyApi } from './agent/policy';
 import { WorkspaceRunLeaseManager } from '../services/agent-runs/workspaceRunLease';
 import { redisClient } from '../services/redisService';
 import { FileService } from '../services/fileService';
@@ -66,6 +67,11 @@ export default function(
   const userOAuthTokenService = new UserOAuthTokenService(dbService);
   const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);
   const gcsBucketRegistryService = new GcsBucketRegistryService(dbService.getDb(), userService);
+  // Stateless factory, so a second instance alongside the one the run routes
+  // build is not a second source of truth -- both close over the same services
+  // and answer identically. Shared Chat needs it to sign its token the same way
+  // a private run does.
+  const agentPolicyApi = createAgentPolicyApi(googleOAuthService, userService);
   const workspaceTeamChatAgentService = new WorkspaceTeamChatAgentService(
     workspaceService,
     userService,
@@ -74,6 +80,7 @@ export default function(
     // workspace, so Shared Chat and agent runs still exclude each other.
     new WorkspaceRunLeaseManager(redisClient),
     knowledgeService,
+    agentPolicyApi,
   );
   const dailyReflectionService = new DailyReflectionService(dbService);
   const userMemoryService = new UserMemoryService(dbService);

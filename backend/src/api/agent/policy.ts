@@ -193,6 +193,14 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     workspaceId: string;
     policy: EffectiveAgentPolicy;
     skipPlanApprovals: boolean;
+    /**
+     * Set by Shared Chat. The channel is the one caller that is not a private
+     * agent run, and it builds its token here rather than signing its own so
+     * that the skill allow-list, the version pins and the sandbox flag are
+     * derived once. Deriving them separately is what let Shared Chat drift into
+     * offering skills it would then refuse.
+     */
+    sharedTeamChannel?: boolean;
   }): Promise<string | null> => {
     const workspacePins = typeof (userService as any).getWorkspaceSkillRuntimePins === 'function'
       ? await userService.getWorkspaceSkillRuntimePins(input.workspaceId)
@@ -246,6 +254,9 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
         ])),
       },
     };
+    if (input.sharedTeamChannel) {
+      payload.sharedTeamChannel = true;
+    }
     if (isSkillSandboxRunnerEnabled()) {
       payload.allowSkillSandbox = true;
     }
