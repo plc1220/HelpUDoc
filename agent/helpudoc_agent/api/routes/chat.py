@@ -21,7 +21,6 @@ from langchain_core.callbacks.base import AsyncCallbackHandler
 from langgraph.errors import GraphInterrupt, GraphRecursionError
 from langgraph.types import Command
 
-from helpudoc_agent.artifact_pack import CONTINUE, pack_disposition
 from helpudoc_agent.configuration import Settings
 from helpudoc_agent.document_tool_guard import (
     LOOP_BREAK_ERROR_CODE,
@@ -1837,10 +1836,6 @@ def register_chat_routes(
             if str(item).strip()
         ]
         if not required:
-            return []
-        if pack_disposition(context) == CONTINUE:
-            # The human was shown the existing pack and chose to build on it, so
-            # untouched artifacts are expected rather than a sign of contamination.
             return []
         try:
             baseline_ns = int(context.get("_turn_started_at_ns") or 0)

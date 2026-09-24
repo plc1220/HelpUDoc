@@ -12,17 +12,6 @@ from ....interaction_workflows import frontend_slides_gate_id
 from ....clarification_responses import normalize_clarification_resume_payload
 from ....interrupt_payloads import build_plan_approval_interrupt_value
 from ....state import WorkspaceState
-from ....artifact_pack import (
-    CONTINUE,
-    REPLACE,
-    VALID_DISPOSITIONS,
-    ProtectedPackError,
-    already_archived_for_run,
-    archive_existing_pack,
-    detect_existing_pack,
-    pack_notice_markdown,
-    set_pack_disposition,
-)
 from ..clarification_parse import (
     clarification_input_mode,
     parse_choices_from_json,
@@ -63,30 +52,6 @@ def _record_completed_interaction_gate(workspace_state: WorkspaceState, display_
     )
 
 
-def _apply_pack_disposition(workspace_state: WorkspaceState, disposition: str) -> str:
-    """Act on the approved disposition. Returns a line for the tool's reply.
-
-    Archiving happens only after a human approves the plan that declared it, so a
-    rejected or edited plan never moves anyone's files.
-    """
-    if disposition not in VALID_DISPOSITIONS:
-        return ""
-    set_pack_disposition(workspace_state, disposition)
-    if disposition == CONTINUE:
-        return "Existing artifact pack: continuing from it.\n"
-    context = workspace_state.context if isinstance(workspace_state.context, dict) else {}
-    run_id = str(context.get("run_id") or "").strip()
-    if already_archived_for_run(context, run_id):
-        # A second request_plan_approval in the same run must not archive the
-        # artifacts this run has already written.
-        return "Existing artifact pack: already archived for this run.\n"
-    try:
-        moved = archive_existing_pack(workspace_state, run_id)
-    except ProtectedPackError as exc:
-        return f"Existing artifact pack: NOT replaced. {exc}\n"
-    return f"Existing artifact pack: archived {len(moved)} file(s); starting fresh.\n"
-
-
 def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
     @tool
     def request_plan_approval(
@@ -102,14 +67,8 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
         risky_actions: str = "None",
         reviewer_feedback: str = "",
         edited_plan_content: str = "",
-        pack_disposition: str = "",
     ) -> str:
-        """Request human approval/edit/rejection for a proposed execution plan.
-
-        When the workspace already holds the active skill's declared artifacts,
-        `pack_disposition` must say whether this plan continues or replaces them.
-        The human approves that choice along with the plan.
-        """
+        """Request human approval/edit/rejection for a proposed execution plan."""
         title = (plan_title or "").strip()
         summary = (plan_summary or "").strip()
         summary_markdown = (plan_summary_markdown or "").strip()
@@ -131,34 +90,10 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
         workspace_state.context["last_plan_feedback"] = feedback
         workspace_state.context["last_plan_file_path"] = plan_path
 
-        # A workspace is shared, and this skill writes to fixed paths. If its pack is
-        # already here the human decides what happens to it, as part of approving the
-        # plan rather than through a gate of its own.
-        existing_pack = detect_existing_pack(workspace_state)
-        disposition = (pack_disposition or "").strip().lower()
-        if existing_pack is not None:
-            if disposition not in VALID_DISPOSITIONS:
-                return (
-                    "PLAN_APPROVAL_NEEDS_PACK_DISPOSITION\n"
-                    f"This workspace already holds {existing_pack.count} of this skill's "
-                    f"declared artifacts (last updated {existing_pack.newest_mtime}):\n"
-                    + "\n".join(f"  - /{item}" for item in existing_pack.paths)
-                    + "\n\nThey may belong to an earlier run or another person. Call "
-                    "request_plan_approval again with pack_disposition set to "
-                    "'continue' (build on them) or 'replace' (archive them and start "
-                    "fresh), and say which you chose in plan_summary_markdown."
-                )
-            notice = pack_notice_markdown(existing_pack, disposition)
-            summary_markdown = notice + (summary_markdown or summary)
-
         checklist_display = checklist or json.dumps(normalized_steps, ensure_ascii=False)
 
         if workspace_state.context.get("skip_plan_approvals"):
             workspace_state.context["plan_approved"] = True
-            if existing_pack is not None:
-                # Trusted mode has nobody to ask, so it keeps the pack. Archiving on
-                # an unreviewed decision would move another person's work unseen.
-                set_pack_disposition(workspace_state, CONTINUE)
             return (
                 "PLAN_APPROVAL_SKIPPED_TRUSTED_MODE\n"
                 f"Title: {title}\n"
@@ -262,11 +197,9 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
 
         workspace_state.context["plan_approved"] = True
         workspace_state.context["last_plan_decision"] = "approve"
-        pack_line = _apply_pack_disposition(workspace_state, disposition)
         return (
             "PLAN_APPROVAL_RECORDED\n"
             f"{base_fields}"
-            f"{pack_line}"
             "Reviewer feedback: None\n"
             "Plan decision has been applied. Continue executing the approved plan."
         )

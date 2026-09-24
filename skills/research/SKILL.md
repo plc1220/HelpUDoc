@@ -209,20 +209,13 @@ Both examples fail because they are not computed integer counts and contain forb
 
 ### 0. Existing Work in This Workspace
 
-A workspace is shared. Its files may have been written by an earlier run or by
-another person.
+A workspace is shared. Files at this skill's paths may have been written by an
+earlier run or by another person, on a different subject.
 
-Before planning, check whether this skill's artifacts are already present. If they
-are, `request_plan_approval` will refuse until you set `pack_disposition`:
-
-- `continue` -- this request extends the existing report. Read the existing
-  artifacts and build on them.
-- `replace` -- this request is a new topic. The existing files are archived and the
-  run starts clean.
-
-Say which you chose, and why, in `plan_summary_markdown`. The human approves that
-choice together with the plan. Never assume an existing report is about the subject
-you were asked to research; check its actual content first.
+Read `/question.txt` and the opening of `/final-research-report.md` before you
+build on anything. If they are about a different subject than the current
+request, start those artifacts fresh rather than expanding them. Never expand a
+report whose subject you have not checked.
 
 ### 1. Record the Question
 
