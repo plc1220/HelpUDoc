@@ -265,7 +265,10 @@ export class WorkspacePublicationService {
     }
     const selectedRole = input.role || 'viewer';
     const legacyRole = namedGrantToLegacyWorkspaceRole(selectedRole);
-    const teamRole = selectedRole === 'viewer' ? 'viewer' : 'contributor';
+    // The role the caller chose, not a capped one. This used to fold
+    // `publisher` down to `contributor`, so one control quietly meant two
+    // different things for the people and the teams it was applied to.
+    const teamRole = selectedRole;
     const editingPolicy = input.editingPolicy || workspace.editingPolicy || 'direct';
 
     await this.db.transaction(async (tx) => {
@@ -1645,7 +1648,10 @@ export class WorkspacePublicationService {
     const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.selectedUserIds);
     const selectedRole = input.selectedRole || 'viewer';
     const legacyRole = namedGrantToLegacyWorkspaceRole(selectedRole);
-    const teamRole = selectedRole === 'viewer' ? 'viewer' : 'contributor';
+    // The role the caller chose, not a capped one. This used to fold
+    // `publisher` down to `contributor`, so one control quietly meant two
+    // different things for the people and the teams it was applied to.
+    const teamRole = selectedRole;
 
     await this.db.transaction(async (tx) => {
       await tx('workspaces').insert({

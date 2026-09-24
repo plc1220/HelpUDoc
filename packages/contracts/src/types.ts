@@ -49,8 +49,14 @@ export interface Workspace {
    * read `teams`.
    */
   teamName?: string | null;
-  /** Every team that can reach this workspace, each with the role it carries. */
-  teams?: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }>;
+  /**
+   * Every team that can reach this workspace, each with the role it carries.
+   *
+   * `publisher` included: release authority is reachable through a team, because
+   * every publication records the person who made it rather than inferring them
+   * from the grant.
+   */
+  teams?: Array<{ id: string; name: string; role: 'viewer' | 'contributor' | 'publisher' }>;
   publicationStatus?:
     | 'private_draft'
     | 'up_to_date'

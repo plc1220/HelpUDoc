@@ -57,7 +57,10 @@ const transferWorkspaceOwnershipSchema = z.object({
 
 const teamAccessSchema = z.object({
   teamId: z.string().uuid(),
-  role: z.enum(['contributor', 'viewer']).optional(),
+  // `publisher` is reachable through a team. Every publication records the
+  // person who made it, so the authority does not need a named grant to stay
+  // accountable — see `TEAM_GRANT_ROLES`.
+  role: z.enum(['publisher', 'contributor', 'viewer']).optional(),
 });
 
 const syncWorkspaceSchema = z.object({

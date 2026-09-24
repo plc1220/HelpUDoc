@@ -147,7 +147,7 @@ Private workspaces must not have access-grant rows.
 | Publisher | Yes | Yes | Yes | Yes | Yes | Yes | No |
 | Owner | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 
-Publisher is a direct user grant. A Team grant may provide Viewer or Contributor, but must not grant Publisher authority to every Team member.
+A Team grant may provide Viewer, Contributor or Publisher. Publisher was once a direct user grant only, on the reasoning that release authority needs a named individual behind it. Every publication already records one — `publisherUserId` on the version, `publishedByUserId` on a file publication, and an audit event — so the restriction bought consent rather than traceability, and cost the consistency of one role a Team could never hold. Granting it to a Team does mean a later Team membership change confers release authority, which is the trade being made.
 
 Effective direct-user access uses:
 

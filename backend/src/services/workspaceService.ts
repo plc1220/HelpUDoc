@@ -6,7 +6,12 @@ import { DatabaseService } from './databaseService';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, ConflictError, NotFoundError, WorkspaceContentLockedError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
-import { legacyWorkspaceRoleToNamedGrant } from './workspaceAudiencePolicy';
+import {
+  legacyWorkspaceRoleToNamedGrant,
+  namedGrantToLegacyWorkspaceRole,
+  type WorkspaceNamedGrantRole,
+} from './workspaceAudiencePolicy';
+import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
 import { isPlatformAdmin } from './governance/teamRoles';
 import { detachUnreachablePublicationLinks } from './workspaceTeamReach';
 
@@ -60,12 +65,30 @@ export function buildWorkspaceTeamAccessQuery(db: Knex, workspaceId: string) {
  * team name, are the ones being selected. A ranked subquery keeps it one row.
  *
  * This duplicates `WORKSPACE_ROLE_RANK` in SQL, so the two are pinned together
- * by a test. Team grants only ever carry `contributor` or `viewer`.
+ * by a test. Every reader uses this constant rather than its own copy of the
+ * `CASE`: the list query carried a hand-written duplicate, which would have
+ * ranked a publisher grant as a viewer the moment a third tier existed.
+ *
+ * Ranks the stored spelling. `workspace_team_grants.role` holds the named-grant
+ * vocabulary, the same as `workspace_user_grants`, so the strongest tier is
+ * `publisher` rather than the `editor` it resolves to.
  */
-const TEAM_GRANT_RANK_SQL = `CASE "role" WHEN 'contributor' THEN 2 ELSE 1 END`;
+const TEAM_GRANT_RANK_SQL = `CASE "role" WHEN 'publisher' THEN 3 WHEN 'contributor' THEN 2 ELSE 1 END`;
 
-/** The roles a team grant may carry, strongest first. */
-export const TEAM_GRANT_ROLES: WorkspaceRole[] = ['contributor', 'viewer'];
+/**
+ * The effective roles a team grant may resolve to, strongest first.
+ *
+ * `editor` — Publisher — is reachable through a team. It was once direct-user
+ * only, on the reasoning that release authority needs a named individual behind
+ * it. Every publication already records one: `publisherUserId` on the version,
+ * `publishedByUserId` on a file publication, and an audit event. What the
+ * restriction actually bought was consent rather than traceability, and it cost
+ * the consistency of having one role a team could never hold.
+ */
+export const TEAM_GRANT_ROLES: WorkspaceRole[] = ['editor', 'contributor', 'viewer'];
+
+/** The spellings `workspace_team_grants.role` may hold, strongest first. */
+export const TEAM_GRANT_STORED_ROLES: WorkspaceNamedGrantRole[] = ['publisher', 'contributor', 'viewer'];
 
 /**
  * The strongest role `userId` holds on `workspaceId` through any of their teams,
@@ -85,8 +108,22 @@ export async function resolveTeamGrantRole(
     .select('tg.role')
     .first();
   if (!grant) return null;
-  return grant.role === 'contributor' ? 'contributor' : 'viewer';
+  return storedTeamGrantRole(grant.role);
 }
+
+/**
+ * Read a stored team grant as the role it grants.
+ *
+ * Fails closed: anything outside the vocabulary reads as `viewer` rather than
+ * being honoured, so a hand-written row cannot mint authority. That mattered
+ * more when `publisher` was unreachable, and it still decides what an older or
+ * mistyped row means.
+ */
+export const storedTeamGrantRole = (role: unknown): WorkspaceRole => {
+  const stored = String(role || '').trim();
+  if (!TEAM_GRANT_STORED_ROLES.includes(stored as WorkspaceNamedGrantRole)) return 'viewer';
+  return namedGrantToLegacyWorkspaceRole(stored as WorkspaceNamedGrantRole);
+};
 
 /**
  * Whether someone may give up their own access to a workspace, and if not, why.
@@ -477,7 +514,7 @@ export class WorkspaceService {
     canEdit: boolean;
     canPublish: boolean;
     teamName?: string | null;
-    teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }>;
+    teams: Array<{ id: string; name: string; role: WorkspaceNamedGrantRole }>;
     canLeave: boolean;
     publicationStatus: 'private_draft' | 'up_to_date' | 'changes_to_publish' | 'withdrawn' | 'detached' | 'team_updates_available' | 'review_needed';
     linkedTeamWorkspaceId?: string | null;
@@ -536,7 +573,7 @@ export class WorkspaceService {
           SELECT tg.role FROM workspace_team_grants AS tg
           JOIN group_members AS gm ON gm."groupId" = tg."teamId" AND gm."userId" = ?
           WHERE tg."workspaceId" = w.id
-          ORDER BY CASE tg.role WHEN 'contributor' THEN 2 ELSE 1 END DESC, tg."teamId" ASC
+          ORDER BY ${TEAM_GRANT_RANK_SQL.replace(/"role"/g, 'tg.role')} DESC, tg."teamId" ASC
           LIMIT 1
         ) as "teamGrantRole"`, [userId]),
         this.db.raw(`(
@@ -629,10 +666,10 @@ export class WorkspaceService {
     return rows.map((row: any) => {
       const visibility = row.visibility === 'team' ? 'team' : 'private';
       const teamRole: WorkspaceRole | null = row.teamGrantRole
-        ? row.teamGrantRole === 'contributor' ? 'contributor' : 'viewer'
+        ? storedTeamGrantRole(row.teamGrantRole)
         : null;
       // `json_agg` yields null when a workspace has no grants.
-      const teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }> =
+      const teams: Array<{ id: string; name: string; role: WorkspaceNamedGrantRole }> =
         Array.isArray(row.teams) ? row.teams : [];
       const effectiveRole = visibility === 'private'
         ? 'owner'
@@ -744,9 +781,13 @@ export class WorkspaceService {
           editingPolicy: visibility === 'team' ? (row.editingPolicy || 'review') : null,
           contentLocked: visibility === 'team' && Boolean(row.currentPublishedVersionId),
         }).canEdit,
+        // Read from `effectiveRole`, not `directRole`. The server authorises
+        // publishing through `ensureMembership`, which merges the team grant into
+        // the role it returns, so deriving the button from the direct grant alone
+        // would hide it from a team Publisher the endpoint would accept.
         canPublish: (row.status || 'active') === 'active'
           && visibility === 'team'
-          && (row.directRole === 'owner' || row.directRole === 'editor'),
+          && getWorkspaceRoleCapabilities(effectiveRole).canPublish,
         teams,
         // Kept until every reader moves to `teams`. Derived from the same list
         // rather than a second join, so the two cannot disagree.
@@ -1670,7 +1711,7 @@ export class WorkspaceService {
     workspaceId: string,
     actingUserId: string,
     teamId: string,
-    role: 'contributor' | 'viewer' = 'viewer',
+    role: WorkspaceNamedGrantRole = 'viewer',
   ): Promise<void> {
     const { membership } = await this.ensureMembership(workspaceId, actingUserId);
     const workspace = await this.db<WorkspaceRecord>('workspaces').where({ id: workspaceId }).first();
@@ -1758,7 +1799,7 @@ export class WorkspaceService {
   ): Promise<{
     collaborators: Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>;
     directCollaborators: Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>;
-    teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }>;
+    teams: Array<{ id: string; name: string; role: WorkspaceNamedGrantRole }>;
   }> {
     // Read-only, so the admin oversight page can pass the override here. The
     // mutating collaborator methods deliberately do not accept it.
@@ -1785,7 +1826,7 @@ export class WorkspaceService {
     const teams = await buildWorkspaceTeamAccessQuery(this.db, workspaceId) as Array<{
       id: string;
       name: string;
-      role: 'viewer' | 'contributor';
+      role: WorkspaceNamedGrantRole;
     }>;
     if (teams.length) {
       // Each team carries its own role, so members are folded in per team rather

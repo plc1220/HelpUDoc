@@ -111,7 +111,7 @@ export type WorkspaceCollaborator = {
 export type WorkspaceAccessTeam = {
   id: string;
   name: string;
-  role: 'viewer' | 'contributor';
+  role: WorkspaceNamedGrantRole;
 };
 
 export const fetchUserDirectory = async (query: string, limit = 20) => {
@@ -168,7 +168,7 @@ export const removeWorkspaceCollaborator = async (workspaceId: string, targetUse
 export const addWorkspaceTeam = async (
   workspaceId: string,
   teamId: string,
-  role: 'viewer' | 'contributor' = 'viewer',
+  role: WorkspaceNamedGrantRole = 'viewer',
 ) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/collaborators/teams`, {
     method: 'POST',

@@ -43,6 +43,13 @@ import {
 
 const SEARCH_DEBOUNCE_MS = 300;
 
+/** Team grants carry the named-grant vocabulary, the same as a direct grant. */
+const TEAM_ROLE_LABELS: Record<string, string> = {
+  publisher: 'Publisher',
+  contributor: 'Contributor',
+  viewer: 'Viewer',
+};
+
 /**
  * `editor` is the stored role; `publisher` is the same authority under the name
  * the sharing API and the UI both use. Mirrors `legacyWorkspaceRoleToNamedGrant`
@@ -80,7 +87,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
   const [collaboratorsError, setCollaboratorsError] = useState<string | null>(null);
   const [availableTeams, setAvailableTeams] = useState<WorkspaceTeam[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState('');
-  const [selectedTeamRole, setSelectedTeamRole] = useState<'contributor' | 'viewer'>('contributor');
+  const [selectedTeamRole, setSelectedTeamRole] = useState<WorkspaceNamedGrantRole>('contributor');
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamBusyId, setTeamBusyId] = useState<string | null>(null);
   const [teamError, setTeamError] = useState<string | null>(null);
@@ -345,7 +352,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
                   <Box sx={{ minWidth: 0 }}>
                     <Typography variant="body2" noWrap>{team.name}</Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Team members have {team.role === 'contributor' ? 'Contributor' : 'Viewer'} access
+                      Team members have {TEAM_ROLE_LABELS[team.role] || 'Viewer'} access
                     </Typography>
                   </Box>
                 </Box>
@@ -394,10 +401,11 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
           size="small"
           value={selectedTeamRole}
           onChange={(_event, value) => {
-            if (value) setSelectedTeamRole(value as 'contributor' | 'viewer');
+            if (value) setSelectedTeamRole(value as WorkspaceNamedGrantRole);
           }}
           sx={{ mb: 3 }}
         >
+          <ToggleButton value="publisher">Publisher</ToggleButton>
           <ToggleButton value="contributor">Contributor</ToggleButton>
           <ToggleButton value="viewer">Viewer</ToggleButton>
         </ToggleButtonGroup>

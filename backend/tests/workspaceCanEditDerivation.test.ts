@@ -13,10 +13,13 @@ import test from 'node:test';
 
 import {
   TEAM_GRANT_ROLES,
+  TEAM_GRANT_STORED_ROLES,
   isWorkspaceContentLocked,
   resolveWorkspaceContentEditAccess,
+  storedTeamGrantRole,
   strongestWorkspaceRole,
 } from '../src/services/workspaceService';
+import { getWorkspaceRoleCapabilities } from '../src/services/workspaceCollaborationPolicy';
 
 type Role = 'owner' | 'editor' | 'contributor' | 'viewer';
 
@@ -120,14 +123,40 @@ test('a trashed or purged workspace denies both rights regardless of role', () =
 // role. The strongest one a person reaches wins.
 
 test('the SQL rank and the TypeScript rank agree on team grant roles', () => {
-  // `listWorkspacesForUser` picks the strongest grant with
-  // `CASE role WHEN 'contributor' THEN 2 ELSE 1 END DESC`, because joining the
-  // grants in would fan the row out. That ordering has to mean the same thing as
-  // `WORKSPACE_ROLE_RANK`, and nothing but this test holds the two together.
-  const sqlRank = (role: string) => (role === 'contributor' ? 2 : 1);
-  const sorted = [...TEAM_GRANT_ROLES].sort((left, right) => sqlRank(right) - sqlRank(left));
-  assert.deepEqual(sorted, ['contributor', 'viewer'], 'SQL ranks contributor above viewer');
-  assert.equal(strongestWorkspaceRole(...TEAM_GRANT_ROLES), 'contributor');
+  // `resolveTeamGrantRole` and `listWorkspacesForUser` both pick the strongest
+  // grant with `TEAM_GRANT_RANK_SQL`, because joining the grants in would fan the
+  // row out. That ordering has to mean the same thing as `WORKSPACE_ROLE_RANK`,
+  // and nothing but this test holds the two together.
+  const sqlRank = (role: string) => (role === 'publisher' ? 3 : role === 'contributor' ? 2 : 1);
+  const sorted = [...TEAM_GRANT_STORED_ROLES].sort((left, right) => sqlRank(right) - sqlRank(left));
+  assert.deepEqual(sorted, ['publisher', 'contributor', 'viewer'], 'SQL ranks publisher highest');
+  // The same order, read as the roles they resolve to.
+  assert.deepEqual(TEAM_GRANT_STORED_ROLES.map(storedTeamGrantRole), TEAM_GRANT_ROLES);
+  assert.equal(strongestWorkspaceRole(...TEAM_GRANT_ROLES), 'editor');
+});
+
+test('a stored team grant reads as the role it grants, and fails closed', () => {
+  assert.equal(storedTeamGrantRole('publisher'), 'editor');
+  assert.equal(storedTeamGrantRole('contributor'), 'contributor');
+  assert.equal(storedTeamGrantRole('viewer'), 'viewer');
+  // Nothing outside the vocabulary mints authority, whatever put it there.
+  assert.equal(storedTeamGrantRole('editor'), 'viewer', 'the legacy spelling is not stored here');
+  assert.equal(storedTeamGrantRole('owner'), 'viewer');
+  assert.equal(storedTeamGrantRole(''), 'viewer');
+  assert.equal(storedTeamGrantRole(null), 'viewer');
+});
+
+test('a team publisher can publish, which is what the grant is for', () => {
+  // `ensureMembership` merges the team grant into the role it returns, and every
+  // publish guard reads that. `canPublish` in `listWorkspacesForUser` has to be
+  // derived the same way, or the endpoint accepts a publisher the button hides.
+  const role = strongestWorkspaceRole(null, storedTeamGrantRole('publisher'));
+  assert.equal(getWorkspaceRoleCapabilities(role).canPublish, true);
+  assert.equal(getWorkspaceRoleCapabilities(role).canManageAccess, false, 'publishing is not owning');
+  assert.equal(
+    getWorkspaceRoleCapabilities(storedTeamGrantRole('contributor')).canPublish,
+    false,
+  );
 });
 
 test('a team grant never outranks a stronger direct grant', () => {
