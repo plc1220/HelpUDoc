@@ -180,17 +180,32 @@ test('approved and published files are read-only; earlier states are not', () =>
   assert.equal(isFileContentProtected({ status: 'draft' }, openWorkspace), false);
 });
 
-test('a private workspace never protects a file, whatever status it inherited', () => {
-  // Sync copies the status but leaves the published artifact behind, and a
-  // private copy exists to draft changes to a signed-off document.
+test('approved is protected in a private workspace too', () => {
+  // One badge, one meaning. Drafting a change to a signed-off file is still the
+  // point of a private copy; the route is `Return to draft` first, which is
+  // offered there to anyone who could approve.
   const privateCopy: Workspace = { ...openWorkspace, visibility: 'private' };
-  assert.equal(isFileContentProtected({ status: 'published' }, privateCopy), false);
-  assert.equal(isFileContentProtected({ status: 'approved' }, privateCopy), false);
+  assert.equal(isFileContentProtected({ status: 'approved' }, privateCopy), true);
+  assert.equal(isFileContentProtected({ status: 'in_review' }, privateCopy), false);
+  assert.equal(isFileContentProtected({ status: 'draft' }, privateCopy), false);
 });
 
-test('a missing file or workspace is not protected', () => {
+test('an inherited published stays editable in a private copy', () => {
+  // Sync copies the status but leaves the artifact behind, and there is no
+  // transition out of `published` in a private workspace, so freezing it would
+  // leave the file with no way back.
+  const privateCopy: Workspace = { ...openWorkspace, visibility: 'private' };
+  assert.equal(isFileContentProtected({ status: 'published' }, privateCopy), false);
+});
+
+test('a missing file is not protected, and an unknown workspace fails closed', () => {
   assert.equal(isFileContentProtected(null, openWorkspace), false);
-  assert.equal(isFileContentProtected({ status: 'approved' }, null), false);
+  // `approved` needs no workspace to decide, so a caller that has not resolved
+  // one yet is refused rather than allowed through.
+  assert.equal(isFileContentProtected({ status: 'approved' }, null), true);
+  // `published` does need one, and without it there is nothing to say the file
+  // is in a Shared workspace.
+  assert.equal(isFileContentProtected({ status: 'published' }, null), false);
 });
 
 test('the canvas refuses an approved file even in an editable workspace', () => {

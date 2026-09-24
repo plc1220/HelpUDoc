@@ -42,15 +42,21 @@ export const isWorkspaceContentLocked = (
  * *Send back to review* or *Return to draft* — which is an approver's call and
  * demands a written reason.
  *
- * Only in a Shared workspace. A private copy inherits the status from sync but
- * not the published artifact, and exists precisely to draft changes to a
- * signed-off document.
+ * `approved` reads the same in a private workspace as in a Shared one. It was
+ * once Shared-only, which made one badge mean two different things depending on
+ * where the file sat.
+ *
+ * `published` remains Shared-only. A private copy inherits that status from sync
+ * without owning the artifact, and has no transition out of it, so freezing the
+ * content there would leave the file with no way back. Mirrors
+ * `isFileContentProtected` in `backend/src/services/fileStatusService.ts`, which
+ * is the authority; this exists so the canvas can explain itself.
  */
 export const isFileContentProtected = (
   file: Pick<File, 'status'> | null | undefined,
   workspace: Pick<Workspace, 'visibility'> | null | undefined,
-): boolean => workspace?.visibility === 'team'
-  && (file?.status === 'approved' || file?.status === 'published');
+): boolean => file?.status === 'approved'
+  || (file?.status === 'published' && workspace?.visibility === 'team');
 
 /**
  * Single source of truth for "may the user mutate what is currently on the canvas?".

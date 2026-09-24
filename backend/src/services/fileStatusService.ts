@@ -200,28 +200,38 @@ export const hasDrifted = (file: {
 };
 
 /**
- * A signed-off file in a Shared workspace is read-only for content.
+ * A signed-off file is read-only for content.
  *
  * Status used to be a record rather than a lock: approval pinned
  * `approvedAtVersion`, editing bumped `files.version`, and the only trace was a
  * drift badge somebody had to notice. Nothing refused the write — an agent run
  * would overwrite a document a publisher signed off an hour earlier.
  *
- * Deliberately scoped to Shared workspaces. Sync copies `files.status` into a
- * private copy but leaves the published artifact behind, so a private row can
- * say `published` while owning nothing in the bucket. `allowedTransitionsFor`
- * already strips every route out of that state there, so freezing the content
- * too would leave the file with no writes *and* no way back — and a private copy
- * exists precisely to draft changes to a signed-off document.
+ * `approved` means the same thing in every workspace, so it freezes content in
+ * every workspace. It was once Shared-only, on the reasoning that a private copy
+ * exists to draft changes to a signed-off document. That made one status mean
+ * two different things depending on where the file sat, and people read a green
+ * Approved badge as a guarantee about the bytes rather than about the workspace
+ * they happened to be in. Drafting a change to an approved file is still the
+ * point of a private copy — the route is now `Return to draft` first, which
+ * `allowedTransitionsFor` offers there to anyone who could approve.
+ *
+ * `published` stays Shared-only, and that is not an inconsistency left behind.
+ * Sync copies `files.status` into a private copy but leaves the artifact in the
+ * release bucket, so a private row can say `published` while owning nothing.
+ * `allowedTransitionsFor` strips every route out of that state there — moving
+ * out of it would imply withdrawing an artifact this workspace does not own — so
+ * freezing the content too would leave the file with no writes *and* no way
+ * back. `approved` has no such problem, which is why only it changes.
  */
+export const protectedFileStatusesFor = (
+  workspace: Pick<WorkspaceRecord, 'visibility' | 'workspaceType'>,
+): FileStatus[] => (isSharedWorkspaceRecord(workspace) ? ['approved', 'published'] : ['approved']);
+
 export const isFileContentProtected = (
   file: { status?: unknown },
   workspace: Pick<WorkspaceRecord, 'visibility' | 'workspaceType'>,
-): boolean => {
-  if (!isSharedWorkspaceRecord(workspace)) return false;
-  const status = normalizeFileStatus(file.status);
-  return status === 'approved' || status === 'published';
-};
+): boolean => protectedFileStatusesFor(workspace).includes(normalizeFileStatus(file.status));
 
 export const allowedTransitionsFor = (
   status: FileStatus,

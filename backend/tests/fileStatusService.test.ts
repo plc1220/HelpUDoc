@@ -669,11 +669,31 @@ test('approved and published refuse content writes; draft and in_review do not',
   assert.equal(isFileContentProtected({}, shared), false, 'a missing status reads as draft');
 });
 
-test('a private copy is never protected, whatever status it inherited', () => {
-  // Sync copies the status but leaves the artifact behind, so a private row can
-  // say `published` while owning nothing in the bucket. Freezing it would leave
-  // the file with no writes and no transitions out — see the read-only
-  // assertion above — and a private copy exists to draft changes.
+test('approved refuses content writes in a private workspace too', () => {
+  // The badge has to mean one thing. Approved was once Shared-only, so the same
+  // file read as frozen or editable depending on which workspace it sat in.
+  // Drafting a change is still possible here: `Return to draft` is offered in a
+  // private workspace, which the transition test below pins.
+  assert.equal(isFileContentProtected({ status: 'approved' }, privateWs), true);
+  assert.equal(isFileContentProtected({ status: 'in_review' }, privateWs), false);
+  assert.equal(isFileContentProtected({ status: 'draft' }, privateWs), false);
+});
+
+test('an inherited published stays writable in a private copy', () => {
+  // Not an oversight left behind by the rule above. Sync copies the status but
+  // leaves the artifact in the release bucket, so a private row can say
+  // `published` while owning nothing, and `allowedTransitionsFor` strips every
+  // route out of that state there. Freezing it would leave the file with no
+  // writes and no way back.
   assert.equal(isFileContentProtected({ status: 'published' }, privateWs), false);
-  assert.equal(isFileContentProtected({ status: 'approved' }, privateWs), false);
+  assert.deepEqual(allowedTransitionsFor('published', 'owner', false, false), []);
+});
+
+test('an approved file in a private workspace still has a way back to draft', () => {
+  // What makes freezing `approved` there safe, and the difference from
+  // `published`. Asserted so the two cannot be collapsed into one rule later.
+  assert.deepEqual(
+    allowedTransitionsFor('approved', 'owner', false, false).map((t) => t.toStatus),
+    ['in_review', 'draft'],
+  );
 });

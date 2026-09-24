@@ -7,9 +7,13 @@ import type { ObjectStore } from './objectStore';
 import { getObjectStore } from './objectStoreFactory';
 import { DatabaseService } from './databaseService';
 import { Knex } from 'knex';
-import { WorkspaceService, isSharedWorkspaceRecord } from './workspaceService';
+import { WorkspaceService } from './workspaceService';
 import type { WorkspaceRecord } from './workspaceService';
-import { isFileContentProtected, normalizeFileStatus } from './fileStatusService';
+import {
+  isFileContentProtected,
+  normalizeFileStatus,
+  protectedFileStatusesFor,
+} from './fileStatusService';
 import { ConflictError, FileContentProtectedError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { isInternalWorkspacePath as isInternalPath } from '../lib/workspacePaths';
@@ -886,19 +890,20 @@ export class FileService {
   /**
    * Workspace-relative paths of the files that will refuse a content write.
    *
-   * Sent to the agent so it plans around them. Empty for a private workspace,
-   * which is where the protection deliberately does not apply.
+   * Sent to the agent so it plans around them. It has to agree with
+   * `isFileContentProtected`, or the agent writes work the commit then refuses:
+   * `approved` in every workspace, `published` only in a Shared one.
    */
   async listProtectedFilePaths(workspaceId: string): Promise<string[]> {
     const workspace = await this.db('workspaces')
       .select('visibility', 'workspaceType')
       .where({ id: workspaceId })
       .first();
-    if (!workspace || !isSharedWorkspaceRecord(workspace)) return [];
+    if (!workspace) return [];
     const rows = await this.db('files')
       .where({ workspaceId })
       .whereNull('deletedAt')
-      .whereIn('status', ['approved', 'published'])
+      .whereIn('status', protectedFileStatusesFor(workspace))
       .select('name')
       .orderBy('name', 'asc');
     return rows
@@ -929,11 +934,13 @@ export class FileService {
     normalizedFolder: string,
     workspace: WorkspaceRecord,
   ): Promise<void> {
-    if (!isSharedWorkspaceRecord(workspace)) return;
+    // The same statuses `isFileContentProtected` refuses, asked of many rows at
+    // once rather than one at a time — a folder operation names a folder, so a
+    // per-file guard would never see the files it rewrites.
     const blocked = await this.db('files')
       .where({ workspaceId })
       .whereNull('deletedAt')
-      .whereIn('status', ['approved', 'published'])
+      .whereIn('status', protectedFileStatusesFor(workspace))
       .andWhere('name', 'like', `${normalizedFolder}/%`)
       .select('id', 'name', 'status')
       .orderBy('name', 'asc')
