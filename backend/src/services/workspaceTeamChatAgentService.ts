@@ -6,6 +6,7 @@ import {
   type createAgentPolicyApi,
   type EffectiveAgentPolicy,
 } from '../api/agent/policy';
+import { resolveTaggedFileContext } from '../api/agent/runs';
 import { runAgent } from './agentService';
 import type {
   WorkspaceTeamAgentHistoryMessage,
@@ -266,6 +267,20 @@ export class WorkspaceTeamChatAgentService {
     const knowledgeRefs = knowledgeBaseIds.length
       ? await this.knowledgeService.resolveKnowledgeBaseRefs(userId, knowledgeBaseIds)
       : [];
+    // `@file` mentions, which the shared composer has always offered in its `@`
+    // menu and this service has always thrown away. Same resolver the private
+    // run uses, so a tagged file is mirrored to disk and named in the prompt the
+    // same way.
+    //
+    // Scoped to the workspace, not to the asker -- unlike the knowledge bases
+    // above. Every member can already read these files, so resolving them
+    // against the workspace lends nobody anything they did not have.
+    const { prompt: questionWithFiles } = await resolveTaggedFileContext(
+      this.fileService,
+      question,
+      workspaceId,
+      userId,
+    );
     const workingVersionLabel = 'the current Shared working version';
     const writeInstruction = canWriteSharedWorkspace
       ? 'You may edit Shared workspace files and folders when the request requires it. Apply the same workspace permissions, concurrency, revision-history, attribution, and audit rules as a human Freeflow edit.'
@@ -286,7 +301,7 @@ export class WorkspaceTeamChatAgentService {
           'Use knowledge_read or knowledge_search only within these selected bundles.',
         ].join('\n')]
         : []),
-      `Question from ${sourceMessage.authorName}: ${question || sourceMessage.body}`,
+      `Question from ${sourceMessage.authorName}: ${questionWithFiles || question || sourceMessage.body}`,
     ].join('\n\n');
     // The agent matches this block at the start of the text and treats the rest,
     // preamble included, as the prompt. That is why the directive survives here
