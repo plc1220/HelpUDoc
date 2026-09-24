@@ -470,6 +470,28 @@ type WorkspaceKnowledgeSource = {
   } | null;
 };
 
+const createToolEvent = (name: string, status: ToolEvent['status'] = 'running'): ToolEvent => ({
+  id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  name,
+  status,
+  startedAt: new Date().toISOString(),
+});
+
+/**
+ * A `tool_end` with no `tool_start` to match, so how long it took is unknown.
+ *
+ * These used to be created and finished from the same `new Date()`, which
+ * recorded a duration of exactly zero and displayed as one. An empty
+ * `startedAt` reads as unknown instead, and the formatter shows nothing rather
+ * than claiming the work was instant — `request_plan_approval` arrives this
+ * way, and it is the event most likely to have taken real time.
+ */
+const createUntimedToolEvent = (name: string, status: ToolEvent['status']): ToolEvent => ({
+  ...createToolEvent(name, status),
+  startedAt: '',
+  finishedAt: new Date().toISOString(),
+});
+
 type ActiveRunInfo = {
   runId: string;
   conversationId: string;
@@ -4169,13 +4191,6 @@ export default function WorkspacePage() {
     });
   }, [updateMessagesForConversation]);
 
-  const createToolEvent = (name: string, status: ToolEvent['status'] = 'running'): ToolEvent => ({
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    name,
-    status,
-    startedAt: new Date().toISOString(),
-  });
-
   const appendAgentThought = useCallback((conversationId: string, index: number, chunk: string) => {
     if (!chunk || index < 0) {
       return;
@@ -4247,8 +4262,7 @@ export default function WorkspacePage() {
       if (!events.length) {
         return [
           {
-            ...createToolEvent(label, status),
-            finishedAt: new Date().toISOString(),
+            ...createUntimedToolEvent(label, status),
             summary,
             outputFiles,
             relatedFiles,
@@ -4259,8 +4273,7 @@ export default function WorkspacePage() {
       const lastRunningOffset = [...next].reverse().findIndex((event) => event.status === 'running');
       if (lastRunningOffset === -1) {
         next.push({
-          ...createToolEvent(label, status),
-          finishedAt: new Date().toISOString(),
+          ...createUntimedToolEvent(label, status),
           summary,
           outputFiles,
           relatedFiles,
@@ -5535,6 +5548,18 @@ export default function WorkspacePage() {
               status: 'awaiting_approval',
               pendingInterrupt: effectivePendingInterrupt,
             }));
+        }
+        // Copy the run's working time onto the message while it is still
+        // readable. Run metadata is Redis with a 24-hour TTL, so a conversation
+        // reopened later has no other source for it, and the header would fall
+        // back to a span that counts any approval wait.
+        if (!supersededByNewerStream
+          && typeof latestRunMeta?.activeMs === 'number'
+          && isTerminalRunStatus(finalStatus)) {
+          updateMessageMetadataAtIndex(conversationId, agentMessageIndexForFinalStatus, (metadata) => ({
+            ...metadata,
+            runActiveMs: latestRunMeta?.activeMs,
+          }));
         }
         if (STREAM_DEBUG_ENABLED) {
           console.debug('[WorkspacePage] stream finished', { runId, status: finalStatus });

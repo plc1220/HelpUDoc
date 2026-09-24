@@ -108,14 +108,32 @@ type RunPendingInterrupt = {
   interactionRequest?: InteractionRequest;
 };
 
+/**
+ * Shadows the exported `RunMeta` in `./types`, which has drifted from it — this
+ * one carries `interactionGateState`. `getRunMeta` returns this one, so a field
+ * added only to the exported copy does nothing (LEARNINGS.md §7).
+ */
 type RunMeta = {
   workspaceId: string;
   userId?: string;
   persona: string;
   status: AgentRunStatus;
   createdAt: string;
+  /** Start of the current leg; re-stamped on every resume. */
   startedAt?: string;
+  /** When the open working leg began, or absent while the run is not working. */
+  activeLegStartedAt?: string;
   completedAt?: string;
+  /**
+   * Milliseconds the run spent working, accumulated across legs.
+   *
+   * `completedAt - startedAt` cannot answer this: a run that stops for a plan
+   * approval resumes with a fresh `startedAt`, so that subtraction measures the
+   * last leg alone, while measuring from `createdAt` would count however long
+   * the human took to answer. This clock runs only between a leg starting and
+   * that leg stopping, so the wait is excluded by construction.
+   */
+  activeMs?: number;
   error?: string;
   turnId?: string;
   pendingInterrupt?: RunPendingInterrupt;
@@ -2385,6 +2403,17 @@ const persistRunConversationMessage = async (
     status,
   };
 
+  // The run's working time, copied onto the message so it outlives the run
+  // metadata's 24-hour TTL in Redis. Read here rather than passed in because
+  // this runs after `markRunFinished` has closed the final leg; on a status
+  // that is not terminal the total is still moving, so it is left off.
+  if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+    const activeMs = await computeActiveMs(runId).catch(() => undefined);
+    if (typeof activeMs === 'number' && activeMs >= 0) {
+      metadata.runActiveMs = activeMs;
+    }
+  }
+
   if (snapshot.thinkingText?.trim()) {
     metadata.thinkingText = snapshot.thinkingText;
   }
@@ -3113,11 +3142,51 @@ const cleanupRunWorker = async (runId: string, upstream?: IncomingMessage) => {
   cleanupRun(runId, upstream);
 };
 
+/**
+ * The run's working time as of now: the legs already banked, plus the one
+ * currently open if there is one.
+ *
+ * Deliberately does not write. The terminal status and the conversation message
+ * are persisted in either order depending on the path — the worker writes the
+ * message first, `cancelAgentRun` writes it last — so a reader that consumed a
+ * stored total would be right on one path and wrong on the other. Computing it
+ * gives the same answer from both, and once the open leg has been banked and
+ * `activeLegStartedAt` cleared, calling it again returns the same number rather
+ * than counting that leg twice.
+ *
+ * `activeLegStartedAt` rather than `startedAt`, which callers outside this file
+ * read and which is re-stamped on every resume.
+ */
+export const accumulateWorkingMs = (input: {
+  bankedMs?: unknown;
+  legStartedAt?: string;
+  now?: number;
+}): number => {
+  const banked = Number(input.bankedMs);
+  const carried = Number.isFinite(banked) && banked > 0 ? banked : 0;
+  const legStart = Date.parse(input.legStartedAt || '');
+  if (!Number.isFinite(legStart)) return carried;
+  // A clock that went backwards must not subtract from the total.
+  return carried + Math.max(0, (input.now ?? Date.now()) - legStart);
+};
+
+const computeActiveMs = async (runId: string): Promise<number | undefined> => {
+  const meta = await redisClient.hGetAll(buildMetaKey(runId)).catch(() => undefined);
+  if (!meta || !Object.keys(meta).length) return undefined;
+  return accumulateWorkingMs({ bankedMs: meta.activeMs, legStartedAt: meta.activeLegStartedAt });
+};
+
+/** Bank the open leg and close it, so the total stops moving. */
+const bankActiveLeg = async (runId: string): Promise<number | undefined> => computeActiveMs(runId);
+
 const markRunFinished = async (runId: string, status: AgentRunStatus, error?: string): Promise<string> => {
   const completedAt = new Date().toISOString();
+  const activeMs = await bankActiveLeg(runId);
   await persistMeta(runId, {
     status,
     completedAt,
+    ...(activeMs === undefined ? {} : { activeMs }),
+    activeLegStartedAt: '',
     error,
     pendingInterrupt: '',
     runContext: '',
@@ -3129,8 +3198,13 @@ const markRunFinished = async (runId: string, status: AgentRunStatus, error?: st
 };
 
 const markRunAwaitingApproval = async (runId: string, interruptPayload: string, params?: StartRunParams) => {
+  // Stops the working clock. It restarts when the human answers and
+  // `runAgentRunWorker` opens a new leg.
+  const activeMs = await bankActiveLeg(runId);
   await persistMeta(runId, {
     status: 'awaiting_approval',
+    ...(activeMs === undefined ? {} : { activeMs }),
+    activeLegStartedAt: '',
     pendingInterrupt: interruptPayload,
     error: '',
     ...(params ? { runContext: serializeRunContext(params) } : {}),
@@ -3338,6 +3412,8 @@ async function runAgentRunWorker(
   await persistMeta(runId, {
     status: 'running',
     startedAt,
+    // Opens a working leg. Banked and cleared when the run interrupts or ends.
+    activeLegStartedAt: startedAt,
     error: '',
     pendingInterrupt: '',
   });
@@ -4781,6 +4857,8 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
     createdAt: meta.createdAt,
     startedAt: meta.startedAt,
     completedAt: meta.completedAt,
+    // Redis hashes are strings; the caller wants the number it stored.
+    activeMs: Number.isFinite(Number(meta.activeMs)) ? Number(meta.activeMs) : undefined,
     error: meta.error,
     turnId: meta.turnId,
     pendingInterrupt: parsePendingInterrupt(meta.pendingInterrupt),

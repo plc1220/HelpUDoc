@@ -344,6 +344,15 @@ export interface ConversationMessageMetadata {
   bodySource?: 'assistant' | 'summary';
   runId?: string;
   status?: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  /**
+   * Milliseconds the run spent working, excluding any wait for a human.
+   *
+   * Copied from the run's `activeMs` when it reaches a terminal status, because
+   * run metadata lives in Redis for 24 hours and the conversation outlives it.
+   * Without this the duration of anything older than a day could not be shown
+   * at all, and reading it live would answer for recent runs only.
+   */
+  runActiveMs?: number;
   pendingInterrupt?: PendingInterrupt;
   runPolicy?: {
     skill?: string;

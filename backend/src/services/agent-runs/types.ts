@@ -81,8 +81,22 @@ export type RunMeta = {
   persona: string;
   status: AgentRunStatus;
   createdAt: string;
+  /**
+   * When the current leg began. Re-stamped on every resume, so on a run that was
+   * interrupted this is the start of the last leg, not of the run.
+   */
   startedAt?: string;
   completedAt?: string;
+  /**
+   * Milliseconds the run spent working, accumulated across legs.
+   *
+   * `completedAt - startedAt` cannot answer this. A run that stops for a plan
+   * approval resumes with a fresh `startedAt`, so that subtraction measures the
+   * last leg alone, and against `createdAt` it would instead count however long
+   * the human took to answer. The clock here only runs between a leg starting
+   * and that leg stopping, so waiting for a person is excluded by construction.
+   */
+  activeMs?: number;
   error?: string;
   turnId?: string;
   pendingInterrupt?: RunPendingInterrupt;

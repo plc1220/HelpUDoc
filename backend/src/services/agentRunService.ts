@@ -9,6 +9,7 @@ export {
 } from './agent-runs/interrupts';
 export { getRunStreamKey } from './agent-runs/persistence';
 export {
+  accumulateWorkingMs,
   configureAgentRunServices,
   startAgentRun,
   persistInterruptAndStopRun,

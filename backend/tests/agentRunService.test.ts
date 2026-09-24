@@ -5,6 +5,7 @@ import type { AxiosResponse } from 'axios';
 import type { IncomingMessage } from 'node:http';
 import { redisClient } from '../src/services/redisService';
 import {
+  accumulateWorkingMs,
   buildSyntheticClarificationFollowupPrompt,
   buildSyntheticResumeParams,
   buildFrontendSlidesWorkflowState,
@@ -2564,4 +2565,70 @@ test('non-slide skill can resume through multiple generic Interaction input gate
       await redisClient.quit();
     }
   }
+});
+
+/**
+ * A run's duration is the time it spent working, not the time it existed.
+ *
+ * `completedAt - startedAt` cannot express that: `startedAt` is re-stamped on
+ * every resume, so it measures the last leg alone, while measuring from
+ * `createdAt` would count however long a person took to answer a plan approval.
+ * The clock is banked when a leg stops and reopened when the next one starts,
+ * so a wait is excluded by never being counted in the first place.
+ */
+
+test('an open leg adds to the banked total', () => {
+  const now = Date.parse('2026-01-01T00:00:30.000Z');
+  assert.equal(
+    accumulateWorkingMs({ bankedMs: 5000, legStartedAt: '2026-01-01T00:00:20.000Z', now }),
+    15000,
+  );
+});
+
+test('waiting for an approval adds nothing, however long it lasts', () => {
+  // Leg one ran 10s and was banked when the run stopped for a human. While it
+  // waits there is no open leg, so the total does not move.
+  const banked = 10_000;
+  const during = accumulateWorkingMs({ bankedMs: banked, legStartedAt: undefined });
+  assert.equal(during, banked);
+
+  // The human took four minutes. The second leg then runs 2s.
+  const resumedAt = '2026-01-01T00:04:10.000Z';
+  const finishedAt = Date.parse('2026-01-01T00:04:12.000Z');
+  assert.equal(
+    accumulateWorkingMs({ bankedMs: banked, legStartedAt: resumedAt, now: finishedAt }),
+    12_000,
+    'twelve seconds of work, not four minutes and twelve seconds',
+  );
+});
+
+test('banking twice does not count the same leg twice', () => {
+  // Terminal status and the conversation message are written in either order
+  // depending on the path, so this is read more than once per run.
+  const banked = accumulateWorkingMs({
+    bankedMs: 0,
+    legStartedAt: '2026-01-01T00:00:00.000Z',
+    now: Date.parse('2026-01-01T00:00:03.000Z'),
+  });
+  assert.equal(banked, 3000);
+  // Once the leg is closed, `legStartedAt` is gone and the total stands still.
+  assert.equal(accumulateWorkingMs({ bankedMs: banked, legStartedAt: '' }), 3000);
+});
+
+test('a missing or unusable total starts from zero', () => {
+  assert.equal(accumulateWorkingMs({}), 0);
+  assert.equal(accumulateWorkingMs({ bankedMs: 'not a number', legStartedAt: '' }), 0);
+  assert.equal(accumulateWorkingMs({ bankedMs: -5, legStartedAt: '' }), 0);
+  assert.equal(accumulateWorkingMs({ bankedMs: 100, legStartedAt: 'not a date' }), 100);
+});
+
+test('a clock that went backwards never subtracts', () => {
+  assert.equal(
+    accumulateWorkingMs({
+      bankedMs: 500,
+      legStartedAt: '2026-01-01T00:00:10.000Z',
+      now: Date.parse('2026-01-01T00:00:05.000Z'),
+    }),
+    500,
+  );
 });

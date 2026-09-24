@@ -127,6 +127,8 @@ export const getRunStatus = async (
   persona: string;
   turnId?: string;
   error?: string;
+  /** Working milliseconds, with any wait for a human decision excluded. */
+  activeMs?: number;
   pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'];
 }> => {
   const response = await apiFetch(`${API_URL}/agent/runs/${runId}`);

@@ -14,6 +14,7 @@ import { TextArea } from '@astryxdesign/core/TextArea';
 import type { Components } from 'react-markdown';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
 import { InteractionSurfaceRenderer } from '../../interactions/InteractionSurfaceRenderer';
+import { formatDurationBetween, formatDurationMs } from '../../utils/formatDuration';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 
 import type {
@@ -141,31 +142,6 @@ const getAttachmentPreviewUrl = (
     url.searchParams.set('disposition', 'inline');
   }
   return url.toString();
-};
-
-const formatElapsedTime = (
-  startedAt?: string,
-  now = Date.now(),
-  endedAt?: string,
-): string => {
-  if (!startedAt) {
-    return '';
-  }
-  const started = new Date(startedAt).getTime();
-  if (Number.isNaN(started)) {
-    return '';
-  }
-  const ended = endedAt ? new Date(endedAt).getTime() : Number.NaN;
-  const effectiveNow = Number.isNaN(ended) ? now : ended;
-  const elapsedSeconds = Math.max(0, Math.floor((effectiveNow - started) / 1000));
-  const minutes = Math.floor(elapsedSeconds / 60);
-  const seconds = elapsedSeconds % 60;
-  if (minutes >= 60) {
-    const hours = Math.floor(minutes / 60);
-    const remainingMinutes = minutes % 60;
-    return `${hours}h ${remainingMinutes}m`;
-  }
-  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
 };
 
 const isSkippedToolEvent = (event: NonNullable<ConversationMessage['toolEvents']>[number]): boolean => {
@@ -683,7 +659,7 @@ export default function ChatMessageBubble({
           label: getFriendlyToolName(event.name),
           status: event.status,
           duration: event.finishedAt
-            ? formatElapsedTime(event.startedAt, Date.now(), event.finishedAt)
+            ? formatDurationBetween(event.startedAt, event.finishedAt)
             : undefined,
         }));
     const deduplicated: typeof source = [];
@@ -1841,9 +1817,32 @@ export default function ChatMessageBubble({
           || (latestToolEvent ? getFriendlyToolName(latestToolEvent.name) : '')
           || toolDigest.currentLabel
           || 'Agent activity';
-  const activityDuration = latestToolEvent?.finishedAt
-    ? formatElapsedTime(latestToolEvent.startedAt, now, latestToolEvent.finishedAt)
-    : undefined;
+  /**
+   * How long the run worked, sitting beside the step count where people read it
+   * as exactly that.
+   *
+   * It used to be the elapsed time of the *last* tool call, which answered a
+   * different question from the one its placement asks — a three-minute run
+   * ending in a fast write reported the write. `runActiveMs` is the run's own
+   * working time, with any wait for an approval excluded.
+   *
+   * The fallback spans the first tool start to the last tool finish, for
+   * messages persisted before `runActiveMs` existed. It overstates a run that
+   * paused for a human, so it is second choice rather than the rule. When there
+   * is neither, nothing is shown: no duration beats a wrong one.
+   */
+  const activityDuration = useMemo(() => {
+    if (typeof messageMetadata?.runActiveMs === 'number') {
+      return formatDurationMs(messageMetadata.runActiveMs);
+    }
+    const finished = toolEvents.filter((event) => event.finishedAt);
+    if (!finished.length) {
+      return undefined;
+    }
+    const first = toolEvents.find((event) => event.startedAt);
+    const last = finished[finished.length - 1];
+    return formatDurationBetween(first?.startedAt, last.finishedAt, now) || undefined;
+  }, [messageMetadata?.runActiveMs, toolEvents, now]);
   const activityMetaLabel = [
     `${activityEventCount} recorded ${activityEventCount === 1 ? 'step' : 'steps'}`,
     activityDuration,
@@ -2325,7 +2324,7 @@ export default function ChatMessageBubble({
                                 )}
                                 endContent={event.finishedAt ? (
                                   <span className="lumo-agent-activity-item-meta">
-                                    {formatElapsedTime(event.startedAt, now, event.finishedAt)}
+                                    {formatDurationBetween(event.startedAt, event.finishedAt, now)}
                                   </span>
                                 ) : undefined}
                               />
@@ -2521,8 +2520,14 @@ export default function ChatMessageBubble({
                                   isDarkMode ? 'text-slate-500' : 'text-slate-400'
                                 }`}
                                 >
-                                  {formatMessageTimestamp(event.startedAt)}
-                                  {event.finishedAt ? ` • ${formatMessageTimestamp(event.finishedAt)}` : ''}
+                                  {/*
+                                    An event whose start was never seen has an
+                                    empty `startedAt`, so the separator has to
+                                    depend on both sides or it dangles.
+                                  */}
+                                  {[formatMessageTimestamp(event.startedAt), formatMessageTimestamp(event.finishedAt)]
+                                    .filter(Boolean)
+                                    .join(' • ')}
                                 </p>
                                 {event.outputFiles?.length ? (
                                   <div className="mt-2 min-w-0 space-y-3">
