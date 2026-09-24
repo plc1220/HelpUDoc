@@ -30,12 +30,24 @@ _DIRECTIVE_BLOCK_RE = re.compile(
     r"^\s*<<<HELPUDOC_DIRECTIVE\s*\n(?P<payload>\{.*?\})\n>>>\s*(?P<rest>[\s\S]*)$",
     re.DOTALL,
 )
+# Scanned, not anchored. A host that sends raw text rather than a directive
+# block puts the user's own message through here, and the `/` menu writes the
+# directive wherever the cursor was -- so `@kb:General Knowledge /skill x` has to
+# name the skill. The slash must open the text or follow whitespace or an
+# opening bracket, which keeps `https://host/skill` and `docs/skill notes` out,
+# and the id stops at a closing bracket as well as at whitespace. An
+# immediately preceding `use` or `please use` is matched too, so that lead-in
+# is removed with the directive rather than left addressing nobody.
+#
+# Mirrors `parseComposerDirective` in packages/contracts/src/composerDirectives.ts.
+# `tests/test_directives.py` and frontend/tests/composerDirectives.test.ts share
+# their vectors so the two cannot drift.
 _RAW_SKILL_DIRECTIVE_RE = re.compile(
-    r"^\s*/skill\s+(?P<skill_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
+    r"(?:^|[\s([{])(?:(?:please[ \t]+)?use[ \t]+)?/skill[ \t]+(?P<skill_id>[^\s)\]}]+)",
     re.IGNORECASE,
 )
 _RAW_MCP_DIRECTIVE_RE = re.compile(
-    r"^\s*/mcp\s+(?P<server_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
+    r"(?:^|[\s([{])(?:(?:please[ \t]+)?use[ \t]+)?/mcp[ \t]+(?P<server_id>[^\s)\]}]+)",
     re.IGNORECASE,
 )
 _LEGACY_SKILL_PROMPT_RE = re.compile(
@@ -47,14 +59,6 @@ _LEGACY_SKILL_PROMPT_RE = re.compile(
 _LEGACY_MCP_PROMPT_RE = re.compile(
     r'^\s*Prefer tools from the MCP server "(?P<server_id>[^"]+)" for this task\.\s*'
     r'[\s\S]*?(?:User request:\s*(?P<prompt>[\s\S]*))?$',
-    re.IGNORECASE,
-)
-_LINE_SKILL_DIRECTIVE_RE = re.compile(
-    r"^\s*(?:(?:please\s+)?use\s+)?/skill\s+(?P<skill_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
-    re.IGNORECASE,
-)
-_LINE_MCP_DIRECTIVE_RE = re.compile(
-    r"^\s*(?:(?:please\s+)?use\s+)?/mcp\s+(?P<server_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
     re.IGNORECASE,
 )
 

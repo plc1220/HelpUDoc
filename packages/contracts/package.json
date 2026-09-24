@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./types": "./src/types.ts",
-    "./agentStream": "./src/agentStream.ts"
+    "./agentStream": "./src/agentStream.ts",
+    "./composerDirectives": "./src/composerDirectives.ts"
   }
 }

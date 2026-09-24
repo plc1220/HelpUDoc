@@ -1,3 +1,5 @@
+import { parseComposerDirective } from '@helpudoc/contracts/composerDirectives';
+
 import { HttpError } from '../errors';
 import { loadRuntimeMcpServers } from '../api/agent/policy';
 import { runAgent } from './agentService';
@@ -15,38 +17,35 @@ import type { WorkspaceRunLeaseManager } from './agent-runs/workspaceRunLease';
 /**
  * A `/skill` or `/mcp` a member typed in the shared channel.
  *
- * The agent parses these itself, but only from the first non-empty line of the
- * message it receives. Shared Chat prepends its channel preamble, so a directive
- * typed by a member never reached line one and was silently dropped. Pulling it
- * out here and re-emitting it as a `<<<HELPUDOC_DIRECTIVE` block -- which the
- * agent matches at the start of the text regardless of what follows -- makes it
- * work without loosening the agent's parser for every caller.
+ * The agent can parse these itself, but Shared Chat prepends its channel
+ * preamble, so a directive typed by a member never survives into the text the
+ * agent reads. Pulling it out here and re-emitting it as a
+ * `<<<HELPUDOC_DIRECTIVE` block -- which the agent matches at the start of the
+ * text regardless of what follows -- keeps the member's choice intact.
  */
 export type SharedChatDirective =
   | { kind: 'skill'; skillId: string }
   | { kind: 'mcp'; serverId: string };
 
-const DIRECTIVE_LINE = /^\s*\/(skill|mcp)\s+(\S+)\s*(.*)$/i;
 const KB_MENTION = /@kb:([^\n]+)/gi;
 
 export const parseSharedChatDirective = (
   text: string,
 ): { directive: SharedChatDirective | null; question: string } => {
-  const lines = String(text || '').split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!lines[index].trim()) continue;
-    const match = DIRECTIVE_LINE.exec(lines[index]);
-    if (!match) break; // Only a leading directive counts, as in private chat.
-    const [, rawKind, target, remainder] = match;
-    const rest = [remainder, ...lines.slice(index + 1)].join('\n').trim();
-    return {
-      directive: rawKind.toLowerCase() === 'skill'
-        ? { kind: 'skill', skillId: target }
-        : { kind: 'mcp', serverId: target },
-      question: rest,
-    };
+  // The same parser the private composer uses, so a member who tags a knowledge
+  // base before the skill gets the skill either way. This used to accept only a
+  // leading directive, which matched private chat's behaviour at the time --
+  // both were wrong in the same way.
+  const parsed = parseComposerDirective(text);
+  if (!parsed) {
+    return { directive: null, question: String(text || '').trim() };
   }
-  return { directive: null, question: String(text || '').trim() };
+  return {
+    directive: parsed.kind === 'skill'
+      ? { kind: 'skill', skillId: parsed.id }
+      : { kind: 'mcp', serverId: parsed.id },
+    question: parsed.prompt,
+  };
 };
 
 /**

@@ -15,7 +15,18 @@
     "paths": {
       "@helpudoc/contracts/types": ["../packages/contracts/src/types.ts"],
       "@helpudoc/contracts/agentStream": ["../packages/contracts/src/agentStream.ts"],
+      "@helpudoc/contracts/composerDirectives": ["../packages/contracts/src/composerDirectives.ts"],
       "*": ["node_modules/*"]
+    }
+  },
+  // `@helpudoc/contracts` is `"type": "module"`, which only mattered once the
+  // backend imported a runtime value from it rather than a type. Under
+  // CommonJS, ts-node honours that field and the require fails with
+  // ERR_REQUIRE_ESM. `tsc` already emits these sources as CommonJS into `dist`,
+  // so this only aligns dev and test with what the build produces.
+  "ts-node": {
+    "moduleTypes": {
+      "../packages/contracts/src/**/*.ts": "cjs"
     }
   },
   "include": ["src/**/*", "scripts/**/*"]

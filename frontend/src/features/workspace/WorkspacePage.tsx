@@ -235,6 +235,11 @@ import {
   sanitizeRunPolicy,
 } from '../../utils/messages';
 import { getImplicitContinuationContext, buildContinuationPrompt } from '../../utils/implicitSkillContinuation';
+import {
+  findKnowledgeBaseMentions,
+  parseComposerDirective,
+  removeComposerDirective,
+} from '@helpudoc/contracts/composerDirectives';
 import { createMarkdownComponents } from '../../components/markdown/MarkdownShared';
 import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../../theme';
 
@@ -443,9 +448,14 @@ function MobileLumoAvatar({
   );
 }
 
+/**
+ * `span` is where the `/skill …` text sits inside `raw`. The chip's ✕ splices
+ * that range out rather than rebuilding the message from `prompt`, which would
+ * discard anything the user wrote before the directive.
+ */
 type ParsedSlashDirective =
-  | { kind: 'skill'; skillId: string; prompt: string; raw: string }
-  | { kind: 'mcp'; serverId: string; prompt: string; raw: string }
+  | { kind: 'skill'; skillId: string; prompt: string; raw: string; span: { start: number; end: number } }
+  | { kind: 'mcp'; serverId: string; prompt: string; raw: string; span: { start: number; end: number } }
   | { kind: 'pet'; action: 'on' | 'off'; prompt: string; raw: string }
   | { kind: 'none'; prompt: string; raw: string };
 
@@ -2568,18 +2578,20 @@ export default function WorkspacePage() {
         closeCommand();
         return false;
       }
-      const resolvedDirectiveMatch = textBeforeCursor.match(/^\s*\/(skill|mcp)\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
-      if (resolvedDirectiveMatch) {
-        const kind = resolvedDirectiveMatch[1]?.toLowerCase();
-        const targetId = (resolvedDirectiveMatch[2] || '').trim().toLowerCase();
-        const trailingPrompt = resolvedDirectiveMatch[3] || '';
-        const targetExists =
-          kind === 'skill'
-            ? availableSkillMap.has(targetId)
-            : kind === 'mcp'
-              ? availableMcpServerMap.has(targetId)
-              : false;
-        if (targetExists && (trailingPrompt.trim().length > 0 || /\s$/.test(textBeforeCursor))) {
+      // Scanned like the parser, not anchored. A directive typed after an `@`
+      // mention is just as resolved as one at the start, and leaving the menu
+      // open over a finished directive is what made the two feel different.
+      const resolvedDirective = parseComposerDirective(textBeforeCursor);
+      if (resolvedDirective) {
+        const targetId = resolvedDirective.id.toLowerCase();
+        const targetExists = resolvedDirective.kind === 'skill'
+          ? availableSkillMap.has(targetId)
+          : availableMcpServerMap.has(targetId);
+        // Still typing the id counts as unresolved, so the menu keeps filtering
+        // until a separator says the id is finished.
+        const idIsFinished = resolvedDirective.end < textBeforeCursor.length
+          || /\s$/.test(textBeforeCursor);
+        if (targetExists && idIsFinished) {
           closeCommand();
           return false;
         }
@@ -2685,24 +2697,28 @@ export default function WorkspacePage() {
         raw: trimmed,
       };
     }
-    const skillMatch = trimmed.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
-    if (skillMatch) {
-      const requestedSkillId = (skillMatch[1] || '').trim();
-      const resolvedSkill = requestedSkillId ? availableSkillMap.get(requestedSkillId.toLowerCase()) : undefined;
+    // Anywhere in the message, not only at its start. The `/` menu opens at any
+    // cursor position, so tagging a knowledge base first and the skill second
+    // used to produce a message this parser read as plain prose — no chip, and
+    // no directive for the agent. See `packages/contracts/src/composerDirectives.ts`.
+    const directive = parseComposerDirective(trimmed);
+    if (directive?.kind === 'skill') {
+      const resolvedSkill = availableSkillMap.get(directive.id.toLowerCase());
       return {
         kind: 'skill',
-        skillId: resolvedSkill?.id || requestedSkillId,
-        prompt: (skillMatch[2] || '').trim(),
+        skillId: resolvedSkill?.id || directive.id,
+        prompt: directive.prompt,
         raw: trimmed,
+        span: { start: directive.start, end: directive.end },
       };
     }
-    const mcpMatch = trimmed.match(/^\/mcp\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
-    if (mcpMatch) {
+    if (directive?.kind === 'mcp') {
       return {
         kind: 'mcp',
-        serverId: (mcpMatch[1] || '').trim(),
-        prompt: (mcpMatch[2] || '').trim(),
+        serverId: directive.id,
+        prompt: directive.prompt,
         raw: trimmed,
+        span: { start: directive.start, end: directive.end },
       };
     }
     return {
@@ -2747,15 +2763,22 @@ export default function WorkspacePage() {
 
   const handleRemoveCommandTag = useCallback((tagId: string) => {
     const directive = parseSlashDirective(chatMessage);
-    if (tagId === 'skill' && directive.kind === 'skill') {
-      setChatMessage(directive.prompt);
-      closeCommand();
+    if (directive.kind !== 'skill' && directive.kind !== 'mcp') {
       return;
     }
-    if (tagId === 'mcp' && directive.kind === 'mcp') {
-      setChatMessage(directive.prompt);
-      closeCommand();
+    if (tagId !== directive.kind) {
+      return;
     }
+    // Splice the directive out of `raw`. Assigning `prompt` would be the same
+    // thing only while the directive sits at the start; anywhere else it would
+    // silently delete whatever the user had typed before it.
+    setChatMessage(removeComposerDirective(directive.raw, {
+      kind: directive.kind,
+      id: directive.kind === 'skill' ? directive.skillId : directive.serverId,
+      prompt: directive.prompt,
+      ...directive.span,
+    }));
+    closeCommand();
   }, [chatMessage, closeCommand, parseSlashDirective]);
 
   const findMentionedFiles = useCallback(
@@ -2796,17 +2819,13 @@ export default function WorkspacePage() {
       if (!value) {
         return [];
       }
-      // Longest names first so a base whose name is a prefix of another does not
-      // shadow the more specific mention.
-      return [...knowledgeBaseCatalog]
-        .sort((left, right) => right.name.length - left.name.length)
-        .flatMap((kb) => {
-          if (kb.status !== 'published' || kb.entitled === false) {
-            return [];
-          }
-          const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'i');
-          return mentionPattern.test(value) ? [{ id: kb.id, name: kb.name }] : [];
-        });
+      // The same matcher Shared Chat uses, so one message selects the same bases
+      // wherever it is typed. Entitlement is filtered first: a base the user
+      // cannot read must not shadow a longer name they can.
+      const readable = knowledgeBaseCatalog.filter(
+        (kb) => kb.status === 'published' && kb.entitled !== false,
+      );
+      return findKnowledgeBaseMentions(value, readable).map((kb) => ({ id: kb.id, name: kb.name }));
     },
     [knowledgeBaseCatalog],
   );

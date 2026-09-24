@@ -7,10 +7,14 @@ import {
 } from '../src/services/workspaceTeamChatAgentService';
 
 /**
- * The agent parses `/skill` and `/mcp` itself, but only from the first non-empty
- * line of the text it receives. Shared Chat prepends its channel preamble, so a
- * directive a member typed never reached line one and was dropped without a
- * word. These pin the extraction that runs before the preamble is composed.
+ * Shared Chat prepends its channel preamble, so a directive a member typed never
+ * survives into the text the agent reads. These pin the extraction that runs
+ * before the preamble is composed.
+ *
+ * The parser is shared with the private composer
+ * (`packages/contracts/src/composerDirectives.ts`), so a directive is found
+ * wherever it sits. Both surfaces used to accept a leading directive only, which
+ * meant tagging a knowledge base first dropped the skill in either place.
  */
 
 test('a leading skill directive is lifted out of the question', () => {
@@ -42,14 +46,35 @@ test('leading blank lines do not hide the directive', () => {
   assert.deepStrictEqual(directive, { kind: 'skill', skillId: 'pptx' });
 });
 
-test('a directive further down the message is not honoured', () => {
-  // Matches private chat: only a leading directive counts, so prose that merely
-  // mentions a command cannot silently rebind the run.
+test('a directive further down the message is honoured', () => {
+  // The reported bug, in the shared channel: the `/` menu inserts at the cursor,
+  // so a member who tagged a base first put the directive on line two and lost
+  // the skill. Private chat now reads it too.
   const { directive, question } = parseSharedChatDirective(
     'can you help\n/skill research',
   );
+  assert.deepStrictEqual(directive, { kind: 'skill', skillId: 'research' });
+  assert.strictEqual(question, 'can you help');
+});
+
+test('a knowledge base tagged before the skill does not hide it', () => {
+  const { directive, question } = parseSharedChatDirective(
+    '@kb:General Knowledge /skill data/analyze summarise it',
+  );
+  assert.deepStrictEqual(directive, { kind: 'skill', skillId: 'data/analyze' });
+  assert.strictEqual(question, '@kb:General Knowledge summarise it');
+});
+
+test('the knowledge base is still resolvable from the remaining question', () => {
+  // The two tags have to survive together: the directive leaves, the mention
+  // stays behind for `parseKnowledgeBaseMentions`.
+  const { question } = parseSharedChatDirective('@kb:Sales Playbook /skill research go');
+  assert.deepStrictEqual(parseKnowledgeBaseMentions(question), ['Sales Playbook go']);
+});
+
+test('prose that merely looks like a path does not rebind the run', () => {
+  const { directive } = parseSharedChatDirective('see https://example.test/skill/data');
   assert.strictEqual(directive, null);
-  assert.strictEqual(question, 'can you help\n/skill research');
 });
 
 test('an ordinary question is untouched', () => {
