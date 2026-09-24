@@ -26,6 +26,10 @@ import {
   SettingsTabs,
 } from '../components/settings/SettingsScaffold';
 import GovernanceViewToggle, { type GovernanceViewMode } from '../features/governance/GovernanceViewToggle';
+import {
+  isKnowledgeBaseUsable,
+  knowledgeBaseTeamAccessCount,
+} from '../utils/knowledgeBaseTeamAccess';
 import KnowledgeBundleExplorer from '../components/KnowledgeBundleExplorer';
 import { putGlobalKnowledgeUpload } from '../services/knowledgeApi';
 import {
@@ -44,8 +48,10 @@ import {
   fetchKnowledgeBaseSourceSnapshots,
   fetchKnowledgeBaseTeams,
   fetchKnowledgeBaseVersions,
+  grantKnowledgeBaseTeam,
   publishKnowledgeBase,
   removeKnowledgeBaseSource,
+  revokeKnowledgeBaseTeam,
   type AssignableSource,
   type GovernanceTeam,
   type KnowledgeBaseDetail,
@@ -235,7 +241,7 @@ const KnowledgeGovernancePage = () => {
                           <p className="mt-1">
                             {base.entitled === false
                               ? `No access · ask ${base.ownerTeamName || 'a Platform Admin'}`
-                              : `${base.sourceCount} sources · ${base.teamGrantCount} teams`}
+                              : `${base.sourceCount} sources · ${knowledgeBaseTeamAccessCount(base, base.teamGrantCount)} teams`}
                           </p>
                         </div>
                       </button>
@@ -380,6 +386,9 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
   const [addSourceId, setAddSourceId] = useState('');
   const [uploads, setUploads] = useState<Array<{ name: string; status: string }>>([]);
   const [explorerSource, setExplorerSource] = useState<{ id: number; title: string } | null>(null);
+  const [eligibleTeams, setEligibleTeams] = useState<GovernanceTeam[]>([]);
+  const [addTeamId, setAddTeamId] = useState('');
+  const [teamBusyId, setTeamBusyId] = useState<string | null>(null);
 
   // Kept stable so the explorer's effects depend on them without refetching on
   // every render of this page.
@@ -400,6 +409,10 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
       setGrants(g);
       if (d.permissions.canManage) {
         setAssignable((await fetchAssignableSources()).filter((source) => source.knowledgeBaseId !== knowledgeBaseId));
+        // Teams the caller leads. `PUT /:id/teams/:teamId` authorises on the
+        // owning team's lead, so this control is theirs; it used to point them
+        // at User & Team Management, which is platform-admin only.
+        setEligibleTeams(await fetchEligibleTeams().catch(() => []));
       }
     } catch (error) {
       setErr(error instanceof Error ? error.message : 'Failed to load knowledge base');
@@ -464,6 +477,13 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
   };
 
   const canManage = detail?.permissions.canManage ?? false;
+  // Teams this lead could still share with: the ones they lead, less the owning
+  // team (which already reaches the base) and any that already hold a grant.
+  const shareableTeams = useMemo(
+    () => eligibleTeams.filter((team) => team.id !== detail?.ownerTeamId
+      && !grants.some((grant) => grant.teamId === team.id)),
+    [eligibleTeams, detail?.ownerTeamId, grants],
+  );
 
   return (
     <>
@@ -592,20 +612,93 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
             ) : null}
           </section>
 
+          {/*
+            The owning team is listed and counted even though it holds no grant
+            row. It reaches the base through `ownerTeamId` — `canView`, the
+            catalogue and `resolveAccessibleKnowledgeBaseIds` all say so — but
+            this panel counted `knowledge_base_group_grants` alone, so a base a
+            team was already using reported "Not shared with any team yet". Team
+            Leads read that as their new base having failed to reach anyone.
+
+            Shown rather than stored: writing an owner grant row would duplicate
+            `ownerTeamId`, and revoking it would take the owning team's access
+            away without changing who owns the base.
+          */}
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-slate-800">Team access ({grants.length})</h3>
-            {!grants.length ? (
+            <h3 className="mb-2 text-sm font-semibold text-slate-800">
+              Team access ({knowledgeBaseTeamAccessCount(detail, grants.length)})
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {detail.ownerTeamId ? (
+                <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                  {detail.ownerTeamName || 'Owning team'}
+                  <span className="text-slate-500">owner</span>
+                </span>
+              ) : null}
+              {grants.map((grant) => (
+                <span key={grant.teamId} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                  {grant.teamName}
+                  {canManage ? (
+                    <button
+                      type="button"
+                      disabled={busy || teamBusyId === grant.teamId}
+                      onClick={() => void run(() => revokeKnowledgeBaseTeam(knowledgeBaseId, grant.teamId))}
+                      className="text-slate-500 hover:text-red-600 disabled:opacity-50"
+                      aria-label={`Remove ${grant.teamName} access`}
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </span>
+              ))}
+            </div>
+            {!grants.length && !detail.ownerTeamId ? (
               <p className="text-sm text-slate-500">Not shared with any team yet.</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {grants.map((grant) => (
-                  <span key={grant.teamId} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-                    {grant.teamName}
-                  </span>
-                ))}
+            ) : null}
+            {canManage && !shareableTeams.length ? (
+              // A lead of one team has nobody left to share with once their own
+              // team is excluded, and an empty picker would read as a broken
+              // control rather than an empty set.
+              <p className="mt-3 text-xs text-slate-500">
+                No other team to share with. A Platform Admin can grant this base to teams you do not lead.
+              </p>
+            ) : null}
+            {canManage && shareableTeams.length ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <select
+                  value={addTeamId}
+                  onChange={(event) => setAddTeamId(event.target.value)}
+                  disabled={busy || Boolean(teamBusyId)}
+                  className="rounded-md border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+                >
+                  <option value="">Share with a team…</option>
+                  {shareableTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                </select>
+                <button
+                  type="button"
+                  disabled={!addTeamId || busy || Boolean(teamBusyId)}
+                  onClick={() => {
+                    const teamId = addTeamId;
+                    setTeamBusyId(teamId);
+                    void run(() => grantKnowledgeBaseTeam(knowledgeBaseId, teamId))
+                      .finally(() => { setAddTeamId(''); setTeamBusyId(null); });
+                  }}
+                  className="rounded-md bg-slate-900 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  Share
+                </button>
               </div>
-            )}
-            <p className="mt-3 text-xs text-slate-500">Grant this knowledge base to teams from User &amp; Team Management → Teams.</p>
+            ) : null}
+            {!isKnowledgeBaseUsable(detail) ? (
+              // The step Team Leads are usually missing. A draft is invisible to
+              // the agent for everyone, owning team included, because
+              // `resolveAccessibleKnowledgeBaseIds` requires a published base —
+              // so "nobody can use it" reads as a sharing failure when it is not.
+              <p className="mt-3 text-xs text-amber-700">
+                This knowledge base is a draft. Add sources and publish it before anyone,
+                including {detail.ownerTeamName || 'the owning team'}, can use it in chat.
+              </p>
+            ) : null}
           </section>
 
           {canManage && !detail.isDefault ? (
