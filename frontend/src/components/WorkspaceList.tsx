@@ -25,7 +25,6 @@ import {
   Groups,
   History,
   Lock,
-  ManageAccounts,
   MoreHoriz,
   Publish,
   Share,
@@ -196,13 +195,17 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         icon: <Difference fontSize="small" />,
         onClick: () => onReviewDraftChanges(workspace),
       } : null,
+      // Both states open the same dialog. The first grant there turns the
+      // workspace Shared; later ones add to it. Sharing used to be a separate
+      // dialog that could only ever do the first, so a private workspace had no
+      // way to show who had access or to take it away.
       isPrivate
         && workspace.publicationStatus !== 'detached'
         && !workspace.linkedTeamWorkspaceId
-        && onPublishWorkspace ? {
+        && onManageTeamAccess ? {
         label: `Share workspace`,
         icon: <Share fontSize="small" />,
-        onClick: () => onPublishWorkspace(workspace),
+        onClick: () => onManageTeamAccess(workspace),
       } : null,
       isPrivate && workspace.linkedTeamWorkspaceId ? {
         label: `Open shared workspace`,
@@ -236,9 +239,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         icon: <Unpublished fontSize="small" />,
         onClick: () => onWithdrawWorkspace(workspace),
       } : null,
+      // Same label and icon as the private entry above, because it is now the
+      // same dialog doing the same job. Two names for one thing was the outward
+      // half of the split.
       isSharedWorkspace && lifecycleStatus === 'active' && isOwner && onManageTeamAccess ? {
-        label: `Manage access`,
-        icon: <ManageAccounts fontSize="small" />,
+        label: `Share workspace`,
+        icon: <Share fontSize="small" />,
         onClick: () => onManageTeamAccess(workspace),
       } : null,
       !isSharedWorkspace ? {

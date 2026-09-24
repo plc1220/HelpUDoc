@@ -1,34 +1,30 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
-  Autocomplete,
-  Box,
   Button,
-  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
   TextField,
   Typography,
 } from '@mui/material';
 
 import type { Workspace } from '../types';
-import {
-  fetchUserDirectory,
-  listWorkspaceTeams,
-  publishWorkspace,
-  shareWorkspaceWithAudience,
-  type DirectoryUser,
-  type WorkspaceNamedGrantRole,
-  type WorkspaceTeam,
-} from '../services/workspaceApi';
+import { publishWorkspace } from '../services/workspaceApi';
 
+/**
+ * Locks the current Working version of a Shared workspace into an immutable
+ * version.
+ *
+ * This used to be two dialogs in one: the same component asked a private
+ * workspace who to share it with, and a Shared workspace whether to lock. They
+ * are unrelated jobs, and keeping them together is how sharing ended up with a
+ * surface that could only ever grant access once, with no way to see or remove
+ * it afterwards. Sharing now lives in `WorkspaceShareDialog`, which serves both
+ * states.
+ */
 type WorkspacePublishDialogProps = {
   open: boolean;
   workspace: Workspace | null;
@@ -44,91 +40,24 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
   onBeforePublish,
   onPublished,
 }) => {
-  const [selectedPeople, setSelectedPeople] = useState<DirectoryUser[]>([]);
-  const [peopleOptions, setPeopleOptions] = useState<DirectoryUser[]>([]);
-  const [peopleQuery, setPeopleQuery] = useState('');
-  const [peopleLoading, setPeopleLoading] = useState(false);
-  const [teams, setTeams] = useState<WorkspaceTeam[]>([]);
-  const [teamIds, setTeamIds] = useState<string[]>([]);
-  const [teamsLoading, setTeamsLoading] = useState(false);
-  const [namedRole, setNamedRole] = useState<WorkspaceNamedGrantRole>('contributor');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const isPrivate = workspace?.visibility !== 'team';
 
   useEffect(() => {
     if (!open) {
-      setSelectedPeople([]);
-      setPeopleOptions([]);
-      setPeopleQuery('');
-      setTeams([]);
-      setTeamIds([]);
-      setNamedRole('contributor');
       setNote('');
       setError('');
     }
   }, [open]);
 
-  useEffect(() => {
-    if (!open || !isPrivate || peopleQuery.trim().length < 2) {
-      setPeopleOptions([]);
-      setPeopleLoading(false);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      setPeopleLoading(true);
-      void fetchUserDirectory(peopleQuery.trim())
-        .then((users) => {
-          if (!cancelled) setPeopleOptions(users);
-        })
-        .catch(() => {
-          if (!cancelled) setPeopleOptions([]);
-        })
-        .finally(() => {
-          if (!cancelled) setPeopleLoading(false);
-        });
-    }, 300);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [isPrivate, open, peopleQuery]);
-
-  useEffect(() => {
-    if (!open || !isPrivate) return;
-    setTeamsLoading(true);
-    void listWorkspaceTeams()
-      .then((items) => {
-        setTeams(items);
-        if (items.length === 1) setTeamIds([items[0].id]);
-      })
-      .catch(() => setTeams([]))
-      .finally(() => setTeamsLoading(false));
-  }, [isPrivate, open]);
-
-  const canSubmit = useMemo(() => {
-    if (!workspace || busy) return false;
-    if (!isPrivate) return true;
-    return (teamIds.length > 0 || selectedPeople.length > 0) && !peopleLoading && !teamsLoading;
-  }, [busy, isPrivate, peopleLoading, selectedPeople.length, teamIds, teamsLoading, workspace]);
-
   const handleSubmit = async () => {
-    if (!workspace || !canSubmit) return;
+    if (!workspace || busy) return;
     setBusy(true);
     setError('');
     try {
       await onBeforePublish?.(workspace);
-      if (isPrivate) {
-        await shareWorkspaceWithAudience(workspace.id, {
-          userIds: selectedPeople.map((person) => person.id),
-          teamIds,
-          role: namedRole,
-        });
-      } else {
-        await publishWorkspace(workspace.id, { note: note.trim() || undefined });
-      }
+      await publishWorkspace(workspace.id, { note: note.trim() || undefined });
       await onPublished();
       onClose();
     } catch (reason) {
@@ -140,130 +69,29 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="sm">
-      <DialogTitle>{isPrivate ? 'Share workspace' : 'Lock current changes'}</DialogTitle>
+      <DialogTitle>Lock current changes</DialogTitle>
       <DialogContent dividers>
         <Typography variant="body2" sx={{ mb: 2 }}>
-          {isPrivate ? (
-            <>
-              Share <strong>{workspace?.name}</strong> as one live workspace. You can add more people later.
-            </>
-          ) : (
-            <>
-              Create an immutable locked version from the current Working version of <strong>{workspace?.name}</strong>.
-              Live work continues afterward, and the locked snapshot cannot be edited.
-            </>
-          )}
+          Create an immutable locked version from the current Working version of{' '}
+          <strong>{workspace?.name}</strong>. Live work continues afterward, and the locked
+          snapshot cannot be edited.
         </Typography>
-
-        {isPrivate ? (
-          <>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>Share with</Typography>
-            {teamsLoading ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                <CircularProgress size={26} />
-              </Box>
-            ) : teams.length ? (
-              <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-                <InputLabel id="publish-team-label">Teams (optional)</InputLabel>
-                <Select
-                  multiple
-                  labelId="publish-team-label"
-                  label="Teams (optional)"
-                  value={teamIds}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setTeamIds(typeof next === 'string' ? next.split(',') : next);
-                  }}
-                  renderValue={(selected) => teams
-                    .filter((team) => (selected as string[]).includes(team.id))
-                    .map((team) => team.name)
-                    .join(', ')}
-                >
-                  {teams.map((team) => <MenuItem key={team.id} value={team.id}>{team.name}</MenuItem>)}
-                </Select>
-              </FormControl>
-            ) : (
-              <Alert severity="info" sx={{ mb: 2 }}>
-                You do not belong to any team yet. You can still share with individual people.
-              </Alert>
-            )}
-            {teamIds.length ? (
-              <Alert severity="info" sx={{ mb: 2 }}>
-                Members of {teamIds.length === 1 ? 'this team' : `these ${teamIds.length} teams`} will
-                receive {namedRole === 'viewer' ? 'Viewer' : 'Contributor'} access to the shared
-                workspace, including Workspace Chat and collaboration. Publisher authority remains
-                direct-user only.
-              </Alert>
-            ) : null}
-            <Autocomplete
-              multiple
-              options={peopleOptions}
-              value={selectedPeople}
-              inputValue={peopleQuery}
-              onInputChange={(_event, value) => setPeopleQuery(value)}
-              onChange={(_event, value) => setSelectedPeople(value)}
-              getOptionLabel={(person) => person.email
-                ? `${person.displayName} (${person.email})`
-                : person.displayName}
-              isOptionEqualToValue={(left, right) => left.id === right.id}
-              filterOptions={(options) => options}
-              filterSelectedOptions
-              loading={peopleLoading}
-              renderTags={(value, getTagProps) => value.map((person, index) => (
-                <Chip {...getTagProps({ index })} key={person.id} size="small" label={person.displayName} />
-              ))}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="People"
-                  placeholder="Search registered users"
-                  helperText="Type at least 2 characters. You can manage access again at any time."
-                />
-              )}
-              sx={{ mb: 2 }}
-            />
-            <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-              <InputLabel id="shared-workspace-role-label">Access role</InputLabel>
-              <Select
-                labelId="shared-workspace-role-label"
-                label="Access role"
-                value={namedRole}
-                onChange={(event) => setNamedRole(event.target.value as WorkspaceNamedGrantRole)}
-              >
-                <MenuItem value="viewer">Viewer</MenuItem>
-                <MenuItem value="contributor">Contributor</MenuItem>
-                <MenuItem value="publisher">Publisher</MenuItem>
-              </Select>
-            </FormControl>
-            <Alert severity="info" sx={{ mb: 2 }}>
-              Contributors can edit shared content directly or work privately and submit changes for review.
-              Publishers can also approve submissions and create immutable locked versions.
-            </Alert>
-            {!teamIds.length && selectedPeople.length === 0 ? (
-              <Alert severity="warning" sx={{ mt: 2 }}>
-                Choose at least one team or person before sharing.
-              </Alert>
-            ) : null}
-          </>
-        ) : (
-          <TextField
-            label="Lock note (optional)"
-            placeholder="Describe this locked version"
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            multiline
-            minRows={3}
-            fullWidth
-            inputProps={{ maxLength: 1000 }}
-          />
-        )}
-
+        <TextField
+          label="Lock note (optional)"
+          placeholder="Describe this locked version"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          multiline
+          minRows={3}
+          fullWidth
+          inputProps={{ maxLength: 1000 }}
+        />
         {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
       </DialogContent>
       <DialogActions sx={{ px: 3, py: 2 }}>
         <Button onClick={onClose} color="inherit" disabled={busy}>Cancel</Button>
-        <Button variant="contained" onClick={() => void handleSubmit()} disabled={!canSubmit}>
-          {busy ? <CircularProgress size={22} color="inherit" /> : isPrivate ? 'Share workspace' : 'Lock current changes'}
+        <Button variant="contained" onClick={() => void handleSubmit()} disabled={!workspace || busy}>
+          {busy ? <CircularProgress size={22} color="inherit" /> : 'Lock current changes'}
         </Button>
       </DialogActions>
     </Dialog>

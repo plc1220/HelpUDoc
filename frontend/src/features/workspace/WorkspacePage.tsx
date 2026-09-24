@@ -7314,8 +7314,11 @@ export default function WorkspacePage() {
     resetWorkspaceArtifactState,
   ]);
 
+  // Private workspaces open this too. The dialog decides where a grant goes from
+  // the workspace's own state, so the guard here would only stop the first
+  // share, which is the one case the dialog exists to handle.
   const handleManageTeamAccess = useCallback((workspace: Workspace) => {
-    if (workspace.visibility === 'team') setShareWorkspace(workspace);
+    setShareWorkspace(workspace);
   }, []);
 
   const handleUpdateFile = useCallback(async (

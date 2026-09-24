@@ -33,13 +33,24 @@ import {
   listWorkspaceTeams,
   removeWorkspaceCollaborator,
   removeWorkspaceTeam,
+  shareWorkspaceWithAudience,
   type DirectoryUser,
   type WorkspaceAccessTeam,
   type WorkspaceCollaborator,
+  type WorkspaceNamedGrantRole,
   type WorkspaceTeam,
 } from '../services/workspaceApi';
 
 const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * `editor` is the stored role; `publisher` is the same authority under the name
+ * the sharing API and the UI both use. Mirrors `legacyWorkspaceRoleToNamedGrant`
+ * on the server, which this dialog cannot import.
+ */
+const toNamedGrantRole = (
+  role: 'editor' | 'contributor' | 'viewer',
+): WorkspaceNamedGrantRole => (role === 'editor' ? 'publisher' : role);
 
 function useDebouncedValue<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -84,6 +95,21 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
+  /**
+   * Whether the workspace has been shared yet, which decides where a grant goes.
+   *
+   * The first grant is a state change — `POST /share` turns the workspace from
+   * private into Shared and refuses a workspace that already is one. Later
+   * grants are ordinary writes on `/collaborators`, which in turn refuse a
+   * private workspace. So the endpoint depends on the state, and the state can
+   * change while this dialog is open.
+   *
+   * Kept locally rather than read from `workspace.visibility` because the prop
+   * is a snapshot the parent captured when the dialog opened; it still says
+   * `private` after the first share, which would send the second grant to the
+   * endpoint that has just started refusing it.
+   */
+  const [isShared, setIsShared] = useState(false);
 
   const workspaceId = workspace?.id;
 
@@ -123,19 +149,21 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
   }, [open, workspaceId, loadCollaborators]);
 
   useEffect(() => {
-    if (!open) {
-      setSearchInput('');
-      setOptions([]);
-      setSelected([]);
-      setAccessTeams([]);
-      setAvailableTeams([]);
-      setSelectedTeamId('');
-      setSelectedTeamRole('contributor');
-      setInviteRole('contributor');
-      setInviteError(null);
-      setTeamError(null);
+    if (open) {
+      setIsShared(workspace?.visibility === 'team');
+      return;
     }
-  }, [open]);
+    setSearchInput('');
+    setOptions([]);
+    setSelected([]);
+    setAccessTeams([]);
+    setAvailableTeams([]);
+    setSelectedTeamId('');
+    setSelectedTeamRole('contributor');
+    setInviteRole('contributor');
+    setInviteError(null);
+    setTeamError(null);
+  }, [open, workspace?.visibility]);
 
   useEffect(() => {
     if (open && workspaceId) {
@@ -193,8 +221,19 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
     setInviteBusy(true);
     setInviteError(null);
     try {
-      for (const user of selected) {
-        await addWorkspaceCollaborator(workspaceId, { userId: user.id, role: inviteRole });
+      if (isShared) {
+        for (const user of selected) {
+          await addWorkspaceCollaborator(workspaceId, { userId: user.id, role: inviteRole });
+        }
+      } else {
+        // One call, because sharing is a single transition rather than a grant
+        // per person: it flips the workspace to Shared and writes the whole
+        // audience together.
+        await shareWorkspaceWithAudience(workspaceId, {
+          userIds: selected.map((user) => user.id),
+          role: toNamedGrantRole(inviteRole),
+        });
+        setIsShared(true);
       }
       setSelected([]);
       await loadCollaborators();
@@ -225,7 +264,15 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
     setTeamBusyId(selectedTeamId);
     setTeamError(null);
     try {
-      await addWorkspaceTeam(workspaceId, selectedTeamId, selectedTeamRole);
+      if (isShared) {
+        await addWorkspaceTeam(workspaceId, selectedTeamId, selectedTeamRole);
+      } else {
+        await shareWorkspaceWithAudience(workspaceId, {
+          teamIds: [selectedTeamId],
+          role: selectedTeamRole,
+        });
+        setIsShared(true);
+      }
       setSelectedTeamId('');
       await Promise.all([loadCollaborators(), loadAvailableTeams()]);
       await onWorkspaceChanged?.();
@@ -254,7 +301,13 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
-        <span>Manage access</span>
+        {/*
+          One title for both states. "Manage access" described nothing on a
+          workspace nobody could reach yet, and the private and Shared paths are
+          the same dialog now, so a title that changes under the user would be
+          the only thing left telling them otherwise.
+        */}
+        <span>Share workspace</span>
         <IconButton aria-label="close" onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
@@ -265,6 +318,17 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
             {workspace.name}
           </Typography>
         ) : null}
+
+        {/*
+          Worth saying once, and true in both states: the old private-only
+          dialog said it in its title and body, and dropping that would leave
+          the first person a user adds turning the workspace Shared with nothing
+          on screen to say so. Written to hold either way, so the dialog reads
+          the same before and after the first grant.
+        */}
+        <Typography variant="body2" sx={{ mb: 2 }}>
+          Everyone here works in one live shared workspace.
+        </Typography>
 
         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
           Teams with access
