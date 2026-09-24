@@ -29,6 +29,7 @@ import GovernanceViewToggle, { type GovernanceViewMode } from '../features/gover
 import {
   isKnowledgeBaseUsable,
   knowledgeBaseTeamAccessCount,
+  selectVisibleKnowledgeBases,
 } from '../utils/knowledgeBaseTeamAccess';
 import KnowledgeBundleExplorer from '../components/KnowledgeBundleExplorer';
 import { putGlobalKnowledgeUpload } from '../services/knowledgeApi';
@@ -124,17 +125,29 @@ const KnowledgeGovernancePage = () => {
 
   useEffect(() => { void load(); }, [load]);
 
-  const visibleCatalog = useMemo(() => {
-    const query = catalogQuery.trim().toLowerCase();
-    const scoped = tab === 'manage'
-      ? catalog.filter((base) => teams.some((team) => team.isLead && team.id === base.ownerTeamId))
-      : catalog;
-    if (!query) return scoped;
-    return scoped.filter((base) =>
-      base.name.toLowerCase().includes(query)
-      || base.slug.toLowerCase().includes(query)
-      || (base.ownerTeamName || '').toLowerCase().includes(query));
-  }, [catalog, catalogQuery, tab, teams]);
+  const ledTeamIds = useMemo(
+    () => teams.filter((team) => team.isLead).map((team) => team.id),
+    [teams],
+  );
+
+  const visibleCatalog = useMemo(
+    () => selectVisibleKnowledgeBases({
+      bases: catalog,
+      tab,
+      ledTeamIds,
+      query: catalogQuery,
+    }),
+    [catalog, catalogQuery, tab, ledTeamIds],
+  );
+
+  /**
+   * Drafts the Catalog tab is holding back, so an empty list can say why rather
+   * than implying the search was wrong.
+   */
+  const hiddenDraftCount = useMemo(
+    () => (tab === 'manage' ? 0 : catalog.filter((base) => !isKnowledgeBaseUsable(base)).length),
+    [catalog, tab],
+  );
 
   const createAction = canCreate ? (
     <button
@@ -217,7 +230,16 @@ const KnowledgeGovernancePage = () => {
               </div>
 
               {!visibleCatalog.length ? (
-                <SettingsEmptyState title="No matching bases" description="Try a different search or tab." icon={Search} />
+                <SettingsEmptyState
+                  title="No matching bases"
+                  // Naming the reason, because otherwise a lead who has just
+                  // created a base is told nothing matches while it sits one tab
+                  // away. The header already says this tab lists published bases.
+                  description={hiddenDraftCount && !catalogQuery.trim()
+                    ? `${hiddenDraftCount} unpublished ${hiddenDraftCount === 1 ? 'base is' : 'bases are'} not listed here. Publish from My knowledge bases.`
+                    : 'Try a different search or tab.'}
+                  icon={Search}
+                />
               ) : (
                 <div className={`mt-4 ${catalogView === 'card' ? 'grid gap-4 md:grid-cols-2 xl:grid-cols-3' : 'space-y-2'}`}>
                   {visibleCatalog.map((base) => (

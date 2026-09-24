@@ -31,3 +31,36 @@ export const knowledgeBaseTeamAccessCount = (
 export const isKnowledgeBaseUsable = (
   base: Pick<KnowledgeBaseSummary, 'status'>,
 ): boolean => base.status === 'published';
+
+/**
+ * Which bases a governance tab lists.
+ *
+ * The two tabs ask opposite questions. Catalog asks "what can I use", and a
+ * draft is usable by nobody — `resolveAccessibleKnowledgeBaseIds` returns
+ * published bases only — so listing one there offers something that cannot be
+ * referenced. My knowledge bases asks "what am I curating", so it keeps drafts;
+ * without them a Team Lead has nowhere to open the base they just created, which
+ * is where publishing happens.
+ *
+ * Both halves live here so collapsing them into one filter has to be deliberate.
+ */
+export const selectVisibleKnowledgeBases = <
+  T extends Pick<KnowledgeBaseSummary, 'status' | 'ownerTeamId' | 'name' | 'slug' | 'ownerTeamName'>,
+>(input: {
+  bases: readonly T[];
+  tab: 'catalog' | 'manage';
+  ledTeamIds: readonly string[];
+  query?: string;
+}): T[] => {
+  const scoped = input.tab === 'manage'
+    ? input.bases.filter((base) => Boolean(base.ownerTeamId) && input.ledTeamIds.includes(String(base.ownerTeamId)))
+    : input.bases.filter((base) => isKnowledgeBaseUsable(base));
+  const query = (input.query || '').trim().toLowerCase();
+  if (!query) {
+    return [...scoped];
+  }
+  return scoped.filter((base) =>
+    base.name.toLowerCase().includes(query)
+    || base.slug.toLowerCase().includes(query)
+    || (base.ownerTeamName || '').toLowerCase().includes(query));
+};
