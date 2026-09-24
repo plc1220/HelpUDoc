@@ -139,13 +139,19 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
         decision_type = str(decision.get("type") or "").strip().lower()
         edited_args = edited_action_args(decision)
         decision_message = str(decision.get("message") or "").strip()
+        # Only the human's decision decides what this was.
+        #
+        # `feedback` is the `reviewer_feedback` tool argument, which the model
+        # fills in itself. Treating a non-empty one as an edit turned an approve
+        # into "revise the plan and ask again": the model passed
+        # `reviewer_feedback="Approved. All steps are documented."`, the branch
+        # below fired on an approve decision, and the user was asked to approve
+        # the same plan a second time.
         edit_feedback = ""
         if decision_type == "edit":
             edit_feedback = (
                 str(edited_args.get("reviewer_feedback") or "").strip() or decision_message or feedback
             )
-        elif feedback:
-            edit_feedback = feedback
         edited_draft_content = str(edited_args.get("edited_plan_content") or "").strip() or draft_content
         edited_plan_path = str(edited_args.get("plan_file_path") or "").strip()
         if edited_plan_path:
@@ -172,7 +178,7 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
                 "Do not execute this plan. Ask for a revised direction before continuing."
             )
 
-        if decision_type == "edit" or edit_feedback:
+        if decision_type == "edit":
             feedback = edit_feedback
             draft_content = edited_draft_content
             workspace_state.context["last_plan_feedback"] = feedback
