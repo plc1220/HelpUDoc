@@ -165,6 +165,12 @@ export type GroupPromptAccess = {
   skillIds: string[];
   mcpServerIds: string[];
   knowledgeBaseIds: string[];
+  /**
+   * Grants naming an MCP server that is no longer configured, already removed
+   * from `mcpServerIds`. Absent from a save payload — the server rejects unknown
+   * ids — so saving the team is what clears the rows.
+   */
+  unknownMcpServerIds?: string[];
 };
 
 export type UserSortField = 'displayName' | 'email' | 'role' | 'createdAt';

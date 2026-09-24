@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { UserService } from '../services/userService';
 import { HttpError } from '../errors';
-import { findUnknownRuntimeMcpServerIds, loadRuntimeMcpServers } from './agent/policy';
+import {
+  findUnknownRuntimeMcpServerIds,
+  loadRuntimeMcpServers,
+  splitConfiguredMcpServerIds,
+} from './agent/policy';
 
 const updateAdminSchema = z.object({
   isAdmin: z.boolean(),
@@ -297,7 +301,23 @@ export default function usersRoutes(userService: UserService) {
       if (!access) {
         return res.status(404).json({ error: 'Team not found' });
       }
-      res.json(access);
+      // Against the same list `PUT` validates the payload with. The two
+      // disagreed: a grant kept its row when its server left `runtime.yaml`, so
+      // this returned an id the picker had no option for. The trigger counts the
+      // value array, so the team read "2 selected" over a single tick — and
+      // because every change sent the stale id back, `PUT` then refused to save
+      // the team at all.
+      const { known, unknown } = splitConfiguredMcpServerIds(
+        access.mcpServerIds,
+        await loadRuntimeMcpServers(),
+      );
+      res.json({
+        ...access,
+        mcpServerIds: known,
+        // Reported rather than silently dropped. A grant disappearing with no
+        // word is how an admin loses track of what a team was meant to reach.
+        unknownMcpServerIds: unknown,
+      });
     } catch (error) {
       console.error('Failed to load group access', error);
       res.status(500).json({ error: 'Failed to load team access' });

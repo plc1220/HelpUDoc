@@ -109,6 +109,12 @@ const UsersPage = () => {
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [groupMembers, setGroupMembers] = useState<ManagedUser[]>([]);
   const [groupAccess, setGroupAccess] = useState<GroupPromptAccess>(emptyAccess);
+  /**
+   * Grants that name an MCP server no longer in `runtime.yaml`. The server has
+   * already dropped them from `mcpServerIds`, so they are held separately to be
+   * reported rather than to be edited.
+   */
+  const [orphanedMcpServerIds, setOrphanedMcpServerIds] = useState<string[]>([]);
   const [savedGroupAccess, setSavedGroupAccess] = useState<GroupPromptAccess>(emptyAccess);
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -314,6 +320,7 @@ const UsersPage = () => {
       };
       setGroupMembers(members);
       setGroupAccess(normalized);
+      setOrphanedMcpServerIds(sortStrings(access.unknownMcpServerIds || []));
       setSavedGroupAccess(normalized);
       setError(null);
     } catch (err) {
@@ -423,6 +430,9 @@ const UsersPage = () => {
       };
       setGroupAccess(normalized);
       setSavedGroupAccess(normalized);
+      // `replaceGroupPromptAccess` rewrites the rows from the payload, and the
+      // payload never carried them, so the stale grants are gone.
+      setOrphanedMcpServerIds([]);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save team access');
@@ -1096,6 +1106,18 @@ const UsersPage = () => {
                             searchPlaceholder="Search servers"
                           />
                         </div>
+
+                        {orphanedMcpServerIds.length ? (
+                          <SettingsNotice variant="warning">
+                            {orphanedMcpServerIds.length === 1
+                              ? `This team has a grant for ${orphanedMcpServerIds[0]}, which is no longer a configured MCP server.`
+                              : `This team has grants for ${orphanedMcpServerIds.join(', ')}, which are no longer configured MCP servers.`}
+                            {' '}
+                            {orphanedMcpServerIds.length === 1 ? 'It is' : 'They are'} not counted above and
+                            cannot be granted again. Saving this team removes the leftover
+                            {orphanedMcpServerIds.length === 1 ? ' grant' : ' grants'}.
+                          </SettingsNotice>
+                        ) : null}
 
                         {visiblePlugins.length > 0 ? (
                           <div>

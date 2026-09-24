@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   createAgentPolicyApi,
   findUnknownRuntimeMcpServerIds,
+  splitConfiguredMcpServerIds,
   resolveRuntimeSkillAccess,
   type EffectiveAgentPolicy,
 } from '../src/api/agent/policy';
@@ -282,4 +283,60 @@ test('the private skill runtime kill switch withholds draft pins from the token'
     if (previous === undefined) delete process.env.ENABLE_PRIVATE_SKILL_RUNTIME;
     else process.env.ENABLE_PRIVATE_SKILL_RUNTIME = previous;
   }
+});
+
+/**
+ * A team's MCP grants outlive the servers they name. `runtime.yaml` dropped
+ * `toolbox-bq-demo` when `bigquery-managed` replaced it, and the grant rows
+ * stayed, so the Team access panel counted a server it could not show and the
+ * save it then sent back was refused for naming an unknown one.
+ */
+
+const configured = [
+  { name: 'bigquery-managed' },
+  { name: 'data-artifacts' },
+  { name: 'google-workspace' },
+];
+
+test('a grant for a server that left the runtime is separated out', () => {
+  const { known, unknown } = splitConfiguredMcpServerIds(
+    ['data-artifacts', 'toolbox-bq-demo'],
+    configured,
+  );
+  // The reported case: "2 selected" over a single tick.
+  assert.deepEqual(known, ['data-artifacts']);
+  assert.deepEqual(unknown, ['toolbox-bq-demo']);
+});
+
+test('a team whose grants are all configured keeps every one', () => {
+  const { known, unknown } = splitConfiguredMcpServerIds(
+    ['google-workspace', 'data-artifacts'],
+    configured,
+  );
+  assert.deepEqual(known, ['data-artifacts', 'google-workspace']);
+  assert.deepEqual(unknown, []);
+});
+
+test('the two halves agree with what a write would refuse', () => {
+  // `PUT` rejects exactly `findUnknownRuntimeMcpServerIds`, so a read that kept
+  // anything from that set would hand back a payload the server will not accept.
+  const granted = ['data-artifacts', 'toolbox-bq-demo', 'retired-server'];
+  const { known, unknown } = splitConfiguredMcpServerIds(granted, configured);
+  assert.deepEqual(unknown, findUnknownRuntimeMcpServerIds(granted, configured));
+  assert.deepEqual(findUnknownRuntimeMcpServerIds(known, configured), []);
+});
+
+test('blank and duplicate ids do not survive the split', () => {
+  const { known, unknown } = splitConfiguredMcpServerIds(
+    ['data-artifacts', ' data-artifacts ', '', '   '],
+    configured,
+  );
+  assert.deepEqual(known, ['data-artifacts']);
+  assert.deepEqual(unknown, []);
+});
+
+test('no configured server at all makes every grant unknown', () => {
+  const { known, unknown } = splitConfiguredMcpServerIds(['data-artifacts'], []);
+  assert.deepEqual(known, []);
+  assert.deepEqual(unknown, ['data-artifacts']);
 });

@@ -68,6 +68,30 @@ export function findUnknownRuntimeMcpServerIds(
   return normalizeUniqueIds(requestedServerIds).filter((serverId) => !configuredIds.has(serverId));
 }
 
+/**
+ * Split stored MCP grants into the ones a runtime still offers and the ones it
+ * does not.
+ *
+ * A grant keeps its row when its server leaves `runtime.yaml`, so the two ends
+ * of the Team access panel disagreed: the picker renders options from the
+ * configured list while the trigger counts the stored value, which read as
+ * "2 selected" over a single tick. Worse, `PUT` rejects unknown ids, so sending
+ * the stale one back refused the whole save and the team could not be edited.
+ *
+ * Both halves come from here so a read and a write cannot answer differently.
+ */
+export function splitConfiguredMcpServerIds(
+  grantedServerIds: string[],
+  configuredServers: Array<{ name?: string }>,
+): { known: string[]; unknown: string[] } {
+  const unknown = findUnknownRuntimeMcpServerIds(grantedServerIds, configuredServers);
+  const unknownSet = new Set(unknown);
+  return {
+    known: normalizeUniqueIds(grantedServerIds).filter((serverId) => !unknownSet.has(serverId)),
+    unknown,
+  };
+}
+
 export function resolveRuntimeSkillAccess(
   entitledSkillIds: string[],
   workspacePins: WorkspaceSkillRuntimePin[],
