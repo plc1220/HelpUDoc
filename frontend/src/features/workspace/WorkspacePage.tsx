@@ -9177,9 +9177,10 @@ export default function WorkspacePage() {
                           <FileStatusChip
                             workspaceId={selectedWorkspace.id}
                             fileId={selectedFile.id}
-                            size="md"
+                            size="sm"
                             status={fileStatusById[String(selectedFile.id)].status}
                             drift={fileStatusById[String(selectedFile.id)].drift}
+                            hideSubmitForReview
                             onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
                           />
                           {fileStatusById[String(selectedFile.id)].status === 'published' && (
