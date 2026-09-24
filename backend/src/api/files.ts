@@ -19,9 +19,9 @@ export default function(
   fileService: FileService,
   workspaceService: WorkspaceService,
   googleOAuthService: GoogleOAuthService,
-  fileStatusService: FileStatusService,
-  filePublicationService: FilePublicationService,
   officeDocuments = new OfficeDocumentService(fileService, workspaceService),
+  fileStatusService?: FileStatusService,
+  filePublicationService?: FilePublicationService,
 ) {
   const router = Router({ mergeParams: true });
   const upload = multer({
@@ -368,7 +368,7 @@ export default function(
     try {
       const user = requireUserContext(req);
       const workspaceId = String((req.params as Record<string, string>).workspaceId);
-      res.json(await fileStatusService.getWorkspaceSummary(workspaceId, user.userId));
+      res.json(await fileStatusService!.getWorkspaceSummary(workspaceId, user.userId));
     } catch (error) {
       handleError(res, error, 'Failed to summarize file statuses');
     }
@@ -377,7 +377,7 @@ export default function(
   router.get('/:fileId/status', async (req: Request<{ fileId: string }>, res: Response) => {
     try {
       const user = requireUserContext(req);
-      res.json(await fileStatusService.getStatus(
+      res.json(await fileStatusService!.getStatus(
         Number.parseInt(req.params.fileId, 10),
         user.userId,
       ));
@@ -390,7 +390,7 @@ export default function(
     try {
       const user = requireUserContext(req);
       const payload = fileStatusSchema.parse(req.body || {});
-      res.json(await fileStatusService.transition(
+      res.json(await fileStatusService!.transition(
         Number.parseInt(req.params.fileId, 10),
         user.userId,
         payload,
@@ -403,7 +403,7 @@ export default function(
   router.get('/:fileId/publications', async (req: Request<{ fileId: string }>, res: Response) => {
     try {
       const user = requireUserContext(req);
-      const publications = await filePublicationService.listPublications(
+      const publications = await filePublicationService!.listPublications(
         Number.parseInt(req.params.fileId, 10),
         user.userId,
       );
@@ -419,7 +419,7 @@ export default function(
       try {
         const user = requireUserContext(req);
         const fileId = officeFileId(req.params.fileId);
-        const delivery = await filePublicationService.deliverCurrentToGoogleDrive(
+        const delivery = await filePublicationService!.deliverCurrentToGoogleDrive(
           fileId, user.userId, googleDriveService,
         );
         res.json({ delivery });
@@ -432,7 +432,7 @@ export default function(
   router.get('/:fileId/google-drive-delivery', async (req: Request<{ fileId: string }>, res: Response) => {
     try {
       const user = requireUserContext(req);
-      const delivery = await filePublicationService.getCurrentGoogleDriveDelivery(
+      const delivery = await filePublicationService!.getCurrentGoogleDriveDelivery(
         officeFileId(req.params.fileId), user.userId,
       );
       res.json({ delivery });
@@ -448,7 +448,7 @@ export default function(
         const user = requireUserContext(req);
         // Streamed through the API: the publication bucket is access-controlled,
         // not public, so membership stays the access boundary.
-        const download = await filePublicationService.getPublicationDownload(
+        const download = await filePublicationService!.getPublicationDownload(
           Number.parseInt(req.params.fileId, 10),
           Number.parseInt(req.params.publicationVersion, 10),
           user.userId,

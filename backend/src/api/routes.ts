@@ -99,7 +99,9 @@ export default function(
     '/workspaces/:workspaceId/collaboration',
     workspaceCollaborationRoutes(workspaceCollaborationService, workspaceTeamChatAgentService),
   );
-  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService, fileStatusService, filePublicationService));
+  router.use('/workspaces/:workspaceId/files', fileRoutes(
+    fileService, workspaceService, googleOAuthService, undefined, fileStatusService, filePublicationService,
+  ));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));
