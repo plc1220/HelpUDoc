@@ -2,6 +2,7 @@ import { Button } from '@astryxdesign/core/Button';
 import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
 import { ChatToolCalls } from '@astryxdesign/core/Chat';
 import { TextArea } from '@astryxdesign/core/TextArea';
+import { Token } from '@astryxdesign/core/Token';
 import { CommandSuggestionList, MentionSuggestionList } from './ComposerSuggestionList';
 import {
   buildCommandSuggestions,
@@ -26,6 +27,12 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Components } from 'react-markdown';
+
+import {
+  findKnowledgeBaseMentions,
+  parseComposerDirective,
+  removeComposerDirective,
+} from '@helpudoc/contracts/composerDirectives';
 
 import type { Workspace } from '../../types';
 import { isTeamChatFrozen } from '../../utils/workspaceLifecycle';
@@ -52,6 +59,17 @@ type CollaborationConversion = {
   requiresContributor?: boolean;
   requiresFile?: boolean;
 };
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** An `@` tag is only a tag on a word boundary, matching the resolver's rule. */
+const mentionPattern = (mention: string): RegExp =>
+  new RegExp(`(^|[\\s([{])${escapeRegExp(mention)}(?=$|[\\s)\\]}])`, 'i');
+
+const stripMention = (value: string, mention: string): string => value
+  .replace(new RegExp(mentionPattern(mention).source, 'gi'), (_match, prefix: string) => prefix)
+  .replace(/[ \t]{2,}/g, ' ')
+  .trim();
 
 const CONVERSIONS: CollaborationConversion[] = [
   { label: 'Private note', type: 'sticky_note', visibility: 'private' },
@@ -262,6 +280,43 @@ export default function WorkspaceTeamChatPanel({
   const selectMention = (suggestion: ChatMentionSuggestion) => {
     setDraft((value) => value.replace(/@[^@\n]*$/, `${suggestion.mention} `));
   };
+
+  /**
+   * The same removable chips the private composer shows. Without them a member
+   * had no sign that a `/skill` or `@kb:` had registered -- which is how the
+   * dropped directive stayed invisible for as long as it did.
+   */
+  const composerTags = useMemo(() => {
+    const tags: Array<{ id: string; label: string; remove: (value: string) => string }> = [];
+    const directive = parseComposerDirective(draft);
+    if (directive) {
+      tags.push({
+        id: `directive:${directive.kind}`,
+        label: `${directive.kind === 'skill' ? 'Skill' : 'MCP'}: ${directive.id}`,
+        remove: (value) => removeComposerDirective(value, directive),
+      });
+    }
+    const readableBases = knowledgeBases.filter(
+      (kb) => kb.status === 'published' && kb.entitled !== false,
+    );
+    findKnowledgeBaseMentions(draft, readableBases).forEach((kb) => {
+      tags.push({
+        id: `kb:${kb.id}`,
+        label: `KB: ${kb.name}`,
+        remove: (value) => stripMention(value, `@kb:${kb.name}`),
+      });
+    });
+    files
+      .filter((file) => mentionPattern(`@${file.name}`).test(draft))
+      .forEach((file) => {
+        tags.push({
+          id: `file:${file.id}`,
+          label: `File: ${file.name}`,
+          remove: (value) => stripMention(value, `@${file.name}`),
+        });
+      });
+    return tags;
+  }, [draft, files, knowledgeBases]);
 
   const selectCommand = (suggestion: CommandSuggestion) => {
     const inserted = suggestion.insertCommand || suggestion.command;
@@ -591,6 +646,19 @@ export default function WorkspaceTeamChatPanel({
           }`}>
             <span className="truncate">Replying to {replyTo.authorName}: {replyTo.body}</span>
             <Button label="Cancel reply" size="sm" variant="ghost" onClick={() => setReplyTo(null)} />
+          </div>
+        ) : null}
+        {composerTags.length ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {composerTags.map((tag) => (
+              <Token
+                key={tag.id}
+                label={tag.label}
+                size="sm"
+                color="blue"
+                onRemove={() => setDraft((value) => tag.remove(value))}
+              />
+            ))}
           </div>
         ) : null}
         <div className="relative">
