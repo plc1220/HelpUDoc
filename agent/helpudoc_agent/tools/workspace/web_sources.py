@@ -19,6 +19,8 @@ from .timeouts import (
     DEFAULT_SEARCH_MAX_ATTEMPTS,
     DEFAULT_SEARCH_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_SEARCH_TIMEOUT,
+    DEFAULT_SEARCH_TOTAL_BUDGET,
+    MIN_SEARCH_RETRY_HEADROOM,
     invoke_lc_with_timeout,
     search_retry_delay,
 )
@@ -338,14 +340,23 @@ def build_google_search_tool(
         sources: List[Dict[str, str]] = []
         error_text = ""
         attempts = 0
+        call_started = time.monotonic()
         for attempt in range(1, DEFAULT_SEARCH_MAX_ATTEMPTS + 1):
             attempts = attempt
             workspace_state.context["google_search_upstream_attempt_count"] = (
                 int(workspace_state.context.get("google_search_upstream_attempt_count", 0) or 0) + 1
             )
+            # Never let one attempt run past the call's budget.
+            attempt_timeout = max(
+                MIN_SEARCH_RETRY_HEADROOM,
+                min(
+                    DEFAULT_SEARCH_TIMEOUT,
+                    int(DEFAULT_SEARCH_TOTAL_BUDGET - (time.monotonic() - call_started)),
+                ),
+            )
             response, error = invoke_lc_with_timeout(
                 lambda: llm_search.invoke([HumanMessage(content=search_prompt)], temperature=0),
-                timeout_s=DEFAULT_SEARCH_TIMEOUT,
+                timeout_s=attempt_timeout,
                 label=f"{search_label} attempt={attempt}",
             )
             if not error and response is not None:
@@ -416,6 +427,16 @@ def build_google_search_tool(
                 break
             if attempt < DEFAULT_SEARCH_MAX_ATTEMPTS:
                 delay = search_retry_delay(attempt)
+                remaining = DEFAULT_SEARCH_TOTAL_BUDGET - (time.monotonic() - call_started) - delay
+                if remaining < MIN_SEARCH_RETRY_HEADROOM:
+                    logger.warning(
+                        "%s giving up after attempt %s: %.0fs of the %ss budget is spent",
+                        search_label,
+                        attempt,
+                        time.monotonic() - call_started,
+                        DEFAULT_SEARCH_TOTAL_BUDGET,
+                    )
+                    break
                 logger.warning(
                     "%s transient failure on attempt %s/%s; retrying in %.2fs: %s",
                     search_label,

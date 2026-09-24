@@ -83,6 +83,23 @@ DEFAULT_SEARCH_MAX_CONSECUTIVE_FAILURES = min(
         1,
     ),
 )
+# Wall clock for one `google_search` call, retries included.
+#
+# `DEFAULT_SEARCH_MAX_ATTEMPTS` alone weights every failure the same. An empty
+# grounded reply comes back in about four seconds and is well worth a second
+# try; a timeout costs the full deadline and retrying one spends another. Two
+# timed-out attempts held a run for ~101s before the tool even reported, and the
+# model then retried on top of that.
+#
+# With a budget the cheap failure still retries and the expensive one does not,
+# without either being special-cased by name.
+DEFAULT_SEARCH_TOTAL_BUDGET = max(
+    DEFAULT_SEARCH_TIMEOUT,
+    env_int("GOOGLE_SEARCH_TOTAL_BUDGET_SECONDS", DEFAULT_SEARCH_TIMEOUT + 25),
+)
+# Below this there is no point starting another upstream call.
+MIN_SEARCH_RETRY_HEADROOM = 10
+
 DEFAULT_SEARCH_RETRY_BASE_DELAY = max(
     0.0,
     env_float("GOOGLE_SEARCH_RETRY_BASE_DELAY_SECONDS", 1.0),
