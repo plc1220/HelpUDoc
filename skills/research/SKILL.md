@@ -921,7 +921,7 @@ If `/final-research-report.md` is below the selected mode minimum:
 
 1. Do not claim completion.
 2. Do not report an estimated word count.
-3. Expand the final report section by section using only the dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix produced by this run, or those you explicitly chose to continue at step 0. Never expand a report from workspace files whose subject you have not verified.
+3. Expand the final report section by section using only the dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix produced by this run, or those whose subject you verified at step 0. Never expand a report from workspace files whose subject you have not checked.
 4. Preserve citations and evidence confidence.
 5. Re-run the declared `count_words` script after expansion.
 6. Repeat until the computed word count is within the selected mode range, or explicitly downgrade the mode through plan approval before finalizing.
@@ -944,6 +944,13 @@ run_skill_python_script(
 
 The script reads the staged report file and returns JSON containing the computed `word_count`. Treat that returned integer as authoritative. Do not use a model-authored count, manual inspection, an estimate, or a count copied from an earlier draft.
 
+If `run_skill_python_script` is not among your available tools, the sandbox is
+disabled for this deployment and no computed count can exist. Do not invent one
+and do not keep calling the tool. Record `Computed word count: unavailable (skill
+sandbox disabled)` and `Pass / fail: not verified`, deliver the report, and say
+plainly in your reply that the length was not machine-verified. The length gates
+below are advisory in that case; every other gate still applies.
+
 Write this to `/final_quality_check.md`:
 
 ```markdown
@@ -957,7 +964,7 @@ Write this to `/final_quality_check.md`:
 
 The computed word count must be derived from the final report file only. Do not estimate it. Do not use manual counts. Do not count workspace artifacts, notes, dossiers, matrices, source registers, quality checks, or chat messages.
 
-If the computed word count is below the selected mode minimum, do not finalize. Expand the final report using the existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix, then recompute the word count.
+If the computed word count is below the selected mode minimum, do not finalize. Expand the final report using the existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix, then recompute the word count. This rule needs a computed count; when none is available, finalize on the other gates rather than looping.
 
 ### 25. Final Report Audit
 
