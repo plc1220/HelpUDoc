@@ -1,13 +1,22 @@
 export type WorkspaceLifecycleAction = 'unshare' | 'reshare' | 'trash' | 'restore' | 'leave' | 'reconnect';
 
+/**
+ * Why a workspace is in the trash. `owner_deactivated` marks an archive caused
+ * by an admin suspending the owner, which reactivation reverses; `user` marks a
+ * delete the owner asked for, which it does not.
+ */
+export type WorkspaceTrashReason = 'user' | 'owner_deactivated';
+
 export interface Workspace {
   id: string;
   name: string;
   lastUsed: string;
-  status?: 'active' | 'unshared' | 'trashed';
+  status?: 'active' | 'unshared' | 'trashed' | 'purged';
   unsharedAt?: string | null;
   trashedAt?: string | null;
+  trashReason?: WorkspaceTrashReason | null;
   purgeAfter?: string | null;
+  purgedAt?: string | null;
   slug?: string;
   role?: 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
   canEdit?: boolean;

@@ -13,6 +13,7 @@ import knowledgeRoutes from './knowledge';
 import knowledgeCatalogRoutes from './knowledgeCatalog';
 import knowledgeBaseRoutes from './knowledgeBases';
 import usersRoutes from './users';
+import adminWorkspaceRoutes from './adminWorkspaces';
 import settingsReflectionRoutes from './settingsReflections';
 import governanceRoutes from './governance';
 import meMemoryRoutes from './meMemory';
@@ -89,7 +90,14 @@ export default function(
   ));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService }));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
-  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
+  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
+  // Read-only workspace oversight. Every route under it is a GET; see the note
+  // in `adminWorkspaces.ts` for why the mutation surface is deliberately empty.
+  router.use(
+    '/admin/workspaces',
+    requireSystemAdmin(userService),
+    adminWorkspaceRoutes(workspaceService, fileService),
+  );
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
   router.use('/knowledge-catalog', knowledgeCatalogRoutes(knowledgeService));
   // Not admin-gated: team leads manage their own bases; access is enforced in the service.
