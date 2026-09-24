@@ -268,11 +268,6 @@ export default function AgentChatPane({
     && sharedWorkspace?.canEdit,
   );
   const hasPrivateWorkingCopy = Boolean(sharedWorkspace?.privateCopyWorkspaceId);
-  const canReceivePrivateWorkingCopy = Boolean(
-    sharedWorkspace?.role === 'owner'
-    || sharedWorkspace?.role === 'editor'
-    || sharedWorkspace?.role === 'contributor',
-  );
   const canOpenPrivateWorkingCopy = Boolean(
     isSharedWorkspace
     && hasPrivateWorkingCopy
@@ -360,14 +355,22 @@ export default function AgentChatPane({
                   ? 'border-violet-900/60 bg-violet-950/30 text-violet-200'
                   : 'border-violet-100 bg-violet-50 text-violet-700'
               }`}>
+                {/*
+                  One fact, which is the one this banner is for: who can see this
+                  chat. It used to append what ARIA would write to, so the line
+                  read "Visible only to you. Preparing My draft for ARIA
+                  changes…" — a privacy statement and a provisioning message
+                  joined by a full stop, which people read as one confusing
+                  sentence about their chat.
+
+                  Where writes land is already said where it is actionable: the
+                  workspace banner above states the lock and offers the private
+                  copy, the `Open My draft` button sits in this same row, and the
+                  composer placeholder and empty state distinguish working on the
+                  workspace from asking about it.
+                */}
                 <span className="min-w-0">
-                  Visible only to you. {sharedLumoCanWrite
-                    ? 'ARIA edits the Shared Working version directly.'
-                    : hasPrivateWorkingCopy
-                      ? 'ARIA edits My draft, not the Shared workspace.'
-                      : canReceivePrivateWorkingCopy
-                        ? 'Preparing My draft for ARIA changes…'
-                        : 'Viewer access is read-only.'}
+                  This chat is visible only to you.
                 </span>
                 {canOpenPrivateWorkingCopy ? (
                   <Button
