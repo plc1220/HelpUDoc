@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import Any, Iterable, List
 import hashlib
 import json
+import logging
 import re
 import shutil
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -18,6 +21,7 @@ class SkillPolicy:
     required_artifacts_mode: str | None = None
     required_artifacts: List[str] | None = None
     pre_plan_search_limit: int = 0
+    post_plan_search_limit: int = 0
 
 
 @dataclass(frozen=True)
@@ -279,6 +283,15 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
             pre_plan_search_limit = max(0, int(raw_pre_plan_limit.strip()))
         except ValueError:
             pre_plan_search_limit = 0
+    raw_post_plan_limit = meta.get("post_plan_search_limit")
+    post_plan_search_limit = 0
+    if isinstance(raw_post_plan_limit, int):
+        post_plan_search_limit = max(0, raw_post_plan_limit)
+    elif isinstance(raw_post_plan_limit, str):
+        try:
+            post_plan_search_limit = max(0, int(raw_post_plan_limit.strip()))
+        except ValueError:
+            post_plan_search_limit = 0
 
     required_artifacts_mode = explicit_required_artifacts_mode
     required_artifacts = explicit_required_artifacts
@@ -291,6 +304,7 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
         required_artifacts_mode=required_artifacts_mode,
         required_artifacts=required_artifacts,
         pre_plan_search_limit=pre_plan_search_limit,
+        post_plan_search_limit=post_plan_search_limit,
     )
 
 
@@ -564,6 +578,24 @@ def find_skill(skills_root: Path | None, skill_id_or_name: str) -> SkillMetadata
     return None
 
 
+def skill_block_paths(skills_root: Path, skill_key: str, manifest_hash: str | None = None) -> list[str]:
+    identities = [f"skill:{skill_key}"]
+    if manifest_hash:
+        identities.append(f"package:{manifest_hash}")
+    identities.append(f"removed:{skill_key}")
+    return [str(skills_root / ".governed-blocks" / hashlib.sha256(identity.encode()).hexdigest())
+            for identity in identities]
+
+
+def load_context_skills(skills_root: Path, context: dict[str, Any]) -> List[SkillMetadata]:
+    """Only signed personal packages are discoverable; never scan private storage."""
+    pins = context.get("skill_version_pins") or {}
+    keys = {skill.skill_id for skill in load_skills(skills_root)} | set(pins)
+    return [skill for key in sorted(keys)
+            if (skill := find_skill_for_context(skills_root, key, context)) is not None
+            and is_skill_allowed(skill, context)]
+
+
 def find_skill_for_context(
     skills_root: Path | None,
     skill_id_or_name: str,
@@ -572,6 +604,8 @@ def find_skill_for_context(
     """Resolve an exact governed workspace pin before the mutable default."""
     normalized = str(skill_id_or_name or "").strip()
     if skills_root is None or not normalized:
+        return None
+    if any(Path(marker).exists() for marker in skill_block_paths(skills_root, normalized)):
         return None
     pins = context.get("skill_version_pins") if isinstance(context, dict) else None
     if not isinstance(pins, dict):
@@ -611,6 +645,27 @@ def _load_governed_pin(
     skill_key: str,
     raw_pin: dict[str, Any],
 ) -> SkillMetadata | None:
+    """Resolve an exact signed version pin, or return None.
+
+    Every rejection is fail-closed on purpose: a pin that cannot be verified must never fall back
+    to the mutable registry, or a published workspace could execute unreviewed content. But a
+    silent None is indistinguishable from "no such skill", which is how a stranded pin once
+    disabled every skill in production for 38 hours without a single error. Each branch therefore
+    logs the specific reason so the condition is greppable in agent logs.
+    """
+    def reject(reason: str, **fields: Any) -> None:
+        detail = " ".join(f"{key}={value}" for key, value in fields.items())
+        logger.warning(
+            "governed skill pin rejected: skill=%s reason=%s %s", skill_key, reason, detail,
+        )
+
+    if not re.fullmatch(r"[a-z0-9_-]+(?:/[a-z0-9_-]+)*", skill_key):
+        reject("invalid_skill_key")
+        return None
+    if any(Path(marker).exists() for marker in skill_block_paths(skills_root, skill_key, str(raw_pin.get("manifestHash") or ""))):
+        # An administrator block is an intended state, so this is informational rather than a fault.
+        logger.info("governed skill pin blocked by administrator: skill=%s", skill_key)
+        return None
     version_id = str(raw_pin.get("versionId") or "").strip()
     manifest_hash = str(raw_pin.get("manifestHash") or "").strip().lower()
     if (
@@ -620,15 +675,48 @@ def _load_governed_pin(
         )
         or not re.fullmatch(r"[0-9a-f]{64}", manifest_hash)
     ):
+        reject("malformed_pin", versionId=version_id or "<empty>")
         return None
     governed_root = (skills_root / ".governed-versions" / "packages").resolve()
     version_root = (governed_root / skill_key / version_id).resolve()
-    if governed_root not in version_root.parents or not (version_root / "SKILL.md").is_file():
+    if governed_root not in version_root.parents:
+        reject("path_escaped_governed_root", versionId=version_id)
         return None
-    if _compute_governed_manifest_hash(version_root) != manifest_hash:
+    if not (version_root / "SKILL.md").is_file():
+        # Typically the materialized package was destroyed while the database kept the version row,
+        # so the pin points at a directory that no longer exists. Republish to recover.
+        reject("package_not_materialized", versionId=version_id, expected=str(version_root))
+        return None
+    computed = _compute_governed_manifest_hash(version_root)
+    if computed != manifest_hash:
+        reject(
+            "manifest_hash_mismatch",
+            versionId=version_id,
+            expected=manifest_hash,
+            computed=computed or "<unreadable>",
+        )
         return None
     loaded = load_skills(version_root)
-    return replace(loaded[0], skill_id=skill_key) if loaded else None
+    if not loaded:
+        reject("package_has_no_skill", versionId=version_id)
+        return None
+    return replace(loaded[0], skill_id=skill_key)
+
+
+def governed_pin_for(context: dict[str, Any] | None, skill_id_or_name: str) -> dict[str, Any] | None:
+    """Return the signed pin for *skill_id_or_name*, if the turn carries one.
+
+    Lets callers tell "this skill is pinned but unresolvable" apart from "this skill does not
+    exist", which are the same `None` from `find_skill_for_context` but mean opposite things to
+    an operator.
+    """
+    if not isinstance(context, dict):
+        return None
+    pins = context.get("skill_version_pins")
+    if not isinstance(pins, dict):
+        return None
+    pin = pins.get(str(skill_id_or_name or "").strip())
+    return pin if isinstance(pin, dict) else None
 
 
 def _compute_governed_manifest_hash(package_root: Path) -> str | None:
@@ -686,6 +774,15 @@ def activate_skill_context(
     preferred_mcp_server = str(context.get("preferred_mcp_server") or "").strip()
     if preferred_mcp_server and preferred_mcp_server not in allowed_mcp_servers:
         allowed_mcp_servers.append(preferred_mcp_server)
+    package_root = skill.path.parent
+    governed_parent = next((parent for parent in package_root.parents if parent.name == ".governed-versions"), None)
+    root = governed_parent.parent if governed_parent else package_root
+    if governed_parent is None:
+        for _ in skill.skill_id.split("/"):
+            root = root.parent
+    pin_map = context.get("skill_version_pins") or {}
+    pin = pin_map.get(skill.skill_id) or {}
+    context["active_skill_block_paths"] = skill_block_paths(root, skill.skill_id, pin.get("manifestHash"))
     context["active_skill"] = skill.skill_id
     version_pins = context.get("skill_version_pins")
     active_version = version_pins.get(skill.skill_id) if isinstance(version_pins, dict) else None
@@ -727,6 +824,7 @@ def activate_skill_context(
         "required_artifacts_mode": skill.policy.required_artifacts_mode,
         "required_artifacts": skill.policy.required_artifacts or [],
         "pre_plan_search_limit": max(0, int(skill.policy.pre_plan_search_limit or 0)),
+        "post_plan_search_limit": max(0, int(skill.policy.post_plan_search_limit or 0)),
     }
     # Plan approval is per top-level task; a newly activated skill starts fresh unless
     # the workspace is explicitly configured to auto-approve plan reviews.
@@ -734,6 +832,7 @@ def activate_skill_context(
         context.get("skip_plan_approvals") or context.get("host_plan_approved")
     )
     context["pre_plan_search_count"] = 0
+    context["post_plan_search_count"] = 0
 
 
 def read_skill_content(skill: SkillMetadata) -> str:
@@ -951,6 +1050,11 @@ def sync_skills_to_workspace(skills_root: Path, workspace_root: Path) -> None:
         return
     dest = workspace_root / "skills"
     try:
-        shutil.copytree(skills_root, dest, dirs_exist_ok=True)
+        # Never expose immutable storage (including every user's private packages)
+        # through a shared workspace filesystem. Personal assets are materialized
+        # only by an explicitly authorized load_skill invocation.
+        shutil.rmtree(dest / ".governed-versions", ignore_errors=True)
+        shutil.copytree(skills_root, dest, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns(".*", "personal"))
     except Exception:
         return

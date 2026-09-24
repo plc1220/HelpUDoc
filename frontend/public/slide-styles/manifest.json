@@ -1,0 +1,459 @@
+{
+  "8-bit-orbit": {
+    "src": "/slide-styles/8-bit-orbit.jpg?v=63e3b14b7488",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "d2ae9e1071842203d644c7fc40f71aa258870ff0f463fdb36e5cbbb10c748eb9",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "63e3b14b7488dc3cef2ecc2931cf03f33ed8594e928079cf7e6d3a2942176f0c",
+    "fonts": [
+      "Tektur",
+      "Space Mono",
+      "Chakra Petch"
+    ],
+    "bytes": 70430
+  },
+  "biennale-yellow": {
+    "src": "/slide-styles/biennale-yellow.jpg?v=c138022835a6",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "0583f7a10f2b3fd06e2852b9c5bb58c09a644927710c2ae6864793f4c45c5a28",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "c138022835a65b5e2423c9dbfbf36f0c58d3c6eb1e6ba9cf2bda1ed0507ef89a",
+    "fonts": [
+      "Instrument Serif",
+      "Archivo"
+    ],
+    "bytes": 43553
+  },
+  "block-frame": {
+    "src": "/slide-styles/block-frame.jpg?v=5b81692a5124",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "ed630bd6cedc973d69065b3b9710c3638da35f98d8831e24aec4ffe2db9f5819",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "5b81692a5124506407403f7353acca9761eea25e19db9bcf639f8068b4613b4c",
+    "fonts": [
+      "Inter",
+      "Space Grotesk"
+    ],
+    "bytes": 53754
+  },
+  "blue-professional": {
+    "src": "/slide-styles/blue-professional.jpg?v=a5df3d8b0fe4",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "dcf84b533453ef213b08ec18f662e1e163a47c09bc908b40c276990737ac7e0a",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "a5df3d8b0fe4167bfbf3b04f493572e4246c67f47708819c5d01fb2d220c2c97",
+    "fonts": [
+      "Space Grotesk",
+      "Inter"
+    ],
+    "bytes": 33397
+  },
+  "bold-poster": {
+    "src": "/slide-styles/bold-poster.jpg?v=74852a703ca6",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "91006596b4da7488c9366878f2b438c8843756eb86cfe8d1a2afd4589fbc9eca",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "74852a703ca62a0d0f864a3a610cf1218dc48920daf40361f40096add65425e7",
+    "fonts": [
+      "Shrikhand",
+      "Space Grotesk",
+      "Libre Baskerville"
+    ],
+    "bytes": 48288
+  },
+  "broadside": {
+    "src": "/slide-styles/broadside.jpg?v=7c2672d08fe3",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "66e82436ebef04f09484cf3e9f4838a54f1a75d4a62a7eec13f5ef360005cb52",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "7c2672d08fe3c6494ab7da99f0e81384a1a08cdc16ac9077980d73a0ead5fd07",
+    "fonts": [
+      "Barlow",
+      "IBM Plex Mono"
+    ],
+    "bytes": 35667
+  },
+  "capsule": {
+    "src": "/slide-styles/capsule.jpg?v=2e7e1be8a870",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "5c194c7a5828cdea19d6fb412a88e8899305ddd38baec84062ac24099be4a258",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "2e7e1be8a870ad98a20f96d81784e7b5d6bbac75d9b09fa088b24d2828fa915d",
+    "fonts": [
+      "Bodoni Moda",
+      "Space Grotesk"
+    ],
+    "bytes": 40100
+  },
+  "cartesian": {
+    "src": "/slide-styles/cartesian.jpg?v=8a353be395e4",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "a448565aef6eca7262c5d2da9283e4d0eecd974c813337c73e5ab47841c43c2a",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "8a353be395e47a25e3e9db54154e3d427c130e7e7951b1c8eeec2d286f7f2468",
+    "fonts": [
+      "Playfair Display",
+      "Inter"
+    ],
+    "bytes": 33151
+  },
+  "cobalt-grid": {
+    "src": "/slide-styles/cobalt-grid.jpg?v=9b9d1f0bce1e",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "36d3db053474293403bb09405a1f0fb943b4d550e4c70436314050178761f684",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "9b9d1f0bce1e364d669a91b728a1b44e544c429307a680074a484156edccac39",
+    "fonts": [
+      "Newsreader",
+      "DM Mono",
+      "Hanken Grotesk"
+    ],
+    "bytes": 44997
+  },
+  "coral": {
+    "src": "/slide-styles/coral.jpg?v=4cd8b54549e9",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "f1922b79b8a7fab02080abb0a910567c3f35a0c1c0fd6f8c5866fc477570d7b7",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "4cd8b54549e9a9bdcb3b22a64fc82388b6bf2370538b8d347661a3a451029f8f",
+    "fonts": [
+      "Bebas Neue",
+      "Inter"
+    ],
+    "bytes": 56696
+  },
+  "creative-mode": {
+    "src": "/slide-styles/creative-mode.jpg?v=af9d4c2afd71",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "7a01735d0c36ace50e7f689f4ecd54f438890b3b329770e2a261d3eabaf0fcea",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "af9d4c2afd71147060fe0de6c7a7537520bc820f5faea159b998f27d0d85cd24",
+    "fonts": [
+      "Archivo Black",
+      "JetBrains Mono",
+      "Space Grotesk"
+    ],
+    "bytes": 40414
+  },
+  "daisy-days": {
+    "src": "/slide-styles/daisy-days.jpg?v=180a07eaf8d1",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "9aaa486e961e6257837e6c32a3629b691cf0e07c8df61e44a66cd581c79be2f3",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "180a07eaf8d1189431e64f42c659afc1f6dae4f0901d810bc15b6449492954ab",
+    "fonts": [
+      "Fredoka One",
+      "Quicksand"
+    ],
+    "bytes": 36152
+  },
+  "editorial-forest": {
+    "src": "/slide-styles/editorial-forest.jpg?v=13e1c55611ca",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "2a4d085c01eff703105e1f31e75e253f9f6a14fdb4dd2f2593c7fbb343f12634",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "13e1c55611cab3f70e60ad29752ef91d109fd16f7ac80d208549b0d1e7ce73cb",
+    "fonts": [
+      "Source Serif 4",
+      "JetBrains Mono"
+    ],
+    "bytes": 36658
+  },
+  "editorial-tri-tone": {
+    "src": "/slide-styles/editorial-tri-tone.jpg?v=a53064833712",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "858d6db6aaac3fb3a12bc412e21cb8a0442cc21ead02696226b86974f836ae84",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "a53064833712c195e96b336745b0db697ee3994cc437f0f860d98cb159315dd4",
+    "fonts": [
+      "Bricolage Grotesque",
+      "JetBrains Mono",
+      "Instrument Serif"
+    ],
+    "bytes": 33118
+  },
+  "emerald-editorial": {
+    "src": "/slide-styles/emerald-editorial.jpg?v=73e2aad25c35",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "2c9ca36081366a362f63a46f01f5e14c749e5f02dd5cd7f0960a550211bfb303",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "73e2aad25c3590d8fdb3e53bf8b06cf41d0db68b64a7dc4cf321bc991d1742f6",
+    "fonts": [
+      "Bodoni Moda",
+      "Manrope"
+    ],
+    "bytes": 42808
+  },
+  "grove": {
+    "src": "/slide-styles/grove.jpg?v=838a5c65081b",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "b340598c36eed473efa89d35c2d156faa2447c0929e742e70f83c445f1e54661",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "838a5c65081b1d25aadb2a2a29379aba37e310835e8bd52280a9ab249cd5a902",
+    "fonts": [
+      "Playfair Display",
+      "JetBrains Mono",
+      "Jost"
+    ],
+    "bytes": 32152
+  },
+  "long-table": {
+    "src": "/slide-styles/long-table.jpg?v=3fbe52e231bf",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "f84418b0fff771d85de71e0ee473d8f37837e92108acf1cc23345e56f3046245",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "3fbe52e231bf5d927efbeed82bc93809a91cee224a862e215cfb26741e4420fb",
+    "fonts": [
+      "Bricolage Grotesque",
+      "Fraunces"
+    ],
+    "bytes": 41048
+  },
+  "mat": {
+    "src": "/slide-styles/mat.jpg?v=b2c540700ea1",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "8b5955c9f5bfc6a73cab4139635b5878ac97c2d9aa27d69e6a45efe57a0840a4",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "b2c540700ea1f1717f3c78badfbdf2cedba6ff5ebb1ceecfdfd0b67f463f8189",
+    "fonts": [
+      "Bricolage Grotesque",
+      "DM Mono",
+      "DM Sans"
+    ],
+    "bytes": 36393
+  },
+  "monochrome": {
+    "src": "/slide-styles/monochrome.jpg?v=9b2ea6173923",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "5052c1c556b1f6e2b0e5185d7850ceefaa188bb59779ccce05e95f3e175abdc8",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "9b2ea6173923ada52e4f876bf9cd8282d7294cc1f3d6466c2168ddd1a8a80274",
+    "fonts": [
+      "Jost",
+      "JetBrains Mono"
+    ],
+    "bytes": 27762
+  },
+  "neo-grid-bold": {
+    "src": "/slide-styles/neo-grid-bold.jpg?v=579464fbee09",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "015d57413f51746d08ca1b0a99e083648b0d3e335d03a8f3b3d1c715515e4a65",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "579464fbee09b2217c96be5e2163cbbba5595c13df9ab8b785aa1a7b2b2517b4",
+    "fonts": [
+      "Space Grotesk",
+      "JetBrains Mono"
+    ],
+    "bytes": 37170
+  },
+  "peoples-platform": {
+    "src": "/slide-styles/peoples-platform.jpg?v=30dc06e9fbaf",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "ade8961155029dc0c276aaeee5167ee5df451a4156c20580f961dbf5b743cc38",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "30dc06e9fbaf8d8e77369dcd980e7d5a5625971e254d26f758211075c3f2bdbe",
+    "fonts": [
+      "Alfa Slab One",
+      "DM Mono",
+      "Archivo Narrow",
+      "Caveat Brush"
+    ],
+    "bytes": 56934
+  },
+  "pin-and-paper": {
+    "src": "/slide-styles/pin-and-paper.jpg?v=e61e55500771",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "a20dea5f380ab7ca6c0c1b63af091bb7ad928f1a532f6d30696be43d35d9575d",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "e61e55500771c88fa110112ccf46d71a985ab6c995f91f8d30420b88dc8b2277",
+    "fonts": [
+      "Space Grotesk",
+      "DM Mono",
+      "Caveat"
+    ],
+    "bytes": 47647
+  },
+  "pink-script": {
+    "src": "/slide-styles/pink-script.jpg?v=6294eab25d36",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "c9ba53095049c55b37b9d20903d43e90d19b927e716fa65406b05cc9b55c8225",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "6294eab25d3655a9be739d99beda331d3147e12a2c8c5c02d617caf803aa231f",
+    "fonts": [
+      "DM Serif Display",
+      "JetBrains Mono",
+      "Inter"
+    ],
+    "bytes": 56451
+  },
+  "playful": {
+    "src": "/slide-styles/playful.jpg?v=967b8ea1f788",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "b64e58c7e31257a2ffad72f56a22bfd88f30af7d66c9884f5da02910c9019d45",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "967b8ea1f7887a05f188a3040a7a8d5750154434896d4996eddae87688dfa06e",
+    "fonts": [
+      "Syne",
+      "Space Grotesk"
+    ],
+    "bytes": 49628
+  },
+  "raw-grid": {
+    "src": "/slide-styles/raw-grid.jpg?v=44491286f48a",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "b2504c312b5546f88cb329f906a3cd1f8b30e27de9c1d01010ba992c9f6fd861",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "44491286f48a4afaed2ea8a7ce6d700ac7ed972cfeb5aac55426ac5e730cee4a",
+    "fonts": [
+      "Segoe UI"
+    ],
+    "bytes": 42989
+  },
+  "retro-windows": {
+    "src": "/slide-styles/retro-windows.jpg?v=8de02d3aaf05",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "fec57ffa702998f50dcbe4a5fb2c65c8a63cade49ca7a0abc57cd2012092455d",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "8de02d3aaf052c1f582a17c4f5be8498608e59da2f03b1216b8decce9b1e906e",
+    "fonts": [
+      "MS Sans Serif"
+    ],
+    "bytes": 38381
+  },
+  "retro-zine": {
+    "src": "/slide-styles/retro-zine.jpg?v=624356315c45",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "ad468df8f43b9b4fd800da932bf5d01a93eaee16ac985c7e0b36ea370e890192",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "624356315c4577f5fd3980be783489c3f2a4d160a0d0d74980778b8e22d32eb2",
+    "fonts": [
+      "Bebas Neue",
+      "Space Grotesk",
+      "Caveat"
+    ],
+    "bytes": 40162
+  },
+  "sakura-chroma": {
+    "src": "/slide-styles/sakura-chroma.jpg?v=075d8223621e",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "0e6a8b02a82b198f32c88acef772b1951c58979858f41f5c794a73538e1f425c",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "075d8223621efe2c009e7f2597c53158ecb318a76b11138b6db7cf3fcce72afa",
+    "fonts": [
+      "Big Shoulders Display",
+      "JetBrains Mono",
+      "Albert Sans"
+    ],
+    "bytes": 41563
+  },
+  "scatterbrain": {
+    "src": "/slide-styles/scatterbrain.jpg?v=94442f03b849",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "e9c18fb1994996f7dfdc98fc20211af1220fa2810a31e2887673d8f5f2cb87f5",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "94442f03b8498fb042a7df2956ef54789a742f304d0d0e3a6de93970cd06451b",
+    "fonts": [
+      "Shrikhand",
+      "Caveat",
+      "Zilla Slab"
+    ],
+    "bytes": 42389
+  },
+  "signal": {
+    "src": "/slide-styles/signal.jpg?v=a98bb747e7f1",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "ea454630e95f04c9e363b27c1ea9e8e42c55db6f30964a6fa16e16ccb2c49997",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "a98bb747e7f122140b307843425998fc6b5802c0c32c2b0c6a42891bdd094f43",
+    "fonts": [
+      "Source Serif 4",
+      "IBM Plex Mono",
+      "DM Sans"
+    ],
+    "bytes": 34224
+  },
+  "soft-editorial": {
+    "src": "/slide-styles/soft-editorial.jpg?v=d2d23bfc2239",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "343004a999eab3b2d69a980ad355a7dc9a1da4b01ffc38f11c8c37a0c3b341fd",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "d2d23bfc2239346b9656394ba2ea088b99edc8251a0e6ecd84330c00c804ed6b",
+    "fonts": [
+      "Cormorant Garamond",
+      "Work Sans"
+    ],
+    "bytes": 33372
+  },
+  "stencil-tablet": {
+    "src": "/slide-styles/stencil-tablet.jpg?v=e0d1d09b2f29",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "26948edf6165ac4d601eed61e51061c27a8e7f8615833a30a37547f5cdabb8e8",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "e0d1d09b2f296bca43f2abdabb4d14d61bc93d79687d2252d6e7de2ce5701baa",
+    "fonts": [
+      "Stardos Stencil",
+      "Barlow Condensed",
+      "Inter"
+    ],
+    "bytes": 51250
+  },
+  "studio": {
+    "src": "/slide-styles/studio.jpg?v=975e4511e2a2",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "1d9f06554b85897b893c4988092ae219a123e61afc8cfd44e9b267d650ff38ee",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "975e4511e2a25fd191396475bff7e02bd2bf1d0a2789c68da52194f094147afb",
+    "fonts": [
+      "Barlow",
+      "IBM Plex Mono"
+    ],
+    "bytes": 42042
+  },
+  "vellum": {
+    "src": "/slide-styles/vellum.jpg?v=58236cfb94d2",
+    "width": 960,
+    "height": 540,
+    "sourceHash": "7bb43002d7948285151e9be30a251f9f6d7f824ab15c0026afcd3a475b10c86b",
+    "rendererHash": "3641ad74ad87b0828f77cdb12e1802f3786ecef5d0e425c062c97727ec6e1f55",
+    "imageHash": "58236cfb94d21eb93610630554a7b3bfe7c94cc5dd76f95300ac9d0f7187229c",
+    "fonts": [
+      "Cormorant Garamond",
+      "Courier Prime",
+      "DM Sans"
+    ],
+    "bytes": 30601
+  }
+}

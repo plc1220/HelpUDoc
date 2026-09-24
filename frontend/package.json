@@ -11,16 +11,19 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "preview": "vite preview",
     "e2e:install": "playwright install --with-deps chromium",
-    "e2e": "playwright test --project=chromium"
+    "e2e": "playwright test --project=chromium",
+    "e2e:production:slides": "RUN_PRODUCTION_SLIDES_E2E=1 playwright test e2e/production-slides-smoke.spec.ts --project=chromium"
   },
   "dependencies": {
     "@astryxdesign/core": "^0.1.7",
     "@astryxdesign/theme-neutral": "^0.1.7",
+    "@docx-editor.dev/core": "2.19.0",
+    "@docx-editor.dev/fonts": "2.19.0",
+    "@docx-editor.dev/react": "2.19.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@helpudoc/contracts": "file:../packages/contracts",
     "@helpudoc/dashboard-runtime": "file:../packages/dashboard-runtime",
-    "@hocuspocus/provider": "^3.4.3",
     "@mdxeditor/editor": "^3.48.0",
     "@monaco-editor/react": "^4.7.0",
     "@mui/icons-material": "^7.3.4",
@@ -29,9 +32,12 @@
     "hyparquet": "^1.25.1",
     "hyparquet-compressors": "^1.1.1",
     "jszip": "^3.10.1",
+    "lexical": "0.35.0",
     "lucide-react": "^0.546.0",
-    "mammoth": "^1.12.0",
+    "mdast-util-from-markdown": "2.0.2",
+    "mdast-util-gfm": "^3.1.0",
     "mermaid": "^11.12.0",
+    "micromark-extension-gfm": "^3.0.0",
     "monaco-editor": "^0.54.0",
     "papaparse": "^5.5.3",
     "pdfjs-dist": "^4.10.38",
@@ -46,9 +52,7 @@
     "react-syntax-highlighter": "^16.0.0",
     "remark-gfm": "^4.0.1",
     "xlsx": "^0.18.5",
-    "y-monaco": "^0.1.6",
-    "yaml": "^2.8.1",
-    "yjs": "^13.6.27"
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@astryxdesign/cli": "^0.1.7",

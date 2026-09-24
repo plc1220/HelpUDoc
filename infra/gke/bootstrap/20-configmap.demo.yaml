@@ -45,3 +45,6 @@ data:
   SANDBOX_INLINE_ENABLED: "false"
   SANDBOX_INLINE_MAX_GLOBAL_JOBS: "4"
   HELPUDOC_SANDBOX_IMAGE: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+  HELPUDOC_INLINE_SANDBOX_IMAGE: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-inline-sandbox:latest
+  HELPUDOC_INLINE_SANDBOX_TRANSPORT: object_store
+  HELPUDOC_SANDBOX_RUNTIME_CLASS: gvisor

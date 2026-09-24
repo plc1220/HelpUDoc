@@ -49,6 +49,8 @@ class Query implements PromiseLike<Row[]> {
     return this;
   }
 
+  select(..._columns: string[]): this { return this; }
+
   forUpdate(): this {
     return this;
   }
@@ -215,4 +217,40 @@ test('ownership transfer promotes the target and demotes the former owner atomic
   assert.equal(tables.workspace_members.find((row) => row.userId === nextOwnerId)?.role, 'owner');
   assert.equal(tables.workspace_members.find((row) => row.userId === ownerId)?.role, 'editor');
   assert.equal(tables.workspace_user_grants.find((row) => row.userId === nextOwnerId)?.role, 'publisher');
+});
+
+
+test('private workspaces go to trash and restore as active without detaching shared links', async () => {
+  const { service, tables, workspaceId, ownerId } = lifecycleHarness();
+  Object.assign(tables.workspaces[0], { visibility: 'private', workspaceType: 'private' });
+  await service.deleteWorkspace(workspaceId, ownerId);
+  assert.equal(tables.workspaces[0].status, 'trashed');
+  assert.ok(tables.workspaces[0].purgeAfter);
+  assert.equal(tables.workspace_publication_links[0].status, 'active');
+  await assert.rejects(service.ensureMembership(workspaceId, ownerId), /trash/);
+  await service.restoreWorkspace(workspaceId, ownerId);
+  assert.equal(tables.workspaces[0].status, 'active');
+  assert.equal(tables.workspaces[0].purgeAfter, null);
+  assert.equal(tables.workspaces[0].unsharedAt, null);
+});
+
+test('permanent deletion requires ownership, trash status, and a non-system workspace', async () => {
+  const { service, tables, workspaceId, ownerId, collaboratorId } = lifecycleHarness();
+  await assert.rejects(service.permanentlyDeleteWorkspace(workspaceId, ownerId), /trash/);
+  tables.workspaces[0].status = 'trashed';
+  await assert.rejects(service.permanentlyDeleteWorkspace(workspaceId, collaboratorId), /Only owners/);
+  tables.workspaces[0].isSystem = true;
+  await assert.rejects(service.permanentlyDeleteWorkspace(workspaceId, ownerId), /Only owners/);
+  assert.equal(tables.workspaces.length, 1);
+});
+
+test('permanent deletion removes an owned trashed workspace and cleans its artifacts', async () => {
+  const { service, tables, workspaceId, ownerId } = lifecycleHarness();
+  tables.workspaces[0].status = 'trashed';
+  const cleaned: string[] = [];
+  Object.assign(service, { performWorkspaceCleanup: async (id: string) => { cleaned.push(id); } });
+  await service.permanentlyDeleteWorkspace(workspaceId, ownerId);
+  assert.equal(tables.workspaces.length, 0);
+  assert.deepEqual(cleaned, [workspaceId]);
+  await assert.rejects(service.permanentlyDeleteWorkspace(workspaceId, ownerId), /not found/);
 });

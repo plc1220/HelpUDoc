@@ -1,0 +1,26 @@
+.canvas-annotations-batch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  padding-block-end: var(--spacing-3);
+  border-block-end: var(--border-width) solid var(--color-border);
+}
+
+.canvas-annotations-batch-selection {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+}
+
+.canvas-annotations-list-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--spacing-2);
+}
+
+.canvas-annotations-list-row > :first-child {
+  margin-block-start: var(--spacing-3);
+}

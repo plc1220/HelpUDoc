@@ -255,6 +255,9 @@ jobs:
           docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
             python /app/agent/scripts/smoke_officecli.py
 
+          docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
+            python /app/agent/scripts/smoke_office_preview.py
+
   deploy:
     name: Deploy to GKE
     needs: [guard, build-backend, build-frontend, build-agent]
@@ -777,9 +780,19 @@ jobs:
           set -euo pipefail
           APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
           test -n "${APP_POD}"
-          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+          # Never delete .governed-versions: it holds the immutable published packages and
+          # content blobs that signed runtime version pins resolve against. The repo tarball
+          # does not contain them, so wiping it strands every pin and silently disables
+          # every skill until a republish.
+          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -not -name '.governed-versions' -not -name '.governed-blocks' -exec rm -rf {} +"
           tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
+          # Drift guard. Checking that the packages directory exists is not enough: it is recreated
+          # empty on boot, so an empty directory looks healthy while every signed pin is stranded
+          # and every skill silently fails to load. --verify resolves each active default version
+          # against its materialized package and exits non-zero if any cannot be resolved.
+          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc \
+            "cd /app && node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/repair-governed-packages.ts --verify"
 
       - name: Legacy sync Agent Config PVC (kubectl exec)
         if: ${{ inputs.sync_runtime_assets }}

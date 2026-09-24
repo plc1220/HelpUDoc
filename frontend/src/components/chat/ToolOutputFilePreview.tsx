@@ -1,5 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { safeMarkdownUrlTransform } from '../../utils/markdownUrls';
+import { remarkEditorHtml } from '../../utils/remarkEditorHtml';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -148,7 +150,7 @@ export default function ToolOutputFilePreview({
   if (normalizedMime.includes('markdown')) {
     return (
       <div className="prose prose-sm mt-2 max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkEditorHtml]} components={markdownComponents} urlTransform={safeMarkdownUrlTransform}>
           {content}
         </ReactMarkdown>
       </div>

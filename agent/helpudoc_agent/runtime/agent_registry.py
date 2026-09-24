@@ -24,7 +24,9 @@ from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddle
 from langchain_quickjs.middleware import CodeInterpreterMiddleware
 
 from helpudoc_agent.middleware.interaction_contract import InteractionContractMiddleware
+from helpudoc_agent.middleware.slide_style_preview import SlideStylePreviewMiddleware
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
+from helpudoc_agent.middleware.mcp_discovery import MCPDiscoveryMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from ..configuration import Settings
@@ -35,10 +37,16 @@ from ..skills_registry import (
     collect_tool_names,
     get_candidate_mcp_servers,
     load_skills,
+    load_context_skills,
+    find_skill_for_context,
+    is_skill_allowed,
+    activate_skill_context,
     sync_skills_to_workspace,
 )
 from ..mcp_manager import MCPServerManager
 from ..tool_guard import GuardedTool
+from ..skill_builder import SKILL_BUILDER_SYSTEM_PROMPT, SKILL_BUILDER_TOOL_GROUPS
+from ..slide_style_preview import preview_tool_error
 from ..memory_store import UserScopedStoreBackend
 
 logger = logging.getLogger(__name__)
@@ -49,7 +57,8 @@ GENERAL_SYSTEM_PROMPT = (
     "then load_skill for only the matching SKILL.md and follow its instructions. "
     "If tools are listed in a skill frontmatter, use only those tools while executing that skill; "
     "if no tools are listed, you may use any appropriate tools. "
-    "Routing override: if the request mentions .ppt, .pptx, PowerPoint, Google Slides, native slide decks, deck templates, editing an existing deck, or producing a PowerPoint/Google Slides deliverable, load the pptx skill. "
+    "Routing override: for .ppt, .pptx, PowerPoint, Google Slides, native slide decks/templates, or editing an existing native deck, load the pptx skill. "
+    "Editing or restyling an existing HTML/web deck stays in frontend-slides Mode C, without restarting creation. "
     "Do not load frontend-slides for PPTX-related work. Use frontend-slides only when the user explicitly asks for a browser-native HTML/web presentation or an animated interactive HTML deck. "
     "For tagged or named PDFs load the pdf skill; for DOCX or Word documents load the docx skill; "
     "for XLSX, XLSM, CSV, or TSV files load the xlsx skill. Search the original document on demand "
@@ -112,6 +121,9 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
 
     def _workspace_write_error(self, operation: str, file_path: str) -> str | None:
         context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        preview_error = preview_tool_error(context, "write_file", {"file_path": file_path})
+        if preview_error:
+            return preview_error
         virtual_path = self._virtual_path(file_path)
         if (
             str(context.get("active_skill") or "").strip() == "research"
@@ -411,6 +423,7 @@ class AgentRegistry:
         max_output_tokens = self.settings.model.resolve_max_output_tokens(mode)
         resolved_name = f"{self._default_agent_name}:{mode}"
         context_payload = initial_context or {}
+        builder_mode = context_payload.get("skill_builder") is True
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
         internet_search_key = "search:on" if context_payload.get("internet_search_enabled") else "search:off"
@@ -426,10 +439,12 @@ class AgentRegistry:
         )
         user_key = str(context_payload.get("user_id") or "")
         cache_scope_prefix = f"{user_key}:{policy_key}:"
+        skill_versions_key = json.dumps({"allow": context_payload.get("skill_allow_ids", []),
+                                         "pins": context_payload.get("skill_version_pins", {}), "builder": builder_mode}, sort_keys=True)
         key = (
             resolved_name,
             workspace_id,
-            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}:{skill_sandbox_key}",
+            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}:{skill_sandbox_key}:{skill_versions_key}",
         )
         preserved_context: Dict[str, Any] = {}
         if key in self._cache:
@@ -495,11 +510,19 @@ class AgentRegistry:
                 "or review the proposed change."
             )
         skills_root = self.settings.backend.skills_root
+        active_key = workspace_state.context.get("active_skill")
+        if active_key and skills_root is not None:
+            active = find_skill_for_context(skills_root, active_key, workspace_state.context)
+            if active is not None and is_skill_allowed(active, workspace_state.context):
+                activate_skill_context(workspace_state.context, active, plugins_root=self.settings.backend.plugins_root)
+            else:
+                for field in ("active_skill", "active_skill_scope", "active_skill_version", "active_skill_policy", "active_skill_block_paths"):
+                    workspace_state.context.pop(field, None)
         if skills_root is not None:
             skills_root.mkdir(parents=True, exist_ok=True)
-            if self.settings.backend.sync_skills_to_workspace:
+            if self.settings.backend.sync_skills_to_workspace and not builder_mode:
                 sync_skills_to_workspace(skills_root, workspace_state.root_path)
-        skills = load_skills(skills_root) if skills_root is not None else []
+        skills = load_context_skills(skills_root, workspace_state.context) if skills_root is not None else []
         tool_names = collect_tool_names(skills, plugins_root=self.settings.backend.plugins_root)
         if tool_names:
             tool_names = [name for name in tool_names if name in self.settings.tools]
@@ -516,6 +539,9 @@ class AgentRegistry:
                 tool_names.append("google_search")
             if "url_context" in self.settings.tools and "url_context" not in tool_names:
                 tool_names.append("url_context")
+
+        if builder_mode:
+            tool_names = [name for name in self.settings.tools if name in SKILL_BUILDER_TOOL_GROUPS]
 
         builtin_tools = [
             GuardedTool.from_tool(tool, workspace_state=workspace_state)
@@ -537,10 +563,11 @@ class AgentRegistry:
             candidate_mcp_servers,
             preferred_mcp_server,
         )
-        await mcp_manager.initialize(
-            candidate_server_names=candidate_mcp_servers,
-            preflight_gemini=self.settings.model.provider == "gemini",
-        )
+        if not builder_mode:
+            await mcp_manager.initialize(
+                candidate_server_names=candidate_mcp_servers,
+                preflight_gemini=self.settings.model.provider == "gemini",
+            )
         preferred_server = workspace_state.context.get("preferred_mcp_server")
         normalized_preferred = str(preferred_server).strip() if isinstance(preferred_server, str) else ""
         bound_servers = list(mcp_manager.get_tools_by_server().keys())
@@ -548,16 +575,6 @@ class AgentRegistry:
             normalized_preferred and normalized_preferred in bound_servers
         )
         workspace_state.context["_bound_mcp_candidates"] = list(candidate_mcp_servers)
-        mcp_tools = []
-        for server_name, server_tools in mcp_manager.get_tools_by_server().items():
-            for tool in server_tools:
-                mcp_tools.append(
-                    GuardedTool.from_tool(
-                        tool,
-                        workspace_state=workspace_state,
-                        tool_mcp_server=server_name,
-                    )
-                )
 
         logger.info(
             "MCP bind results (workspace=%s active_skill=%s allowed_by_rbac=%s accepted=%s rejected=%s)",
@@ -567,7 +584,9 @@ class AgentRegistry:
             list(mcp_manager.get_tools_by_server().keys()),
             mcp_manager.get_rejected_servers(),
         )
-        tools = builtin_tools + mcp_tools
+        # MCP schemas/execution are registered by MCPDiscoveryMiddleware. Do not
+        # also register raw names here: they can shadow builtins or each other.
+        tools = builtin_tools
         def make_backend(runtime) -> CompositeBackend:
             routes = {
                 "/memories/": UserScopedStoreBackend(
@@ -575,7 +594,9 @@ class AgentRegistry:
                     store=self._memory_store.store if self._memory_store is not None else None,
                 ),
             }
-            if skills_root is not None:
+            if builder_mode:
+                routes = {}
+            if skills_root is not None and not builder_mode:
                 routes["/skills/"] = FilesystemBackend(
                     root_dir=str(skills_root),
                     virtual_mode=True,
@@ -610,8 +631,10 @@ class AgentRegistry:
             ),
             PatchToolCallsMiddleware(),
         ]
+        if not builder_mode:
+            middleware.append(MCPDiscoveryMiddleware(mcp_manager))
         code_interpreter = self.settings.backend.code_interpreter
-        if code_interpreter.enabled:
+        if code_interpreter.enabled and not builder_mode:
             middleware.append(
                 CodeInterpreterMiddleware(
                     tool_name=code_interpreter.tool_name,
@@ -632,10 +655,11 @@ class AgentRegistry:
         if interrupt_on:
             middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
         middleware.append(InteractionContractMiddleware(enabled=True))
+        middleware.append(SlideStylePreviewMiddleware())
         if self.settings.backend.implicit_input_guard:
             middleware.append(ImplicitInputGuardMiddleware(enabled=True))
 
-        full_prompt = system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT
+        full_prompt = SKILL_BUILDER_SYSTEM_PROMPT if builder_mode else (system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT)
         agent = create_agent(
             model=model,
             tools=tools,

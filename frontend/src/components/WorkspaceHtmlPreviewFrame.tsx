@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useCanvasAnnotations } from './CanvasAnnotationContext';
+import { annotationPreviewBridge } from '../utils/annotationPreviewBridge';
 import { Loader2 } from 'lucide-react';
 
 import { getWorkspaceFilePreview } from '../services/fileApi';
-import { hydrateWorkspaceHtmlAssets, previewPayloadToHtml } from '../utils/workspaceHtmlPreview';
+import { hydrateWorkspaceHtmlAssets, previewPayloadToHtml, withPreviewStorage } from '../utils/workspaceHtmlPreview';
 
 export default function WorkspaceHtmlPreviewFrame({
   workspaceId,
@@ -21,6 +23,39 @@ export default function WorkspaceHtmlPreviewFrame({
   placeholderClassName?: string;
   sandbox?: string;
 }) {
+  const annotation = useCanvasAnnotations();
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  useEffect(() => {
+    if (!annotation) return;
+    const sendState = () => {
+      const probe = document.createElement('span');
+      probe.style.display = 'none';
+      document.body.appendChild(probe);
+      const token = (name: string, fallback: string) => {
+        probe.style.color = `var(${name}, ${fallback})`;
+        return getComputedStyle(probe).color;
+      };
+      frameRef.current?.contentWindow?.postMessage({
+        type: 'canvas-annotation-state', active: annotation.active, annotations: annotation.annotations,
+        theme: { accent: token('--color-accent', '#262626'), surface: token('--color-background-surface', '#ffffff'), text: token('--color-on-accent', '#ffffff'), focus: token('--color-border-blue', '#2563eb') },
+      }, '*');
+      probe.remove();
+    };
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frameRef.current?.contentWindow || event.data?.type !== 'canvas-annotation') return;
+      if (event.data.ready) sendState();
+      if (typeof event.data.id === 'string' && annotation.annotations.some(item => item.id === event.data.id)) annotation.open(event.data.id);
+      const anchor = event.data.anchor;
+      if (annotation.active && anchor && typeof anchor.blockId === 'string' && anchor.blockId.length <= 255 && typeof anchor.anchorText === 'string') {
+        annotation.select({ blockId: anchor.blockId, anchorText: anchor.anchorText.slice(0, 4000), anchorFingerprint: typeof anchor.anchorFingerprint === 'string' ? anchor.anchorFingerprint.slice(0, 255) : undefined });
+      }
+    };
+    window.addEventListener('message', receive);
+    sendState();
+    const observer = new MutationObserver(sendState);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-astryx-theme', 'class', 'style'] });
+    return () => { window.removeEventListener('message', receive); observer.disconnect(); };
+  }, [annotation]);
   const embeddedHtml = String(html || '').trim();
   const sourcePath = String(path || '').trim();
   const [resolvedHtml, setResolvedHtml] = useState(sourcePath ? '' : embeddedHtml);
@@ -44,7 +79,7 @@ export default function WorkspaceHtmlPreviewFrame({
       };
     }
 
-    const loadHtml = sourcePath
+    const loadHtml = sourcePath && !embeddedHtml
       ? getWorkspaceFilePreview(workspaceId, sourcePath).then(previewPayloadToHtml)
       : Promise.resolve(embeddedHtml);
     void loadHtml
@@ -71,6 +106,8 @@ export default function WorkspaceHtmlPreviewFrame({
             (assetPath) => getWorkspaceFilePreview(workspaceId, assetPath),
           ).then((fallbackHtml) => {
             if (!cancelled) setResolvedHtml(fallbackHtml);
+          }).catch(() => {
+            if (!cancelled) setError('Preview could not be loaded.');
           });
           return;
         }
@@ -85,8 +122,9 @@ export default function WorkspaceHtmlPreviewFrame({
   if (resolvedHtml) {
     return (
       <iframe
+        ref={frameRef}
         title={title}
-        srcDoc={resolvedHtml}
+        srcDoc={withPreviewStorage(resolvedHtml) + (annotation ? annotationPreviewBridge : '')}
         loading="lazy"
         sandbox={sandbox}
         referrerPolicy="no-referrer"

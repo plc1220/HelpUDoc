@@ -194,6 +194,40 @@ def test_detect_implicit_input_style_selector_above() -> None:
     assert result.awaiting is True
 
 
+def test_guard_loops_back_instead_of_synthesizing_missing_style_files() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(
+                content=(
+                    "I generated Style A, Style B, and Style C. "
+                    "Please choose your favorite direction in the interactive selector above."
+                )
+            )
+        ]
+    }
+    runtime = Runtime(
+        context={
+            "active_skill": "frontend-slides",
+            "frontend_slides_completed_interaction_gates": [
+                "presentation_context",
+                "outline_confirmation",
+            ],
+        }
+    )
+
+    result = middleware.after_model(state, runtime)
+
+    assert result is not None
+    assert result.get("jump_to") == "model"
+    assert result.get("implicit_retry") is True
+    messages = result.get("messages") or []
+    assert len(messages) == 1
+    assert isinstance(messages[0], HumanMessage)
+    assert "Generate the three style previews" in messages[0].content
+    assert "workflow_action" in messages[0].content
+
+
 def test_detect_implicit_input_visual_theme_selection_without_preview_wording() -> None:
     result = detect_implicit_input_awaiting(
         skill_id="frontend-slides",
@@ -524,6 +558,25 @@ def test_guard_reuses_context_when_editing_an_existing_html_deck() -> None:
         context={
             "active_skill": "frontend-slides",
             "frontend_slides_edit_existing": True,
+        }
+    )
+
+    assert middleware.after_model(state, runtime) is None
+
+
+def test_guard_detects_edit_existing_from_current_user_prompt_without_trace_hint() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(content="I enhanced presentation.html in place as requested.")
+        ]
+    }
+    runtime = Runtime(
+        context={
+            "active_skill": "frontend-slides",
+            "current_user_prompt": (
+                "Enhance @presentation.html in place and add a closing slide."
+            ),
         }
     )
 

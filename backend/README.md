@@ -9,7 +9,7 @@ The backend is an Express + TypeScript API for HelpUDoc. It handles:
 - agent run orchestration
 - conversation history persistence
 - admin-only settings for agent config, skills, users, and skill-builder workflows
-- the live collaboration WebSocket server
+- shared workspace comments, annotations, and notifications
 
 ## Prerequisites
 
@@ -34,7 +34,6 @@ ENV_FILE=../env/local/dev.env npm run dev
 
 API base URL: `http://localhost:3000/api`
 
-The collaboration server starts alongside the API and listens on `ws://localhost:1234` by default.
 
 ## Key environment variables
 
@@ -70,7 +69,6 @@ The collaboration server starts alongside the API and listens on `ws://localhost
 | `AGENT_URL` | Base URL of the Python agent service. |
 | `AGENT_CONFIG_PATH` | Shared runtime config path for agent settings editing. |
 | `AGENT_JWT_SECRET` | Secret used to sign backend-to-agent requests. |
-| `COLLAB_PORT` | Collaboration WebSocket server port. |
 
 ### Local fallback identity
 
@@ -123,6 +121,28 @@ This provisions PostgreSQL, Redis, and MinIO with the same defaults used by the 
 - `POST /api/agent/runs/:runId/respond`
 - `POST /api/agent/runs/:runId/act`
 
+### Office previews and quick edits
+
+All routes below require workspace membership and use the prefix `/api/workspaces/:workspaceId/files`:
+
+- `GET /:fileId/office-preview` renders the exact stored DOCX/PPTX version. It returns PDF bytes as base64, the source SHA-256 `revision`, `version`, `canEdit`, and an optional DOCX paragraph/style map.
+- `POST /office-preview` accepts `{filename, content}` for a base64 document snapshot. This endpoint is read-only and always returns `canEdit: false`, `version: null`.
+- `POST /:fileId/quick-edit` accepts `{version, revision, edit: {paragraphId, start, end, quote, action, value}}`. DOCX actions are `bold`, `italic`, `fontSize`, `style`, and `replaceText`. Offsets count Unicode code points within the source paragraph. Font sizes use half-point increments; paragraph styles must already exist in the document.
+- `POST /:fileId/quick-edit/undo` accepts `{version, restoreVersion}`. It restores only the base version of the caller's latest quick edit, provided no later file change has occurred.
+
+Edits require write access, preserve immutable file history, and reject stale saves even in direct-edit shared workspaces. Edit and undo responses include the updated `file.content` as base64. Preview requests use signed internal calls to the agent's Office converter; sources are limited to 25 MiB and rendered PDFs to 50 MiB. The agent runtime needs LibreOffice and the document fonts (see `agent/README.md`). Conversion failures do not modify source files.
+
+### Native DOCX editor
+
+The native editor loads and saves DOCX packages directly. These routes use the same `/api/workspaces/:workspaceId/files` prefix and require no Office converter:
+
+- `GET /:fileId/docx-content` returns `{filename, content, version, revision, canEdit, readOnlyReason}`. `content` contains the exact immutable version as base64; `revision` is its SHA-256. The caller must have access to the file in the requested workspace. Restricted documents still return source bytes for viewing, with `canEdit: false` and a specific `readOnlyReason`.
+- `PUT /:fileId/docx-content` accepts `{content, version, revision}` and returns `{file, previousVersion, revision}`. `file.content` is the saved base64 DOCX and the response `revision` is its new SHA-256. Write access, the original version, and the original source hash are required. The backend commits the exported bytes unchanged to immutable file history, with a strict version check under the file row lock. Concurrent changes return HTTP 409; clients should retain unsaved edits and offer to reopen the current version.
+
+Both responses use `Cache-Control: no-store`. Packages must be at most 25 MiB, with at most 4,096 parts and 100 MiB of expanded data. Validation checks package paths, compression bounds, CRC checksums, XML well-formedness, and the Word document namespace, content type, and root relationship. Entity declarations are rejected. Signed documents, editing protection, tracked changes, active embedded content, and external linked document content remain read-only; normal HTTP(S) and email hyperlinks are supported. Save checks apply to both the stored source and exported package, so removing a source protection in a browser export cannot bypass it.
+
+The backend uses Node 20's `zlib.crc32` to verify ZIP entry integrity; deploy with the current Node 20 image or newer. Native editor API tests run with `node -r ts-node/register/transpile-only -r tsconfig-paths/register --test tests/officeDocuments.test.ts`.
+
 ### Admin settings
 
 These routes are protected by system-admin checks:
@@ -139,7 +159,6 @@ These routes are protected by system-admin checks:
 - The server initializes its database structures during startup.
 - CORS is configured with `credentials: true` so cookie-based auth works in local and deployed flows.
 - Session storage uses Redis via `connect-redis`.
-- The collaboration server starts automatically from the same Node process.
 
 ## Related docs
 

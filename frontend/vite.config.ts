@@ -44,10 +44,6 @@ export default defineConfig({
             return 'mdxeditor'
           }
 
-          if (id.includes('@hocuspocus') || id.includes('y-monaco') || id.includes('/yjs/')) {
-            return 'collab'
-          }
-
           if (id.includes('plotly.js') || id.includes('react-plotly.js')) {
             return 'plotly'
           }

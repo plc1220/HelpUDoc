@@ -24,6 +24,8 @@ export type StartRunParams = {
   userId?: string;
   history?: AgentHistoryEntry[];
   forceReset?: boolean;
+  sharedTeamChannel?: boolean;
+  readOnlyWorkspace?: boolean;
   turnId?: string;
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
@@ -76,6 +78,7 @@ export type RunPendingInterrupt = {
 };
 
 export type RunMeta = {
+  sharedTeamChannel?: boolean;
   workspaceId: string;
   userId?: string;
   persona: string;
@@ -103,6 +106,8 @@ export type PersistedRunContext = {
   userId?: string;
   history?: AgentHistoryEntry[];
   forceReset?: boolean;
+  sharedTeamChannel?: boolean;
+  readOnlyWorkspace?: boolean;
   turnId?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;

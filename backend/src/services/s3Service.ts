@@ -403,6 +403,29 @@ export class S3Service implements ObjectStore {
     }
   }
 
+  async getPrefixStats(prefix: string): Promise<{ objectCount: number; totalBytes: number }> {
+    let objectCount = 0;
+    let totalBytes = 0;
+    let continuationToken: string | undefined;
+    try {
+      do {
+        const response = await this.client.send(new ListObjectsV2Command({
+          Bucket: this.bucketName,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }));
+        for (const object of response.Contents || []) {
+          objectCount += 1;
+          totalBytes += object.Size ?? 0;
+        }
+        continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+      } while (continuationToken);
+    } catch (error: unknown) {
+      throw mapS3Error(error, `Unable to get object prefix stats for ${prefix}`);
+    }
+    return { objectCount, totalBytes };
+  }
+
   async deletePrefix(prefix: string): Promise<void> {
     let continuationToken: string | undefined;
     do {

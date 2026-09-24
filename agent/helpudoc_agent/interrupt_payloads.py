@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List
 
 
 logger = logging.getLogger(__name__)
@@ -518,6 +518,79 @@ def _build_human_action_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
     return _normalize_interrupt_payload(interrupt_value)
 
 
+# `steps` reaches this payload as free-form dicts authored by the model: the tool accepts
+# List[Dict[str, Any]] with no schema, and skills document `execution_checklist` rather than
+# `steps`, so the model invents its own key names. The plan-review UI looked for title/label/
+# description and fell back to a literal "Step 1", "Step 2"... which hid the real plan from the
+# reviewer. Normalize here, at the single point every consumer reads, so no renderer has to guess.
+_STEP_TITLE_KEYS = (
+    "title", "label", "name", "step", "action", "task", "summary", "text", "item", "description",
+)
+_STEP_DETAIL_KEYS = ("detail", "details", "description", "notes", "note", "rationale", "reason")
+_STEP_STATE_KEYS = ("state", "status")
+
+
+def _first_text(source: Dict[str, Any], keys: Iterable[str], used: set[str]) -> str:
+    for key in keys:
+        if key in used:
+            continue
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            used.add(key)
+            return value.strip()
+    return ""
+
+
+def normalize_plan_steps(raw_steps: Any) -> List[Dict[str, Any]]:
+    """Coerce model-authored plan steps into a stable {title, detail?, state?} shape.
+
+    Never drops content: a step whose keys are all unrecognized is rendered as compact JSON rather
+    than silently replaced by a positional placeholder.
+    """
+    if not isinstance(raw_steps, list):
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for item in raw_steps:
+        if isinstance(item, str):
+            title = item.strip()
+            if title:
+                normalized.append({"title": title})
+            continue
+        if not isinstance(item, dict):
+            title = str(item).strip()
+            if title:
+                normalized.append({"title": title})
+            continue
+
+        used: set[str] = set()
+        title = _first_text(item, _STEP_TITLE_KEYS, used)
+        if not title:
+            # Unknown key naming: take the first non-empty string value rather than lose the step.
+            title = _first_text(item, list(item.keys()), used)
+        detail = _first_text(item, _STEP_DETAIL_KEYS, used)
+        state = _first_text(item, _STEP_STATE_KEYS, used)
+
+        leftovers = {
+            key: value for key, value in item.items()
+            if key not in used and value not in (None, "", [], {})
+        }
+        if not title:
+            # No string anywhere: preserve the raw step so the reviewer still sees it.
+            title = json.dumps(item, ensure_ascii=False, default=str, separators=(",", ":"))
+            leftovers = {}
+        if leftovers and not detail:
+            detail = json.dumps(leftovers, ensure_ascii=False, default=str, separators=(",", ":"))
+
+        step: Dict[str, Any] = {"title": title}
+        if detail:
+            step["detail"] = detail
+        if state:
+            step["state"] = state
+        normalized.append(step)
+    return normalized
+
+
 def build_plan_approval_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any] | None:
     prompt_title = str(args.get("plan_title") or args.get("title") or "").strip()
     if not prompt_title:
@@ -526,8 +599,7 @@ def build_plan_approval_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any] 
     summary_markdown = str(args.get("plan_summary_markdown") or "").strip()
     summary = str(args.get("plan_summary") or "").strip()
     checklist = str(args.get("execution_checklist") or "").strip()
-    raw_steps = args.get("steps")
-    steps = raw_steps if isinstance(raw_steps, list) else []
+    steps = normalize_plan_steps(args.get("steps"))
     plan_file_path = str(args.get("plan_file_path") or "research_plan.md").strip() or "research_plan.md"
     status_label = str(args.get("status_label") or "Pending Approval").strip() or "Pending Approval"
     risky_actions = str(args.get("risky_actions") or "None").strip() or "None"

@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom';
 import type {
   ChangeEvent,
   ClipboardEvent,
@@ -82,6 +83,7 @@ export default function AgentChatPane({
   interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
   interruptErrorByMessageId,
+  agentChatFocusKey,
   chatMessage,
   chatAttachments,
   commandTags,
@@ -96,6 +98,8 @@ export default function AgentChatPane({
   workspaceId,
   isSharedWorkspace,
   sharedWorkspace,
+  viewedVersion,
+  onTeamFilesChanged,
   activeFilePath,
   internetSearchEnabled,
   formatMessageTimestamp,
@@ -168,6 +172,7 @@ export default function AgentChatPane({
   interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
   interruptErrorByMessageId: Record<string, string>;
+  agentChatFocusKey?: number;
   chatMessage: string;
   chatAttachments: ChatComposerAttachment[];
   commandTags: CommandTag[];
@@ -182,6 +187,8 @@ export default function AgentChatPane({
   workspaceId?: string;
   isSharedWorkspace?: boolean;
   sharedWorkspace?: Workspace;
+  viewedVersion?: { versionId: string; versionNumber: number };
+  onTeamFilesChanged?: () => void;
   activeFilePath?: string;
   internetSearchEnabled: boolean;
   formatMessageTimestamp: (value?: string) => string;
@@ -248,6 +255,7 @@ export default function AgentChatPane({
   onOpenPrivateWorkingCopy?: () => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
+  const notificationLocation = useLocation();
   const [sharedMode, setSharedMode] = useState<SharedChatMode>('team');
   const sharedLumoCanWrite = Boolean(
     isSharedWorkspace
@@ -267,7 +275,14 @@ export default function AgentChatPane({
 
   useEffect(() => {
     setSharedMode('team');
-  }, [sharedWorkspace?.id]);
+  }, [sharedWorkspace?.id, notificationLocation.search]);
+
+  useEffect(() => {
+    if (!agentChatFocusKey) return;
+    setSharedMode('private');
+    const timer = window.setTimeout(() => chatInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [agentChatFocusKey, chatInputRef]);
 
   const handleSharedModeChange = (mode: SharedChatMode) => {
     if (
@@ -318,6 +333,8 @@ export default function AgentChatPane({
         {isSharedWorkspace && sharedWorkspace && sharedMode === 'team' ? (
           <WorkspaceTeamChatPanel
             workspace={sharedWorkspace}
+            viewedVersion={viewedVersion}
+            onFilesChanged={onTeamFilesChanged}
             filePath={activeFilePath}
             colorMode={colorMode}
             markdownComponents={markdownComponents}

@@ -59,8 +59,10 @@ test('Shared members may leave but cannot control sharing or trash', () => {
   );
 });
 
-test('private workspaces never receive Shared lifecycle actions', () => {
-  assert.deepEqual(getSharedWorkspaceLifecycleActions(draft()), []);
+test('private workspace owners can trash and restore without Shared lifecycle actions', () => {
+  assert.deepEqual(getSharedWorkspaceLifecycleActions(draft({ role: 'owner' })), ['trash']);
+  assert.deepEqual(getSharedWorkspaceLifecycleActions(draft({ role: 'owner', status: 'trashed' })), ['restore']);
+  assert.deepEqual(getSharedWorkspaceLifecycleActions(draft({ role: 'viewer' })), []);
 });
 
 test('unshared Shared workspaces are owner-only items in the Private section', () => {

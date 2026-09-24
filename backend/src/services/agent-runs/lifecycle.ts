@@ -1,4 +1,6 @@
+import type { NotificationService } from '../notificationService';
 import { createHash, randomUUID } from 'crypto';
+import { isFrontendSlidesEditExistingRun, slideEditArtifactCandidates } from './slideEditIntent';
 import type { IncomingMessage } from 'http';
 import { redisClient } from '../redisService';
 import { RunTelemetryService } from '../runTelemetryService';
@@ -50,6 +52,10 @@ export type AgentRunStatus =
   | 'cancelled';
 
 type StartRunParams = {
+  sharedTeamChannel?: boolean;
+  readOnlyWorkspace?: boolean;
+  // Internal continuation hint; never inferred from old requests after a fresh turn.
+  frontendSlidesEditExisting?: boolean;
   workspaceId: string;
   conversationId?: string;
   persona: string;
@@ -109,6 +115,7 @@ type RunPendingInterrupt = {
 };
 
 type RunMeta = {
+  sharedTeamChannel?: boolean;
   workspaceId: string;
   userId?: string;
   persona: string;
@@ -134,6 +141,8 @@ type RunContext = {
 };
 
 type PersistedRunContext = {
+  sharedTeamChannel?: boolean;
+  readOnlyWorkspace?: boolean;
   workspaceId: string;
   conversationId?: string;
   persona: string;
@@ -183,6 +192,7 @@ let userMemoryService: UserMemoryService | null = null;
 let skillEvolutionService: SkillEvolutionService | null = null;
 let conversationService: ConversationService | null = null;
 let fileService: FileService | null = null;
+let notificationService: NotificationService | null = null;
 let agentStreamClient = {
   runAgentStream,
   resumeAgentStream,
@@ -191,6 +201,7 @@ let agentStreamClient = {
 };
 
 export function configureAgentRunServices(services: {
+  notificationService?: NotificationService | null;
   telemetryService?: RunTelemetryService | null;
   runProvenanceService?: AgentRunProvenanceService | null;
   userMemoryService?: UserMemoryService | null;
@@ -199,6 +210,7 @@ export function configureAgentRunServices(services: {
   fileService?: FileService | null;
   agentStreamClient?: Partial<typeof agentStreamClient> | null;
 }) {
+  if ('notificationService' in services) notificationService = services.notificationService || null;
   if ('telemetryService' in services) {
     runTelemetryService = services.telemetryService || null;
   }
@@ -628,12 +640,15 @@ export const buildSyntheticResumeParams = (
   nextGateState: InteractionGateState,
 ): StartRunParams => ({
   ...baseParams,
-  prompt: buildSyntheticClarificationFollowupPrompt(
+  prompt: (baseParams.prompt.match(/^SLIDE_STYLE_PREVIEW .*$/m)?.[0] || '') + '\n' + buildSyntheticClarificationFollowupPrompt(
     baseParams.prompt,
     response,
     previousInterrupt,
     nextGateState,
-  ),
+  ) + (isFrontendSlidesEditExistingRun(baseParams)
+    ? `\n\nContinue revising the existing deck, without restarting setup. Candidate artifact paths from the conversation (verify by reading the workspace): ${JSON.stringify(slideEditArtifactCandidates(baseParams))}. Preserve the filename and existing content except for the requested changes.`
+    : ''),
+  frontendSlidesEditExisting: isFrontendSlidesEditExistingRun(baseParams),
   // Synthetic gates do not have LangGraph checkpoints. The continuation
   // prompt must be the sole conversational input for the fresh stream.
   history: undefined,
@@ -732,6 +747,8 @@ export const resolveStreamCloseDisposition = (input: {
 
 const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
   const metaKey = buildMetaKey(runId);
+  const shouldNotify = notificationService && (meta.status === 'completed' || meta.status === 'awaiting_approval');
+  const previous = shouldNotify ? await redisClient.hGetAll(metaKey) : {};
   const stringified: Record<string, string> = {};
   Object.entries(meta).forEach(([key, value]) => {
     if (value !== undefined) {
@@ -741,6 +758,17 @@ const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
   if (Object.keys(stringified).length) {
     await redisClient.hSet(metaKey, stringified);
     await redisClient.expire(metaKey, STREAM_TTL_SECONDS);
+  }
+  if (shouldNotify) {
+    try {
+      await notificationService!.notifyRun(runId, {
+        ...previous, ...stringified,
+        // Completion clears the resumable context; retain its navigation details for the alert.
+        runContext: stringified.runContext || previous.runContext || '',
+      });
+    } catch (error) {
+      console.error('Agent notification delivery failed', safeErrorForLog(error));
+    }
   }
 };
 
@@ -1796,28 +1824,6 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
   };
 };
 
-const isFrontendSlidesEditExistingRun = (params: StartRunParams): boolean => {
-  const messageText = (params.messageContent || [])
-    .map((block) => JSON.stringify(block))
-    .join(' ');
-  const historyText = (params.history || [])
-    .map((entry) => `${entry.role}: ${entry.content}`)
-    .join(' ');
-  const currentText = `${params.prompt || ''} ${messageText}`.toLowerCase();
-  const contextualText = `${currentText} ${historyText}`.toLowerCase();
-  const mentionsExistingArtifact = (
-    contextualText.includes('.html') ||
-    contextualText.includes('.ppt') ||
-    contextualText.includes('.pptx') ||
-    contextualText.includes('existing deck') ||
-    contextualText.includes('existing slides') ||
-    contextualText.includes('current deck') ||
-    contextualText.includes('presentation deck')
-  );
-  const asksForEdit = /\b(?:edit|revise|update|modify|fix|polish|adjust|change|improve|enhance|iterate)\b/.test(currentText);
-  return mentionsExistingArtifact && asksForEdit;
-};
-
 const isFrontendSlidesRun = (skillId: string | null | undefined, params: StartRunParams): boolean => (
   isFrontendSlidesSkill(skillId) || /\bfrontend-slides\b/i.test(params.prompt || '')
 );
@@ -2709,6 +2715,8 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
 const serializeRunContext = (params: StartRunParams): string =>
   JSON.stringify({
     workspaceId: params.workspaceId,
+    sharedTeamChannel: params.sharedTeamChannel,
+    readOnlyWorkspace: params.readOnlyWorkspace,
     conversationId: params.conversationId,
     persona: params.persona,
     prompt: params.prompt,
@@ -2740,6 +2748,8 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
     return {
       params: {
         workspaceId: parsed.workspaceId,
+        sharedTeamChannel: parsed.sharedTeamChannel === true,
+        readOnlyWorkspace: parsed.readOnlyWorkspace === true,
         conversationId: typeof parsed.conversationId === 'string' ? parsed.conversationId : undefined,
         persona: parsed.persona,
         prompt: parsed.prompt,
@@ -3140,7 +3150,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     );
     if (existingRunId) {
       const existingMeta = await getRunMeta(existingRunId);
-      if (existingMeta && !['completed', 'failed', 'cancelled'].includes(existingMeta.status)) {
+      if (existingMeta && (params.sharedTeamChannel || !['completed', 'failed', 'cancelled'].includes(existingMeta.status))) {
         return { runId: existingRunId, status: existingMeta.status };
       }
     }
@@ -3157,6 +3167,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     userId: params.userId,
     persona: params.persona,
     status: 'queued',
+    sharedTeamChannel: params.sharedTeamChannel,
     createdAt: queuedAt,
     turnId: params.turnId,
     pendingInterrupt: '',
@@ -3267,7 +3278,7 @@ async function runAgentRunWorker(
     await cleanupRunWorker(runId);
     return;
   }
-  if (fileService && params.userId) {
+  if (fileService && params.userId && !params.readOnlyWorkspace) {
     await fileService.reconcileWorkspaceMirror(
       params.workspaceId,
       params.userId,
@@ -3368,7 +3379,7 @@ async function runAgentRunWorker(
   let agentStreamEstablished = false;
 
   const commitRunArtifacts = async () => {
-    if (artifactsCommitted || !fileService || !params.userId) return;
+    if (artifactsCommitted || !fileService || !params.userId || params.readOnlyWorkspace) return;
     // A failed connection cannot have generated workspace artifacts. Skipping
     // this commit also keeps a secondary lease failure from masking the real
     // transport error during stale-run recovery.
@@ -4263,7 +4274,7 @@ async function runAgentRunWorker(
   traceContext.skillId = skillId || undefined;
 
   try {
-    if (fileService && params.userId) {
+    if (fileService && params.userId && !params.readOnlyWorkspace) {
       artifactBaseline = await fileService.captureWorkspaceArtifactBaseline(
         params.workspaceId,
         params.userId,
@@ -4644,7 +4655,10 @@ const reconcileActiveRunMetaFromStream = async (
         gateState: interactionGateState,
       })
     : null;
-  if (terminalEvent?.status === 'completed' && missingCompletionGate) {
+  // A committed final deck is authoritative. Reopening a missing gate after
+  // artifact completion resumes an old graph checkpoint and can send the agent
+  // back into generation/export work after the user already has the result.
+  if (terminalEvent?.status === 'completed' && missingCompletionGate && !canCompleteFromDeckArtifact) {
     const recoveredInterrupt = normalizeInterruptPayloadRecord(
       buildFrontendSlidesGatePendingInterrupt({
         runId,
@@ -4736,6 +4750,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   await reconcileActiveRunMetaFromStream(runId, meta, interactionGateState);
   return {
     workspaceId: meta.workspaceId,
+    sharedTeamChannel: meta.sharedTeamChannel === 'true',
     userId: meta.userId,
     persona: meta.persona,
     status: (meta.status as AgentRunStatus) || 'queued',

@@ -26,13 +26,14 @@ export const isOwnerOnlyUnsharedWorkspace = (
 ): boolean => workspace?.visibility === 'team' && getWorkspaceLifecycleStatus(workspace) === 'unshared';
 
 /**
- * Shared workspaces use reversible lifecycle actions. They are never hard-deleted from the UI.
+ * Workspace owners use reversible lifecycle actions here. Permanent deletion lives in Trash.
  * Owners control sharing/trash; members may only leave their own membership.
  */
 export const getSharedWorkspaceLifecycleActions = (
   workspace: Pick<Workspace, 'visibility' | 'role' | 'status' | 'audienceType'>,
 ): WorkspaceLifecycleAction[] => {
-  if (workspace.visibility !== 'team') return [];
+  if (workspace.visibility !== 'team') return workspace.role === 'owner'
+    ? [getWorkspaceLifecycleStatus(workspace) === 'trashed' ? 'restore' : 'trash'] : [];
   const status = getWorkspaceLifecycleStatus(workspace);
   const isOwner = workspace.role === 'owner';
   if (isOwner) {

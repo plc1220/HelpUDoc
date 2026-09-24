@@ -11,6 +11,14 @@ test('line-numbered read_file output is hidden from assistant prose', () => {
   ].join('\n')), true);
 });
 
+test('space-delimited line-numbered read_file output is hidden from assistant prose', () => {
+  assert.equal(isInternalStreamContent([
+    '1  /* mandatory base styles */',
+    '2  html, body { width: 100%; }',
+    '3  .deck-stage { position: absolute; }',
+  ].join('\n')), true);
+});
+
 test('normal numbered Markdown remains user-facing', () => {
   assert.equal(isInternalStreamContent([
     '1. Review the outline',

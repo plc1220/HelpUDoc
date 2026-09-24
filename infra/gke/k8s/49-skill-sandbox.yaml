@@ -3,6 +3,7 @@ kind: ServiceAccount
 metadata:
   name: helpudoc-agent
   namespace: helpudoc
+automountServiceAccountToken: true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -34,10 +35,47 @@ roleRef:
   kind: Role
   name: helpudoc-skill-sandbox-runner
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: helpudoc-sandbox-runner
+  namespace: helpudoc-sandbox
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: helpudoc-inline-sandbox-launcher
+  namespace: helpudoc-sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "jobs/status"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: helpudoc-inline-sandbox-launcher
+  namespace: helpudoc-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: helpudoc-agent
+    namespace: helpudoc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: helpudoc-inline-sandbox-launcher
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: helpudoc-skill-sandbox-deny-egress
+  name: helpudoc-declared-sandbox-deny-egress
   namespace: helpudoc
 spec:
   podSelector:
@@ -46,3 +84,154 @@ spec:
   policyTypes:
     - Egress
   egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: helpudoc-sandbox
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-inline-sandbox-transfer
+  namespace: helpudoc-sandbox
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: helpudoc
+          podSelector:
+            matchLabels:
+              app: helpudoc-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: inline-sandbox-capacity
+  namespace: helpudoc-sandbox
+spec:
+  hard:
+    pods: "4"
+    count/jobs.batch: "20"
+    requests.cpu: "400m"
+    requests.memory: 512Mi
+    requests.ephemeral-storage: 512Mi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+    limits.ephemeral-storage: 4Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: inline-sandbox-defaults
+  namespace: helpudoc-sandbox
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+        ephemeral-storage: 128Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
+        ephemeral-storage: 1Gi
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: helpudoc-inline-sandbox-jobs
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+  validations:
+    - expression: >-
+        has(object.metadata.labels) &&
+        'app' in object.metadata.labels &&
+        'helpudoc.io/sandbox-mode' in object.metadata.labels &&
+        'helpudoc.io/workspace-id' in object.metadata.labels &&
+        'helpudoc.io/sandbox-run-id' in object.metadata.labels &&
+        object.metadata.labels['app'] == 'helpudoc-skill-sandbox' &&
+        object.metadata.labels['helpudoc.io/sandbox-mode'] == 'inline' &&
+        object.metadata.labels['helpudoc.io/workspace-id'] != '' &&
+        object.metadata.labels['helpudoc.io/sandbox-run-id'] != ''
+      message: Inline sandbox Jobs require the canonical run labels.
+    - expression: >-
+        object.spec.backoffLimit == 0 &&
+        object.spec.activeDeadlineSeconds <= 330 &&
+        object.spec.ttlSecondsAfterFinished <= 300
+      message: Inline sandbox Jobs must have bounded retry, runtime, and retention.
+    - expression: >-
+        object.spec.template.spec.runtimeClassName == 'gvisor' &&
+        object.spec.template.spec.serviceAccountName == 'helpudoc-sandbox-runner' &&
+        object.spec.template.spec.automountServiceAccountToken == false &&
+        object.spec.template.spec.enableServiceLinks == false
+      message: Inline sandbox Jobs must use gVisor and the tokenless sandbox identity.
+    - expression: >-
+        (!has(object.spec.template.spec.hostNetwork) || object.spec.template.spec.hostNetwork == false) &&
+        (!has(object.spec.template.spec.hostPID) || object.spec.template.spec.hostPID == false) &&
+        (!has(object.spec.template.spec.hostIPC) || object.spec.template.spec.hostIPC == false)
+      message: Inline sandbox Jobs cannot join host namespaces.
+    - expression: >-
+        object.spec.template.spec.volumes.all(volume, has(volume.emptyDir))
+      message: Inline sandbox Jobs may use only emptyDir volumes.
+    - expression: >-
+        size(object.spec.template.spec.containers) == 1 &&
+        object.spec.template.spec.containers.all(container,
+          container.name == 'runner' &&
+          container.image.startsWith('gcr.io/my-rd-coe-demo-gen-ai/helpudoc-inline-sandbox:') &&
+          container.command == ['python', '/opt/helpudoc/sandbox_supervisor.py'] &&
+          container.securityContext.allowPrivilegeEscalation == false &&
+          container.securityContext.readOnlyRootFilesystem == true &&
+          container.securityContext.capabilities.drop == ['ALL'] &&
+          'cpu' in container.resources.requests &&
+          'memory' in container.resources.requests &&
+          'ephemeral-storage' in container.resources.requests &&
+          'cpu' in container.resources.limits &&
+          'memory' in container.resources.limits &&
+          'ephemeral-storage' in container.resources.limits)
+      message: Inline sandbox containers must use the approved image and restricted security profile.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: helpudoc-inline-sandbox-jobs
+spec:
+  policyName: helpudoc-inline-sandbox-jobs
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        helpudoc.io/purpose: inline-sandbox

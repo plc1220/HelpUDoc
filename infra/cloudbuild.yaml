@@ -20,6 +20,12 @@ steps:
     entrypoint: 'bash'
     args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-agent:latest || true']
 
+  - id: pull-inline-sandbox-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:latest || true']
+
   - id: build-backend
     name: 'gcr.io/cloud-builders/docker'
     waitFor: ['pull-backend-cache']
@@ -78,6 +84,24 @@ steps:
         '.',
       ]
 
+  - id: build-inline-sandbox
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-inline-sandbox-cache']
+    env: ['DOCKER_BUILDKIT=1']
+    args:
+      [
+        'build',
+        '-f',
+        'agent/Dockerfile.sandbox',
+        '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:latest',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:$BUILD_ID',
+        '.',
+      ]
+
   - id: push-backend
     name: 'gcr.io/cloud-builders/docker'
     waitFor: ['build-backend']
@@ -87,11 +111,6 @@ steps:
     name: 'gcr.io/cloud-builders/docker'
     waitFor: ['build-frontend']
     args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
-
-  - id: push-agent
-    name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['smoke-agent-officecli']
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
 
   - id: smoke-agent-officecli
     name: 'gcr.io/cloud-builders/docker'
@@ -104,6 +123,28 @@ steps:
         docker run --rm gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID officecli --version
         docker run --rm gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID \
           python /app/agent/scripts/smoke_officecli.py
+
+  - id: push-agent
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['smoke-agent-officecli']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
+
+  - id: smoke-inline-sandbox
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-inline-sandbox']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        docker run --rm --entrypoint python \
+          gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:$BUILD_ID \
+          -c "import importlib.util, os, pathlib; assert os.getuid() == 1000; assert importlib.util.find_spec('pip') is None; assert importlib.util.find_spec('ensurepip') is None; assert pathlib.Path('/opt/helpudoc/sandbox_supervisor.py').is_file()"
+
+  - id: push-inline-sandbox
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['smoke-inline-sandbox']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:$BUILD_ID']
 
   # Tag :latest without pushing the same bytes twice.
   - id: tag-backend-latest
@@ -145,10 +186,23 @@ steps:
         'gcr.io/$PROJECT_ID/helpudoc-agent:latest',
       ]
 
+  - id: tag-inline-sandbox-latest
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['push-inline-sandbox']
+    args:
+      [
+        'container',
+        'images',
+        'add-tag',
+        '--quiet',
+        'gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:$BUILD_ID',
+        'gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:latest',
+      ]
+
   # 4. Update Image References in Manifests
   - id: rewrite-manifests
     name: 'ubuntu'
-    waitFor: ['push-backend', 'push-frontend', 'push-agent']
+    waitFor: ['push-backend', 'push-frontend', 'push-agent', 'push-inline-sandbox']
     args:
       - 'bash'
       - '-c'
@@ -157,6 +211,7 @@ steps:
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/52-daily-reflection-cron.yaml
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-agent:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
+        sed -i -E "s|gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:[^[:space:]]+|gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-frontend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
 
   # 5. Deploy to GKE

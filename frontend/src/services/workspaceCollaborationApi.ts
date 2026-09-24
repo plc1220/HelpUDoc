@@ -1,3 +1,4 @@
+import type { TeamChatReference } from '../types';
 import { API_URL, apiFetch } from './apiClient';
 
 export type WorkspaceCollaborationObjectType =
@@ -22,6 +23,11 @@ export type WorkspaceCollaborationObject = {
   visibility: 'private' | 'workspace_audience';
   status: WorkspaceCollaborationStatus;
   filePath: string | null;
+  anchorText?: string;
+  anchorStart?: number;
+  anchorEnd?: number;
+  blockId?: string;
+  anchorFingerprint?: string;
   title: string | null;
   body: string;
   authorId: string | null;
@@ -108,6 +114,11 @@ export const createWorkspaceCollaborationObject = async (
     body: string;
     filePath?: string;
     sourceTeamMessageId?: string;
+    anchorText?: string;
+    anchorStart?: number;
+    anchorEnd?: number;
+    blockId?: string;
+    anchorFingerprint?: string;
   },
 ): Promise<WorkspaceCollaborationObject> => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/collaboration/objects`, {
@@ -124,9 +135,10 @@ export const createWorkspaceCollaborationObject = async (
 export const listWorkspaceTeamMessages = async (
   workspaceId: string,
   limit = 200,
+  includeMessageId?: string,
 ): Promise<WorkspaceTeamMessage[]> => {
   const response = await apiFetch(
-    `${API_URL}/workspaces/${workspaceId}/collaboration/team-chat/messages?limit=${limit}`,
+    `${API_URL}/workspaces/${workspaceId}/collaboration/team-chat/messages?limit=${limit}${includeMessageId ? `&includeMessageId=${encodeURIComponent(includeMessageId)}` : ''}`,
   );
   if (!response.ok) {
     return parseError(response, 'Failed to load Workspace Chat');
@@ -141,6 +153,7 @@ export const postWorkspaceTeamMessage = async (
     body: string;
     replyToMessageId?: string;
     mentionedUserIds?: string[];
+    references?: TeamChatReference[];
   },
 ): Promise<WorkspaceTeamMessage> => {
   const response = await apiFetch(
@@ -160,7 +173,7 @@ export const postWorkspaceTeamMessage = async (
 export const invokeLumoForWorkspaceTeamMessage = async (
   workspaceId: string,
   messageId: string,
-): Promise<WorkspaceTeamMessage> => {
+): Promise<{ status: 'queued' }> => {
   const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/collaboration/team-chat/messages/${messageId}/lumo`,
     { method: 'POST' },
@@ -234,4 +247,9 @@ export const applyWorkspaceCollaborationProposal = async (
     return parseError(response, 'Failed to apply proposal');
   }
   return response.json();
+};
+
+export const respondToTeamInteraction = async (workspaceId: string, messageId: string, input: { decision?: 'approve' | 'reject'; message?: string; actionId?: string }) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/collaboration/team-chat/messages/${messageId}/interaction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  if (!response.ok) return parseError(response, 'Unable to respond to Lumo');
 };

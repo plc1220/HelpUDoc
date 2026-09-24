@@ -169,6 +169,8 @@ def test_workflow_action_rejects_frontend_slides_component_mismatch(tmp_path):
 
 def test_workflow_action_frontend_slides_gate_forces_clarification_resume(monkeypatch, tmp_path):
     workspace = WorkspaceState(workspace_id="workflow-interaction", root_path=tmp_path)
+    (tmp_path / "style-a.html").write_text("<!doctype html><title>Style A</title>", encoding="utf-8")
+    (tmp_path / "style-b.html").write_text("<!doctype html><title>Style B</title>", encoding="utf-8")
     captured = {}
 
     def fake_interrupt(payload):
@@ -189,10 +191,17 @@ def test_workflow_action_frontend_slides_gate_forces_clarification_resume(monkey
             "presentation": "style_preview",
             "resume_mode": "approval",
             "props_json": json.dumps(
-                {
-                    "title": "Choose Presentation Style",
-                    "choices": [{"id": "style-a", "label": "Style A"}],
-                }
+                    {
+                        "title": "Choose Presentation Style",
+                        "choices": [
+                            {"id": "style-a", "label": "Style A"},
+                            {"id": "style-b", "label": "Style B"},
+                        ],
+                        "previews": [
+                            {"id": "style-a", "label": "Style A", "path": "style-a.html"},
+                            {"id": "style-b", "label": "Style B", "path": "style-b.html"},
+                        ],
+                    }
             ),
             "context_json": json.dumps(
                 {
@@ -212,6 +221,9 @@ def test_workflow_action_frontend_slides_gate_forces_clarification_resume(monkey
 
 def test_workflow_action_normalizes_legacy_style_preview_options(monkeypatch, tmp_path):
     workspace = WorkspaceState(workspace_id="workflow-style-options", root_path=tmp_path)
+    (tmp_path / "style-a.html").write_text("<!doctype html><title>Blue Professional</title>", encoding="utf-8")
+    (tmp_path / "style-b.html").write_text("<!doctype html><title>Signal</title>", encoding="utf-8")
+    (tmp_path / "style-c.html").write_text("<!doctype html><title>Cobalt Grid</title>", encoding="utf-8")
     captured = {}
 
     def fake_interrupt(payload):
@@ -270,10 +282,101 @@ def test_workflow_action_normalizes_legacy_style_preview_options(monkeypatch, tm
         ("style-c", "Cobalt Grid"),
     ]
     assert [(preview["id"], preview["path"]) for preview in props["previews"]] == [
-        ("style-a", "/style-a.html"),
-        ("style-b", "/style-b.html"),
-        ("style-c", "/style-c.html"),
+        ("style-a", "style-a.html"),
+        ("style-b", "style-b.html"),
+        ("style-c", "style-c.html"),
     ]
+    assert all("<!doctype html>" in preview["html"] for preview in props["previews"])
+
+
+def test_workflow_action_discovers_canonical_style_previews_without_repeated_paths(monkeypatch, tmp_path):
+    workspace = WorkspaceState(workspace_id="workflow-style-discovery", root_path=tmp_path)
+    preview_dir = tmp_path / ".frontend-slides" / "slide-previews"
+    preview_dir.mkdir(parents=True)
+    for name, title in (
+        ("style-a.html", "Bold Signal"),
+        ("style-b.html", "Blue Professional"),
+        ("style-c.html", "Editorial Grid"),
+    ):
+        (preview_dir / name).write_text(
+            f"<!doctype html><html><title>{title}</title></html>",
+            encoding="utf-8",
+        )
+    captured = {}
+
+    def fake_interrupt(payload):
+        captured["payload"] = payload
+        return {
+            "interactionId": "interaction-style_preview_selection",
+            "actionId": "submit",
+            "values": {"selectedChoiceId": "style-b"},
+        }
+
+    monkeypatch.setattr("helpudoc_agent.tools_and_schemas.interrupt", fake_interrupt)
+
+    tool = build_workflow_action_tool(workspace)
+    result = tool.invoke(
+        {
+            "action": "request_user_interaction",
+            "gate_id": "style_preview_selection",
+            "presentation": "style_preview",
+            "props_json": json.dumps(
+                {
+                    "title": "Choose Presentation Style",
+                    "choices": [
+                        {"id": "style-a", "label": "Bold Signal"},
+                        {"id": "style-b", "label": "Blue Professional"},
+                        {"id": "style-c", "label": "Editorial Grid"},
+                    ],
+                }
+            ),
+            "context_json": json.dumps(
+                {"skill": "frontend-slides", "gateId": "style_preview_selection"}
+            ),
+        }
+    )
+
+    assert json.loads(result)["actionId"] == "submit"
+    props = captured["payload"]["interactionRequest"]["props"]
+    assert [preview["path"] for preview in props["previews"]] == [
+        ".frontend-slides/slide-previews/style-a.html",
+        ".frontend-slides/slide-previews/style-b.html",
+        ".frontend-slides/slide-previews/style-c.html",
+    ]
+    assert [preview["label"] for preview in props["previews"]] == [
+        "Bold Signal",
+        "Blue Professional",
+        "Editorial Grid",
+    ]
+    assert all("<!doctype html>" in preview["html"] for preview in props["previews"])
+
+
+def test_workflow_action_blocks_missing_style_preview_files(monkeypatch, tmp_path):
+    workspace = WorkspaceState(workspace_id="workflow-style-missing", root_path=tmp_path)
+    tool = build_workflow_action_tool(workspace)
+
+    result = tool.invoke(
+        {
+            "action": "request_user_interaction",
+            "gate_id": "style_preview_selection",
+            "presentation": "style_preview",
+            "props_json": json.dumps(
+                {
+                    "choices": [
+                        {"id": "style-a", "label": "Style A"},
+                        {"id": "style-b", "label": "Style B"},
+                    ],
+                    "previews": [
+                        {"id": "style-a", "label": "Style A", "path": ".frontend-slides/slide-previews/style-a.html"},
+                        {"id": "style-b", "label": "Style B", "path": ".frontend-slides/slide-previews/style-b.html"},
+                    ],
+                }
+            ),
+            "context_json": json.dumps({"skill": "frontend-slides", "gateId": "style_preview_selection"}),
+        }
+    )
+
+    assert "requires at least two real generated HTML preview files" in result
 
 
 def test_workflow_action_rejects_outline_gate_without_embedded_outline(tmp_path):
