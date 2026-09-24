@@ -2840,7 +2840,10 @@ def register_chat_routes(
                 yield _json_line({
                     "type": "progress",
                     "phase": "failed",
-                    "label": "Dashboard interaction contract failed",
+                    # Every plan-decision resume lands here, not only dashboards.
+                    # The old label sent a failed research run to the wrong
+                    # subsystem for diagnosis.
+                    "label": "Plan approval contract not satisfied",
                     "detail": approval_resume_contract_error,
                     "status": "error",
                     "timestamp": datetime.utcnow().isoformat() + "Z",
