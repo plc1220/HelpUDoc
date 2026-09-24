@@ -155,6 +155,7 @@ import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import FileProvenanceDialog from '../../components/FileProvenanceDialog';
 import FileStatusChip from '../../components/FileStatusChip';
+import GoogleDriveDeliveryButton from '../../components/GoogleDriveDeliveryButton';
 import FileStatusFilterBar, { type FileStatusFilter } from '../../components/FileStatusFilterBar';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import AgentChatPane from '../../components/chat/AgentChatPane';
@@ -9169,17 +9170,22 @@ export default function WorkspacePage() {
                   <div className={`px-4 py-3 flex flex-wrap gap-2 justify-between items-center ${
                     isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
                   }`}>
-                    <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center gap-3">
                       <h3 title={canvasTitle} className={`truncate text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
                       {selectedFile && selectedWorkspace && fileStatusById[String(selectedFile.id)] && (
-                        <FileStatusChip
-                          workspaceId={selectedWorkspace.id}
-                          fileId={selectedFile.id}
-                          size="md"
-                          status={fileStatusById[String(selectedFile.id)].status}
-                          drift={fileStatusById[String(selectedFile.id)].drift}
-                          onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
-                        />
+                        <>
+                          <FileStatusChip
+                            workspaceId={selectedWorkspace.id}
+                            fileId={selectedFile.id}
+                            size="md"
+                            status={fileStatusById[String(selectedFile.id)].status}
+                            drift={fileStatusById[String(selectedFile.id)].drift}
+                            onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
+                          />
+                          {fileStatusById[String(selectedFile.id)].status === 'published' && (
+                            <GoogleDriveDeliveryButton workspaceId={selectedWorkspace.id} fileId={selectedFile.id} />
+                          )}
+                        </>
                       )}
                     </div>
                     <div className="flex min-w-0 flex-wrap items-center gap-2">

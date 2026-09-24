@@ -413,6 +413,34 @@ export default function(
     }
   });
 
+  router.post(
+    '/:fileId/google-drive-delivery',
+    async (req: Request<{ fileId: string }>, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        const fileId = officeFileId(req.params.fileId);
+        const delivery = await filePublicationService.deliverCurrentToGoogleDrive(
+          fileId, user.userId, googleDriveService,
+        );
+        res.json({ delivery });
+      } catch (error) {
+        handleError(res, error, 'Failed to deliver publication to Google Drive');
+      }
+    },
+  );
+
+  router.get('/:fileId/google-drive-delivery', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const delivery = await filePublicationService.getCurrentGoogleDriveDelivery(
+        officeFileId(req.params.fileId), user.userId,
+      );
+      res.json({ delivery });
+    } catch (error) {
+      handleError(res, error, 'Failed to load Google Drive delivery');
+    }
+  });
+
   router.get(
     '/:fileId/publications/:publicationVersion/download',
     async (req: Request<{ fileId: string; publicationVersion: string }>, res: Response) => {

@@ -194,11 +194,12 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
       },
       publication: (() => {
         const publicationBucket = trimEnv(e, 'PUBLICATION_BUCKET_NAME');
-        const usingPrimaryStore = !publicationBucket;
+        const primaryProvider = trimEnv(e, 'OBJECT_STORE_PROVIDER') === 'gcs' ? 'gcs' as const : 's3' as const;
+        const provider = (trimEnv(e, 'PUBLICATION_PROVIDER') || primaryProvider) === 'gcs' ? 'gcs' as const : 's3' as const;
+        const usingPrimaryStore = !publicationBucket && provider === primaryProvider;
         return {
-          provider: (trimEnv(e, 'PUBLICATION_PROVIDER')
-            || trimEnv(e, 'OBJECT_STORE_PROVIDER')) === 'gcs' ? 'gcs' as const : 's3' as const,
-          bucketName: publicationBucket || bucket,
+          provider,
+          bucketName: publicationBucket || (provider === 'gcs' ? (trimEnv(e, 'GCS_BUCKET_NAME') || bucket) : bucket),
           // Without a dedicated bucket, published artifacts still need to be
           // separated from workspace storage inside the shared one.
           prefix: trimEnv(e, 'PUBLICATION_PREFIX') || (usingPrimaryStore ? 'published' : ''),

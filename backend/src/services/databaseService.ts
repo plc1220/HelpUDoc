@@ -41,6 +41,7 @@ export class DatabaseService {
     await this.createFileVersionsTable();
     await this.createFileAuditEventsTable();
     await this.createFilePublicationsTable();
+    await this.createFilePublicationDeliveriesTable();
     await this.createWorkspaceFileRevisionsTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
@@ -547,6 +548,27 @@ export class DatabaseService {
       });
       console.log('Created "file_publications" table.');
     }
+  }
+
+  private async createFilePublicationDeliveriesTable(): Promise<void> {
+    if (await this.db.schema.hasTable('file_publication_deliveries')) return;
+    await this.db.schema.createTable('file_publication_deliveries', (table) => {
+      table.uuid('id').primary();
+      table.uuid('publicationId').notNullable().references('id').inTable('file_publications').onDelete('CASCADE').unique();
+      table.integer('fileId').notNullable();
+      table.uuid('workspaceId').notNullable();
+      // Generate and persist the Drive ID before upload. A retry after a lost
+      // response can inspect or upload that same ID without creating duplicates.
+      table.string('driveFileId', 255).notNullable().unique();
+      table.text('uploadSessionUri');
+      table.text('webViewLink');
+      table.string('status', 16).notNullable().defaultTo('pending');
+      table.string('sha256', 64).notNullable();
+      table.uuid('deliveredByUserId').references('id').inTable('users').onDelete('SET NULL');
+      table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      table.index(['workspaceId', 'createdAt'], 'file_publication_deliveries_workspace_idx');
+    });
   }
 
   private async createWorkspaceFileRevisionsTable(): Promise<void> {

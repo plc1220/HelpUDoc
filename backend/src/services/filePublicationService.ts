@@ -7,6 +7,8 @@ import { getBackendEnv } from '../config/env';
 import type { DatabaseService } from './databaseService';
 import type { FileService } from './fileService';
 import type { WorkspaceService } from './workspaceService';
+import type { GoogleDriveService } from './googleDriveService';
+import { decryptOAuthSecret, encryptOAuthSecret } from './userOAuthTokenService';
 import { ObjectStoreError, type ObjectStore } from './objectStore';
 import { getPublicationObjectStore } from './objectStoreFactory';
 import {
@@ -141,6 +143,116 @@ export class FilePublicationService {
       sizeBytes: Number(publication.sizeBytes || 0),
       downloadName: String(publication.publishedName).split('/').pop() || 'artifact',
     };
+  }
+
+  async deliverToGoogleDrive(
+    fileId: number,
+    publicationVersion: number,
+    userId: string,
+    driveService: GoogleDriveService,
+  ) {
+    const publication = await this.getPublication(fileId, publicationVersion, userId);
+    const current = await this.db('file_publication_deliveries')
+      .where({ publicationId: publication.id }).first();
+    if (current?.status === 'delivered') return this.toDriveDeliveryResponse(current);
+
+    let delivery = current;
+    if (!delivery) {
+      const driveFileId = await driveService.generateUploadId(userId);
+      const candidate = {
+        id: randomUUID(), publicationId: publication.id, fileId,
+        workspaceId: String(publication.workspaceId), driveFileId,
+        status: 'pending', sha256: String(publication.sha256), deliveredByUserId: userId,
+      };
+      try {
+        await this.db('file_publication_deliveries').insert(candidate);
+        delivery = candidate;
+      } catch (error) {
+        // Another request may have reserved the same publication while the ID
+        // was being generated. Continue with its persisted ID.
+        delivery = await this.db('file_publication_deliveries')
+          .where({ publicationId: publication.id }).first();
+        if (!delivery) throw error;
+      }
+    }
+    if (delivery.status !== 'delivered' && String(delivery.deliveredByUserId || '') !== userId) {
+      throw new ConflictError('This Drive delivery is pending under another Google account; ask that publisher to retry it');
+    }
+
+    const object = await this.store.getStream(String(publication.targetKey));
+    const expectedSize = Number(publication.sizeBytes);
+    if (!Number.isSafeInteger(expectedSize) || expectedSize < 0) {
+      throw new ConflictError('The archived publication has an invalid size');
+    }
+    const buffer = Buffer.allocUnsafe(expectedSize);
+    let offset = 0;
+    for await (const chunk of object.stream) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (offset + bytes.length > buffer.length) throw new ConflictError('The archived publication size did not match its record');
+      bytes.copy(buffer, offset);
+      offset += bytes.length;
+    }
+    if (offset !== expectedSize) throw new ConflictError('The archived publication size did not match its record');
+    const sha256 = createHash('sha256').update(buffer).digest('hex');
+    if (sha256 !== String(publication.sha256)) {
+      throw new ConflictError('The archived publication failed its SHA-256 integrity check');
+    }
+    const uploaded = await driveService.uploadPublishedArtifact(userId, {
+      driveFileId: String(delivery.driveFileId),
+      name: String(publication.publishedName).split('/').pop() || 'published-file',
+      mimeType: String(publication.mimeType || 'application/octet-stream'),
+      buffer,
+      publicationId: String(publication.id),
+      uploadSessionUri: delivery.uploadSessionUri ? decryptOAuthSecret(String(delivery.uploadSessionUri)) : null,
+      onUploadSession: async (uri) => {
+        await this.db('file_publication_deliveries').where({ id: delivery!.id }).update({
+          uploadSessionUri: encryptOAuthSecret(uri), updatedAt: this.db.fn.now(),
+        });
+      },
+    });
+    await this.db('file_publication_deliveries').where({ id: delivery.id }).update({
+      status: 'delivered', webViewLink: uploaded.webViewLink || null,
+      uploadSessionUri: null, updatedAt: this.db.fn.now(),
+    });
+    const completed = await this.db('file_publication_deliveries').where({ id: delivery.id }).first();
+    return this.toDriveDeliveryResponse(completed);
+  }
+
+  private toDriveDeliveryResponse(row: any) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      fileId: row.fileId,
+      workspaceId: row.workspaceId,
+      driveFileId: row.driveFileId,
+      webViewLink: row.webViewLink || null,
+      status: row.status,
+      deliveredByUserId: row.deliveredByUserId || null,
+      createdAt: row.createdAt,
+    };
+  }
+
+  async deliverCurrentToGoogleDrive(fileId: number, userId: string, driveService: GoogleDriveService) {
+    const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
+    if (!file) throw new NotFoundError('File not found');
+    await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
+    if (String(file.status) !== 'published' || !file.currentPublicationId) {
+      throw new ConflictError('Publish this file before delivering it to Google Drive');
+    }
+    const publication = await this.db('file_publications').where({ id: file.currentPublicationId }).first();
+    if (!publication) throw new NotFoundError('Current publication not found');
+    return this.deliverToGoogleDrive(fileId, Number(publication.publicationVersion), userId, driveService);
+  }
+
+  async getCurrentGoogleDriveDelivery(fileId: number, userId: string) {
+    const file = await this.db('files').where({ id: fileId }).whereNull('deletedAt').first();
+    if (!file) throw new NotFoundError('File not found');
+    await this.workspaceService.ensureMembership(file.workspaceId, userId);
+    if (String(file.status) !== 'published' || !file.currentPublicationId) return null;
+    const delivery = await this.db('file_publication_deliveries')
+      .select('id', 'fileId', 'workspaceId', 'driveFileId', 'webViewLink', 'status', 'deliveredByUserId', 'createdAt')
+      .where({ publicationId: file.currentPublicationId }).first();
+    return this.toDriveDeliveryResponse(delivery);
   }
 
   /**
