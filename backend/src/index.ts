@@ -14,9 +14,11 @@ import session from 'express-session';
 import { RedisStore } from 'connect-redis';
 import apiRoutes from './api/routes';
 import { loggingMiddleware } from './api/logging';
+import { describePublicationTarget } from './services/objectStoreFactory';
 import { DatabaseService } from './services/databaseService';
 import { UserService } from './services/userService';
 import { RunTelemetryService } from './services/runTelemetryService';
+import { AgentRunProvenanceService } from './services/agentRunProvenanceService';
 import { UserMemoryService } from './services/userMemoryService';
 import { configureAgentRunServices } from './services/agentRunService';
 import { userContextMiddleware } from './middleware/userContext';
@@ -35,6 +37,7 @@ async function startServer() {
   });
 
   logWorkspaceRootDiagnostic('backend');
+  console.log(`Published file artifacts target: ${describePublicationTarget()}`);
   const databaseService = new DatabaseService();
   await databaseService.initialize();
   const userService = new UserService(databaseService);
@@ -42,6 +45,7 @@ async function startServer() {
   await skillGovernanceService.initialize();
   configureAgentRunServices({
     telemetryService: new RunTelemetryService(databaseService),
+    runProvenanceService: new AgentRunProvenanceService(databaseService.getDb()),
     userMemoryService: new UserMemoryService(databaseService),
     skillEvolutionService: null,
   });

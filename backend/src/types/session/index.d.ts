@@ -6,6 +6,8 @@ declare module 'express-session' {
     state: string;
     codeVerifier: string;
     returnTo?: string;
+    extraScopes?: string[];
+    expectedUserId?: string;
     createdAt: number;
   }
 

@@ -23,6 +23,8 @@ import { WorkspacePublicationService } from '../services/workspacePublicationSer
 import { WorkspaceCollaborationService } from '../services/workspaceCollaborationService';
 import { WorkspaceTeamChatAgentService } from '../services/workspaceTeamChatAgentService';
 import { FileService } from '../services/fileService';
+import { FileStatusService } from '../services/fileStatusService';
+import { FilePublicationService } from '../services/filePublicationService';
 import { ConversationService } from '../services/conversationService';
 import { UserService } from '../services/userService';
 import { KnowledgeService } from '../services/knowledgeService';
@@ -50,6 +52,8 @@ export default function(
     workspacePublicationService,
   );
   const fileService = new FileService(dbService, workspaceService);
+  const filePublicationService = new FilePublicationService(dbService, fileService, workspaceService);
+  const fileStatusService = new FileStatusService(dbService, workspaceService, filePublicationService, fileService);
   const conversationService = new ConversationService(dbService, workspaceService);
   const notificationService = new NotificationService(dbService.getDb());
   configureAgentRunServices({ conversationService, fileService, notificationService });
@@ -95,7 +99,9 @@ export default function(
     '/workspaces/:workspaceId/collaboration',
     workspaceCollaborationRoutes(workspaceCollaborationService, workspaceTeamChatAgentService),
   );
-  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService));
+  router.use('/workspaces/:workspaceId/files', fileRoutes(
+    fileService, workspaceService, googleOAuthService, undefined, fileStatusService, filePublicationService,
+  ));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));
