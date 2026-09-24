@@ -172,7 +172,7 @@ function ChatScreen({
         <View style={styles.statusCard}>
           <LumoAvatar size={30} mood="think" />
           <View style={styles.statusCopy}>
-            <Text style={styles.statusTitle}>Lumo is watching the canvas</Text>
+            <Text style={styles.statusTitle}>ARIA is watching the canvas</Text>
             <Text style={styles.statusText}>
               Ask for revisions from chat or while reviewing the artifact.
             </Text>
@@ -182,7 +182,7 @@ function ChatScreen({
 
       <Composer
         draft={draft}
-        placeholder="Ask Lumo..."
+        placeholder="Ask ARIA..."
         onDraftChange={onDraftChange}
       />
     </View>
@@ -293,7 +293,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     <View style={[styles.messageRow, isUser ? styles.userMessageRow : styles.lumoMessageRow]}>
       {!isUser ? <LumoAvatar size={32} mood={message.mood || 'idle'} /> : null}
       <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.lumoBubble]}>
-        {!isUser ? <Text style={styles.bubbleLabel}>Lumo</Text> : null}
+        {!isUser ? <Text style={styles.bubbleLabel}>ARIA</Text> : null}
         <Text style={[styles.messageText, isUser ? styles.userMessageText : styles.lumoMessageText]}>
           {message.text}
         </Text>
@@ -398,7 +398,7 @@ function BottomSheet({
 
         {kind === 'canvas-actions' ? (
           <View style={styles.sheetBody}>
-            <SheetAction label="Ask Lumo to revise" detail="Keep the canvas open and send a revision request." />
+            <SheetAction label="Ask ARIA to revise" detail="Keep the canvas open and send a revision request." />
             <SheetAction label="Share artifact" detail="Prepare a link for review." />
             <SheetAction label="Download package" detail="Export the current dashboard files." />
             <SheetAction label="Reload data" detail="Refresh the canvas preview." />

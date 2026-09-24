@@ -20,6 +20,15 @@ import {
  * Deliberately not a global regex: `lastIndex` would carry between calls and
  * make the result depend on the message tested before it.
  */
+/**
+ * What the assistant is called on screen.
+ *
+ * The stored `authorType` stays `'lumo'`: it is a column value on every message
+ * ever written, and renaming it would need a migration to buy nothing a reader
+ * can see. The display name is presentation, so it moved when the product did.
+ */
+const ARIA_AUTHOR_NAME = 'ARIA';
+
 const AGENT_MENTION = /(^|\s)@(aria|lumo)\b/i;
 
 export type WorkspaceCollaborationStatus =
@@ -208,7 +217,7 @@ export class WorkspaceCollaborationService {
   ): Promise<WorkspaceTeamMessage> {
     const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId, { requireWritable: true });
     if (!canPostWorkspaceTeamMessage(access.membership.role)) {
-      throw new AccessDeniedError('Commenter access is required to invoke Lumo in Workspace Chat');
+      throw new AccessDeniedError('Commenter access is required to invoke ARIA in Workspace Chat');
     }
     const message = await this.getTeamMessage(workspaceId, messageId, userId);
     if (message.authorType !== 'user' || message.authorId !== userId) {
@@ -304,7 +313,7 @@ export class WorkspaceCollaborationService {
     return rows.reverse().map((row: any) => ({
       id: row.id,
       role: row.authorType === 'lumo' ? 'assistant' : 'user',
-      authorName: row.authorType === 'lumo' ? 'Lumo' : row.authorName,
+      authorName: row.authorType === 'lumo' ? ARIA_AUTHOR_NAME : row.authorName,
       content: row.body,
     }));
   }
@@ -662,13 +671,16 @@ export class WorkspaceCollaborationService {
       .select(
         'message.*',
         'version.versionNumber as originVersionNumber',
+        // Bound rather than interpolated: this file builds several raw
+        // fragments, and a constant spliced into one is the shape a dynamic
+        // value later slips into.
         this.db.raw(`
           CASE
-            WHEN message."authorType" = 'lumo' THEN 'Lumo'
+            WHEN message."authorType" = 'lumo' THEN ?
             WHEN message."authorType" = 'system' THEN 'HelpUdoc'
             ELSE COALESCE(author."displayName", 'Former user')
           END as "authorName"
-        `),
+        `, [ARIA_AUTHOR_NAME]),
         this.db.raw(`ARRAY(
           SELECT mention."userId"::text
           FROM workspace_team_message_mentions mention

@@ -406,7 +406,7 @@ function LumoPane({
       <div className="chat-scroll">
         <div className="lumo-intro">
           <div className="lumo-orb">L</div>
-          <strong>Lumo</strong>
+          <strong>ARIA</strong>
           <p>Ask about this workspace or choose an available skill.</p>
         </div>
         {annotating ? (
@@ -535,7 +535,7 @@ function TeamWorkspaceSettingsDialog({
 function ChangeQueuePane({ onPublish }: { onPublish: () => void }) {
   const changes = [
     ["BR", "interview-summary.md", "Bob Rahman · manual edit · 1m ago", "Modified"],
-    ["L", "themes.md", "Lumo · research-synthesis@3.2.0 · 8m ago", "Modified"],
+    ["L", "themes.md", "ARIA · research-synthesis@3.2.0 · 8m ago", "Modified"],
     ["EG", "survey-results.xlsx", "Elena Garcia · uploaded · 18m ago", "Replaced"],
     ["PN", "README.md", "Priya Nair · manual edit · 32m ago", "Modified"],
   ];

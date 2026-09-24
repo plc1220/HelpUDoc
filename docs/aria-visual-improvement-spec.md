@@ -1,4 +1,4 @@
-# Lumo Visual Improvement Specification
+# ARIA Visual Improvement Specification
 
 **Status:** Proposed
 **Scope:** Chat visualization, chat composer, Markdown/Mermaid rendering, login experience, favicon, and product language
@@ -7,7 +7,7 @@
 
 ## 1. Purpose
 
-This specification defines the visual improvement plan for rebranding HelpUDoc as Lumo and improving the main interaction surfaces.
+This specification defines the visual improvement plan for rebranding HelpUDoc as ARIA and improving the main interaction surfaces.
 
 The immediate focus is the experience users see most often:
 
@@ -23,26 +23,25 @@ The plan is intentionally presentation-focused. Existing conversation state, str
 
 ### 2.1 Brand hierarchy
 
-Use **Lumo** as the umbrella brand and **Lumo Studio** as the name of the primary application.
+Use **ARIA** as the name of the product. The main application is ARIA itself, not a separately named surface.
 
 | Name | Role |
 | --- | --- |
-| **Lumo** | Umbrella product and company-facing brand |
-| **Lumo Studio** | Main workspace for creating, reviewing, and working with artifacts |
-| **Lumo Knowledge** | Document ingestion, indexing, retrieval, and governed source context |
-| **Lumo Memory** | Persistent user, team, and project context |
-| **Lumo Skills** | Reusable agent capabilities and specialized instructions |
-| **Lumo Workflows** | Multi-step automations, approvals, and repeatable processes |
-| **Lumo Connect** | External services, MCP servers, storage, and integrations |
-| **Lumo API** | Programmatic access for developers and platform integrations |
+| **ARIA** | The product, and the main workspace for creating, reviewing, and working with artifacts |
+| **ARIA Knowledge** | Document ingestion, indexing, retrieval, and governed source context |
+| **ARIA Memory** | Persistent user, team, and project context |
+| **ARIA Skills** | Reusable agent capabilities and specialized instructions |
+| **ARIA Workflows** | Multi-step automations, approvals, and repeatable processes |
+| **ARIA Connect** | External services, MCP servers, storage, and integrations |
+| **ARIA API** | Programmatic access for developers and platform integrations |
 
-These should initially be treated as product modules rather than seven independent products. The main application should remain visually and navigationally coherent under **Lumo Studio**.
+These should initially be treated as product modules rather than independent products. The main application should remain visually and navigationally coherent under **ARIA**.
 
 ### 2.2 Brand promise
 
 Recommended positioning:
 
-> Lumo turns trusted knowledge into useful work.
+> ARIA turns trusted knowledge into useful work.
 
 Supporting language:
 
@@ -60,7 +59,7 @@ Supporting language:
 
 Avoid:
 
-- switching between HelpUDoc and Lumo in the same visible surface;
+- switching between HelpUDoc and ARIA in the same visible surface;
 - calling every generated response a “chat message” when it is actually a document or artifact;
 - overly anthropomorphic copy that obscures what the system is doing;
 - unexplained internal terms such as stream events, gates, or renderer contracts.
@@ -69,13 +68,13 @@ Avoid:
 
 ### 3.1 Overall character
 
-Lumo should feel calm, intelligent, and useful rather than heavily decorated. The visual hierarchy should come from spacing, typography, and semantic status—not large saturated cards.
+ARIA should feel calm, intelligent, and useful rather than heavily decorated. The visual hierarchy should come from spacing, typography, and semantic status—not large saturated cards.
 
 The preferred direction is:
 
 - neutral Astryx surfaces as the foundation;
 - restrained blue or cyan for interaction and focus;
-- a subtle luminous accent for Lumo branding;
+- a subtle luminous accent for ARIA branding;
 - clear distinction between user content, assistant content, activity, and artifacts;
 - generous readable widths for long-form responses;
 - compact controls around the content rather than inside it.
@@ -106,7 +105,7 @@ Not every group needs a card. Use:
 
 ### 4.1 Target composition
 
-The chat surface should be rebuilt around the Astryx chat family while retaining existing HelpUDoc/Lumo data and event handling.
+The chat surface should be rebuilt around the Astryx chat family while retaining existing HelpUDoc/ARIA data and event handling.
 
 Recommended composition:
 
@@ -258,7 +257,7 @@ The Mermaid renderer should:
 
 ### 6.3 Renderer ownership
 
-Do not migrate every `ReactMarkdown` call site independently. The implementation should introduce one Lumo Markdown presentation adapter and keep Mermaid ownership centralized in the existing shared renderer.
+Do not migrate every `ReactMarkdown` call site independently. The implementation should introduce one ARIA Markdown presentation adapter and keep Mermaid ownership centralized in the existing shared renderer.
 
 The adapter should:
 
@@ -286,12 +285,12 @@ The diagram content itself should be reviewed when layout remains crowded:
 
 ### 7.1 Brand and copy
 
-The login page should use **Lumo Studio** as the product name.
+The login page should use **ARIA** as the product name.
 
 Recommended copy:
 
 **Heading**
-`Welcome to Lumo Studio`
+`Welcome to ARIA`
 
 **Supporting text**
 `Your workspace for knowledge, memory, skills, and workflows.`
@@ -311,20 +310,20 @@ The current full-screen imagery, glass card, old logo, floating animation, and H
 
 Preferred structure:
 
-- quiet neutral background with a subtle Lumo glow or gradient;
+- quiet neutral background with a subtle ARIA glow or gradient;
 - centered or two-column layout depending on product positioning;
-- simple Lumo mark and wordmark;
+- simple ARIA mark and wordmark;
 - focused authentication card or panel;
 - restrained theme toggle;
 - high-contrast, accessible sign-in action;
 - no decorative animation that distracts from authentication.
 
-The login page should feel trustworthy and calm. It should introduce the brand, not attempt to explain every Lumo module.
+The login page should feel trustworthy and calm. It should introduce the brand, not attempt to explain every ARIA module.
 
 ### 7.3 Login requirements
 
-- Replace visible HelpUDoc copy with Lumo/Lumo Studio language.
-- Replace the existing logo treatment with the Lumo mark and wordmark.
+- Replace visible HelpUDoc copy with ARIA language.
+- Replace the existing logo treatment with the ARIA mark and wordmark.
 - Keep Google authentication behavior unchanged.
 - Preserve error, loading, redirect, and header-auth states.
 - Ensure the login page works in light and dark modes.
@@ -337,7 +336,7 @@ The login page should feel trustworthy and calm. It should introduce the brand, 
 
 The current `frontend/index.html` points to `/vite.svg`; this must be replaced.
 
-Create a dedicated simplified Lumo mark for:
+Create a dedicated simplified ARIA mark for:
 
 - `/favicon.svg`;
 - 16px and 32px PNG fallbacks if required;
@@ -351,12 +350,12 @@ The mark must remain recognizable at 16px, work in monochrome, and not rely on w
 
 Provide:
 
-- primary Lumo wordmark;
-- compact Lumo symbol;
+- primary ARIA wordmark;
+- compact ARIA symbol;
 - dark-background and light-background variants;
 - single-colour fallback;
 - clear-space and minimum-size guidance;
-- accessible alt text: `Lumo` or `Lumo Studio`, depending on context.
+- accessible alt text: `ARIA`.
 
 ## 9. Astryx and Tailwind migration
 
@@ -400,7 +399,7 @@ A focused Graphify run over `frontend/src` found 719 nodes, 1,063 relationships,
 | Tool-activity summarisation is its own shared community. | Map existing normalized events to controlled Astryx `ChatToolCalls`; do not recreate event summarisation in the presentation layer. |
 | The frontend contains an Astryx theme root, an MUI compatibility theme, and substantial Tailwind-based UI. | Do not introduce a fourth visual system. Use Astryx for new chat/login work, retain MUI only as compatibility infrastructure, and retire Tailwind feature by feature. |
 | Settings and dashboard components exist in duplicated feature/component paths. | Treat consolidation as a prerequisite audit before any application-wide Tailwind removal. Avoid migrating both copies independently. |
-| The Lumo sprite sheet is consumed by both the desktop pet and the mobile avatar. | Preserve and version this asset as a shared Lumo brand asset; do not treat it as disposable login artwork. |
+| The ARIA sprite sheet is consumed by both the desktop pet and the mobile avatar. | Preserve and version this asset as a shared ARIA brand asset; do not treat it as disposable login artwork. |
 
 The Astryx CLI confirms the component-level contracts needed for the target experience:
 
@@ -408,7 +407,7 @@ The Astryx CLI confirms the component-level contracts needed for the target expe
 - `ChatComposer` already supports controlled values, attachments in `ChatComposerDrawer`, header and footer actions, streaming stop behavior, and inline validation states.
 - `ChatToolCalls` supports controlled expansion, allowing the existing per-message expanded state to remain the source of truth.
 - `Markdown` provides prose-specific `contentWidth` and leaves tables/code unconstrained, which matches the required content width contract when combined with a dedicated Mermaid wrapper.
-- `Resizable` supports `autoSaveId`, so artifact-panel sizing should use one stable, Lumo-namespaced preference key rather than new ad hoc storage.
+- `Resizable` supports `autoSaveId`, so artifact-panel sizing should use one stable, ARIA-namespaced preference key rather than new ad hoc storage.
 - `Item` provides the compact label/description/status-row structure required for collapsed activity summaries.
 
 ### 9.5 Migration constraints
@@ -416,16 +415,16 @@ The Astryx CLI confirms the component-level contracts needed for the target expe
 - Do not change the durable agent stream, interrupt, or authentication contracts as part of the visual migration.
 - Do not duplicate tool-event formatting; continue to use the existing activity-summary utilities.
 - Do not move Mermaid sizing rules into global Markdown CSS.
-- Do not delete or replace the Lumo sprite sheet until both desktop and mobile consumers have been updated deliberately.
+- Do not delete or replace the ARIA sprite sheet until both desktop and mobile consumers have been updated deliberately.
 - Do not remove MUI or Tailwind globally until the duplicate settings/dashboard stacks have an agreed source of truth.
 
 ## 10. Implementation phases
 
 ### Phase 1: Brand foundation
 
-- approve Lumo mark and wordmark direction;
+- approve ARIA mark and wordmark direction;
 - define accent and neutral colour tokens;
-- define Lumo Studio tagline and copy vocabulary;
+- define ARIA tagline and copy vocabulary;
 - create favicon and application icon assets;
 - update title and visible login branding.
 
@@ -447,7 +446,7 @@ The prototype must use the real chat state adapters where possible, including co
 
 Implementation order:
 
-1. Add the shared Lumo Markdown/Mermaid presentation adapter.
+1. Add the shared ARIA Markdown/Mermaid presentation adapter.
 2. Replace the custom composer surface with `ChatComposer` while retaining the existing controlled input handlers.
 3. Replace the message-list shell and bubbles with the Astryx chat family.
 4. Map existing activity summaries to `Item` and detailed events to `ChatToolCalls`.
@@ -457,7 +456,7 @@ Implementation order:
 ### Phase 4: Login redesign
 
 - replace the old logo and HelpUDoc copy;
-- apply Lumo Studio layout and messaging;
+- apply ARIA layout and messaging;
 - retain existing Google/header authentication behavior;
 - validate error, loading, redirect, and theme states.
 
@@ -481,8 +480,8 @@ Implementation order:
 ### Branding
 
 - No visible HelpUDoc or Vite branding remains on the login page or browser tab.
-- Favicon and application icons use the approved Lumo mark.
-- Product names follow the Lumo hierarchy consistently.
+- Favicon and application icons use the approved ARIA mark.
+- Product names follow the ARIA hierarchy consistently.
 
 ### Chat
 
@@ -501,7 +500,7 @@ Implementation order:
 
 ### Login
 
-- Login copy identifies Lumo Studio.
+- Login copy identifies ARIA.
 - Google sign-in, development header sign-in, errors, loading, redirects, and theme switching continue to work.
 - The login page is visually calm, accessible, and responsive.
 

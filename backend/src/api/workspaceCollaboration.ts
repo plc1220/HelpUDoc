@@ -150,7 +150,7 @@ export default function workspaceCollaborationRoutes(
       );
       res.status(201).json(reply);
     } catch (error) {
-      handleError(res, error, 'Failed to invoke Lumo in Workspace Chat');
+      handleError(res, error, 'Failed to invoke ARIA in Workspace Chat');
     }
   });
 

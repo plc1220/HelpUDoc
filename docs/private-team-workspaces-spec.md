@@ -1,6 +1,6 @@
 # Private and Shared Workspaces — Product Specification
 
-Status: Implemented baseline with the intended Team Chat and mode-aware Lumo policy
+Status: Implemented baseline with the intended Team Chat and mode-aware ARIA policy
 
 ## 1. Summary
 
@@ -140,7 +140,7 @@ Private workspaces must not have access-grant rows.
 
 ### Shared workspace
 
-| Role | View working version | Read Team Chat | Post / mention Lumo | Edit Freeflow | Submit Review proposal | Create published version | Manage access |
+| Role | View working version | Read Team Chat | Post / mention ARIA | Edit Freeflow | Submit Review proposal | Create published version | Manage access |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Viewer | Yes | Yes | No | No | No | No | No |
 | Contributor | Yes | Yes | Yes | Yes | Yes | No | No |
@@ -192,25 +192,25 @@ Freeflow must not queue an entire workspace behind one slow editor. The server s
 
 The proposal queue is a governance mechanism. It is separate from the short-lived technical write queue used to make individual mutations safe.
 
-### Team Chat and Lumo execution
+### Team Chat and ARIA execution
 
 Team Chat is part of the Shared workspace surface and is available to every authorized member, whether or not the workspace has a published version. It is opened from the Shared workspace's Working version view. Published history is a separate read-only view and must not be the gate for Team Chat access.
 
-- Viewers may read Team Chat but cannot post, reply, mention Lumo, or create collaboration items that require write access.
-- Contributors, Publishers, and Owners may post, reply, mention Lumo, and use the collaboration actions allowed by their role.
-- Team Chat Lumo always uses the current Shared workspace working version as its context. If no publication exists, the UI must identify the context as the Working version rather than implying that a published version exists.
-- Lumo inherits the invoking member's effective workspace permission and must never gain more authority than that member.
+- Viewers may read Team Chat but cannot post, reply, mention ARIA, or create collaboration items that require write access.
+- Contributors, Publishers, and Owners may post, reply, mention ARIA, and use the collaboration actions allowed by their role.
+- Team Chat ARIA always uses the current Shared workspace working version as its context. If no publication exists, the UI must identify the context as the Working version rather than implying that a published version exists.
+- ARIA inherits the invoking member's effective workspace permission and must never gain more authority than that member.
 
 In **Freeflow**:
 
-- Lumo may apply file and folder changes directly to the current working version when the invoking member has Freeflow edit permission.
+- ARIA may apply file and folder changes directly to the current working version when the invoking member has Freeflow edit permission.
 - Those changes use the same concurrency, revision history, attribution, and audit rules as a human edit.
-- Viewers remain read-only and cannot invoke Lumo from Team Chat.
+- Viewers remain read-only and cannot invoke ARIA from Team Chat.
 
 In **Review**:
 
-- Team Chat Lumo is read-only for every role. It may inspect the current working version and suggest changes, but it must not modify Shared workspace files or apply a proposal directly from the shared channel.
-- Private with Lumo opens the invoking member's automatically provisioned Private working copy, where Lumo may make changes within that member's permission.
+- Team Chat ARIA is read-only for every role. It may inspect the current working version and suggest changes, but it must not modify Shared workspace files or apply a proposal directly from the shared channel.
+- Private with ARIA opens the invoking member's automatically provisioned Private working copy, where ARIA may make changes within that member's permission.
 - The member reviews a visual comparison and submits those changes through the normal Review proposal flow for Owner or Publisher review.
 - Private prompts, agent history, tool calls, credentials, and other runtime state from that working copy remain private.
 
@@ -229,7 +229,7 @@ Sharing does not create a published version. Review copies are per-user and are 
 
 ### Change editing policy
 
-- `Freeflow` to `Review` preserves the Shared working version, stops new direct Contributor/Lumo writes, provisions the owner's Review copy, and transparently provisions Contributor copies on first access.
+- `Freeflow` to `Review` preserves the Shared working version, stops new direct Contributor/ARIA writes, provisions the owner's Review copy, and transparently provisions Contributor copies on first access.
 - `Review` to `Freeflow` enables direct Shared editing without applying, deleting, or detaching existing proposals or Private copies.
 - Pending proposals remain reviewable after a switch to Freeflow and retain stale-revision checks.
 - Returning to Review reuses existing linked copies. Clean copies refresh to the latest Shared revision; copies with private changes remain intact and surface their divergence in `Review changes`.
@@ -494,9 +494,9 @@ Migration must preserve workspace IDs or provide redirects for saved links.
 7. Publication does not freeze the live workspace and does not alter access grants.
 8. Review automatically provisions per-user Private working copies for the owner and eligible Contributors; Freeflow does not require a Private copy.
 9. Team Chat is available to authorized Shared workspace members independently of publication state.
-10. In Freeflow, Team Chat Lumo may write to the Shared working version only within the invoking member's effective edit permission.
-11. In Review, Team Chat Lumo is read-only; file changes go through a Private working copy and the Review proposal flow.
-12. Lumo execution in Team Chat is attributed to the invoking member and is subject to the same audit, concurrency, and content-boundary rules as other workspace actions.
+10. In Freeflow, Team Chat ARIA may write to the Shared working version only within the invoking member's effective edit permission.
+11. In Review, Team Chat ARIA is read-only; file changes go through a Private working copy and the Review proposal flow.
+12. ARIA execution in Team Chat is attributed to the invoking member and is subject to the same audit, concurrency, and content-boundary rules as other workspace actions.
 13. Review copies and proposals operate on the Shared working version and are available before the first publication.
 14. Review changes are visualized before submission and before application, including file status and text diffs where supported.
 15. Editing-policy transitions preserve existing proposals and Private copies and never merge or discard content implicitly.
