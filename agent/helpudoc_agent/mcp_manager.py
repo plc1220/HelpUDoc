@@ -7,6 +7,7 @@ calls MCPServerManager.get_tools() to obtain MCP-provided tools for the request.
 from __future__ import annotations
 
 import logging
+import asyncio
 import os
 import json
 from copy import deepcopy
@@ -516,6 +517,43 @@ class MCPServerManager:
         self._tools_by_server: Dict[str, List[Tool]] = {}
         self._clients_by_server: Dict[str, Any] = {}
         self._rejected_servers: Dict[str, str] = {}
+        self._load_locks: Dict[str, asyncio.Lock] = {}
+
+    def get_permitted_servers(self) -> Dict[str, MCPServerConfig]:
+        """Current RBAC catalog, independent of which servers have been connected."""
+        return self._filter_by_policy()
+
+    async def ensure_server(
+        self, name: str, *, preflight_gemini: bool = False, retry: bool = False,
+    ) -> List[Tool]:
+        """Load one server on demand without discarding already loaded tools.
+
+        Managers belong to a user/policy/auth-scoped agent runtime, never a global
+        registry. Serialize duplicate loads and bound discovery time; do not retry
+        failed servers on every model step. An explicit load may request a retry.
+        """
+        async with self._load_locks.setdefault(name, asyncio.Lock()):
+            if name not in self.get_permitted_servers():
+                return []
+            if name in self._tools_by_server:
+                return self._tools_by_server[name]
+            if name in self._rejected_servers and not retry:
+                return []
+            loader = MCPServerManager(self.settings, self.workspace_state)
+            try:
+                await asyncio.wait_for(loader.initialize(
+                    candidate_server_names=[name], preflight_gemini=preflight_gemini,
+                ), timeout=30)
+            except TimeoutError:
+                self._rejected_servers[name] = "MCP tool discovery timed out"
+                logger.warning("MCP tool discovery timed out (server=%s)", name)
+                return []
+            self._allowed_servers.update(loader._allowed_servers)
+            self._clients_by_server.update(loader._clients_by_server)
+            self._tools_by_server.update(loader._tools_by_server)
+            self._rejected_servers.pop(name, None)
+            self._rejected_servers.update(loader._rejected_servers)
+            return self._tools_by_server.get(name, [])
 
     def _filter_by_policy(self) -> Dict[str, MCPServerConfig]:
         """Filter configured servers based on workspace RBAC policy."""
@@ -635,6 +673,7 @@ class MCPServerManager:
             from langchain_mcp_adapters.client import MultiServerMCPClient  # type: ignore
         except Exception as exc:  # pragma: no cover - optional dependency
             logger.warning("langchain-mcp-adapters not installed; MCP tools disabled (%s)", exc)
+            self._rejected_servers = {name: "MCP adapter unavailable" for name in self._allowed_servers}
             return
 
         for name, cfg in self._allowed_servers.items():

@@ -286,6 +286,16 @@ test('publishing falls back to the workspace bucket when none is configured', ()
   assert.equal(fallback.provider, 's3');
 });
 
+test('GCS publication inherits the configured primary GCS bucket', () => {
+  const publication = parseBackendEnv({
+    OBJECT_STORE_PROVIDER: 'gcs',
+    GCS_BUCKET_NAME: 'workspace-gcs',
+  }).objectStore.publication;
+  assert.equal(publication.provider, 'gcs');
+  assert.equal(publication.bucketName, 'workspace-gcs');
+  assert.equal(publication.usingPrimaryStore, true);
+});
+
 test('a dedicated publication bucket is used verbatim', () => {
   const config = parseBackendEnv({
     PUBLICATION_PROVIDER: 'gcs',

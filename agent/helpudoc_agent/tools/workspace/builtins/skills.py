@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import PurePosixPath
 from typing import List, Optional
 
@@ -13,6 +14,7 @@ from ....configuration import Settings
 from ....sandbox_runner import (
     SandboxExecutionError,
     SandboxUnavailableError,
+    inline_sandbox_available,
     run_inline_python as run_inline_skill_python,
     run_skill_python_script as run_declared_skill_python_script,
 )
@@ -20,8 +22,10 @@ from ....skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
     find_skill_for_context,
+    governed_pin_for,
     is_skill_allowed,
     load_skills,
+    load_context_skills,
     read_helpudoc_learnings,
     read_skill_content,
     routing_hint_from_learnings,
@@ -34,15 +38,19 @@ MAX_SKILL_ASSET_MANIFEST_ITEMS = 40
 MAX_DATA_WORKSPACE_QUERIES_PER_TURN = 10
 
 
-def _frontend_slides_active(context: object) -> bool:
-    if not isinstance(context, dict):
+def _frontend_slides_pptx_export_requested(context: dict) -> bool:
+    """Require an explicit user request before invoking the compatibility exporter."""
+    if str(context.get("active_skill") or "").strip() != "frontend-slides":
+        return True
+    prompt = str(context.get("current_user_prompt") or "").strip().lower()
+    if not prompt:
         return False
-    raw_skill = context.get("active_skill")
-    if not raw_skill and isinstance(context.get("active_skill_scope"), dict):
-        scope = context["active_skill_scope"]
-        raw_skill = scope.get("skill_id") or scope.get("id")
-    normalized = str(raw_skill or "").strip().lower()
-    return normalized == "frontend-slides" or normalized.endswith("/frontend-slides")
+    output_term = r"(?:\.pptx?\b|\bpowerpoint\b)"
+    export_term = r"\b(?:export|convert|download|create|make|produce|provide|save)\b"
+    return bool(
+        re.search(rf"{export_term}[\s\S]{{0,100}}{output_term}", prompt)
+        or re.search(rf"{output_term}[\s\S]{{0,100}}{export_term}", prompt)
+    )
 
 
 def _skill_sandbox_error(
@@ -171,10 +179,9 @@ class RunSkillPythonScriptInput(BaseModel):
     inline_code: Optional[str] = Field(
         default=None,
         description=(
-            "Complete Python source to execute in an isolated sandbox Job. "
-            "Mutually exclusive with script_name. Inline code has no /workspace mount: read staged "
-            "inputs at their workspace-relative staged paths in the run directory and write every artifact to a declared "
-            "output_paths entry."
+            "Complete Python source to execute in an isolated sandbox Job. Mutually exclusive "
+            "with script_name. With object-store isolation, the code receives a private writable "
+            "snapshot at /workspace; successful changes are host-validated before publication."
         ),
     )
     input_paths: Optional[List[str]] = Field(
@@ -184,8 +191,9 @@ class RunSkillPythonScriptInput(BaseModel):
     output_paths: Optional[List[str]] = Field(
         default=None,
         description=(
-            "Required for inline_code: workspace-relative paths the code writes inside the run "
-            "directory. Only these host-validated files are published."
+            "Optional inline_code publication filter. Paths may be workspace-relative or below "
+            "/workspace. When omitted in object-store mode, every validated workspace change is "
+            "published; legacy PVC staging still requires explicit paths."
         ),
     )
     args: Optional[List[str]] = Field(
@@ -195,6 +203,22 @@ class RunSkillPythonScriptInput(BaseModel):
     timeout_seconds: Optional[int] = Field(
         default=None,
         description="Inline-only execution timeout in seconds (default 120, maximum 300).",
+    )
+
+
+class RunDeclaredSkillPythonScriptInput(BaseModel):
+    """Schema exposed when this process cannot launch inline Kubernetes Jobs."""
+
+    script_name: str = Field(
+        description="Script name declared in the active skill's sandbox_scripts frontmatter.",
+    )
+    input_paths: Optional[List[str]] = Field(
+        default=None,
+        description="Workspace file paths to stage for the declared script.",
+    )
+    args: Optional[List[str]] = Field(
+        default=None,
+        description="Command-line arguments to pass to the declared script.",
     )
 
 
@@ -209,7 +233,7 @@ def build_list_skills_tool(settings: Settings, workspace_state: WorkspaceState) 
             return blocked
         if skills_root is None or not skills_root.exists():
             return "No skills directory configured."
-        skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
+        skills = load_context_skills(skills_root, workspace_state.context)
         if not skills:
             return "No skills found."
         lines = []
@@ -241,12 +265,22 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
             return blocked
         if skills_root is None or not skills_root.exists():
             return "No skills directory configured."
-        skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
+        skills = load_context_skills(skills_root, workspace_state.context)
         if not skills:
             return "No skills found."
         normalized = skill_id.strip()
         skill = find_skill_for_context(skills_root, normalized, workspace_state.context)
         if skill is None:
+            if governed_pin_for(workspace_state.context, normalized):
+                # The skill exists and is entitled, but its approved package failed verification.
+                # Say so explicitly: improvising a substitute here is what made a stranded pin
+                # look like a working run for 38 hours.
+                return (
+                    f"Skill '{normalized}' is entitled to this user but its approved version could not "
+                    "be verified, so it cannot be loaded. This is a platform fault, not a missing skill. "
+                    "Do not substitute your own approach or approximate the skill's workflow. Tell the "
+                    "user the skill is temporarily unavailable and stop."
+                )
             available = ", ".join(sorted({s.skill_id for s in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"
 
@@ -298,6 +332,7 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
 def build_run_skill_python_script_tool(settings: Settings, workspace_state: WorkspaceState) -> Tool:
     skills_root = settings.backend.skills_root
     plugins_root = getattr(settings.backend, "plugins_root", None)
+    advertise_inline = inline_sandbox_available()
 
     def _read_output_payload(result_path: str) -> object | None:
         rel = str(result_path or "").strip().replace("\\", "/").lstrip("/")
@@ -383,6 +418,9 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
             lines.extend(f"- {item.path} ({item.size} bytes)" for item in result.output_files)
         else:
             lines.append("Published workspace files: (none produced at the declared output paths)")
+        if result.deleted_files:
+            lines.append("Deleted workspace files:")
+            lines.extend(f"- {path}" for path in result.deleted_files)
         if result.stdout:
             lines.append("STDOUT:")
             lines.append(result.stdout[:8000])
@@ -391,7 +429,13 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
             lines.append(result.stderr[:4000])
         return "\n".join(lines)
 
-    @tool(args_schema=RunSkillPythonScriptInput)
+    exposed_schema = (
+        RunSkillPythonScriptInput
+        if advertise_inline
+        else RunDeclaredSkillPythonScriptInput
+    )
+
+    @tool(args_schema=exposed_schema)
     def run_skill_python_script(
         script_name: Optional[str] = None,
         input_paths: Optional[List[str]] = None,
@@ -423,12 +467,6 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 "Provide exactly one of script_name or inline_code.",
                 "Provide one valid execution mode once; do not repeat this invalid call.",
             )
-        if _frontend_slides_active(workspace_state.context) and has_inline:
-            return _skill_sandbox_error(
-                "FRONTEND_SLIDES_INLINE_SANDBOX_BLOCKED",
-                "frontend-slides HTML previews and decks must be created directly as workspace files; inline sandbox execution is not supported.",
-                "Use write_file or edit_file for HTML/CSS/JavaScript. Use script_name='export-pptx' only when the user explicitly requests PowerPoint export after the HTML deck exists.",
-            )
         if has_inline:
             if args:
                 return _skill_sandbox_error(
@@ -450,6 +488,15 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
             )
         script_name = _canonical_declared_script_name(workspace_state, str(script_name))
         effective_args = list(args or [])
+        if (
+            script_name == "export-pptx"
+            and not _frontend_slides_pptx_export_requested(workspace_state.context)
+        ):
+            return _skill_sandbox_error(
+                "FRONTEND_SLIDES_PPTX_EXPORT_NOT_REQUESTED",
+                "The active frontend-slides request does not explicitly ask for PowerPoint/PPTX export.",
+                "Keep the completed HTML deck as the final artifact. Only call export-pptx after the user explicitly requests a PowerPoint export.",
+            )
         if script_name == "build_native_dashboard_package":
             if "--help" in effective_args or "-h" in effective_args:
                 return (
@@ -595,15 +642,19 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
         return "\n".join(lines)
 
     run_skill_python_script.name = "run_skill_python_script"
-    run_skill_python_script.description = (
-        "Run Python in the configured sandbox. Provide exactly one of script_name or inline_code. "
-        "script_name runs a script declared in the active skill's sandbox_scripts frontmatter; "
-        "declared scripts are reviewed and may receive read-only workspace access at /workspace, "
-        "and they publish their declared outputs. inline_code runs agent-authored Python with no "
-        "/workspace mount at all: only files named in input_paths are staged into the run directory "
-        "(at their workspace-relative path; a simple file is also its basename), and only files written to the paths listed in output_paths are "
-        "published back to the workspace, so hard-coded /workspace paths fail. Inline runs have no "
-        "network or package installation, accept an optional timeout_seconds, and are limited per "
-        "agent run. Pass input_paths as workspace files and args as argv for declared scripts."
-    )
+    if advertise_inline:
+        run_skill_python_script.description = (
+            "Run Python in the configured sandbox. Provide exactly one of script_name or inline_code. "
+            "script_name runs a reviewed script declared in the active skill. inline_code runs in an "
+            "isolated Kubernetes Job with a private writable /workspace snapshot; the host publishes "
+            "only its validated successful diff, optionally filtered by output_paths. Inline runs have "
+            "no arbitrary internet access or runtime package installation and are bounded per run. "
+            "Never use inline_code merely to list, search, or read skill assets; use read_file instead."
+        )
+    else:
+        run_skill_python_script.description = (
+            "Run a reviewed Python script declared in the active skill's sandbox_scripts frontmatter. "
+            "Inline Python is unavailable in this runtime and is intentionally absent from the tool "
+            "schema. Use read_file for skill assets and direct workspace file tools for authoring."
+        )
     return run_skill_python_script

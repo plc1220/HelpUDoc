@@ -1,3 +1,5 @@
+import notificationRoutes from './notifications';
+import { NotificationService } from '../services/notificationService';
 import { Router } from 'express';
 import agentRoutes from './agent';
 import authRoutes from './auth';
@@ -54,7 +56,9 @@ export default function(
   const filePublicationService = new FilePublicationService(dbService, fileService, workspaceService);
   const fileStatusService = new FileStatusService(dbService, workspaceService, filePublicationService, fileService);
   const conversationService = new ConversationService(dbService, workspaceService);
-  configureAgentRunServices({ conversationService, fileService });
+  const notificationService = new NotificationService(dbService.getDb());
+  configureAgentRunServices({ conversationService, fileService, notificationService });
+  router.use('/notifications', notificationRoutes(notificationService));
   const knowledgeService = new KnowledgeService(dbService, workspaceService, fileService);
   const knowledgeBaseService = new KnowledgeBaseService(dbService, knowledgeService);
   const userOAuthTokenService = new UserOAuthTokenService(dbService);
@@ -62,6 +66,7 @@ export default function(
   const workspaceTeamChatAgentService = new WorkspaceTeamChatAgentService(
     workspaceService,
     userService,
+    workspaceCollaborationService, fileService, workspacePublicationService, dbService,
   );
   const dailyReflectionService = new DailyReflectionService(dbService);
   const userMemoryService = new UserMemoryService(dbService);
@@ -74,7 +79,7 @@ export default function(
   );
   router.use('/auth', authRoutes(userService, googleOAuthService));
   router.use('/', governanceRoutes(skillGovernanceService));
-  registerSkillBuilderRoutes(router, workspaceService);
+  registerSkillBuilderRoutes(router, workspaceService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService });
   router.use('/agent', agentRoutes(
     workspaceService,
     fileService,
@@ -83,7 +88,7 @@ export default function(
     conversationService,
     knowledgeService,
   ));
-  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
+  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService }));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
   // Read-only workspace oversight. Every route under it is a GET; see the note
@@ -102,7 +107,9 @@ export default function(
     '/workspaces/:workspaceId/collaboration',
     workspaceCollaborationRoutes(workspaceCollaborationService, workspaceTeamChatAgentService),
   );
-  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService, fileStatusService, filePublicationService));
+  router.use('/workspaces/:workspaceId/files', fileRoutes(
+    fileService, workspaceService, googleOAuthService, undefined, fileStatusService, filePublicationService,
+  ));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import crypto from 'node:crypto';
 import {
   SkillGovernanceError,
   compareSemanticVersions,
@@ -52,6 +53,33 @@ test('manifest hash is deterministic and binds paths, hashes, modes, and sizes',
     computePackageManifestHash([{ ...files[0], mode: 0o644 }, files[1]]),
   );
   assert.match(forward, /^[a-f0-9]{64}$/);
+});
+
+test('manifest hash orders paths by byte order so the Python agent can verify a pin', () => {
+  // The agent verifies a signed pin by recomputing this digest in Python:
+  //   sorted(paths)                      -> byte order
+  //   json.dumps(..., separators=(',',':')) -> compact, insertion-ordered keys
+  // `localeCompare` sorts 'scripts/...' before 'SKILL.md', byte order does the reverse, so a
+  // locale sort silently produced a digest no agent could ever match.
+  const files = [
+    { path: 'scripts/count_words.py', contentHash: 'b'.repeat(64), mode: 0o644, sizeBytes: 1177 },
+    { path: 'SKILL.md', contentHash: 'a'.repeat(64), mode: 0o644, sizeBytes: 29722 },
+  ];
+
+  const pythonEquivalent = crypto.createHash('sha256').update(JSON.stringify([
+    { path: 'SKILL.md', contentHash: 'a'.repeat(64), mode: 0o644, sizeBytes: 29722 },
+    { path: 'scripts/count_words.py', contentHash: 'b'.repeat(64), mode: 0o644, sizeBytes: 1177 },
+  ])).digest('hex');
+
+  assert.equal(computePackageManifestHash(files), pythonEquivalent);
+  assert.notEqual(
+    computePackageManifestHash(files),
+    crypto.createHash('sha256').update(JSON.stringify([
+      { path: 'scripts/count_words.py', contentHash: 'b'.repeat(64), mode: 0o644, sizeBytes: 1177 },
+      { path: 'SKILL.md', contentHash: 'a'.repeat(64), mode: 0o644, sizeBytes: 29722 },
+    ])).digest('hex'),
+    'a locale-ordered manifest must not be accepted as equivalent',
+  );
 });
 
 test('approval conflicts remain revision conflicts instead of activation failures', () => {

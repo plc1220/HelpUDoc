@@ -41,6 +41,7 @@ export class DatabaseService {
     await this.createFileVersionsTable();
     await this.createFileAuditEventsTable();
     await this.createFilePublicationsTable();
+    await this.createFilePublicationDeliveriesTable();
     await this.createWorkspaceFileRevisionsTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
@@ -49,7 +50,6 @@ export class DatabaseService {
     await this.createWorkspaceCollaborationObjectsTable();
     await this.createWorkspaceCollaborationMessagesTable();
     await this.createWorkspaceCollaborationMentionsTable();
-    await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createKnowledgeSourceGroupGrantsTable();
     await this.createKnowledgeBaseTables();
@@ -639,6 +639,27 @@ export class DatabaseService {
     }
   }
 
+  private async createFilePublicationDeliveriesTable(): Promise<void> {
+    if (await this.db.schema.hasTable('file_publication_deliveries')) return;
+    await this.db.schema.createTable('file_publication_deliveries', (table) => {
+      table.uuid('id').primary();
+      table.uuid('publicationId').notNullable().references('id').inTable('file_publications').onDelete('CASCADE').unique();
+      table.integer('fileId').notNullable();
+      table.uuid('workspaceId').notNullable();
+      // Generate and persist the Drive ID before upload. A retry after a lost
+      // response can inspect or upload that same ID without creating duplicates.
+      table.string('driveFileId', 255).notNullable().unique();
+      table.text('uploadSessionUri');
+      table.text('webViewLink');
+      table.string('status', 16).notNullable().defaultTo('pending');
+      table.string('sha256', 64).notNullable();
+      table.uuid('deliveredByUserId').references('id').inTable('users').onDelete('SET NULL');
+      table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      table.index(['workspaceId', 'createdAt'], 'file_publication_deliveries_workspace_idx');
+    });
+  }
+
   private async createWorkspaceFileRevisionsTable(): Promise<void> {
     if (await this.db.schema.hasTable('workspace_file_revisions')) return;
     await this.db.schema.createTable('workspace_file_revisions', (table) => {
@@ -767,26 +788,6 @@ export class DatabaseService {
         'workspace_publication_links',
         'reconnectToken',
         (table) => table.uuid('reconnectToken'),
-      );
-    }
-  }
-
-  private async createCollabDocumentsTable(): Promise<void> {
-    const exists = await this.db.schema.hasTable('collab_documents');
-    if (!exists) {
-      await this.db.schema.createTable('collab_documents', (table) => {
-        table.string('id').primary();
-        table.binary('state');
-        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
-        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
-      });
-      console.log('Created "collab_documents" table.');
-    } else {
-      await this.ensureColumn('collab_documents', 'state', (table) => table.binary('state'));
-      await this.ensureColumn(
-        'collab_documents',
-        'updatedAt',
-        (table) => table.timestamp('updatedAt').defaultTo(this.db.fn.now()),
       );
     }
   }
@@ -1362,6 +1363,11 @@ export class DatabaseService {
       );
       console.log('Created "workspace_team_messages" table.');
     }
+    await this.db.raw(
+      `CREATE INDEX IF NOT EXISTS workspace_team_messages_pending_run_idx
+       ON workspace_team_messages ("updatedAt", "workspaceId")
+       WHERE metadata->>'runStatus' IN ('queued', 'running', 'awaiting_approval')`,
+    );
   }
 
   private async createWorkspaceTeamMessageMentionsTable(): Promise<void> {
@@ -2141,6 +2147,26 @@ export class DatabaseService {
         table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
         table.index(['ownerTeamId', 'status'], 'skills_owner_team_status_idx');
+      });
+    }
+
+    // Personal publication is independent of the review lifecycle.
+    if (!await this.db.schema.hasColumn('private_skill_drafts', 'activeRevisionId')) {
+      await this.db.schema.alterTable('private_skill_drafts', (table) => {
+        table.uuid('activeRevisionId');
+        table.text('activationError');
+      });
+      await this.db('private_skill_drafts').where({ status: 'submitted' }).update({ status: 'private' });
+    }
+    if (!await this.db.schema.hasTable('skill_execution_blocks')) {
+      await this.db.schema.createTable('skill_execution_blocks', (table) => {
+        table.string('id', 64).primary();
+        table.string('skillKey', 128).notNullable();
+        table.uuid('versionId');
+        table.string('manifestHash', 64);
+        table.text('reason').notNullable();
+        table.uuid('blockedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
       });
     }
 

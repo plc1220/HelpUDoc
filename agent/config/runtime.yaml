@@ -21,8 +21,6 @@ backend:
   plugins_root: plugins
   sync_skills_to_workspace: false
   implicit_input_guard: true
-  # Long multi-section skill runs need a high ceiling. Do not lower this to
-  # work around tool loops; the runtime breaks document tool loops directly.
   recursion_limit: 1000
   code_interpreter:
     enabled: true
@@ -131,6 +129,9 @@ mcp_servers:
     default_access: allow
     url: ${GOOGLE_WORKSPACE_MCP_URL}
     delegatedAuthProvider: google
+    description: Google Workspace services including Google Drive files and uploads,
+      Gmail messages, Calendar events, Docs and Sheets; available operations are
+      discovered from the server.
   - name: google-developer-knowledge
     transport: http
     default_access: allow

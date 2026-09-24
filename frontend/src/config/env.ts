@@ -20,7 +20,6 @@ function parseDebugStream(): boolean {
 export const vitePublicEnv = {
   apiUrl: trimValue(raw.VITE_API_URL) ?? 'http://localhost:3000/api',
   authMode: (trimValue(raw.VITE_AUTH_MODE) ?? 'hybrid').toLowerCase(),
-  collabUrl: trimValue(raw.VITE_COLLAB_URL) ?? 'ws://localhost:1234',
   googleClientId: trimValue(raw.VITE_GOOGLE_CLIENT_ID) ?? '',
   debugStream: parseDebugStream(),
 } as const;

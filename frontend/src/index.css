@@ -11,6 +11,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Warm Lumo palette for the compact file lifecycle indicators. */
+.file-status-color-dot[data-file-status='draft'] > span {
+  background-color: #d9cbb9;
+}
+.file-status-color-dot[data-file-status='in_review'] > span {
+  background-color: #ad8c68;
+}
+.file-status-color-dot[data-file-status='approved'] > span {
+  background-color: #80664b;
+}
+.file-status-color-dot[data-file-status='published'] > span {
+  background-color: #493728;
+}
+:root[data-theme='dark'] .file-status-color-dot[data-file-status='draft'] > span {
+  background-color: #e8ddce;
+}
+:root[data-theme='dark'] .file-status-color-dot[data-file-status='in_review'] > span {
+  background-color: #d4b590;
+}
+:root[data-theme='dark'] .file-status-color-dot[data-file-status='approved'] > span {
+  background-color: #b3916b;
+}
+:root[data-theme='dark'] .file-status-color-dot[data-file-status='published'] > span {
+  background-color: #927354;
+}
+
 html[data-astryx-theme="neutral"] {
   --app-bg: var(--color-background-body);
   --surface: var(--color-background-surface);
@@ -973,13 +999,11 @@ body {
   color: var(--color-text-primary);
 }
 
-.helpudoc-mdxeditor {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-  min-height: 0;
+.mdxeditor.helpudoc-mdxeditor {
   background: var(--color-background-surface);
   color: var(--color-text-primary);
+  font-family: var(--font-family-body, inherit);
+  --font-body: var(--font-family-body, inherit);
   --basePageBg: var(--color-background-surface);
   --baseBase: var(--color-background-muted);
   --baseBgSubtle: var(--color-background-muted);
@@ -987,6 +1011,7 @@ body {
   --baseBgHover: color-mix(in srgb, var(--color-background-muted), var(--color-text-primary) 6%);
   --baseBgActive: color-mix(in srgb, var(--color-accent) 12%, var(--color-background-surface));
   --baseBorder: var(--color-border);
+  --baseLine: var(--color-border);
   --baseBorderHover: var(--color-border-emphasized);
   --baseText: var(--color-text-secondary);
   --baseTextContrast: var(--color-text-primary);
@@ -994,6 +1019,109 @@ body {
   --accentBg: color-mix(in srgb, var(--color-accent) 12%, transparent);
   --accentBgHover: color-mix(in srgb, var(--color-accent) 16%, transparent);
   --accentBgActive: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  --accentSolid: var(--color-accent);
+  --accentSolidHover: var(--color-text-primary);
+  --accentTextContrast: var(--color-on-accent);
+  --accentBorder: var(--color-border-emphasized);
+  --accentBorderHover: var(--color-accent);
+  --radius-medium: var(--radius-element);
+  --radius-large: var(--radius-container);
+}
+
+.helpudoc-mdxeditor:not(.mdxeditor-popup-container) {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.helpudoc-mdxeditor.mdxeditor-popup-container {
+  flex: none;
+  height: 0;
+  min-height: 0;
+  background: transparent;
+}
+
+.helpudoc-markdown-editor-shell {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex: 1;
+  flex-direction: column;
+  background: var(--color-background-surface);
+  color: var(--color-text-primary);
+}
+
+.helpudoc-markdown-modebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.helpudoc-markdown-modebar > span:last-child {
+  margin-left: auto;
+}
+
+.helpudoc-markdown-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.helpudoc-markdown-source {
+  width: 100%;
+  min-height: 200px;
+  flex: 1;
+  resize: none;
+  padding: 24px;
+  border: 0;
+  background: var(--color-background-surface);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 14px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+
+.helpudoc-markdown-source:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.helpudoc-markdown-notice,
+.helpudoc-markdown-image-status {
+  flex: none;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background-muted);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.helpudoc-markdown-notice details { margin-top: 4px; }
+.helpudoc-markdown-notice summary { cursor: pointer; }
+.helpudoc-markdown-notice pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.helpudoc-markdown-editor-shell[data-image-drop-active='true']::after {
+  content: 'Drop to insert image';
+  position: absolute;
+  z-index: 5;
+  inset: 100px 16px 16px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--color-accent);
+  border-radius: var(--radius-container);
+  background: color-mix(in srgb, var(--color-background-surface) 85%, transparent);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  pointer-events: none;
 }
 
 .helpudoc-mdxeditor .mdxeditor-root-contenteditable {
@@ -1001,6 +1129,21 @@ body {
   flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.helpudoc-mdxeditor .mdxeditor-root-contenteditable[role='textbox'] {
+  min-height: 100%;
+  height: auto;
+  overflow: visible;
+  padding: 24px 32px;
+}
+
+.helpudoc-mdxeditor .helpudoc-markdown[role='textbox'] > :first-child {
+  margin-top: 0;
+}
+
+.helpudoc-mdxeditor .helpudoc-markdown[role='textbox'] :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--color-text-primary);
 }
 
 .helpudoc-mdxeditor-light.helpudoc-mdxeditor,
@@ -1057,8 +1200,11 @@ body {
   top: 0;
   flex-shrink: 0;
   background: var(--color-background-surface);
-  border-bottom: var(--border-width) solid var(--color-border);
-  padding: var(--spacing-2) var(--spacing-3);
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  padding: 8px 12px;
+  gap: 4px;
+  scrollbar-width: thin;
 }
 
 .helpudoc-mdxeditor .mdxeditor-toolbar button,
@@ -1068,6 +1214,28 @@ body {
   color: var(--color-text-secondary);
   border-color: transparent;
   border-radius: var(--radius-element);
+  min-width: 32px;
+  height: 32px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.helpudoc-mdxeditor [role='toolbar'] button[role='combobox'] {
+  width: auto;
+  min-width: 120px;
+  padding-inline: 10px;
+  justify-content: space-between;
+  border: 1px solid var(--color-border);
+}
+
+.helpudoc-mdxeditor [role='toolbar'] button:disabled {
+  opacity: .4;
+}
+
+.helpudoc-mdxeditor [role='toolbar'] button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .helpudoc-mdxeditor .mdxeditor-toolbar button:hover,
@@ -1150,19 +1318,20 @@ body {
   }
 }
 
-.helpudoc-mdxeditor .mdxeditor-toolbar svg,
-.helpudoc-mdxeditor [role='toolbar'] svg {
+.helpudoc-mdxeditor svg.lucide {
   color: inherit;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke-width: 1.75;
 }
 
-.helpudoc-mdxeditor .mdxeditor-toolbar svg path,
-.helpudoc-mdxeditor .mdxeditor-toolbar svg circle,
-.helpudoc-mdxeditor .mdxeditor-toolbar svg rect,
-.helpudoc-mdxeditor [role='toolbar'] svg path,
-.helpudoc-mdxeditor [role='toolbar'] svg circle,
-.helpudoc-mdxeditor [role='toolbar'] svg rect {
-  fill: currentColor;
-  stroke: currentColor;
+@media (max-width: 640px) {
+  .helpudoc-markdown-modebar { padding: 6px 8px; }
+  .helpudoc-markdown-modebar > span:last-child { display: none; }
+  .helpudoc-mdxeditor [role='toolbar'] { padding: 6px 8px; }
+  .helpudoc-markdown-source { padding: 16px; }
+  .helpudoc-mdxeditor .mdxeditor-root-contenteditable[role='textbox'] { padding: 20px 16px; }
 }
 
 :root[data-theme='dark'] .helpudoc-markdown,
@@ -1257,6 +1426,49 @@ body {
 .helpudoc-markdown-dark.helpudoc-markdown {
   color: var(--color-text-primary);
 }
+
+/* Keep the rich-editor controls inside the same neutral surfaces as the app.
+   The editor's bundled stylesheet also themes its portals and code editors. */
+.mdxeditor.helpudoc-mdxeditor [role='combobox'],
+.mdxeditor.helpudoc-mdxeditor [role='listbox'],
+.mdxeditor.helpudoc-mdxeditor [role='dialog'] {
+  background: var(--color-background-popover, var(--color-background-surface));
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.mdxeditor.helpudoc-mdxeditor [role='option'][data-highlighted],
+.mdxeditor.helpudoc-mdxeditor [role='option'][aria-selected='true'] {
+  background: var(--color-background-muted);
+  color: var(--color-text-primary);
+}
+
+.mdxeditor.helpudoc-mdxeditor .helpudoc-markdown[role='textbox'] :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--color-text-primary);
+}
+
+.mdxeditor.helpudoc-mdxeditor .helpudoc-markdown :is(code, .inline-code) {
+  background: var(--color-background-muted);
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.mdxeditor.helpudoc-mdxeditor .cm-editor,
+.mdxeditor.helpudoc-mdxeditor .cm-scroller,
+.mdxeditor.helpudoc-mdxeditor .cm-content {
+  background: var(--color-background-surface);
+  color: var(--color-text-primary);
+}
+
+.mdxeditor.helpudoc-mdxeditor .cm-gutters,
+.mdxeditor.helpudoc-mdxeditor .cm-activeLineGutter {
+  background: var(--color-background-muted);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+}
+
+.mdxeditor.helpudoc-mdxeditor .cm-cursor { border-left-color: var(--color-text-primary); }
+.mdxeditor.helpudoc-mdxeditor .cm-activeLine { background: var(--color-overlay-hover); }
 
 /* Lumo Studio — Astryx-first chat and authentication surfaces */
 .lumo-agent-pane {
@@ -2087,4 +2299,86 @@ body {
   .lumo-login-card {
     background: var(--color-background-card);
   }
+}
+
+/* Canvas annotation chrome uses the same Astryx tokens as the workspace/chat UI. */
+.canvas-annotations { display: flex; height: 100%; min-height: 0; flex-direction: column; color: var(--color-text-primary); }
+.canvas-annotations-toolbar { display: flex; flex-shrink: 0; align-items: center; gap: var(--spacing-2); padding: var(--spacing-2) var(--spacing-3); border-bottom: var(--border-width) solid var(--color-border); background: var(--color-background-surface); }
+.canvas-annotations-body { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.canvas-annotations-content { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+.canvas-annotations-panel { position: absolute; inset-block: 0; right: 0; z-index: 20; display: flex; width: 336px; max-width: 90%; flex-direction: column; gap: var(--spacing-3); overflow-y: auto; padding: var(--spacing-4); background: var(--color-background-surface); border-left: var(--border-width) solid var(--color-border); box-shadow: var(--shadow-low); }
+.canvas-annotations-panel-header { display: flex; align-items: center; justify-content: space-between; }
+.canvas-annotations-quote { max-height: 144px; overflow: auto; border-inline-start: 2px solid var(--color-border-emphasized); }
+.canvas-annotations-message-body { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--spacing-1); }
+.canvas-annotations-reply { border-top: var(--border-width) solid var(--color-border); padding-top: var(--spacing-3); }
+.canvas-annotations-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-2); }
+.canvas-annotations-composer, .canvas-annotations-card-content { display: flex; flex-direction: column; gap: var(--spacing-2); }
+.canvas-annotations-submit { display: flex; justify-content: flex-end; }
+.canvas-annotations-error { color: var(--color-error); }
+.canvas-annotations-toast { position: absolute; right: var(--spacing-2); bottom: var(--spacing-2); padding: var(--spacing-2); border-radius: var(--radius-element); background: var(--color-background-surface); color: var(--color-error); }
+.canvas-annotations-marks { pointer-events: none; position: absolute; inset: 0; overflow: hidden; }
+.canvas-annotations-mark { position: absolute; pointer-events: auto; cursor: pointer; }
+.canvas-annotations-mark, .canvas-annotation-highlight { background: color-mix(in srgb, var(--color-accent) 15%, transparent); border: 0; border-bottom: 2px solid var(--color-border-emphasized); }
+.canvas-annotations-mark:focus-visible { outline: 2px solid var(--color-border-blue); outline-offset: 1px; }
+.canvas-annotations button { color: var(--color-text-primary) !important; }
+.canvas-annotations button[type='submit'] { background-color: var(--color-accent); color: var(--color-on-accent) !important; }
+.canvas-annotations button:disabled { opacity: 0.5; }
+.canvas-annotations button * { color: inherit; }
+.canvas-annotations-pin { position: absolute; pointer-events: auto; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid var(--color-background-surface); background: var(--color-accent); box-shadow: var(--shadow-low); font-size: 12px; font-weight: 600; cursor: pointer; }
+.canvas-annotations button.canvas-annotations-pin { color: var(--color-on-accent) !important; }
+.canvas-annotations-pin:focus-visible { outline: 2px solid var(--color-border-blue); outline-offset: 2px; }
+.office-document-preview {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 420px;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  background: var(--color-background-surface);
+}
+.office-preview-toolbar, .office-annotation-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2, 8px);
+}
+.office-preview-toolbar {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.office-toolbar-spacer { flex: 1; }
+.office-preview-pages { position: relative; flex: 1; min-height: 0; }
+.office-preview-refreshing { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--color-background-surface) 90%, transparent); }
+.document-pdf-preview { background: var(--color-background-sunken, var(--color-background-surface)); }
+.document-pdf-loading { background: var(--color-background-surface); color: var(--color-text-secondary); }
+.document-pdf-open { background: var(--color-background-surface); border-radius: var(--radius-element, 8px); }
+.office-preview-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
+.office-preview-error { display: flex; gap: 8px; align-items: center; padding: 8px 12px; color: var(--color-error); }
+.office-annotation-selection {
+  position: absolute;
+  z-index: 8;
+  inset-inline: 12px;
+  bottom: 16px;
+  margin-inline: auto;
+  max-width: 660px;
+  max-height: 75%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border-emphasized);
+  border-radius: var(--radius-container, 12px);
+  background: var(--color-background-surface);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 14%);
+}
+.office-annotation-heading { justify-content: space-between; }
+.office-document-preview button { color: var(--color-text-primary) !important; }
+.office-document-preview button * { color: inherit; }
+.office-document-preview button:disabled { opacity: .5; }
+@media (max-width: 600px) {
+  .office-preview-toolbar > :nth-child(2) { display: none; }
+  .office-annotation-selection { inset-inline: 6px; bottom: 8px; padding: 8px; }
 }

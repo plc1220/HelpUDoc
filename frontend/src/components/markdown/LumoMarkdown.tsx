@@ -1,5 +1,7 @@
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { safeMarkdownUrlTransform } from '../../utils/markdownUrls';
+import { remarkEditorHtml } from '../../utils/remarkEditorHtml';
 
 type LumoMarkdownProps = {
   children: string;
@@ -16,7 +18,7 @@ export default function LumoMarkdown({
 }: LumoMarkdownProps) {
   return (
     <div className={`lumo-markdown lumo-markdown-rich ${className || ''}`.trim()}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkEditorHtml]} components={components} urlTransform={safeMarkdownUrlTransform}>
         {children}
       </ReactMarkdown>
     </div>

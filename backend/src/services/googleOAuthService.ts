@@ -106,13 +106,14 @@ function hasRequiredScope(granted: Set<string>, required: string): boolean {
   return equivalents.some((scope) => granted.has(scope));
 }
 
-function getMissingScopes(grantedScope?: string): string[] {
+function getMissingScopes(grantedScope?: string, additionalScopes: string[] = []): string[] {
   const granted = splitScopes(grantedScope);
-  return getScopes().filter((scope) => !hasRequiredScope(granted, scope));
+  return [...new Set([...getScopes(), ...additionalScopes])]
+    .filter((scope) => !hasRequiredScope(granted, scope));
 }
 
-function ensureRequiredScopes(grantedScope?: string): void {
-  const missingScopes = getMissingScopes(grantedScope);
+function ensureRequiredScopes(grantedScope?: string, additionalScopes: string[] = []): void {
+  const missingScopes = getMissingScopes(grantedScope, additionalScopes);
   if (!missingScopes.length) {
     return;
   }
@@ -145,14 +146,14 @@ export class GoogleOAuthService {
     return crypto.randomBytes(24).toString('base64url');
   }
 
-  getAuthStartUrl(params: { state: string; codeChallenge: string }): string {
+  getAuthStartUrl(params: { state: string; codeChallenge: string; extraScopes?: string[] }): string {
     const clientId = requireOAuth(oauthConfig().clientId, 'GOOGLE_OAUTH_CLIENT_ID');
     const redirectUri = requireOAuth(oauthConfig().redirectUri, 'GOOGLE_OAUTH_REDIRECT_URI');
     const url = new URL(GOOGLE_AUTH_BASE);
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', getScopes().join(' '));
+    url.searchParams.set('scope', [...new Set([...getScopes(), ...(params.extraScopes || [])])].join(' '));
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('include_granted_scopes', 'true');
     url.searchParams.set('prompt', 'consent');
@@ -292,13 +293,13 @@ export class GoogleOAuthService {
     await this.tokenStore.upsertToken(userId, 'google', token);
   }
 
-  async getDelegatedAccessToken(userId: string): Promise<DelegatedAccessToken> {
+  async getDelegatedAccessToken(userId: string, additionalScopes: string[] = []): Promise<DelegatedAccessToken> {
     const existing = await this.tokenStore.getToken(userId, 'google');
     if (!existing || !existing.refreshToken) {
       throw new GoogleOAuthTokenMissingError('Google account is not connected for this user');
     }
 
-    ensureRequiredScopes(existing.scope);
+    ensureRequiredScopes(existing.scope, additionalScopes);
 
     const now = Math.floor(Date.now() / 1000);
     if (existing.accessToken && existing.expiryDate && existing.expiryDate > now + 60) {
@@ -343,7 +344,7 @@ export class GoogleOAuthService {
     const expiresIn = toNumber(data.expires_in);
     const expiryDate = computeExpiryEpoch(expiresIn);
     const grantedScope = typeof data.scope === 'string' ? data.scope : existing.scope;
-    ensureRequiredScopes(grantedScope);
+    ensureRequiredScopes(grantedScope, additionalScopes);
 
     await this.tokenStore.upsertToken(userId, 'google', {
       refreshToken: existing.refreshToken,

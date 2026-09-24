@@ -76,6 +76,17 @@ function decryptJson(encrypted: string): Record<string, unknown> {
   return JSON.parse(decrypted.toString('utf-8')) as Record<string, unknown>;
 }
 
+/** Encrypts short-lived OAuth capability URLs with the same key as stored tokens. */
+export function encryptOAuthSecret(value: string): string {
+  return encryptJson({ secret: value });
+}
+
+export function decryptOAuthSecret(value: string): string {
+  const secret = decryptJson(value).secret;
+  if (typeof secret !== 'string') throw new Error('Stored OAuth secret is invalid');
+  return secret;
+}
+
 function isDecryptAuthError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;

@@ -22,6 +22,7 @@ from helpudoc_agent.interaction_workflows import (
 )
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
 from helpudoc_agent.interaction_contract import (
+    is_frontend_slides_edit_existing_context,
     next_pending_gate,
     record_gate_source,
     record_gate_violation,
@@ -86,19 +87,7 @@ def _completed_interaction_gate_ids(context: Any) -> set[str]:
 
 
 def _is_edit_existing_frontend_slides_context(context: Any) -> bool:
-    if not isinstance(context, dict):
-        return False
-    if context.get("frontend_slides_edit_existing") is True:
-        return True
-    raw = " ".join(
-        str(context.get(key) or "")
-        for key in ("prompt", "user_prompt", "original_prompt", "message")
-    ).lower()
-    if not raw:
-        return False
-    mentions_existing_artifact = any(token in raw for token in (".html", ".ppt", ".pptx", "existing deck", "existing slides", "current deck"))
-    asks_for_edit = any(token in raw for token in ("edit", "revise", "update", "modify", "fix", "polish"))
-    return mentions_existing_artifact and asks_for_edit
+    return is_frontend_slides_edit_existing_context(context)
 
 
 def _frontend_slides_required_gate_missing(context: Any) -> str | None:
@@ -750,6 +739,21 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             missing_gate,
             skill_id,
         )
+
+        if missing_gate == "style_preview_selection":
+            if state.get("implicit_retry"):
+                raise ValueError(
+                    "Contract violation: frontend-slides attempted to open style selection without "
+                    "calling workflow_action with real generated HTML preview artifacts."
+                )
+            return {
+                "messages": [HumanMessage(content=_frontend_slides_gate_loopback_instruction(
+                    missing_gate,
+                    assistant_text,
+                ))],
+                "jump_to": "model",
+                "implicit_retry": True,
+            }
 
         if missing_gate:
             interrupt_payload = _build_frontend_slides_gate_interrupt(missing_gate)

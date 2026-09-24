@@ -24,6 +24,7 @@ from .routes.chat import register_chat_routes
 from .routes.documents import register_document_routes
 from .routes.health import register_health_routes
 from .routes.internal import register_internal_routes
+from .routes.office_preview import register_office_preview_routes
 from .routes.skills import register_skills_routes
 from .text_utils import _get_agent_jwt_secret
 
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
         gemini_manager=gemini_manager,
         agent_jwt_secret=agent_jwt_secret,
     )
+    register_office_preview_routes(app, agent_jwt_secret=agent_jwt_secret)
     register_chat_routes(
         app,
         settings=settings,

@@ -1,10 +1,13 @@
+import NotificationCenter from '../../components/NotificationCenter';
+import WorkspaceNavigator from '../../components/WorkspaceNavigator';
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
   CssBaseline,
+  Snackbar,
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
@@ -20,11 +23,12 @@ import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { safeMarkdownUrlTransform } from '../../utils/markdownUrls';
+import { remarkEditorHtml } from '../../utils/remarkEditorHtml';
 import remarkGfm from 'remark-gfm';
 import {
   createWorkspace,
   createPrivateWorkspaceCopy,
-  deleteWorkspace,
   getWorkspaces,
   renameWorkspace,
   getPublishedVersionFileContent,
@@ -114,6 +118,8 @@ import WorkspacePublishDialog from '../../components/WorkspacePublishDialog';
 import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
 import WorkspaceConflictDialog from '../../components/WorkspaceConflictDialog';
 import WorkspaceWithdrawPublicationDialog from '../../components/WorkspaceWithdrawPublicationDialog';
+import CanvasAnnotations from '../../components/CanvasAnnotations';
+import { OfficeDocumentContext } from '../../components/OfficeDocumentContext';
 import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
 import WorkspaceReviewChangesDialog from '../../components/WorkspaceReviewChangesDialog';
 import {
@@ -125,7 +131,6 @@ import {
 import {
   isLinkedDraftAutoSyncEligible,
   getWorkspaceLifecycleStatus,
-  isOwnerOnlyUnsharedWorkspace,
   WORKSPACE_LIFECYCLE_ACTION_LABELS,
   type WorkspaceLifecycleAction,
 } from '../../utils/workspaceLifecycle';
@@ -150,6 +155,7 @@ import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import FileProvenanceDialog from '../../components/FileProvenanceDialog';
 import FileStatusChip from '../../components/FileStatusChip';
+import GoogleDriveDeliveryButton from '../../components/GoogleDriveDeliveryButton';
 import FileStatusFilterBar, { type FileStatusFilter } from '../../components/FileStatusFilterBar';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import AgentChatPane from '../../components/chat/AgentChatPane';
@@ -184,6 +190,7 @@ import {
 } from '../../constants/workspace';
 import { isSystemFile, normalizeFilePath } from '../../utils/files';
 import { isBinaryOfficeDocument } from '../../utils/officeFiles';
+import type { NativeDocxEditorHandle, NativeDocxEditorState } from '../../components/NativeDocxEditor';
 import {
   areStructuredClarificationQuestionsComplete,
   buildClarificationDraftStorageKey,
@@ -205,6 +212,9 @@ import { getImplicitContinuationContext, buildContinuationPrompt } from '../../u
 import { createMarkdownComponents } from '../../components/markdown/MarkdownShared';
 import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../../theme';
 
+import { assertUnchangedDeck, buildStylePreviewPrompt, isHtmlSlideDeck, stylePreviewPath, withActiveSlideContext, type SlideStyle, type BrowseSlideStylesRequest } from '../../components/slides/slideStyleWorkflow';
+import type { DeckRevision, StyleDraft } from '../../components/slides/SlideStyleBrowser';
+const SlideStyleBrowser = lazy(() => import('../../components/slides/SlideStyleBrowser'));
 const FileEditor = lazy(() => import('../../components/FileEditor'));
 const UIBlockRenderer = lazy(() => import('../../components/UIBlockRenderer'));
 
@@ -891,6 +901,8 @@ const isUsableWorkspaceId = (value: string | null | undefined): value is string 
 
 export default function WorkspacePage() {
   const navigate = useNavigate();
+  const notificationLocation = useLocation();
+  const handledNotification = useRef<string | null>(null);
   const { signOut, user: authUser } = useAuth();
   const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -907,6 +919,7 @@ export default function WorkspacePage() {
   const explicitWorkspaceOpenSequenceRef = useRef(0);
   const autoSyncInFlightRef = useRef<Set<string>>(new Set());
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
+  const [trashedWorkspace, setTrashedWorkspace] = useState<Workspace | null>(null);
   const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
   const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
@@ -920,12 +933,21 @@ export default function WorkspacePage() {
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
+  const [openSlideStylesToken, setOpenSlideStylesToken] = useState(0);
+  const [slideStyleChoice, setSlideStyleChoice] = useState<BrowseSlideStylesRequest | null>(null);
+  const slideSelectionRef = useRef('');
   const [selectedDashboardPath, setSelectedDashboardPath] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [dashboardArtifactsByPath, setDashboardArtifactsByPath] = useState<Record<string, DashboardArtifactInfo>>({});
   const [fileContent, setFileContent] = useState('');
+  const nativeDocxRef = useRef<NativeDocxEditorHandle>(null);
+  const [nativeDocxState, setNativeDocxState] = useState<NativeDocxEditorState>({ dirty: false, saving: false, error: null });
+  const isNativeDocx = /\.docx$/i.test(selectedFile?.name || '');
+  const [fileSaveStatus, setFileSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
+  const [annotationChatFocusKey, setAnnotationChatFocusKey] = useState(0);
+  const handledAnnotationFile = useRef<string | null>(null);
   const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
   const [internetSearchEnabled, setInternetSearchEnabled] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -1019,28 +1041,6 @@ export default function WorkspacePage() {
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [pendingRerunConfirmation, setPendingRerunConfirmation] = useState<PendingRerunConfirmation | null>(null);
 
-  const filteredWorkspaces = useMemo(() => {
-    const query = workspaceSearchQuery.trim().toLowerCase();
-    if (!query) {
-      return workspaces;
-    }
-    return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
-  }, [workspaceSearchQuery, workspaces]);
-  const mobilePrivateWorkspaces = useMemo(
-    () => filteredWorkspaces.filter((workspace) => (
-      (workspace.visibility !== 'team' || isOwnerOnlyUnsharedWorkspace(workspace))
-        && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
-    )).slice(0, 8),
-    [filteredWorkspaces],
-  );
-  const mobileTeamWorkspaces = useMemo(
-    () => filteredWorkspaces.filter((workspace) => (
-      workspace.visibility === 'team'
-        && !isOwnerOnlyUnsharedWorkspace(workspace)
-        && getWorkspaceLifecycleStatus(workspace) !== 'trashed'
-    )).slice(0, 8),
-    [filteredWorkspaces],
-  );
   const landingFilteredWorkspaces = useMemo(() => {
     const query = landingWorkspaceQuery.trim().toLowerCase();
     if (!query) {
@@ -1831,6 +1831,8 @@ export default function WorkspacePage() {
   const normalizedFileName = activeFileName.toLowerCase();
   const isMarkdownFile = !!activeFile && MARKDOWN_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isHtmlFile = !!activeFile && HTML_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
+  const isSlideDeck = Boolean(activeFile && isHtmlSlideDeck(activeFile.name, fileContent));
+  slideSelectionRef.current = `${selectedWorkspace?.id}:${activeFile?.id}`;
   const isImageFile = !!activeFile && IMAGE_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const canPrintOrDownloadFile = Boolean(activeFile && (isMarkdownFile || isHtmlFile));
   const canCopyImageUrl = Boolean(isImageFile && activeFile?.publicUrl);
@@ -1895,7 +1897,7 @@ export default function WorkspacePage() {
         : wrapInDocument(fileContent)
       : wrapInDocument(
         renderToStaticMarkup(
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkEditorHtml]} urlTransform={safeMarkdownUrlTransform}>{fileContent}</ReactMarkdown>
         )
       );
 
@@ -2413,7 +2415,7 @@ export default function WorkspacePage() {
 
   const isFileEditable = (fileName: string): boolean => {
     const editableExtensions = [
-      '.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
+      '.docx', '.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
       '.py', '.java', '.c', '.cpp', '.go', '.rs', '.php', '.rb', '.sh', '.yaml', '.yml', '.xml', '.sql', '.csv'
     ];
     const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
@@ -3318,7 +3320,8 @@ export default function WorkspacePage() {
       }
       const conversations = await refreshConversationHistory(selectedWorkspace.id);
       if (conversations.length) {
-        const firstConversation = conversations[0];
+        const requestedConversationId = new URLSearchParams(window.location.search).get('conversationId');
+        const firstConversation = conversations.find((item) => item.id === requestedConversationId) || conversations[0];
         setActiveConversationId(firstConversation.id);
         await loadConversationMessages(firstConversation.id);
       } else {
@@ -3421,6 +3424,36 @@ export default function WorkspacePage() {
       setMobileSurface('canvas');
     }
   }, [publishedVersionView, resetWorkspaceArtifactState]);
+
+  useEffect(() => {
+    const query = new URLSearchParams(notificationLocation.search);
+    const notificationId = query.get('notificationId');
+    const workspaceId = query.get('workspaceId');
+    if (!notificationId || handledNotification.current === notificationLocation.key) return;
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+    handledNotification.current = notificationLocation.key;
+    handleSelectWorkspace(workspace);
+    setIsAgentPaneVisible(true);
+    setMobileSurface(query.get('annotationId') ? 'canvas' : 'chat');
+    const conversationId = query.get('conversationId');
+    if (conversationId && selectedWorkspaceIdRef.current === workspaceId) {
+      setActiveConversationId(conversationId);
+      void loadConversationMessages(conversationId);
+    }
+  }, [notificationLocation.key, notificationLocation.search, workspaces, handleSelectWorkspace, loadConversationMessages]);
+
+  useEffect(() => {
+    const query = new URLSearchParams(notificationLocation.search);
+    if (!query.get('annotationId') || query.get('workspaceId') !== selectedWorkspace?.id || handledAnnotationFile.current === notificationLocation.key) return;
+    const target = files.find(file => file.name === query.get('filePath'));
+    if (target) {
+      handledAnnotationFile.current = notificationLocation.key;
+      setSelectedFile(target);
+      setIsEditMode(shouldForceEditMode(target.name));
+      setMobileSurface('canvas');
+    }
+  }, [notificationLocation.key, notificationLocation.search, selectedWorkspace?.id, files]);
 
   /**
    * Sync the Shared Working version into `My draft`. When overlapping changes exist the backend
@@ -3793,6 +3826,10 @@ export default function WorkspacePage() {
     setSelectedFile(persistedFile);
     setSelectedFileDetails(null);
   }, [files, selectedFile]);
+
+  useEffect(() => {
+    setNativeDocxState({ dirty: false, saving: false, error: null });
+  }, [selectedWorkspace?.id, selectedFile?.id]);
 
   useEffect(() => {
     const name = selectedFile?.name ?? '';
@@ -6605,7 +6642,11 @@ export default function WorkspacePage() {
       const messageContent = hasAttachments
         ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
         : trimmed;
-      const agentPromptBase = buildAgentPromptFromDirective(directive) || messageContent;
+      const agentPromptBase = withActiveSlideContext(
+        buildAgentPromptFromDirective(directive) || messageContent,
+        isSlideDeck && !isEditMode && activeFile && !isDraftWorkspaceFile(activeFile)
+          ? normalizeWorkspaceRelativePath(activeFile.name) : undefined,
+      );
       const conversationId = await ensureConversation(activeWorkspace);
       if (!conversationId) {
         addLocalSystemMessage('Unable to start a conversation right now.');
@@ -6940,19 +6981,17 @@ export default function WorkspacePage() {
 
   const handleDeleteWorkspace = async (id: string) => {
     const target = workspaces.find((workspace) => workspace.id === id);
-    if (target && !window.confirm(`Delete ${target.visibility === 'team' ? 'shared' : 'private'} workspace "${target.name}"?`)) {
-      return;
-    }
     try {
-      await deleteWorkspace(id);
-      setWorkspaces((current) => current.filter((workspace) => workspace.id !== id));
+      await trashWorkspace(id);
+      if (target) setTrashedWorkspace(target);
       if (selectedWorkspace?.id === id) {
         resetWorkspaceArtifactState();
         setSelectedWorkspace(null);
         setIsLandingPageVisible(true);
       }
+      await refreshWorkspaceList();
     } catch (error) {
-      console.error('Failed to delete workspace:', error);
+      addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to move workspace to trash.');
     }
   };
 
@@ -6962,9 +7001,7 @@ export default function WorkspacePage() {
   ) => {
     const confirmation = action === 'unshare'
       ? `Unshare "${workspace.name}"? Existing private drafts will be detached and must reconnect explicitly.`
-      : action === 'trash'
-        ? `Move "${workspace.name}" to trash? You can restore it before its scheduled deletion.`
-        : action === 'leave'
+      : action === 'leave'
           ? `Leave "${workspace.name}"? You will lose access to this Shared workspace.`
           : null;
     if (confirmation && !window.confirm(confirmation)) return;
@@ -6992,6 +7029,7 @@ export default function WorkspacePage() {
         }
       }
       const refreshed = await refreshWorkspaceList();
+      if (action === 'trash') setTrashedWorkspace(workspace);
       const updatedWorkspace = result.workspace
         ? hydrateWorkspace(result.workspace)
         : refreshed.find((candidate) => candidate.id === workspace.id);
@@ -7051,7 +7089,7 @@ export default function WorkspacePage() {
     targetFile: WorkspaceFile | null,
     content: string,
   ): Promise<boolean> => {
-    if (!selectedWorkspace || !targetFile) return false;
+    if (!selectedWorkspace || !targetFile || isBinaryOfficeDocument(targetFile.name, targetFile.mimeType)) return false;
     if (isPublishedMode) {
       // Published versions are immutable; never write through the snapshot view.
       addLocalSystemMessage(
@@ -7109,18 +7147,26 @@ export default function WorkspacePage() {
     targetFile: WorkspaceFile | null,
     content: string,
   ): Promise<boolean> => {
-    const pendingSave = handleUpdateFile(targetFile, content);
+    setFileSaveStatus('saving');
+    // Keep automatic and explicit saves in order so a slower earlier request
+    // cannot overwrite the latest edit.
+    const previousSave = pendingAutoSaveRef.current;
+    const pendingSave = (async () => {
+      if (previousSave) await previousSave;
+      return handleUpdateFile(targetFile, content);
+    })();
     pendingAutoSaveRef.current = pendingSave;
-    void pendingSave.finally(() => {
+    void pendingSave.then((saved) => {
       if (pendingAutoSaveRef.current === pendingSave) {
         pendingAutoSaveRef.current = null;
+        setFileSaveStatus(saved ? 'saved' : 'error');
       }
     });
     return pendingSave;
   }, [handleUpdateFile]);
 
   useEffect(() => {
-    if (!isEditMode || !selectedWorkspace || !selectedFile || isDraftWorkspaceFile(selectedFile)) return;
+    if (!isEditMode || !selectedWorkspace || !selectedFile || isDraftWorkspaceFile(selectedFile) || isBinaryOfficeDocument(selectedFile.name, selectedFile.mimeType)) return;
 
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
@@ -7148,6 +7194,10 @@ export default function WorkspacePage() {
     ) {
       return;
     }
+    if (/\.docx$/i.test(selectedFile.name)) {
+      if (nativeDocxRef.current) await nativeDocxRef.current.save();
+      return;
+    }
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
@@ -7166,6 +7216,121 @@ export default function WorkspacePage() {
       throw new Error('Save the current file before publishing.');
     }
   }, [fileContent, isEditMode, runTrackedWorkspaceSave, selectedFile, selectedWorkspace?.id]);
+
+  const requireSlideIdle = () => {
+    if (!canMutateContent || !selectedWorkspace || !activeFile || isEditMode || isDraftWorkspaceFile(activeFile)) {
+      throw new Error('Open a saved slide deck in Preview before changing its style.');
+    }
+    if (sendLockRef.current || isDriveImporting || pendingAutoSaveRef.current || Object.values(activeRunsRef.current).some(run => run.workspaceId === selectedWorkspace.id)) {
+      throw new Error('Finish or cancel the current agent run before changing slide styles.');
+    }
+    return { workspace: selectedWorkspace, file: activeFile, selection: `${selectedWorkspace.id}:${activeFile.id}` };
+  };
+
+  const handleGenerateSlideStyle = async (style: SlideStyle): Promise<StyleDraft> => {
+    const { workspace, file, selection } = requireSlideIdle();
+    sendLockRef.current = true;
+    setIsAgentPaneVisible(true);
+    try {
+      const source = await getFileContent(workspace.id, file.id);
+      if (source.content !== fileContent || !Number.isInteger(source.version) || source.version < 1) {
+        throw new Error('The deck has changed or is still loading. Reopen it before generating a style preview.');
+      }
+      // File.path is the storage/object-store locator, not the workspace-relative name.
+      const sourcePath = normalizeWorkspaceRelativePath(file.name);
+      const outputPath = stylePreviewPath(sourcePath, crypto.randomUUID());
+      const prompt = buildStylePreviewPrompt(sourcePath, outputPath, style);
+      const conversationId = await ensureConversation(workspace);
+      if (!conversationId) throw new Error('Unable to open the agent conversation. Please try again.');
+      const turnId = generateTurnId();
+      const visibleRequest = `Preview ${style.name} on @${sourcePath}. Keep the original deck unchanged until I apply the style.`;
+      const message = mergeMessageMetadata(await appendConversationMessage(conversationId, 'user', visibleRequest, { turnId, metadata: { taggedFiles: [sourcePath] } }));
+      upsertConversationMessage(conversationId, message);
+      lastUserMessageMapRef.current[conversationId] = prompt;
+      stopRequestedRef.current = false;
+      await launchPreparedAgentRun({
+        workspaceId: workspace.id, conversationId, turnId,
+        persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+        prompt, historyPayload: mapMessagesToAgentHistory(getConversationMessagesSnapshot(conversationId)),
+        taggedFiles: [sourcePath],
+      });
+      if (slideSelectionRef.current !== selection) throw new Error('The open deck changed. Open the original deck to start a new preview.');
+      const updatedFiles: WorkspaceFile[] = await getFiles(workspace.id);
+      const output = updatedFiles.find(candidate => normalizeWorkspaceRelativePath(candidate.name) === outputPath);
+      if (!output) throw new Error('The agent has not delivered a preview. Check chat for errors or required input, then retry.');
+      const result = await getFileContent(workspace.id, output.id);
+      if (!isHtmlSlideDeck('deck.html', String(result.content || ''))) throw new Error('The agent output is not a slide deck. Ask it to finish the preview in chat, then retry.');
+      const parser = new DOMParser();
+      const countSlides = (html: string) => parser.parseFromString(html, 'text/html').querySelectorAll('.slide').length;
+      if (!countSlides(source.content) || countSlides(result.content) !== countSlides(source.content)) {
+        throw new Error('The preview changed the slide count. Ask the agent to preserve every slide, then retry. Nothing has been applied.');
+      }
+      const base = { content: source.content as string, version: source.version as number };
+      assertUnchangedDeck(base, await getFileContent(workspace.id, file.id));
+      return { content: result.content, path: outputPath, base };
+    } finally { sendLockRef.current = false; }
+  };
+
+  const handleCommitSlideStyle = async (content: string, base: DeckRevision): Promise<DeckRevision> => {
+    const { workspace, file, selection } = requireSlideIdle();
+    sendLockRef.current = true;
+    try {
+      if (fileContent !== base.content) throw new Error('The open deck changed. Generate a fresh preview before applying.');
+      assertUnchangedDeck(base, await getFileContent(workspace.id, file.id));
+      if (slideSelectionRef.current !== selection) throw new Error('The open deck changed. Nothing was applied.');
+      const updated = await updateFileContent(workspace.id, Number(file.id), content, base.version, true);
+      markPrivateWorkspaceChanged(workspace.id);
+      if (selectedWorkspaceIdRef.current === workspace.id) {
+        setFiles(prev => prev.map(item => String(item.id) === String(file.id) ? { ...item, ...updated, content } : item));
+      }
+      if (slideSelectionRef.current === selection) {
+        setFileContent(content);
+        lastAutoSavedContentRef.current = content;
+        setSelectedFile(prev => prev?.id === file.id ? { ...prev, ...updated, content } : prev);
+        setSelectedFileDetails(prev => prev?.id === file.id ? { ...prev, ...updated, content } : prev);
+      }
+      addLocalSystemMessage(`Saved a style revision to ${file.name}. The existing deck and its version history are preserved.`);
+      return { content, version: updated.version };
+    } finally { sendLockRef.current = false; }
+  };
+
+  useEffect(() => {
+    const browse = (event: Event) => {
+      const detail = (event as CustomEvent<BrowseSlideStylesRequest>).detail;
+      if (detail?.workspaceId !== selectedWorkspace?.id) return;
+      if (typeof detail?.onSelect !== 'function') return;
+      setSlideStyleChoice(detail);
+      setIsEditMode(false);
+      setOpenSlideStylesToken(value => value + 1);
+      setMobileSurface('canvas');
+    };
+    window.addEventListener('lumo:browse-slide-styles', browse);
+    return () => window.removeEventListener('lumo:browse-slide-styles', browse);
+  }, [selectedWorkspace?.id, isSlideDeck, addLocalSystemMessage]);
+
+  const activeSlideStyleChoice = slideStyleChoice?.workspaceId === selectedWorkspace?.id ? slideStyleChoice : null;
+  useEffect(() => { setSlideStyleChoice(null); }, [selectedWorkspace?.id, activeConversationId]);
+  useEffect(() => {
+    if (!hasPendingInterruptMessage && !isStreaming) setSlideStyleChoice(null);
+  }, [hasPendingInterruptMessage, isStreaming]);
+  const slideStyleCanvas = (isSlideDeck || activeSlideStyleChoice) && !isEditMode && selectedWorkspace ? (
+    <Suspense fallback={canvasLoadingFallback}>
+      <SlideStyleBrowser key={`${selectedWorkspace.id}:${activeFile?.id || 'library'}:${activeSlideStyleChoice?.interactionId || ''}`} workspaceId={selectedWorkspace.id}
+        sourcePath={isSlideDeck && activeFile ? normalizeWorkspaceRelativePath(activeFile.name) : ''} colorMode={colorMode}
+        openStylesToken={openSlideStylesToken}
+        disabledReason={!canMutateContent ? 'Read-only deck. Open its Working version to apply a style.' : isStreaming || (!activeSlideStyleChoice && hasPendingInterruptMessage) ? 'Finish the current agent task before generating or applying a style.' : undefined}
+        onChooseStyle={activeSlideStyleChoice ? async style => {
+          await activeSlideStyleChoice.onSelect(style);
+          setSlideStyleChoice(null);
+          setIsAgentPaneVisible(true);
+        } : undefined}
+        onGenerate={handleGenerateSlideStyle} onCommit={handleCommitSlideStyle}>
+        <div className="h-full w-full overflow-auto"><div className="h-full origin-top-left" style={{ transform: `scale(${canvasZoom})`, width: `${100 / canvasZoom}%`, minHeight: `${100 / canvasZoom}%` }}>
+          <UIBlockRenderer blocks={canvasBlocks} workspaceId={selectedWorkspace.id} className="h-full w-full" />
+        </div></div>
+      </SlideStyleBrowser>
+    </Suspense>
+  ) : null;
 
   const handleBulkDelete = async () => {
     if (!selectedWorkspace) return;
@@ -7613,6 +7778,44 @@ export default function WorkspacePage() {
     });
   }, [closeCommand, closeMention, isAgentPaneVisible, updateCommandState]);
 
+  const handleAnnotationChat = (prompt: string) => {
+    setAnnotationChatFocusKey(key => key + 1);
+    handleLumoPrompt(chatMessage.trim() ? `${chatMessage}\n\n${prompt}` : prompt);
+    setMobileSurface('chat');
+  };
+
+  const officeDocumentContext = {
+    canEdit: canMutateContent,
+    onAgentChat: handleAnnotationChat,
+    onSaved: (file: WorkspaceFile) => {
+      const workspaceId = selectedWorkspace?.id;
+      if (!workspaceId) return;
+      markPrivateWorkspaceChanged(workspaceId);
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      setFiles(previous => previous.map(item => String(item.id) === String(file.id) ? { ...item, ...file } : item));
+      if (slideSelectionRef.current !== `${workspaceId}:${file.id}`) return;
+      const content = file.content || '';
+      setFileContent(content);
+      lastAutoSavedContentRef.current = content;
+      setSelectedFile(previous => previous && String(previous.id) === String(file.id) ? { ...previous, ...file } : previous);
+      setSelectedFileDetails(previous => previous && String(previous.id) === String(file.id) ? { ...previous, ...file } : previous);
+    },
+  };
+
+  const toggleFileEditing = async (editing: boolean) => {
+    const selection = slideSelectionRef.current;
+    if (!editing && isNativeDocx && nativeDocxRef.current) {
+      try { await nativeDocxRef.current.save(); } catch { return; }
+    }
+    if (selection !== slideSelectionRef.current) return;
+    setIsEditMode(editing);
+  };
+
+  const saveActiveFile = () => {
+    if (isNativeDocx) { void nativeDocxRef.current?.save().catch(() => {}); }
+    else if (selectedFile) void runTrackedWorkspaceSave(selectedFile, fileContent);
+  };
+
   const handleMobileSelectFile = (file: WorkspaceFile) => {
     setSelectedDashboardPath(null);
     setSelectedFile(file);
@@ -7654,6 +7857,10 @@ export default function WorkspacePage() {
           </h2>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {isNativeDocx && canMutateContent && !isPublishedMode && <>
+            <ToggleButton label="Edit file" icon={<Edit size={16}/>} size="sm" isPressed={isEditMode} isDisabled={nativeDocxState.saving || !/^\d+$/.test(selectedFile?.id || '')} onPressedChange={value => { void toggleFileEditing(value); }} />
+            {isEditMode && <Button label={nativeDocxState.saving ? 'Saving…' : 'Save'} variant="primary" size="sm" isDisabled={!nativeDocxState.dirty || nativeDocxState.saving} onClick={saveActiveFile} />}
+          </>}
           {!isEditMode ? (
             <>
               <button
@@ -7693,17 +7900,20 @@ export default function WorkspacePage() {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
+        <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} onAgentChat={handleAnnotationChat}>
         {isEditMode && selectedWorkspace ? (
           <Suspense fallback={editorLoadingFallback}>
             <FileEditor
               file={selectedFileDetails || selectedFile}
               fileContent={fileContent}
               onContentChange={setFileContent}
+              nativeDocxRef={nativeDocxRef}
+              onNativeDocxStateChange={setNativeDocxState}
               workspaceId={selectedWorkspace.id}
               colorMode={colorMode}
             />
           </Suspense>
-        ) : isDashboardCanvas ? (
+        ) : slideStyleCanvas ? slideStyleCanvas : isDashboardCanvas ? (
           selectedWorkspace && resolvedDashboardFolder ? (
             <DashboardCanvas
               workspaceId={selectedWorkspace.id}
@@ -7751,6 +7961,7 @@ export default function WorkspacePage() {
             </p>
           </div>
         )}
+        </CanvasAnnotations></OfficeDocumentContext.Provider>
       </div>
       <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
         <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
@@ -7805,6 +8016,7 @@ export default function WorkspacePage() {
             </span>
           </button>
           <div className="flex shrink-0 items-center gap-2">
+            <NotificationCenter placement="below" />
             <button
               type="button"
               onClick={() => {
@@ -8016,101 +8228,26 @@ export default function WorkspacePage() {
               </button>
             </div>
             <div className="max-h-[70dvh] overflow-y-auto px-4 pb-5">
-              <section className="space-y-2">
-                <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                  Private workspaces
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleCreateWorkspace();
-                    setIsMobileWorkspaceSheetOpen(false);
-                    setMobileSurface('chat');
-                  }}
-                  className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold ${
-                    isDarkMode ? 'border-slate-800 bg-slate-900 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'
-                  }`}
-                >
-                  <Plus size={15} />
-                  New Workspace
-                </button>
-                {mobilePrivateWorkspaces.map((workspace) => (
-                  <button
-                    key={workspace.id}
-                    type="button"
-                    onClick={() => {
-                      handleSelectWorkspace(workspace);
-                      setIsMobileWorkspaceSheetOpen(false);
-                      setMobileSurface('chat');
-                    }}
-                    className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
-                      selectedWorkspace?.id === workspace.id
-                        ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
-                        : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate">{workspace.name}</span>
-                      {isOwnerOnlyUnsharedWorkspace(workspace) ? (
-                        <span className={`block truncate text-[10px] ${isDarkMode ? 'text-amber-300' : 'text-amber-600'}`}>
-                          Unshared · Only you can access it
-                        </span>
-                      ) : null}
-                    </span>
-                    {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
-                  </button>
-                ))}
-                {!mobilePrivateWorkspaces.length ? (
-                  <p className={`rounded-xl px-3 py-3 text-sm ${
-                    isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'
-                  }`}>
-                    No private workspaces.
-                  </p>
-                ) : null}
-              </section>
-
-              <section className="mt-5 space-y-2">
-                <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                  Shared workspaces
-                </p>
-                {mobileTeamWorkspaces.map((workspace) => (
-                  <button
-                    key={workspace.id}
-                    type="button"
-                    onClick={() => {
-                      handleSelectWorkspace(workspace);
-                      setIsMobileWorkspaceSheetOpen(false);
-                      setMobileSurface('canvas');
-                    }}
-                    className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
-                      selectedWorkspace?.id === workspace.id
-                        ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
-                        : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate">{workspace.name}</span>
-                      <span className={`block truncate text-[10px] ${
-                        isDarkMode ? 'text-slate-500' : 'text-slate-500'
-                      }`}>
-                        {workspace.teamName || 'Shared workspace'}
-                        {' · '}
-                        {workspace.currentPublishedVersionNumber == null
-                          ? 'Working version'
-                          : `Locked v${workspace.currentPublishedVersionNumber}`}
-                      </span>
-                    </span>
-                    {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
-                  </button>
-                ))}
-                {!mobileTeamWorkspaces.length ? (
-                  <p className={`rounded-xl px-3 py-3 text-sm ${
-                    isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'
-                  }`}>
-                    No shared workspaces.
-                  </p>
-                ) : null}
-              </section>
+              <Button label="New workspace" onClick={() => { void handleCreateWorkspace(); setIsMobileWorkspaceSheetOpen(false); }} />
+              <input aria-label="Search workspaces" placeholder="Search workspaces" value={workspaceSearchQuery} onChange={(event) => setWorkspaceSearchQuery(event.target.value)} className="my-3 w-full rounded-lg border bg-transparent px-3 py-2" />
+              <WorkspaceNavigator
+                storageKey={`helpudoc.navigator.${authUser?.id || 'anonymous'}`}
+                search={workspaceSearchQuery}
+                onRefresh={refreshWorkspaceList}
+                workspaces={workspaces}
+                selectedWorkspace={selectedWorkspace}
+                onSelectWorkspace={(workspace) => { handleSelectWorkspace(workspace); setIsMobileWorkspaceSheetOpen(false); setMobileSurface(workspace.visibility === 'team' ? 'canvas' : 'chat'); }}
+                onDeleteWorkspace={handleDeleteWorkspace}
+                onLifecycleWorkspace={handleWorkspaceLifecycle}
+                onPublishWorkspace={setPublishWorkspaceTarget}
+                onHistoryWorkspace={setHistoryWorkspaceTarget}
+                onWithdrawWorkspace={setWithdrawWorkspaceTarget}
+                onManageTeamAccess={handleManageTeamAccess}
+                onSyncDraftWorkspace={handleSyncDraftWorkspace}
+                onReviewDraftChanges={handleReviewDraftChanges}
+                syncingDraftWorkspaceId={syncingDraftWorkspaceId}
+                lifecycleBusyWorkspaceId={lifecycleBusyWorkspaceId}
+              />
 
               <section className="mt-5 space-y-2">
                 <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
@@ -8226,10 +8363,12 @@ export default function WorkspacePage() {
         }}
       >
         <CssBaseline />
+        <Snackbar open={Boolean(trashedWorkspace)} autoHideDuration={8000} onClose={() => setTrashedWorkspace(null)} message={`Moved ${trashedWorkspace?.name || 'workspace'} to trash`} action={<Button label="Undo" onClick={() => { if (trashedWorkspace) void handleWorkspaceLifecycle(trashedWorkspace, 'restore'); setTrashedWorkspace(null); }} />} />
         {isMobileViewport ? (
           mobileWorkspaceShell
         ) : (
           <>
+
         <ExpandableSidebar
           handleDrawerToggle={handleDrawerToggle}
           isDrawerOpen={drawerOpen}
@@ -8238,7 +8377,9 @@ export default function WorkspacePage() {
         <CollapsibleDrawer
           open={drawerOpen}
           handleDrawerClose={handleDrawerToggle}
-          workspaces={filteredWorkspaces}
+          workspaces={workspaces}
+          storageKey={`helpudoc.navigator.${authUser?.id || "anonymous"}`}
+          onRefresh={refreshWorkspaceList}
           selectedWorkspace={selectedWorkspace}
           workspaceSearchQuery={workspaceSearchQuery}
           setWorkspaceSearchQuery={setWorkspaceSearchQuery}
@@ -9026,23 +9167,29 @@ export default function WorkspacePage() {
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
                   isDarkMode ? 'bg-[#0e1728]' : 'bg-gray-50'
                 }`}>
-                  <div className={`px-4 py-3 flex justify-between items-center ${
+                  <div className={`px-4 py-3 flex flex-wrap gap-2 justify-between items-center ${
                     isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
                   }`}>
-                    <div className="flex items-center gap-3">
-                      <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
+                    <div className="flex min-w-0 flex-wrap items-center gap-3">
+                      <h3 title={canvasTitle} className={`truncate text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
                       {selectedFile && selectedWorkspace && fileStatusById[String(selectedFile.id)] && (
-                        <FileStatusChip
-                          workspaceId={selectedWorkspace.id}
-                          fileId={selectedFile.id}
-                          size="md"
-                          status={fileStatusById[String(selectedFile.id)].status}
-                          drift={fileStatusById[String(selectedFile.id)].drift}
-                          onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
-                        />
+                        <>
+                          <FileStatusChip
+                            workspaceId={selectedWorkspace.id}
+                            fileId={selectedFile.id}
+                            size="sm"
+                            status={fileStatusById[String(selectedFile.id)].status}
+                            drift={fileStatusById[String(selectedFile.id)].drift}
+                            hideSubmitForReview
+                            onChanged={() => { void loadFilesForWorkspace(selectedWorkspace.id); }}
+                          />
+                          {fileStatusById[String(selectedFile.id)].status === 'published' && (
+                            <GoogleDriveDeliveryButton workspaceId={selectedWorkspace.id} fileId={selectedFile.id} />
+                          )}
+                        </>
                       )}
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
                       {selectedWorkspace?.linkedTeamWorkspaceId
                         && selectedWorkspace.publicationStatus !== 'detached' ? (
                         <Button
@@ -9105,23 +9252,29 @@ export default function WorkspacePage() {
                           icon={<Edit size={16} />}
                           size="sm"
                           isPressed={isEditMode}
-                          isDisabled={!canMutateContent || !selectedFile || !isFileEditable(selectedFile.name)}
+                          isDisabled={!canMutateContent || !selectedFile || !isFileEditable(selectedFile.name) || (isNativeDocx && (nativeDocxState.saving || !/^\d+$/.test(selectedFile.id)))}
                           onPressedChange={(isPressed) => {
                             if (isPressed && !isAgentPaneVisible) {
                               setIsAgentPaneVisible(true);
                             }
-                            setIsEditMode(isPressed);
+                            void toggleFileEditing(isPressed);
                           }}
                         />
                       )}
-                      {isPublishedMode ? null : (
+                      {isPublishedMode || (isNativeDocx && !isEditMode) ? null : (
                         <Button
-                          label="Save"
+                          label={(isNativeDocx ? nativeDocxState.saving : fileSaveStatus === 'saving') ? 'Saving…' : 'Save'}
                           variant="primary"
                           size="sm"
-                          onClick={() => selectedFile && runTrackedWorkspaceSave(selectedFile, fileContent)}
-                          isDisabled={!canMutateContent || !isEditMode}
+                          onClick={saveActiveFile}
+                          isDisabled={!canMutateContent || !isEditMode || !selectedFile || (isNativeDocx ? nativeDocxState.saving || !nativeDocxState.dirty : fileSaveStatus === 'saving' || (fileSaveStatus !== 'error' && !isDraftWorkspaceFile(selectedFile) && fileContent === lastAutoSavedContentRef.current))}
                         />
+                      )}
+                      {isEditMode && !isPublishedMode && isNativeDocx && <span role="status" className="text-xs text-slate-400">{nativeDocxState.saving ? 'Saving changes…' : nativeDocxState.error ? 'Save failed · edits kept' : nativeDocxState.dirty ? 'Unsaved changes' : 'All changes saved'}</span>}
+                      {isEditMode && !isPublishedMode && !isNativeDocx && (
+                        <span role={fileSaveStatus === 'error' ? 'alert' : 'status'} className={`text-xs ${fileSaveStatus === 'error' ? 'text-red-500' : 'text-slate-400'}`}>
+                          {fileSaveStatus === 'saving' ? 'Saving changes…' : fileSaveStatus === 'error' ? 'Save failed. Your edits are still open; retry Save.' : selectedFile && isDraftWorkspaceFile(selectedFile) ? 'Save to create this file' : fileContent !== lastAutoSavedContentRef.current ? 'Unsaved changes · autosaves after 2 seconds' : 'All changes saved · autosave on'}
+                        </span>
                       )}
                       {!isEditMode && (
                         <ButtonGroup label="Canvas zoom" size="sm">
@@ -9152,17 +9305,20 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden min-h-0">
+                    <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} onAgentChat={handleAnnotationChat}>
                     {isEditMode && !isPublishedMode && selectedWorkspace ? (
                       <Suspense fallback={editorLoadingFallback}>
                         <FileEditor
                           file={selectedFileDetails || selectedFile}
                           fileContent={fileContent}
                           onContentChange={setFileContent}
+                          nativeDocxRef={nativeDocxRef}
+                          onNativeDocxStateChange={setNativeDocxState}
                           workspaceId={selectedWorkspace.id}
                           colorMode={colorMode}
                         />
                       </Suspense>
-                    ) : (
+                    ) : slideStyleCanvas ? slideStyleCanvas : (
                       <div className={isDashboardCanvas ? 'flex h-full w-full min-h-0 flex-col overflow-hidden' : 'h-full w-full overflow-y-auto overflow-x-hidden'}>
                         {isDashboardCanvas ? (
                           selectedWorkspace && resolvedDashboardFolder ? (
@@ -9200,6 +9356,7 @@ export default function WorkspacePage() {
                         )}
                       </div>
                     )}
+                    </CanvasAnnotations></OfficeDocumentContext.Provider>
                   </div>
                 </div>
               </div>
@@ -9213,6 +9370,7 @@ export default function WorkspacePage() {
             />
 
             <AgentChatPane
+              agentChatFocusKey={annotationChatFocusKey}
               colorMode={colorMode}
               agentPaneStyles={agentPaneStyles}
               isAgentPaneVisible={isAgentPaneVisible}
@@ -9251,6 +9409,8 @@ export default function WorkspacePage() {
               workspaceId={selectedWorkspace?.id}
               isSharedWorkspace={selectedWorkspace?.visibility === 'team'}
               sharedWorkspace={selectedWorkspace?.visibility === 'team' ? selectedWorkspace : undefined}
+              viewedVersion={publishedVersionView || undefined}
+              onTeamFilesChanged={() => { if (selectedWorkspace && !publishedVersionView) void loadFilesForWorkspace(selectedWorkspace.id); }}
               activeFilePath={selectedFile?.name || selectedDashboardPath || undefined}
               internetSearchEnabled={internetSearchEnabled}
               formatMessageTimestamp={formatMessageTimestamp}

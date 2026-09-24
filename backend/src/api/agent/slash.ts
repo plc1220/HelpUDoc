@@ -7,7 +7,7 @@ import { skillsRoot } from '../../services/skills/constants';
 import { collectSkillIds } from '../../services/skills/registry';
 import { getSkillMetadata } from '../../services/skills/metadata';
 import { buildPluginBySkillMap, filterPluginsForAccess, listPlugins } from '../../services/plugins/registry';
-import { loadRuntimeMcpServers, resolveRuntimeSkillAccess } from './policy';
+import { loadRuntimeMcpServers, resolveRuntimeMcpAccess, resolveRuntimeSkillAccess } from './policy';
 
 type SlashSkillMetadata = {
   id: string;
@@ -47,6 +47,8 @@ export function registerSlashRoutes(
       const pluginBySkill = buildPluginBySkillMap(plugins);
       const skills: SlashSkillMetadata[] = [];
       let runtimeSkillIds = promptAccess.skillIds;
+      let workspaceMcpAllowIds: string[] = [];
+      let workspaceMcpDenyIds: string[] = [];
       const workspaceId = typeof req.query.workspaceId === 'string'
         ? req.query.workspaceId.trim()
         : '';
@@ -60,8 +62,17 @@ export function registerSlashRoutes(
           pins,
           workspacePolicy.workspaceMode,
         ).skillAllowIds;
+        workspaceMcpAllowIds = workspacePolicy.mcpServerAllowIds;
+        workspaceMcpDenyIds = workspacePolicy.mcpServerDenyIds;
       }
       const allowedSkillIds = new Set(runtimeSkillIds);
+      const personal = await userService.getPersonalSkillRuntimePins(user.userId);
+      for (const pin of personal) {
+        if (allowedSkillIds.has(pin.skillKey)) skills.push({
+          id: pin.skillKey, name: pin.name, description: pin.description, valid: true,
+        });
+      }
+
       for (const skillId of skillIds) {
         if (!allowedSkillIds.has(skillId)) {
           continue;
@@ -79,8 +90,15 @@ export function registerSlashRoutes(
         }
       }
 
-      const allowedMcpServerIds = new Set(promptAccess.mcpServerIds);
-      const mcpServers = (await loadRuntimeMcpServers())
+      const configuredMcpServers = await loadRuntimeMcpServers();
+      const resolvedMcpAccess = resolveRuntimeMcpAccess(
+        promptAccess.mcpServerIds,
+        configuredMcpServers,
+        workspaceMcpAllowIds,
+        workspaceMcpDenyIds,
+      );
+      const allowedMcpServerIds = new Set(resolvedMcpAccess.allowIds);
+      const mcpServers = configuredMcpServers
         .map((server) => ({
           name: typeof server.name === 'string' ? server.name.trim() : '',
           description: undefined as string | undefined,
@@ -94,7 +112,7 @@ export function registerSlashRoutes(
         plugins: filterPluginsForAccess(plugins, {
           isAdmin: false,
           skillIds: runtimeSkillIds,
-          mcpServerIds: promptAccess.mcpServerIds,
+          mcpServerIds: resolvedMcpAccess.allowIds,
         }),
       });
     } catch (error) {

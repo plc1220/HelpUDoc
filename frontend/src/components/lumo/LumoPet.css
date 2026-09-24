@@ -12,6 +12,11 @@
   bottom: auto;
 }
 
+/* Keep the default pet clear of the workspace composer and its Send control. */
+body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
+  bottom: 156px;
+}
+
 .lumo-root--dragging {
   user-select: none;
 }

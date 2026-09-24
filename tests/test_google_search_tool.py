@@ -7,6 +7,7 @@ from helpudoc_agent.api.routes.chat import _research_source_contract_error
 from helpudoc_agent.state import AgentRuntimeState, WorkspaceState
 from helpudoc_agent.tools.workspace import web_sources
 from helpudoc_agent.tools.workspace.web_sources import build_google_search_tool
+from helpudoc_agent.tools.workspace.policy import apply_search_policy_guard
 from helpudoc_agent.utils import SourceTracker
 
 
@@ -165,6 +166,28 @@ def test_google_search_does_not_retry_non_transient_errors(tmp_path, monkeypatch
     assert result["errorCode"] == "SEARCH_FAILED"
     assert result["retryable"] is False
     assert workspace.context["google_search_terminal_error"] is True
+
+
+def test_research_uses_separate_pre_and_post_plan_search_budgets(tmp_path):
+    workspace = WorkspaceState(workspace_id="ws-search-budgets", root_path=tmp_path)
+    workspace.context["active_skill_policy"] = {
+        "requires_hitl_plan": True,
+        "pre_plan_search_limit": 1,
+        "post_plan_search_limit": 2,
+    }
+
+    assert apply_search_policy_guard(workspace, "google_search") is None
+    assert workspace.context["pre_plan_search_count"] == 1
+    blocked_pre_plan = apply_search_policy_guard(workspace, "google_search")
+    assert blocked_pre_plan is not None
+    assert "Pre-plan search limit reached (1/1)" in blocked_pre_plan
+
+    workspace.context["plan_approved"] = True
+    assert apply_search_policy_guard(workspace, "google_search") is None
+    assert apply_search_policy_guard(workspace, "google_search") is None
+    blocked_post_plan = json.loads(apply_search_policy_guard(workspace, "google_search") or "{}")
+    assert blocked_post_plan["errorCode"] == "SEARCH_CALL_LIMIT"
+    assert "(2/2)" in blocked_post_plan["message"]
 
 
 def test_research_completion_requires_newly_tracked_sources(tmp_path):

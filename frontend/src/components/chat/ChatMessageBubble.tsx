@@ -37,6 +37,7 @@ import {
   normalizeUserFacingSummary,
   stripOperationalThinkingBlocks,
 } from '../../utils/toolActivitySummary';
+import { getAgentDurationBounds } from '../../utils/agentDuration';
 import { buildApiUrl } from '../../services/apiClient';
 import LumoMarkdown from '../markdown/LumoMarkdown';
 import { stripDeadFrontendSlidesUiReferences } from '../../utils/chatMarkdown';
@@ -242,15 +243,6 @@ const normalizePreviewKey = (value: string): string => (
   value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 );
 
-const inferStylePreviewPath = (label: string, value: string): string | undefined => {
-  const source = `${label} ${value}`;
-  const styleMatch = source.match(/\bstyle\s*([a-c])\b/i);
-  if (!styleMatch?.[1]) {
-    return undefined;
-  }
-  return `.frontend-slides/slide-previews/style-${styleMatch[1].toLowerCase()}.html`;
-};
-
 const parseStylePreviewChoiceMetadata = (
   payload?: Record<string, unknown>,
 ): Map<string, Partial<StylePreviewChoice>> => {
@@ -331,7 +323,9 @@ const buildStylePreviewChoices = (
           {};
         const label = matchingMetadata.label || choiceLabel;
         const value = matchingMetadata.value || choiceValue;
-        const path = matchingMetadata.path || inferStylePreviewPath(label, value);
+        // Never invent a conventional preview path. The style workflow must
+        // provide a generated workspace artifact or embedded HTML explicitly.
+        const path = matchingMetadata.path;
         const description = matchingMetadata.description || choiceRecord.description;
         const html = matchingMetadata.html;
         const isHtmlPreview = Boolean(path && /\.html?$/i.test(path));
@@ -825,6 +819,9 @@ export default function ChatMessageBubble({
     [pendingInterrupt, workspaceId],
   );
   const hasStylePreviewChooser = isClarificationInterrupt && stylePreviewChoices.length > 0;
+  const useSpecializedStylePreviewChooser = Boolean(
+    interactionRequest?.presentation === 'style_preview' && hasStylePreviewChooser,
+  );
   const [activeStylePreviewId, setActiveStylePreviewId] = useState<string | null>(null);
   const activeStylePreviewChoice = useMemo(() => {
     if (!stylePreviewChoices.length) {
@@ -1826,8 +1823,9 @@ export default function ChatMessageBubble({
           || (latestToolEvent ? getFriendlyToolName(latestToolEvent.name) : '')
           || toolDigest.currentLabel
           || 'Agent activity';
-  const activityDuration = latestToolEvent?.finishedAt
-    ? formatElapsedTime(latestToolEvent.startedAt, now, latestToolEvent.finishedAt)
+  const durationBounds = getAgentDurationBounds(message, effectiveStatus === 'running', now);
+  const activityDuration = durationBounds
+    ? formatElapsedTime(durationBounds.startedAt, now, durationBounds.finishedAt)
     : undefined;
   const activityMetaLabel = [
     `${activityEventCount} recorded ${activityEventCount === 1 ? 'step' : 'steps'}`,
@@ -1961,7 +1959,7 @@ export default function ChatMessageBubble({
                 {displayThinkingText ? 'Finalizing response...' : 'Thinking...'}
               </span>
             ) : null}
-            {interactionRequest ? (
+            {interactionRequest && !useSpecializedStylePreviewChooser ? (
               <div className="mt-3">
                 <InteractionSurfaceRenderer
                   request={interactionRequest}
@@ -2127,7 +2125,8 @@ export default function ChatMessageBubble({
                 </div>
               </div>
             ) : null}
-            {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed && !(interactionRequest) ? (
+            {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed
+              && (!interactionRequest || useSpecializedStylePreviewChooser) ? (
               <div className="mt-3 rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">

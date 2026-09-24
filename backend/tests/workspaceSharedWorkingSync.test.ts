@@ -25,6 +25,7 @@ type HarnessOptions = {
   sharedVisibility?: 'team' | 'private';
   sharedExists?: boolean;
   sharedAccess?: boolean;
+  subMillisecondLinkTimestamp?: boolean;
 };
 
 function hash(value: string): string {
@@ -146,11 +147,18 @@ function syncHarness(options: HarnessOptions = {}) {
   const sharedContent = makeContent(sharedFiles, options.sharedFolders);
   const fakeTx = ((table: string) => {
     if (table === 'workspace_publication_links') {
-      return { where: () => ({ update: updateLink }) };
+      return { where: (predicate: Record<string, unknown>) => ({
+        update: (payload: Record<string, unknown>) => {
+          // pg reads timestamps as JS Dates, dropping stored microseconds.
+          if (options.subMillisecondLinkTimestamp && 'updatedAt' in predicate) return Promise.resolve(0);
+          return updateLink(payload);
+        },
+      }) };
     }
     throw new Error(`Unexpected transaction table ${table}`);
   }) as any;
   fakeTx.fn = { now: () => 'NOW()' };
+  db.transaction = async (callback: (tx: unknown) => Promise<unknown>) => callback(fakeTx);
 
   const service = Object.create(WorkspacePublicationService.prototype) as any;
   Object.assign(service, {
@@ -289,6 +297,32 @@ test('a revision bump with byte-identical Working content is a no-op', async () 
   const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
 
   assert.equal(result.status, 'up_to_date');
+  assert.equal(harness.replaceCalls(), 0);
+  assert.equal(harness.link.baseSharedContentRevision, 9);
+  assert.notEqual(harness.link.updatedAt, '2026-08-01T00:00:00Z');
+});
+
+test('sync acknowledges unchanged Shared content while preserving unpublished draft changes', async () => {
+  const harness = syncHarness({
+    privateFiles: { 'notes.txt': 'my edits', 'new.txt': 'new draft file' },
+    privateRevision: 4,
+    hasUnpublishedChanges: true,
+    subMillisecondLinkTimestamp: true,
+  });
+  const before = new Date().toISOString();
+  const result = await harness.service.sync(harness.privateWorkspaceId, harness.userId);
+  assert.equal(result.status, 'up_to_date');
+  assert.equal(harness.replaceCalls(), 0);
+  assert.ok(harness.link.updatedAt >= before);
+  assert.equal(harness.link.basePrivateContentRevision, 3);
+  assert.equal(harness.link.hasUnpublishedChanges, true);
+});
+
+test('a Shared revision race does not acknowledge an outdated comparison', async () => {
+  const harness = syncHarness();
+  harness.service.assertSharedWorkingRevision = async () => { throw new Error('Shared Working changed'); };
+  await assert.rejects(harness.service.sync(harness.privateWorkspaceId, harness.userId), /Shared Working changed/);
+  assert.equal(harness.linkUpdates.length, 0);
   assert.equal(harness.replaceCalls(), 0);
 });
 

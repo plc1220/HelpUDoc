@@ -159,7 +159,7 @@ export const isInternalStreamContent = (value: string): boolean => {
   // unroled token/chunk.
   const numberedToolLines = normalized
     .split(/\r?\n/)
-    .filter((line) => /^\s*\d+\t/.test(line));
+    .filter((line) => /^\s*\d+(?:\t| {2,})/.test(line));
   return numberedToolLines.length >= 3;
 };
 

@@ -1,3 +1,4 @@
+import { NotificationProvider } from './components/NotificationCenter';
 import { Suspense, lazy, type FC, type ReactElement } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth/useAuth';
@@ -32,6 +33,7 @@ const RequireAuth: FC<{ children: ReactElement }> = ({ children }) => {
 
 const ProtectedShell: FC = () => {
   return (
+    <NotificationProvider>
     <Suspense
       fallback={(
         <div className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] text-slate-500">
@@ -107,6 +109,7 @@ const ProtectedShell: FC = () => {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
+    </NotificationProvider>
   );
 };
 

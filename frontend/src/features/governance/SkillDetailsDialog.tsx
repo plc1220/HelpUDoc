@@ -98,7 +98,7 @@ export default function SkillDetailsDialog({
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">Team skill</span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">{friendlyStatus(skill.status)}</span>
-              {skill.entitled ? <span className="text-emerald-700">You have access</span> : <span className="text-slate-500">Not assigned to you</span>}
+              {skill.executionBlockedReason ? <span className="text-rose-700">Blocked: {skill.executionBlockedReason}</span> : skill.entitled ? <span className="text-emerald-700">You have access</span> : <span className="text-slate-500">Not assigned to you</span>}
             </div>
             <h2 id="skill-details-title" className="mt-2 truncate text-2xl font-semibold text-slate-900">{skill.displayName}</h2>
             <p className="mt-1 text-sm leading-6 text-slate-600">{skill.description || 'No description has been added yet.'}</p>

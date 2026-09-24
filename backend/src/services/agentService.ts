@@ -435,6 +435,54 @@ export async function preflightWorkspaceDocument(
   return res.data;
 }
 
+export type OfficeQuickEdit = {
+  paragraphId: string;
+  start: number;
+  end: number;
+  quote: string;
+  action: 'bold' | 'italic' | 'fontSize' | 'style' | 'replaceText';
+  value: boolean | number | string;
+};
+
+export type OfficeDocumentMap = {
+  paragraphs: Array<{
+    id: string;
+    text: string;
+    styleId?: string | null;
+    editable: boolean;
+    runs: Array<{ start: number; end: number; bold?: boolean | null; italic?: boolean | null; fontSize?: number | null }>;
+  }>;
+  styles: Array<{ id: string; name: string }>;
+};
+
+type OfficeDocumentPayload = { workspaceId: string; filename: string; content: string };
+
+export async function previewOfficeDocument(
+  payload: OfficeDocumentPayload,
+  options?: InternalAgentOptions,
+): Promise<{ pdf: string; revision: string; document?: OfficeDocumentMap }> {
+  const res = await client.post('/documents/office-preview', payload, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    maxBodyLength: 36 * 1024 * 1024,
+    maxContentLength: 75 * 1024 * 1024,
+    headers: options?.authToken ? { Authorization: `Bearer ${options.authToken}` } : {},
+  });
+  return res.data;
+}
+
+export async function editOfficeDocument(
+  payload: OfficeDocumentPayload & { revision: string; edit: OfficeQuickEdit },
+  options?: InternalAgentOptions,
+): Promise<{ content: string; revision: string }> {
+  const res = await client.post('/documents/office-edit', payload, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    maxBodyLength: 36 * 1024 * 1024,
+    maxContentLength: 36 * 1024 * 1024,
+    headers: options?.authToken ? { Authorization: `Bearer ${options.authToken}` } : {},
+  });
+  return res.data;
+}
+
 export async function enrichKnowledgeWindow(payload: {
   workspaceId: string;
   window: Record<string, unknown>;

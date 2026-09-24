@@ -11,6 +11,7 @@ const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document';
 const GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet';
 const GOOGLE_SLIDE_MIME = 'application/vnd.google-apps.presentation';
 const GOOGLE_FOLDER_MIME = 'application/vnd.google-apps.folder';
+const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME = 'application/pdf';
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
@@ -290,6 +291,165 @@ export class GoogleDriveService {
     private readonly googleOAuthService: GoogleOAuthService,
     private readonly fileService: FileService,
   ) {}
+
+  /** Reserve an ID before upload so retries after a network timeout are safe. */
+  async generateUploadId(userId: string): Promise<string> {
+    const { accessToken } = await this.googleOAuthService.getDelegatedAccessToken(userId, [DRIVE_FILE_SCOPE]);
+    const url = new URL(`${DRIVE_API_BASE}/files/generateIds`);
+    url.searchParams.set('count', '1');
+    url.searchParams.set('space', 'drive');
+    const result = await this.fetchJson<{ ids?: string[] }>(accessToken, url.toString(), 'Could not prepare Google Drive upload');
+    const id = result.ids?.[0];
+    if (!id) throw new HttpError(502, 'Google Drive did not provide an upload ID');
+    return id;
+  }
+
+  async uploadPublishedArtifact(userId: string, input: {
+    driveFileId: string;
+    name: string;
+    mimeType: string;
+    buffer: Buffer;
+    publicationId: string;
+    uploadSessionUri?: string | null;
+    onUploadSession?: (uri: string) => Promise<void>;
+  }): Promise<{ id: string; webViewLink?: string; uploadSessionUri: string }> {
+    const { accessToken } = await this.googleOAuthService.getDelegatedAccessToken(userId, [DRIVE_FILE_SCOPE]);
+    const metadata = Buffer.from(JSON.stringify({
+      id: input.driveFileId,
+      name: input.name,
+      mimeType: input.mimeType,
+      appProperties: { helpudocPublicationId: input.publicationId },
+    }));
+
+    let sessionUri = input.uploadSessionUri || '';
+    if (sessionUri) {
+      let parsed: URL;
+      try { parsed = new URL(sessionUri); } catch { throw new HttpError(409, 'Stored Google Drive upload session is invalid'); }
+      if (parsed.protocol !== 'https:' || parsed.hostname !== 'www.googleapis.com') {
+        throw new HttpError(409, 'Stored Google Drive upload session has an invalid host');
+      }
+      const state = await this.queryUploadSession(accessToken, sessionUri, input.buffer.length);
+      if (state.file) return { ...state.file, uploadSessionUri: sessionUri };
+      if (state.expired) {
+        try {
+          const existing = await this.getUploadedFileMetadata(userId, input.driveFileId);
+          return { ...existing, uploadSessionUri: sessionUri };
+        } catch (error) {
+          if (!(error instanceof HttpError) || error.statusCode !== 404) throw error;
+        }
+        sessionUri = '';
+      } else {
+        const uploaded = await this.continueResumableUpload(accessToken, sessionUri, input.buffer, state.offset);
+        return { ...uploaded, uploadSessionUri: sessionUri };
+      }
+    }
+
+    const startUrl = new URL('https://www.googleapis.com/upload/drive/v3/files');
+    startUrl.searchParams.set('uploadType', 'resumable');
+    startUrl.searchParams.set('supportsAllDrives', 'true');
+    startUrl.searchParams.set('fields', 'id,webViewLink');
+    const started = await fetch(startUrl.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+        'X-Upload-Content-Type': input.mimeType,
+        'X-Upload-Content-Length': String(input.buffer.length),
+      },
+      body: metadata,
+    });
+    if (started.status === 409) {
+      const existing = await this.getUploadedFileMetadata(userId, input.driveFileId);
+      return { ...existing, uploadSessionUri: '' };
+    }
+    if (!started.ok) {
+      const text = await started.text();
+      throw new HttpError(started.status, `Could not start Google Drive upload (${started.status}): ${text.slice(0, 300)}`);
+    }
+    sessionUri = started.headers.get('Location') || '';
+    if (!sessionUri) throw new HttpError(502, 'Google Drive did not return an upload session');
+    await input.onUploadSession?.(sessionUri);
+    const uploaded = await this.continueResumableUpload(accessToken, sessionUri, input.buffer, 0);
+    return { ...uploaded, uploadSessionUri: sessionUri };
+  }
+
+  private async queryUploadSession(
+    accessToken: string,
+    sessionUri: string,
+    totalBytes: number,
+  ): Promise<{ offset: number; expired?: boolean; file?: { id: string; webViewLink?: string } }> {
+    const response = await fetch(sessionUri, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Length': '0',
+        'Content-Range': `bytes */${totalBytes}`,
+      },
+    });
+    if (response.status === 404) return { offset: 0, expired: true };
+    if (response.status === 200 || response.status === 201) {
+      return { offset: totalBytes, file: await response.json() as { id: string; webViewLink?: string } };
+    }
+    if (response.status !== 308) {
+      const text = await response.text();
+      throw new HttpError(response.status, `Could not resume Google Drive upload (${response.status}): ${text.slice(0, 300)}`);
+    }
+    const lastReceived = /bytes=0-(\d+)/i.exec(response.headers.get('Range') || '')?.[1];
+    return { offset: lastReceived ? Number(lastReceived) + 1 : 0 };
+  }
+
+  private async continueResumableUpload(
+    accessToken: string,
+    sessionUri: string,
+    buffer: Buffer,
+    initialOffset: number,
+  ): Promise<{ id: string; webViewLink?: string }> {
+    let offset = initialOffset;
+    const chunkSize = 8 * 1024 * 1024;
+    while (offset < buffer.length) {
+      const endExclusive = Math.min(offset + chunkSize, buffer.length);
+      const chunk = buffer.subarray(offset, endExclusive);
+      const response = await fetch(sessionUri, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Length': String(chunk.length),
+          'Content-Range': `bytes ${offset}-${endExclusive - 1}/${buffer.length}`,
+        },
+        body: new Uint8Array(chunk),
+      });
+      if (response.status === 200 || response.status === 201) {
+        return response.json() as Promise<{ id: string; webViewLink?: string }>;
+      }
+      if (response.status === 308) {
+        const lastReceived = /bytes=0-(\d+)/i.exec(response.headers.get('Range') || '')?.[1];
+        const nextOffset = lastReceived ? Number(lastReceived) + 1 : 0;
+        if (nextOffset <= offset && chunk.length > 0) throw new HttpError(502, 'Google Drive upload made no progress');
+        offset = nextOffset;
+        continue;
+      }
+      const text = await response.text();
+      throw new HttpError(response.status, `Failed to upload publication to Google Drive (${response.status}): ${text.slice(0, 300)}`);
+    }
+    if (buffer.length === 0) {
+      const response = await fetch(sessionUri, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Length': '0', 'Content-Range': 'bytes */0' },
+      });
+      if (response.status === 200 || response.status === 201) {
+        return response.json() as Promise<{ id: string; webViewLink?: string }>;
+      }
+    }
+    throw new HttpError(502, 'Google Drive upload ended before the file was complete');
+  }
+
+  async getUploadedFileMetadata(userId: string, driveFileId: string): Promise<{ id: string; webViewLink?: string }> {
+    const { accessToken } = await this.googleOAuthService.getDelegatedAccessToken(userId, [DRIVE_FILE_SCOPE]);
+    const url = new URL(`${DRIVE_API_BASE}/files/${encodeURIComponent(driveFileId)}`);
+    url.searchParams.set('fields', 'id,webViewLink');
+    url.searchParams.set('supportsAllDrives', 'true');
+    return this.fetchJson(accessToken, url.toString(), 'Could not verify Google Drive upload');
+  }
 
   async searchFiles(
     userId: string,

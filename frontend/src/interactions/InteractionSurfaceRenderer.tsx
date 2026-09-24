@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
@@ -14,6 +14,7 @@ import type {
 import { buildApiUrl } from '../services/apiClient';
 import { resolveStylePreviewSource } from '../utils/stylePreview';
 import WorkspaceHtmlPreviewFrame from '../components/WorkspaceHtmlPreviewFrame';
+import type { SlideStyle } from '../components/slides/slideStyleWorkflow';
 
 type Choice = {
   id?: string;
@@ -48,6 +49,37 @@ const asRecord = (value: unknown): Record<string, unknown> => (
     ? value as Record<string, unknown>
     : {}
 );
+
+const PLAN_STEP_LABEL_KEYS = [
+  'title', 'label', 'name', 'step', 'action', 'task', 'summary', 'text', 'item', 'description',
+];
+
+/**
+ * Resolve a reviewer-facing label for a plan step.
+ *
+ * The agent normalizes steps to `{title, detail?, state?}`, but this stays defensive: a step with
+ * unrecognized keys must still show its content. Rendering a positional "Step 3" placeholder hid
+ * the actual plan from the approver, which is worse than showing an ugly value.
+ */
+const planStepLabel = (record: Record<string, unknown>, index: number): string => {
+  for (const key of PLAN_STEP_LABEL_KEYS) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  const firstText = Object.values(record).find(
+    (value): value is string => typeof value === 'string' && value.trim().length > 0,
+  );
+  if (firstText) return firstText.trim();
+  const keys = Object.keys(record);
+  if (keys.length) {
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return keys.join(', ');
+    }
+  }
+  return `Step ${index + 1}`;
+};
 
 const asChoices = (value: unknown): Choice[] => (
   Array.isArray(value)
@@ -135,6 +167,7 @@ export function InteractionSurfaceRenderer({
   const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionLock = useRef(false);
   const [error, setError] = useState<string>();
   const inputMode = String(props.inputMode || '').toLowerCase();
   const hasStructuredQuestions = questions.length > 0;
@@ -145,19 +178,26 @@ export function InteractionSurfaceRenderer({
     && !hasStructuredQuestions
     && (inputMode !== 'choice' || choices.length === 0);
 
-  const submit = async (response: Omit<InteractionResponse, 'interactionId'>) => {
+  const submit = async (response: Omit<InteractionResponse, 'interactionId'>, propagateError = false) => {
+    if (submissionLock.current) {
+      if (propagateError) throw new Error('This choice is already being submitted. Follow its progress in chat.');
+      return;
+    }
+    submissionLock.current = true;
     setIsSubmitting(true);
     setError(undefined);
     try {
       await onSubmit({ interactionId: request.interactionId, ...response });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not submit your response.');
+      if (propagateError) throw caught;
     } finally {
+      submissionLock.current = false;
       setIsSubmitting(false);
     }
   };
 
-  const renderChoiceList = (items: Choice[], questionId?: string) => {
+  const renderChoiceList = (items: Choice[], questionId?: string, labelOffset = 0) => {
     const selected = questionId ? answers[questionId] : selectedChoiceId;
     return (
       <List>
@@ -173,7 +213,7 @@ export function InteractionSurfaceRenderer({
               startContent={(
                 <Badge
                   variant={isSelected ? 'info' : 'neutral'}
-                  label={String.fromCharCode(65 + index)}
+                  label={String.fromCharCode(65 + index + labelOffset)}
                 />
               )}
               isSelected={isSelected}
@@ -254,13 +294,13 @@ export function InteractionSurfaceRenderer({
                   path={html ? undefined : sourcePath}
                   html={html}
                   title={`${choiceLabel(choice, index)} preview`}
-                  sandbox=""
+                  sandbox="allow-scripts"
                   className="block h-[240px] w-full border-0"
                   placeholderClassName="flex h-[240px] w-full items-center justify-center bg-slate-950"
                 />
               </div>
             ) : null}
-            {renderChoiceList([choice])}
+            {renderChoiceList([choice], undefined, index)}
           </Stack>
         );
       })}
@@ -314,7 +354,19 @@ export function InteractionSurfaceRenderer({
           />
         ) : null}
 
-        {request.presentation === 'style_preview' ? renderStylePreviews() : null}
+        {request.presentation === 'style_preview' ? <>
+          {renderStylePreviews()}
+          {workspaceId && <Button label="Browse all styles" variant="secondary" size="sm" isDisabled={isSubmitting} onClick={() => {
+            window.dispatchEvent(new CustomEvent('lumo:browse-slide-styles', { detail: {
+              workspaceId, interactionId: request.interactionId,
+              onSelect: (style: SlideStyle) => submit({
+                decision: 'submit', actionId: request.resumeAction?.actionId || 'submit',
+                values: { selectedChoiceId: style.id, selectedValues: [style.name], designPath: style.designPath },
+                message: `Use ${style.name} from the full style library. Read ${style.designPath} in frontend-slides. Continue from this style-selection step; do not restart the brief, outline or other completed gates. If editing an existing deck, keep its content and filename.`,
+              }, true),
+            } }));
+          }} />}
+        </> : null}
 
         {request.presentation === 'plan_review' ? (
           <Stack direction="vertical" gap={2} width="100%">
@@ -340,9 +392,7 @@ export function InteractionSurfaceRenderer({
                 <List>
                   {planSteps.map((step, index) => {
                     const record = asRecord(step);
-                    const label = typeof step === 'string'
-                      ? step
-                      : String(record.title || record.label || record.description || `Step ${index + 1}`);
+                    const label = typeof step === 'string' ? step : planStepLabel(record, index);
                     const detail = typeof step === 'string'
                       ? undefined
                       : String(record.detail || record.description || '');

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -286,7 +287,7 @@ def test_runner_creates_hardened_job_and_deletes_it(tmp_path: Path) -> None:
     body = batch_api.created_body
     pod_spec = body["spec"]["template"]["spec"]
     container = pod_spec["containers"][0]
-    assert pod_spec["runtimeClassName"] == "gvisor"
+    assert "runtimeClassName" not in pod_spec
     assert pod_spec["automountServiceAccountToken"] is False
     affinity_term = pod_spec["affinity"]["podAffinity"][
         "requiredDuringSchedulingIgnoredDuringExecution"
@@ -323,8 +324,29 @@ def test_declared_manifest_omits_unconfigured_runtime_class() -> None:
         sandbox_config=config,
     )
 
-    assert config.runtime_class_name == ""
+    assert config.declared_runtime_class_name == ""
     assert "runtimeClassName" not in manifest["spec"]["template"]["spec"]
+
+
+def test_declared_manifest_uses_its_own_runtime_class() -> None:
+    config = replace(_sandbox_config(), declared_runtime_class_name="runc-sandbox")
+    manifest = build_sandbox_job_manifest(
+        job_name="job",
+        workspace_id="ws",
+        run_id="run",
+        staged_script_name="scripts/run.py",
+        args=[],
+        script=SkillSandboxScript(
+            name="run",
+            path="scripts/run.py",
+            sha256="0" * 64,
+            timeout_seconds=120,
+            outputs=[],
+        ),
+        sandbox_config=config,
+    )
+
+    assert manifest["spec"]["template"]["spec"]["runtimeClassName"] == "runc-sandbox"
 
 
 def test_runner_stages_skill_scripts_tree_for_imports(tmp_path: Path) -> None:
@@ -1362,12 +1384,35 @@ def test_inline_tool_reports_disabled_flag_without_running(
     settings = SimpleNamespace(backend=SimpleNamespace(skills_root=skills_root, plugins_root=None))
     tool_obj = build_run_skill_python_script_tool(settings, workspace)
 
+    assert "inline_code" not in tool_obj.args
+    assert "output_paths" not in tool_obj.args
+    assert "timeout_seconds" not in tool_obj.args
+
     response = tool_obj.func(
         inline_code="print('hi')\n",
         output_paths=["outputs/final.txt"],
     )
 
     assert "SANDBOX_INLINE_DISABLED" in response
+
+
+def test_inline_tool_advertises_inline_arguments_only_on_enabled_kubernetes_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.helpudoc_agent.tools.workspace.builtins.skills import (
+        build_run_skill_python_script_tool,
+    )
+
+    _enable_inline(monkeypatch)
+    monkeypatch.setenv("HELPUDOC_SANDBOX_BACKEND", "kubernetes")
+    skills_root, workspace = _inline_workspace(tmp_path)
+    settings = SimpleNamespace(backend=SimpleNamespace(skills_root=skills_root, plugins_root=None))
+
+    tool_obj = build_run_skill_python_script_tool(settings, workspace)
+
+    assert "inline_code" in tool_obj.args
+    assert "output_paths" in tool_obj.args
+    assert "timeout_seconds" in tool_obj.args
 
 
 def test_inline_tool_rejects_both_and_neither_modes(
@@ -1422,11 +1467,15 @@ def test_tool_rejects_arguments_from_the_other_execution_mode(
     assert "SKILL_SANDBOX_REQUEST_INVALID" in declared_with_outputs
 
 
-def test_inline_tool_description_explains_both_filesystem_modes(tmp_path: Path) -> None:
+def test_inline_tool_description_explains_enabled_kubernetes_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from agent.helpudoc_agent.tools.workspace.builtins.skills import (
         build_run_skill_python_script_tool,
     )
 
+    _enable_inline(monkeypatch)
+    monkeypatch.setenv("HELPUDOC_SANDBOX_BACKEND", "kubernetes")
     skills_root, workspace = _inline_workspace(tmp_path)
     settings = SimpleNamespace(backend=SimpleNamespace(skills_root=skills_root, plugins_root=None))
     tool_obj = build_run_skill_python_script_tool(settings, workspace)
@@ -1434,6 +1483,6 @@ def test_inline_tool_description_explains_both_filesystem_modes(tmp_path: Path) 
     description = tool_obj.description
 
     assert "inline_code" in description
-    assert "no\n/workspace mount" in description or "no /workspace mount" in description
-    assert "read-only workspace access" in description
+    assert "private writable /workspace snapshot" in description
     assert "output_paths" in description
+    assert "Never use inline_code merely to list, search, or read skill assets" in description

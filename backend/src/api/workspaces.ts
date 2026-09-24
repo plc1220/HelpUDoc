@@ -382,6 +382,16 @@ export default function workspaceRoutes(
     }
   });
 
+  router.delete('/:workspaceId/permanent', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      await workspaceService.permanentlyDeleteWorkspace(req.params.workspaceId, user.userId);
+      res.status(204).send();
+    } catch (error) {
+      handleError(res, error, 'Failed to permanently delete workspace');
+    }
+  });
+
   router.post('/:workspaceId/trash', async (req, res) => {
     try {
       const user = requireUserContext(req);

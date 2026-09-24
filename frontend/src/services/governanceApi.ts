@@ -15,6 +15,10 @@ export type SkillDraftSummary = {
   description?: string | null;
   proposedOwnerTeamId?: string | null;
   proposedOwnerTeamName?: string | null;
+  activeRevisionId?: string | null;
+  currentDraftRevisionId?: string;
+  activationError?: string | null;
+  executionBlockedReason?: string | null;
   draftRevision: number;
   status: 'private' | 'submitted' | 'archived';
   hasReviewHistory?: boolean;
@@ -54,6 +58,9 @@ export type SkillValidation = {
 };
 
 export type SkillDraft = SkillDraftSummary & {
+  sourceVersionId?: string;
+  nextSemanticVersion?: string;
+  executionBlocks?: Array<{ reason: string }>;
   currentDraftRevisionId: string;
   etag: string;
   files: SkillDraftFile[];
@@ -62,6 +69,7 @@ export type SkillDraft = SkillDraftSummary & {
 };
 
 export type MySkillsResponse = {
+  canManageBlocks?: boolean;
   drafts: SkillDraftSummary[];
   reviews: Array<{
     id: string;
@@ -159,6 +167,7 @@ export type TeamReviewDetail = {
 };
 
 export type CatalogSkill = {
+  executionBlockedReason?: string | null;
   id: string;
   skillKey: string;
   displayName: string;
@@ -304,6 +313,7 @@ export const submitSkillDraft = (
   draftId: string,
   input: {
     owningTeamId?: string;
+    publishToTeam?: boolean;
     semanticVersion: string;
     submissionNote?: string;
     expectedDraftRevision: number;
@@ -461,3 +471,11 @@ export const setTeamLead = (teamId: string, userId: string, enabled: boolean) =>
     },
     'Failed to update Team Lead assignment',
   );
+
+export type SkillExecutionControls = {
+  skills: Array<{ id: string; skillKey: string; displayName: string; ownerName: string; scope: string; activeRevisionId?: string | null }>;
+  blocks: Array<{ id: string; skillKey: string; versionId?: string; manifestHash?: string; reason: string }>;
+};
+export const fetchSkillExecutionControls = () => jsonRequest<SkillExecutionControls>(`${API_URL}/skills/execution-controls`, {}, 'Failed to load execution controls');
+export const setSkillExecutionBlock = (input: { skillKey: string; versionId?: string; blocked: boolean; reason: string }) =>
+  jsonRequest(`${API_URL}/skills/execution-controls`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }, 'Failed to update execution block');

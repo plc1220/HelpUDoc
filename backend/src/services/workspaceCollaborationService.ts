@@ -1,3 +1,4 @@
+import { createNotification } from './notificationService';
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -79,6 +80,7 @@ export type UpdateWorkspaceCollaborationInput = {
 type CollaborationAccess = {
   membership: WorkspaceMembershipRecord;
   currentPublishedVersionId: string | null;
+  isShared: boolean;
 };
 
 export type WorkspaceTeamMessageAuthorType = 'user' | 'lumo' | 'system';
@@ -125,17 +127,53 @@ export class WorkspaceCollaborationService {
     this.publicationService = publicationService;
   }
 
+  async withTeamMessageLock<T>(workspaceId: string, messageId: string, work: (row: WorkspaceTeamMessage, tx: Knex.Transaction) => Promise<T>): Promise<T> {
+    return this.db.transaction(async (tx) => {
+      const row = await tx('workspace_team_messages').where({ workspaceId, id: messageId }).forUpdate().first();
+      if (!row) throw new NotFoundError('Workspace Chat message not found');
+      return work(row, tx);
+    });
+  }
+
+  async updateTeamRun(workspaceId: string, messageId: string, metadata: Record<string, unknown>) {
+    await this.withTeamMessageLock(workspaceId, messageId, async (row, tx) => {
+      await tx('workspace_team_messages').where({ id: messageId }).update({
+        metadata: { ...row.metadata, ...metadata }, updatedAt: new Date(),
+      });
+    });
+  }
+
   async listTeamMessages(
     workspaceId: string,
     userId: string,
     limit = 200,
+    includeMessageId?: string,
   ): Promise<WorkspaceTeamMessage[]> {
     await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     const rows = await this.teamMessageQuery(userId)
       .where('message.workspaceId', workspaceId)
       .orderBy('message.createdAt', 'desc')
       .limit(Math.min(Math.max(limit, 1), 500));
-    return (rows as WorkspaceTeamMessage[]).reverse();
+    const messages = (rows as WorkspaceTeamMessage[]).reverse();
+    // Preserve the exact destination of an older mention without exposing another workspace.
+    if (includeMessageId) {
+      const target = await this.getTeamMessage(workspaceId, includeMessageId, userId);
+      if (!messages.some((message) => message.id === target.id)) messages.push(target);
+      if (target.threadRootId && !messages.some((message) => message.id === target.threadRootId)) {
+        messages.push(await this.getTeamMessage(workspaceId, target.threadRootId, userId));
+      }
+      messages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+    return messages;
+  }
+
+  async listPendingTeamMessages(workspaceId: string, userId: string): Promise<WorkspaceTeamMessage[]> {
+    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    return this.teamMessageQuery(userId)
+      .where('message.workspaceId', workspaceId)
+      .whereRaw(`message.metadata->>'runStatus' IN ('queued', 'running', 'awaiting_approval')`)
+      .orderBy('message.updatedAt', 'asc')
+      .limit(100);
   }
 
   async createTeamMessage(
@@ -145,6 +183,7 @@ export class WorkspaceCollaborationService {
       body: string;
       replyToMessageId?: string;
       mentionedUserIds?: string[];
+      references?: Array<Record<string, unknown>>;
     },
   ): Promise<WorkspaceTeamMessage> {
     const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
@@ -162,6 +201,7 @@ export class WorkspaceCollaborationService {
       replyTo = await this.getTeamMessage(workspaceId, input.replyToMessageId, userId);
     }
 
+    const { collaborators } = await this.workspaceService.listCollaborators(workspaceId, userId);
     const id = uuidv4();
     const body = input.body.trim();
     await this.db.transaction(async (tx) => {
@@ -174,7 +214,8 @@ export class WorkspaceCollaborationService {
         body,
         replyToMessageId: replyTo?.id || null,
         threadRootId: replyTo ? (replyTo.threadRootId || replyTo.id) : null,
-        mentionsLumo: /(^|\s)@lumo\b/i.test(body),
+        mentionsLumo: /(^|\s)@lumo\b/i.test(body) || Boolean(input.references?.some((ref) => ref.kind === 'skill' || ref.kind === 'agent')),
+        metadata: { references: input.references || [], ...( /(^|\s)@lumo\b/i.test(body) || input.references?.some((ref) => ref.kind === 'skill' || ref.kind === 'agent') ? { runStatus: 'queued' } : {}) },
       });
       if (mentionedUserIds.length) {
         await tx('workspace_team_message_mentions').insert(
@@ -183,6 +224,17 @@ export class WorkspaceCollaborationService {
             userId: mentionedUserId,
           })),
         );
+      }
+      for (const recipientUserId of new Set([...collaborators.map((member) => member.userId), ...mentionedUserIds].filter((id) => id !== userId))) {
+        const mentioned = mentionedUserIds.includes(recipientUserId);
+        await createNotification(tx, {
+          recipientUserId,
+          eventType: mentioned ? 'chat.mentioned' : 'chat.message',
+          resourceType: 'workspace_team_message',
+          resourceId: id,
+          eventKey: id,
+          payload: { title: mentioned ? 'You were mentioned in team chat' : 'New team chat message', description: body.slice(0, 500), workspaceId, messageId: id, channel: 'team' },
+        });
       }
     });
 
@@ -227,6 +279,7 @@ export class WorkspaceCollaborationService {
     sourceMessage: WorkspaceTeamMessage,
     invokingUserId: string,
     body: string,
+    metadata: Record<string, unknown> = {},
   ): Promise<WorkspaceTeamMessage> {
     const existing = await this.findLumoReply(workspaceId, sourceMessage.id, invokingUserId);
     if (existing) {
@@ -245,7 +298,7 @@ export class WorkspaceCollaborationService {
         threadRootId: sourceMessage.threadRootId || sourceMessage.id,
         mentionsLumo: false,
         metadata: {
-          readOnly: true,
+          ...metadata,
           invokedByUserId: invokingUserId,
           sourceMessageId: sourceMessage.id,
         },
@@ -301,7 +354,7 @@ export class WorkspaceCollaborationService {
       filePath?: string;
     } = {},
   ): Promise<WorkspaceCollaborationObject[]> {
-    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
 
     const rows = await this.db('workspace_collaboration_objects as object')
       .leftJoin('users as author', 'author.id', 'object.authorId')
@@ -313,6 +366,7 @@ export class WorkspaceCollaborationService {
           .orWhere('object.authorId', userId);
       })
       .modify((query) => {
+        if (!access.isShared) query.where('object.type', 'annotation').where('object.visibility', 'private');
         if (filters.status) query.where('object.status', filters.status);
         if (filters.type) query.where('object.type', filters.type);
         if (filters.filePath) query.where('object.filePath', filters.filePath);
@@ -347,8 +401,8 @@ export class WorkspaceCollaborationService {
       updatedAt: string;
     }>;
   }> {
-    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
-    const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    const object = await this.ensureObjectAccess(workspaceId, objectId, userId, !access.isShared);
     const messages = await this.db('workspace_collaboration_messages as message')
       .leftJoin('users as author', 'author.id', 'message.authorId')
       .where('message.objectId', objectId)
@@ -365,7 +419,10 @@ export class WorkspaceCollaborationService {
     userId: string,
     input: CreateWorkspaceCollaborationInput,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    if (!access.isShared && (input.type !== 'annotation' || input.visibility !== 'private' || input.sourceTeamMessageId)) {
+      throw new ConflictError('Personal workspaces support private annotations only');
+    }
     if (!canCreateWorkspaceCollaborationObject(access.membership.role, input.type, input.visibility)) {
       throw new AccessDeniedError(
         input.type === 'change_proposal'
@@ -394,6 +451,9 @@ export class WorkspaceCollaborationService {
       await this.getTeamMessage(workspaceId, input.sourceTeamMessageId, userId);
     }
 
+    const recipients = input.type === 'annotation' && input.visibility === 'workspace_audience'
+      ? (await this.workspaceService.listCollaborators(workspaceId, userId)).collaborators.map(member => member.userId)
+      : [];
     const id = uuidv4();
     await this.db.transaction(async (tx) => {
       await tx('workspace_collaboration_objects').insert({
@@ -406,7 +466,7 @@ export class WorkspaceCollaborationService {
         fileId: input.fileId || null,
         filePath: this.optionalText(input.filePath),
         blockId: this.optionalText(input.blockId),
-        anchorText: this.optionalText(input.anchorText),
+        anchorText: input.anchorText || null,
         anchorStart: input.anchorStart ?? null,
         anchorEnd: input.anchorEnd ?? null,
         anchorFingerprint: this.optionalText(input.anchorFingerprint),
@@ -425,6 +485,12 @@ export class WorkspaceCollaborationService {
           })),
         );
       }
+      for (const recipientUserId of new Set(recipients.filter(id => id !== userId))) {
+        await createNotification(tx, {
+          recipientUserId, eventType: 'annotation.created', resourceType: 'workspace_annotation', resourceId: id, eventKey: id,
+          payload: { title: 'New canvas comment', description: input.body.trim().slice(0, 500), workspaceId, annotationId: id, filePath: input.filePath },
+        });
+      }
     });
 
     return this.ensureObjectAccess(workspaceId, id, userId);
@@ -436,8 +502,8 @@ export class WorkspaceCollaborationService {
     userId: string,
     body: string,
   ) {
-    const { membership } = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
-    const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
+    const { membership, isShared } = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    const object = await this.ensureObjectAccess(workspaceId, objectId, userId, !isShared);
     if (
       object.visibility === 'workspace_audience'
       && !getWorkspaceRoleCapabilities(membership.role).canComment
@@ -445,20 +511,24 @@ export class WorkspaceCollaborationService {
       throw new AccessDeniedError('Commenter access is required to reply');
     }
 
-    const [message] = await this.db('workspace_collaboration_messages')
-      .insert({
-        id: uuidv4(),
-        objectId,
-        authorId: userId,
-        body: body.trim(),
-      })
-      .returning('*');
-    await this.db('workspace_collaboration_objects')
-      .where({ id: objectId })
-      .update({
-        status: object.status === 'open' ? 'discussing' : object.status,
-        updatedAt: this.db.fn.now(),
+    const recipients = object.type === 'annotation' && object.visibility === 'workspace_audience'
+      ? (await this.workspaceService.listCollaborators(workspaceId, userId)).collaborators.map(member => member.userId)
+      : [];
+    const message = await this.db.transaction(async tx => {
+      const [created] = await tx('workspace_collaboration_messages').insert({
+        id: uuidv4(), objectId, authorId: userId, body: body.trim(),
+      }).returning('*');
+      await tx('workspace_collaboration_objects').where({ id: objectId }).update({
+        status: object.status === 'open' ? 'discussing' : object.status, updatedAt: tx.fn.now(),
       });
+      for (const recipientUserId of new Set(recipients.filter(id => id !== userId))) {
+        await createNotification(tx, {
+          recipientUserId, eventType: 'annotation.replied', resourceType: 'workspace_annotation', resourceId: objectId, eventKey: created.id,
+          payload: { title: 'New reply to a canvas comment', description: body.trim().slice(0, 500), workspaceId, annotationId: objectId, filePath: object.filePath },
+        });
+      }
+      return created;
+    });
     return message;
   }
 
@@ -468,8 +538,8 @@ export class WorkspaceCollaborationService {
     userId: string,
     input: UpdateWorkspaceCollaborationInput,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
-    const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    const object = await this.ensureObjectAccess(workspaceId, objectId, userId, !access.isShared);
     const canModerate = canModerateWorkspaceCollaboration(access.membership.role);
     const canManageItem = canModerate
       || object.authorId === userId
@@ -572,13 +642,23 @@ export class WorkspaceCollaborationService {
     workspaceId: string,
     userId: string,
   ): Promise<CollaborationAccess> {
-    const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
-    if (workspace.visibility !== 'team') {
-      throw new ConflictError('Collaboration items are available only in Shared workspaces');
+    const access = await this.ensureCollaborationWorkspaceAccess(workspaceId, userId);
+    if (!access.isShared) {
+      throw new ConflictError('This collaboration feature is available only in Shared workspaces');
     }
+    return access;
+  }
+
+  private async ensureCollaborationWorkspaceAccess(
+    workspaceId: string,
+    userId: string,
+  ): Promise<CollaborationAccess> {
+    // ensureMembership enforces the owner-only boundary for personal workspaces.
+    const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
     return {
       membership,
       currentPublishedVersionId: workspace.currentPublishedVersionId || null,
+      isShared: workspace.visibility === 'team',
     };
   }
 
@@ -586,6 +666,7 @@ export class WorkspaceCollaborationService {
     workspaceId: string,
     objectId: string,
     userId: string,
+    personalOnly = false,
   ): Promise<WorkspaceCollaborationObject> {
     const object = await this.db('workspace_collaboration_objects as object')
       .leftJoin('users as author', 'author.id', 'object.authorId')
@@ -606,7 +687,8 @@ export class WorkspaceCollaborationService {
     if (!object) {
       throw new NotFoundError('Collaboration item not found');
     }
-    if (object.visibility === 'private' && object.authorId !== userId) {
+    if ((personalOnly && (object.type !== 'annotation' || object.visibility !== 'private'))
+      || (object.visibility === 'private' && object.authorId !== userId)) {
       throw new NotFoundError('Collaboration item not found');
     }
     return object;

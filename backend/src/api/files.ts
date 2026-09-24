@@ -13,13 +13,15 @@ import { HttpError } from '../errors';
 import { WorkspaceService } from '../services/workspaceService';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
 import { GoogleDriveService } from '../services/googleDriveService';
+import { OfficeDocumentService } from '../services/officeDocumentService';
 
 export default function(
   fileService: FileService,
   workspaceService: WorkspaceService,
   googleOAuthService: GoogleOAuthService,
-  fileStatusService: FileStatusService,
-  filePublicationService: FilePublicationService,
+  officeDocuments = new OfficeDocumentService(fileService, workspaceService),
+  fileStatusService?: FileStatusService,
+  filePublicationService?: FilePublicationService,
 ) {
   const router = Router({ mergeParams: true });
   const upload = multer({
@@ -38,6 +40,9 @@ export default function(
   const updateFileSchema = z.object({
     content: z.string(),
     version: z.number().int().positive().optional(),
+    strictVersion: z.boolean().optional(),
+  }).refine(value => !value.strictVersion || value.version !== undefined, {
+    message: 'Strict saves require the expected version',
   });
 
   const restoreFileVersionSchema = z.object({
@@ -118,6 +123,76 @@ export default function(
     console.error(fallbackMessage, error);
     return res.status(500).json({ error: fallbackMessage });
   };
+
+  const officeFileId = (value: string) => {
+    if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+      throw new HttpError(400, 'Invalid file ID');
+    }
+    return Number(value);
+  };
+
+  // Byte previews are read-only, including immutable published snapshots and virtual files.
+  router.post('/office-preview', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await officeDocuments.previewBytes(req.params.workspaceId, user.userId, req.body);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid Office preview payload' });
+      handleError(res, error, 'Failed to render Office preview');
+    }
+  });
+
+  router.get('/:fileId/office-preview', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await officeDocuments.preview(req.params.workspaceId, officeFileId(req.params.fileId), user.userId);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) { handleError(res, error, 'Failed to render Office preview'); }
+  });
+
+  router.get('/:fileId/docx-content', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await officeDocuments.nativeDocxSource(req.params.workspaceId, officeFileId(req.params.fileId), user.userId);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) { handleError(res, error, 'Failed to open DOCX document'); }
+  });
+
+  router.put('/:fileId/docx-content', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await officeDocuments.saveNativeDocx(req.params.workspaceId, officeFileId(req.params.fileId), user.userId, req.body);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid DOCX save payload' });
+      handleError(res, error, 'Failed to save DOCX document');
+    }
+  });
+
+  router.post('/:fileId/quick-edit', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      res.json(await officeDocuments.quickEdit(req.params.workspaceId, officeFileId(req.params.fileId), user.userId, req.body));
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid quick edit payload' });
+      handleError(res, error, 'Failed to apply document edit');
+    }
+  });
+
+  router.post('/:fileId/quick-edit/undo', async (req: Request<{ workspaceId: string; fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      res.json(await officeDocuments.undo(req.params.workspaceId, officeFileId(req.params.fileId), user.userId, req.body));
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid undo payload' });
+      handleError(res, error, 'Failed to undo document edit');
+    }
+  });
 
   router.get('/drive/search', async (req: Request<{ workspaceId: string }>, res: Response) => {
     try {
@@ -293,7 +368,7 @@ export default function(
     try {
       const user = requireUserContext(req);
       const workspaceId = String((req.params as Record<string, string>).workspaceId);
-      res.json(await fileStatusService.getWorkspaceSummary(workspaceId, user.userId));
+      res.json(await fileStatusService!.getWorkspaceSummary(workspaceId, user.userId));
     } catch (error) {
       handleError(res, error, 'Failed to summarize file statuses');
     }
@@ -302,7 +377,7 @@ export default function(
   router.get('/:fileId/status', async (req: Request<{ fileId: string }>, res: Response) => {
     try {
       const user = requireUserContext(req);
-      res.json(await fileStatusService.getStatus(
+      res.json(await fileStatusService!.getStatus(
         Number.parseInt(req.params.fileId, 10),
         user.userId,
       ));
@@ -315,7 +390,7 @@ export default function(
     try {
       const user = requireUserContext(req);
       const payload = fileStatusSchema.parse(req.body || {});
-      res.json(await fileStatusService.transition(
+      res.json(await fileStatusService!.transition(
         Number.parseInt(req.params.fileId, 10),
         user.userId,
         payload,
@@ -328,13 +403,41 @@ export default function(
   router.get('/:fileId/publications', async (req: Request<{ fileId: string }>, res: Response) => {
     try {
       const user = requireUserContext(req);
-      const publications = await filePublicationService.listPublications(
+      const publications = await filePublicationService!.listPublications(
         Number.parseInt(req.params.fileId, 10),
         user.userId,
       );
       res.json({ publications });
     } catch (error) {
       handleError(res, error, 'Failed to list publications');
+    }
+  });
+
+  router.post(
+    '/:fileId/google-drive-delivery',
+    async (req: Request<{ fileId: string }>, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        const fileId = officeFileId(req.params.fileId);
+        const delivery = await filePublicationService!.deliverCurrentToGoogleDrive(
+          fileId, user.userId, googleDriveService,
+        );
+        res.json({ delivery });
+      } catch (error) {
+        handleError(res, error, 'Failed to deliver publication to Google Drive');
+      }
+    },
+  );
+
+  router.get('/:fileId/google-drive-delivery', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const user = requireUserContext(req);
+      const delivery = await filePublicationService!.getCurrentGoogleDriveDelivery(
+        officeFileId(req.params.fileId), user.userId,
+      );
+      res.json({ delivery });
+    } catch (error) {
+      handleError(res, error, 'Failed to load Google Drive delivery');
     }
   });
 
@@ -345,7 +448,7 @@ export default function(
         const user = requireUserContext(req);
         // Streamed through the API: the publication bucket is access-controlled,
         // not public, so membership stays the access boundary.
-        const download = await filePublicationService.getPublicationDownload(
+        const download = await filePublicationService!.getPublicationDownload(
           Number.parseInt(req.params.fileId, 10),
           Number.parseInt(req.params.publicationVersion, 10),
           user.userId,
@@ -531,10 +634,11 @@ export default function(
     try {
       const { fileId } = req.params;
       const user = requireUserContext(req);
-      const { content, version } = updateFileSchema.parse(req.body);
-      const updatedFile = await fileService.updateFile(parseInt(fileId, 10), content, user.userId, version);
+      const { content, version, strictVersion } = updateFileSchema.parse(req.body);
+      const updatedFile = await fileService.updateFile(parseInt(fileId, 10), content, user.userId, version, { strictVersion });
       res.json(updatedFile);
     } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid content update payload' });
       handleError(res, error, 'Failed to update file content');
     }
   });

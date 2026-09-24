@@ -15,6 +15,14 @@ RUN apt-get update \
     curl \
     libicu72 \
     libreoffice-calc \
+    libreoffice-writer \
+    libreoffice-impress \
+    libseccomp2 \
+    fonts-crosextra-carlito \
+    fonts-crosextra-caladea \
+    fonts-liberation2 \
+    fonts-noto-core \
+    fonts-noto-cjk \
     nodejs \
   && rm -rf /var/lib/apt/lists/*
 

@@ -1,3 +1,4 @@
+import type { BuilderReferenceServices } from '../../services/governance/skillBuilderReferences';
 import { Router } from 'express';
 import type { WorkspaceService } from '../../services/workspaceService';
 import type { DatabaseService } from '../../services/databaseService';
@@ -14,6 +15,7 @@ export default function settingsRoutes(
   workspaceService: WorkspaceService,
   userService: UserService,
   databaseService: DatabaseService,
+  builderServices: BuilderReferenceServices,
 ) {
   const router = Router();
 
@@ -36,7 +38,7 @@ export default function settingsRoutes(
 
   registerAgentConfigRoutes(router);
   registerSkillsRoutes(router);
-  registerSkillBuilderRoutes(router, workspaceService);
+  registerSkillBuilderRoutes(router, workspaceService, builderServices);
   registerGithubImportRoutes(router);
 
   return router;

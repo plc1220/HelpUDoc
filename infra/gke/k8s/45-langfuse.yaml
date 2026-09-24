@@ -34,7 +34,8 @@ spec:
               exit 1
       containers:
         - name: langfuse-web
-          image: langfuse/langfuse:3
+          # Langfuse 3.225.7: pin alongside worker to prevent migration/version drift.
+          image: langfuse/langfuse@sha256:a27fe525f52984fa6d36fd34e8b8c6e5ae4af43f34134cafc833b467fa9580ae
           ports:
             - containerPort: 3000
           resources:
@@ -238,7 +239,8 @@ spec:
               exit 1
       containers:
         - name: langfuse-worker
-          image: langfuse/langfuse-worker:3
+          # Langfuse 3.225.7: keep aligned with the web image above.
+          image: langfuse/langfuse-worker@sha256:93207bd67d2e789ea55fa3d47eeba065dd6b1869187127ab24201784c52b96bc
           ports:
             - containerPort: 3030
           resources:

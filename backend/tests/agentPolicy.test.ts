@@ -3,9 +3,49 @@ import test from 'node:test';
 import {
   createAgentPolicyApi,
   findUnknownRuntimeMcpServerIds,
+  resolveRuntimeMcpAccess,
   resolveRuntimeSkillAccess,
   type EffectiveAgentPolicy,
 } from '../src/api/agent/policy';
+
+test('default-allow MCP servers are available to everyone unless explicitly denied', () => {
+  assert.deepEqual(resolveRuntimeMcpAccess(
+    [],
+    [
+      { name: 'google-workspace', default_access: 'allow' },
+      { name: 'restricted-server', default_access: 'deny' },
+    ],
+  ), {
+    allowIds: ['google-workspace'],
+    denyIds: ['restricted-server'],
+  });
+
+  assert.deepEqual(resolveRuntimeMcpAccess(
+    [],
+    [{ name: 'google-workspace', default_access: 'allow' }],
+    [],
+    ['google-workspace'],
+  ), {
+    allowIds: [],
+    denyIds: ['google-workspace'],
+  });
+});
+
+test('default-deny MCP servers still require assignment and workspace allow', () => {
+  const configured = [{ name: 'restricted-server', default_access: 'deny' }];
+  assert.deepEqual(resolveRuntimeMcpAccess(['restricted-server'], configured), {
+    allowIds: [],
+    denyIds: ['restricted-server'],
+  });
+  assert.deepEqual(resolveRuntimeMcpAccess(
+    ['restricted-server'],
+    configured,
+    ['restricted-server'],
+  ), {
+    allowIds: ['restricted-server'],
+    denyIds: [],
+  });
+});
 
 test('MCP Team assignments reject unknown or disabled runtime servers', () => {
   assert.deepEqual(findUnknownRuntimeMcpServerIds(
@@ -28,7 +68,7 @@ const decodePayload = (token: string): Record<string, unknown> =>
   JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf-8'));
 
 test('buildAgentAuthToken preserves a disabled plan-approval bypass', async () => {
-  const api = createAgentPolicyApi({} as any, {} as any);
+  const api = createAgentPolicyApi({} as any, { getPersonalSkillRuntimePins: async () => [], getDefaultSkillRuntimePins: async () => [] } as any);
   const token = await api.buildAgentAuthToken({
     userId: 'user-1',
     workspaceId: 'workspace-1',
@@ -41,7 +81,7 @@ test('buildAgentAuthToken preserves a disabled plan-approval bypass', async () =
 });
 
 test('buildAgentAuthToken enables trusted mode only when explicitly configured', async () => {
-  const api = createAgentPolicyApi({} as any, {} as any);
+  const api = createAgentPolicyApi({} as any, { getPersonalSkillRuntimePins: async () => [], getDefaultSkillRuntimePins: async () => [] } as any);
   const token = await api.buildAgentAuthToken({
     userId: 'user-1',
     workspaceId: 'workspace-1',
@@ -54,7 +94,7 @@ test('buildAgentAuthToken enables trusted mode only when explicitly configured',
 });
 
 test('buildAgentAuthToken carries the published workspace write boundary to the agent sandbox', async () => {
-  const api = createAgentPolicyApi({} as any, {} as any);
+  const api = createAgentPolicyApi({} as any, { getPersonalSkillRuntimePins: async () => [], getDefaultSkillRuntimePins: async () => [] } as any);
   const token = await api.buildAgentAuthToken({
     userId: 'user-1',
     workspaceId: 'workspace-1',
@@ -77,6 +117,8 @@ test('buildAgentAuthToken carries the published workspace write boundary to the 
 
 test('buildAgentAuthToken restricts team workspaces to entitled exact pins', async () => {
   const api = createAgentPolicyApi({} as any, {
+    getPersonalSkillRuntimePins: async () => [],
+    getDefaultSkillRuntimePins: async () => [],
     getWorkspaceSkillRuntimePins: async () => [
       {
         skillId: 'skill-1',
@@ -121,6 +163,8 @@ test('buildAgentAuthToken restricts team workspaces to entitled exact pins', asy
 
 test('buildAgentAuthToken fails closed when a private workspace pin is unavailable', async () => {
   const api = createAgentPolicyApi({} as any, {
+    getPersonalSkillRuntimePins: async () => [],
+    getDefaultSkillRuntimePins: async () => [],
     getWorkspaceSkillRuntimePins: async () => [{
       skillId: 'skill-1',
       skillKey: 'data/dashboard',
@@ -145,6 +189,8 @@ test('buildAgentAuthToken fails closed when a private workspace pin is unavailab
 
 test('Platform Admin metadata never becomes runtime skill consumption access', async () => {
   const api = createAgentPolicyApi({} as any, {
+    getPersonalSkillRuntimePins: async () => [],
+    getDefaultSkillRuntimePins: async () => [],
     getEffectivePromptAccess: async () => ({
       isAdmin: true,
       skillIds: [],
@@ -199,4 +245,35 @@ test('slash discovery and runtime share the same exact-pin fail-closed selection
     ).skillAllowIds,
     ['data/dashboard'],
   );
+});
+
+test('personal skills use signed immutable owner pins and are excluded from published workflows', async () => {
+  const personal = { skillId: 'draft-id', skillKey: 'personal/draft-id', versionId: 'revision-id',
+    semanticVersion: '0.0.2', manifestHash: 'hash', available: true };
+  const api = createAgentPolicyApi({} as any, {
+    getWorkspaceSkillRuntimePins: async () => [],
+    getPersonalSkillRuntimePins: async (userId: string) => userId === 'owner' ? [personal] : [],
+    getDefaultSkillRuntimePins: async () => [],
+  } as any);
+  const input = { userId: 'owner', workspaceId: 'workspace', skipPlanApprovals: false,
+    policy: { ...policy, skillAllowIds: [personal.skillKey] } };
+  const payload = decodePayload((await api.buildAgentAuthToken(input))!);
+  assert.deepEqual(payload.skillAllowIds, [personal.skillKey]);
+  assert.equal((payload.skillVersionPins as any)[personal.skillKey].versionId, 'revision-id');
+  const shared = decodePayload((await api.buildAgentAuthToken({ ...input, policy: { ...input.policy, workspaceMode: 'published_read_only' } }))!);
+  assert.deepEqual(shared.skillAllowIds, []);
+  const colleague = decodePayload((await api.buildAgentAuthToken({ ...input, userId: 'colleague', policy: { ...policy, skillAllowIds: [] } }))!);
+  assert.deepEqual(colleague.skillAllowIds, []);
+  assert.deepEqual(colleague.skillVersionPins, {});
+});
+
+test('a default revoked between entitlement lookup and signing cannot fall back to the registry', async () => {
+  const api = createAgentPolicyApi({} as any, {
+    getWorkspaceSkillRuntimePins: async () => [], getPersonalSkillRuntimePins: async () => [],
+    getDefaultSkillRuntimePins: async () => [{ skillKey: 'data/dashboard', versionId: 'blocked', available: false }],
+  } as any);
+  const payload = decodePayload((await api.buildAgentAuthToken({ userId: 'owner', workspaceId: 'workspace',
+    policy, skipPlanApprovals: false }))!);
+  assert.deepEqual(payload.skillAllowIds, []);
+  assert.deepEqual(payload.skillVersionPins, {});
 });

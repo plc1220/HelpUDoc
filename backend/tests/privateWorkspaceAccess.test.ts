@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { WorkspaceService } from '../src/services/workspaceService';
+import { WorkspaceCollaborationService } from '../src/services/workspaceCollaborationService';
 
 const privateWorkspace = {
   id: 'workspace-private',
@@ -151,6 +152,45 @@ test('a purged workspace is unreachable even for its owner', async () => {
     service.ensureMembership(workspaceId, 'owner-user', {}),
     /Workspace not found/,
   );
+});
+
+test('personal annotation CRUD rejects other users before reading or writing any comment data', async () => {
+  const db = (() => { throw new Error('Annotation data must not be accessed'); }) as any;
+  const service = new WorkspaceCollaborationService({ getDb: () => db } as any, workspaceServiceForPrivateWorkspace(), {} as any);
+  for (const operation of [
+    () => service.listObjects(privateWorkspace.id, 'another-user'),
+    () => service.getObject(privateWorkspace.id, 'annotation', 'another-user'),
+    () => service.createObject(privateWorkspace.id, 'another-user', { type: 'annotation', visibility: 'private', body: 'Comment' }),
+    () => service.appendMessage(privateWorkspace.id, 'annotation', 'another-user', 'Reply'),
+    () => service.updateObject(privateWorkspace.id, 'annotation', 'another-user', { status: 'resolved' }),
+  ]) {
+    await assert.rejects(operation(), /Private workspace access denied/);
+  }
+});
+
+test('personal annotation reads enforce object workspace, author, visibility, and type', async () => {
+  let object = { id: 'annotation', workspaceId: privateWorkspace.id, authorId: 'owner-user', type: 'annotation', visibility: 'private' };
+  const db = ((table: string) => {
+    const filters: Record<string, string> = {};
+    const query: any = {
+      leftJoin: () => query,
+      select: () => query,
+      where(key: string, value: string) { filters[key.split('.').pop()!] = value; return query; },
+      andWhere(key: string, value: string) { return query.where(key, value); },
+      first: async () => Object.entries(filters).every(([key, value]) => object[key as keyof typeof object] === value) ? object : undefined,
+      orderBy: async () => [],
+    };
+    assert.ok(['workspace_collaboration_objects as object', 'workspace_collaboration_messages as message'].includes(table));
+    return query;
+  }) as any;
+  db.raw = () => '';
+  const service = new WorkspaceCollaborationService({ getDb: () => db } as any, workspaceServiceForPrivateWorkspace(), {} as any);
+  assert.equal((await service.getObject(privateWorkspace.id, 'annotation', 'owner-user')).object.id, 'annotation');
+  const original = object;
+  for (const change of [{ workspaceId: 'different-workspace' }, { authorId: 'another-user' }, { visibility: 'workspace_audience' }, { type: 'task' }]) {
+    object = { ...original, ...change };
+    await assert.rejects(service.getObject(privateWorkspace.id, 'annotation', 'owner-user'), /Collaboration item not found/);
+  }
 });
 
 function workspaceServiceForSharedWorkspace(

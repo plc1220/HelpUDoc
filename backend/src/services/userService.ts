@@ -1,3 +1,4 @@
+import { filterExecutablePins } from './governance/skillExecutionPolicy';
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
@@ -148,6 +149,7 @@ export interface UserDeletionImpact {
   authoredKnowledgeCount: number;
   authoredConversationCount: number;
   authoredMessageCount: number;
+  authoredArtifactCount: number;
 }
 
 interface UserProfileInput {
@@ -866,7 +868,7 @@ export class UserService {
     if (!group) {
       return null;
     }
-    const [legacySkillRows, governedSkillRows, mcpRows, knowledgeRows] = await Promise.all([
+    const [legacySkillRows, governedSkillRows, ownedSkillRows, mcpRows, knowledgeRows] = await Promise.all([
       this.db('skill_grants')
         .select('skillId')
         .where({ principalType: 'group', principalId: groupId, effect: 'allow' }),
@@ -874,6 +876,7 @@ export class UserService {
         .join('skills as skill', 'skill.id', 'grant.skillId')
         .select('skill.skillKey as skillId')
         .where({ 'grant.teamId': groupId, 'grant.effect': 'allow' }),
+      this.db('skills').select('skillKey as skillId').where({ ownerTeamId: groupId, status: 'active' }),
       this.db('mcp_server_group_grants')
         .select('serverId')
         .where({ groupId }),
@@ -884,7 +887,7 @@ export class UserService {
 
     return {
       skillIds: normalizeUniqueStrings(
-        [...legacySkillRows, ...governedSkillRows]
+        [...legacySkillRows, ...governedSkillRows, ...ownedSkillRows]
           .map((row: any) => String(row.skillId || '')),
       ),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
@@ -899,7 +902,7 @@ export class UserService {
     access: GroupPromptAccess,
     actorUserId?: string,
   ): Promise<(GroupPromptAccess & { auditEventId?: string }) | null> {
-    const skillIds = normalizeUniqueStrings(access.skillIds || []);
+    let skillIds = normalizeUniqueStrings(access.skillIds || []);
     const mcpServerIds = normalizeUniqueStrings(access.mcpServerIds || []);
     const knowledgeBaseIds = normalizeUniqueStrings(access.knowledgeBaseIds || []);
 
@@ -908,6 +911,9 @@ export class UserService {
       if (!group) {
         return null;
       }
+      const owned = await tx('skills as s').join('skill_versions as v', 'v.id', 's.defaultVersionId')
+        .select('s.skillKey').where({ 's.ownerTeamId': groupId, 's.status': 'active', 'v.status': 'active' });
+      skillIds = normalizeUniqueStrings([...skillIds, ...owned.map((row: any) => row.skillKey)]);
       const previousGoverned = await tx('team_skill_grants as grant')
         .join('skills as skill', 'skill.id', 'grant.skillId')
         .select('skill.skillKey')
@@ -1022,7 +1028,7 @@ export class UserService {
     const memberships = await this.db('group_members').select('groupId').where({ userId });
     const groupIds = normalizeUniqueStrings((memberships as Array<{ groupId?: string }>).map((row) => String(row.groupId || '')));
 
-    const [legacyGroupSkills, legacyDirectSkills, governedTeamSkills, governedDirectSkills, mcpRows, knowledgeRows] = await Promise.all([
+    const [legacyGroupSkills, legacyDirectSkills, governedTeamSkills, governedDirectSkills, ownedTeamSkills, mcpRows, knowledgeRows] = await Promise.all([
       groupIds.length
         ? this.db('skill_grants as grant')
           .leftJoin('skills as governedSkill', 'governedSkill.skillKey', 'grant.skillId')
@@ -1068,6 +1074,9 @@ export class UserService {
           'skill.status': 'active',
           'version.status': 'active',
         }),
+      this.db('skills as skill').join('skill_versions as version', 'version.id', 'skill.defaultVersionId')
+        .select('skill.skillKey as skillId').whereIn('skill.ownerTeamId', groupIds)
+        .where({ 'skill.status': 'active', 'version.status': 'active' }),
       groupIds.length
         ? this.db('mcp_server_group_grants')
           .select('serverId')
@@ -1081,21 +1090,53 @@ export class UserService {
         : Promise.resolve([]),
     ]);
 
+    const personal = await this.getPersonalSkillRuntimePins(userId);
+    const governedKeys = [...governedTeamSkills, ...governedDirectSkills, ...ownedTeamSkills].map((row: any) => row.skillId);
+    const allowedDefaults = await this.getDefaultSkillRuntimePins(governedKeys);
+    const blocks = await this.db('skill_execution_blocks');
+    const blockedKeys = new Set(blocks.filter((block: any) => !block.manifestHash).map((block: any) => block.skillKey));
+    const blockedDefaultRows = await this.db('skills as s').join('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .select('s.skillKey').whereIn('v.manifestHash', blocks.map((block: any) => block.manifestHash).filter(Boolean));
+    blockedDefaultRows.forEach((row: any) => blockedKeys.add(row.skillKey));
     return {
       isAdmin: user.isAdmin,
       skillIds: normalizeUniqueStrings(
         [
           ...legacyGroupSkills,
           ...legacyDirectSkills,
-          ...governedTeamSkills,
-          ...governedDirectSkills,
-        ].map((row: any) => String(row.skillId || '')),
+          ...allowedDefaults.filter(pin => pin.available).map(pin => ({ skillId: pin.skillKey })),
+          ...personal.map(pin => ({ skillId: pin.skillKey })),
+        ].map((row: any) => String(row.skillId || '')).filter(key => !blockedKeys.has(key)),
       ),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
       knowledgeBaseIds: normalizeUniqueStrings(
         (knowledgeRows as Array<{ knowledgeBaseId?: string }>).map((row) => String(row.knowledgeBaseId || '')),
       ),
     };
+  }
+
+  async getPersonalSkillRuntimePins(userId: string): Promise<Array<WorkspaceSkillRuntimePin & { name: string; description: string }>> {
+    const rows = await this.db('private_skill_drafts as d')
+      .join('skill_draft_revisions as r', 'r.id', 'd.activeRevisionId')
+      .select('d.id', 'd.displayName', 'd.description', 'r.id as versionId', 'r.revisionNumber', 'r.manifestHash')
+      .where({ 'd.ownerUserId': userId, 'd.status': 'private' });
+    return filterExecutablePins(this.db, rows.map((row: any) => ({
+      skillId: row.id, skillKey: `personal/${row.id}`, versionId: row.versionId,
+      semanticVersion: `0.0.${row.revisionNumber}`, manifestHash: row.manifestHash, available: true,
+      name: `${row.displayName} (Personal)`, description: row.description || '',
+    })));
+  }
+
+  async getDefaultSkillRuntimePins(skillKeys: string[]): Promise<WorkspaceSkillRuntimePin[]> {
+    const rows = await this.db('skills as s').leftJoin('skill_versions as v', 'v.id', 's.defaultVersionId')
+      .select('s.id as skillId', 's.skillKey', 's.status as skillStatus', 'v.status as versionStatus',
+        'v.id as versionId', 'v.semanticVersion', 'v.manifestHash')
+      .whereIn('s.skillKey', skillKeys);
+    const executable = new Set((await filterExecutablePins(this.db, rows)).map((row: any) => row.skillKey));
+    // Keep unavailable entries: the signer must deny these keys rather than
+    // accidentally falling back to a mutable registry copy after revocation.
+    return rows.map((row: any) => ({ ...row, available: row.skillStatus === 'active'
+      && row.versionStatus === 'active' && executable.has(row.skillKey) }));
   }
 
   async getWorkspaceSkillRuntimePins(workspaceId: string): Promise<WorkspaceSkillRuntimePin[]> {
@@ -1116,7 +1157,7 @@ export class UserService {
       )
       .where({ 'pin.workspaceId': workspaceId })
       .orderBy('skill.skillKey', 'asc');
-    return rows.map((row: any) => ({
+    const pins = rows.map((row: any) => ({
       skillId: row.skillId,
       skillKey: row.skillKey,
       versionId: row.versionId,
@@ -1128,6 +1169,8 @@ export class UserService {
         && row.pinnedSemanticVersion === row.semanticVersion
         && row.pinnedManifestHash === row.manifestHash,
     }));
+    const allowed = new Set((await filterExecutablePins(this.db, pins)).map(pin => pin.versionId));
+    return pins.map(pin => ({ ...pin, available: pin.available && allowed.has(pin.versionId) }));
   }
 
   /**
@@ -1534,7 +1577,7 @@ export class UserService {
     }
 
     const ownedWorkspaces = await this.listOwnedWorkspaces(userId);
-    const [sharedWorkspaceCount, groupMembershipCount, oauthTokenCount, authoredFileCount, authoredKnowledgeCount, authoredConversationCount, authoredMessageCount] = await Promise.all([
+    const [sharedWorkspaceCount, groupMembershipCount, oauthTokenCount, authoredFileCount, authoredKnowledgeCount, authoredConversationCount, authoredMessageCount, authoredArtifactCount] = await Promise.all([
       this.countSharedWorkspaceMemberships(userId),
       this.countRows('group_members', { userId }),
       this.countRows('user_oauth_tokens', { userId }),
@@ -1542,6 +1585,7 @@ export class UserService {
       this.countDistinctReferences('knowledge_sources', 'id', ['createdBy', 'updatedBy'], userId),
       this.countDistinctReferences('conversations', 'id', ['createdBy', 'updatedBy'], userId),
       this.countDistinctReferences('conversation_messages', 'id', ['authorId'], userId),
+      this.countDistinctReferences('derived_artifacts', 'id', ['createdBy', 'updatedBy'], userId),
     ]);
 
     return {
@@ -1561,6 +1605,7 @@ export class UserService {
       authoredKnowledgeCount,
       authoredConversationCount,
       authoredMessageCount,
+      authoredArtifactCount,
     };
   }
 
@@ -1695,6 +1740,11 @@ export class UserService {
       tx('conversations').where({ createdBy: userId }).update({ createdBy: null, updatedAt: this.db.fn.now() }),
       tx('conversations').where({ updatedBy: userId }).update({ updatedBy: null, updatedAt: this.db.fn.now() }),
       tx('conversation_messages').where({ authorId: userId }).update({ authorId: null, updatedAt: this.db.fn.now() }),
+      // derived_artifacts carries the same nullable authorship FKs with ON DELETE NO ACTION.
+      // Omitting it made any user who had ever produced a derived artifact undeletable, failing
+      // with an opaque 500 from the foreign key rather than a useful message.
+      tx('derived_artifacts').where({ createdBy: userId }).update({ createdBy: null, updatedAt: this.db.fn.now() }),
+      tx('derived_artifacts').where({ updatedBy: userId }).update({ updatedBy: null, updatedAt: this.db.fn.now() }),
     ]);
   }
 

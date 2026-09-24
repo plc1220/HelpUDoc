@@ -18,6 +18,8 @@ type StartState = {
   state: string;
   codeVerifier: string;
   returnTo?: string;
+  extraScopes?: string[];
+  expectedUserId?: string;
   createdAt: number;
 };
 
@@ -119,11 +121,23 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       const codeChallenge = googleOAuthService.createPkceChallenge(codeVerifier);
       const state = googleOAuthService.createStateToken();
       const returnTo = sanitizeReturnPath(typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined);
+      const requestedExtras = typeof req.query.extraScopes === 'string'
+        ? req.query.extraScopes.split(/[\s,]+/).filter(Boolean)
+        : [];
+      const extraScopes = [...new Set(requestedExtras)];
+      if (extraScopes.some((scope) => scope !== 'https://www.googleapis.com/auth/drive.file')) {
+        return res.status(400).json({ error: 'Unsupported additional Google OAuth scope' });
+      }
+      if (extraScopes.length && !req.userContext?.userId) {
+        return res.status(401).json({ error: 'Sign in before connecting Google Drive publishing' });
+      }
 
       const statePayload: StartState = {
         state,
         codeVerifier,
         returnTo,
+        extraScopes,
+        expectedUserId: extraScopes.length ? req.userContext?.userId : undefined,
         createdAt: Date.now(),
       };
 
@@ -160,7 +174,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
           secure,
         });
       }
-      const redirectUrl = googleOAuthService.getAuthStartUrl({ state, codeChallenge });
+      const redirectUrl = googleOAuthService.getAuthStartUrl({ state, codeChallenge, extraScopes });
       return res.redirect(302, redirectUrl);
     } catch (error) {
       if (error instanceof GoogleOAuthConfigError) {
@@ -241,6 +255,9 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       // loop with no explanation of why.
       if (isUserDeactivated(user)) {
         return redirectWithError('account_deactivated');
+      }
+      if (oauthState.expectedUserId && oauthState.expectedUserId !== user.id) {
+        return redirectWithError('google_account_mismatch');
       }
 
       await googleOAuthService.upsertUserGoogleToken(user.id, tokenResponse);

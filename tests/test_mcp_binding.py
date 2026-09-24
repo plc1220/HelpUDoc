@@ -473,6 +473,7 @@ def test_agent_registry_builds_runtime_with_wrapped_proposal_writing_candidates(
         captured["tool_names"] = [getattr(tool, "name", None) for tool in tools]
         captured["model"] = model
         captured["middleware_count"] = len(middleware)
+        captured["mcp_middleware"] = next(item for item in middleware if type(item).__name__ == "MCPDiscoveryMiddleware")
         return DummyAgent(tools)
 
     monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.create_agent", fake_create_agent)
@@ -523,10 +524,11 @@ def test_agent_registry_builds_runtime_with_wrapped_proposal_writing_candidates(
     )
 
     assert runtime is not None
-    assert captured["tool_names"] == [
-        "get_pricing",
-        "aws___search_documentation",
-    ]
+    assert captured["tool_names"] == []  # MCP operations are registered dynamically.
+    dynamic = captured["mcp_middleware"]._dynamic_tools({})
+    assert {tool.wrapped_tool.name for tool in dynamic.values()} == {
+        "get_pricing", "aws___search_documentation",
+    }
 
 
 def test_agent_registry_rebuilds_runtime_when_preferred_mcp_server_changes(
