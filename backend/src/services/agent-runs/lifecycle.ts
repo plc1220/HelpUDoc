@@ -752,6 +752,32 @@ export const resolveStreamCloseDisposition = (input: {
   return { status: 'completed', preserveInterrupt: false };
 };
 
+/**
+ * What to record when the response socket closes before the stream finished.
+ *
+ * `completed` from `resolveStreamCloseDisposition` means nothing named a cause,
+ * so the transport close is genuinely all we know and the reason goes in the
+ * message. Any other status is a real cause that outranks it — the abort is the
+ * consequence, not the failure.
+ *
+ * Split out because the listeners that need it were added after
+ * `resolveStreamCloseDisposition` and skipped it for months, reporting every
+ * such run as "Agent stream aborted before completion" whatever had gone wrong.
+ */
+export const resolvePrematureCloseOutcome = (input: {
+  disposition: { status: AgentRunStatus; error?: string };
+  aborted: boolean;
+  reason: string;
+}): { status: AgentRunStatus; error?: string } => {
+  if (input.disposition.status !== 'completed') {
+    return { status: input.disposition.status, error: input.disposition.error };
+  }
+  return {
+    status: input.aborted ? 'cancelled' : 'failed',
+    error: input.aborted ? undefined : `Agent stream ${input.reason} before completion`,
+  };
+};
+
 const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
   const metaKey = buildMetaKey(runId);
   const stringified: Record<string, string> = {};
@@ -4506,9 +4532,44 @@ async function runAgentRunWorker(
         await finalizeRun(status, error.message);
       }));
       const handlePrematureClose = (reason: string) => handleTerminal(async () => {
-        const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
-        const message = controller.signal.aborted ? undefined : `Agent stream ${reason} before completion`;
-        if (message) await appendStreamEvent(runId, JSON.stringify({ type: 'error', message }));
+        /**
+         * Report why the run failed, not how the socket died.
+         *
+         * `resolveStreamCloseDisposition` exists to rank the real cause above
+         * the transport one — a `GraphRecursionError`, a stall after a
+         * clarification, or an `error` line the agent already sent all beat a
+         * bare abort, and its comment says why. The `end` and `error` handlers
+         * ask it. These two listeners were added later and did not, so a run
+         * whose socket closed first recorded "Agent stream aborted before
+         * completion" and threw the diagnosis away. That is the message users
+         * report, and it says nothing.
+         *
+         * `preserveInterrupt` is honoured here for the same reason it is
+         * there: a premature close after the agent emitted an interrupt is the
+         * normal shape of an approval, not a failure.
+         */
+        const disposition = resolveStreamCloseDisposition({
+          sawInterruptPayload,
+          loopErrorMessage,
+          stallErrorMessage,
+          streamErrorMessage,
+          aborted: controller.signal.aborted,
+          contractErrorMessage,
+        });
+        if (disposition.preserveInterrupt && sawInterruptPayload) {
+          await publishDeferredInterrupt(sawInterruptPayload);
+          return;
+        }
+        const { status, error: message } = resolvePrematureCloseOutcome({
+          disposition,
+          aborted: controller.signal.aborted,
+          reason,
+        });
+        // The agent already published its own `error` line; repeating it would
+        // show the user the same failure twice.
+        if (message && !streamErrorMessage) {
+          await appendStreamEvent(runId, JSON.stringify({ type: 'error', message }));
+        }
         await finalizeRun(status, message);
       });
       upstream!.once('aborted', () => handlePrematureClose('aborted'));

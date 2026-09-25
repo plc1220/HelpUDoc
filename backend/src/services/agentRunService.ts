@@ -13,6 +13,7 @@ export {
   configureAgentRunServices,
   startAgentRun,
   persistInterruptAndStopRun,
+  resolvePrematureCloseOutcome,
   resolveStreamCloseDisposition,
   resumeAgentRun,
   resumeAgentRunWithResponse,

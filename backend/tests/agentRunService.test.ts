@@ -16,6 +16,7 @@ import {
   isCompletedFrontendSlidesGateInterrupt,
   isRealRunProgressEvent,
   normalizeWorkflowActionEvent,
+  resolvePrematureCloseOutcome,
   resolveStreamCloseDisposition,
   shouldFailRunningRunForStaleActivity,
   shouldFailResumedRunForIdle,
@@ -2631,4 +2632,66 @@ test('a clock that went backwards never subtracts', () => {
     }),
     500,
   );
+});
+
+/**
+ * `handlePrematureClose` was added three days after `resolveStreamCloseDisposition`
+ * and did not consult it, so a run whose socket closed before its `end` event
+ * recorded "Agent stream aborted before completion" no matter what had actually
+ * gone wrong. Users reported exactly that string on runs that failed for a
+ * named reason the system already knew.
+ */
+
+test('a premature close reports the cause the run already named', () => {
+  const recursion = 'Agent stopped after reaching the LangGraph recursion limit of 1000 steps.';
+  assert.deepEqual(
+    resolvePrematureCloseOutcome({
+      disposition: resolveStreamCloseDisposition({ streamErrorMessage: recursion }),
+      aborted: false,
+      reason: 'aborted',
+    }),
+    { status: 'failed', error: recursion },
+  );
+});
+
+test('a stall outranks the transport close that follows it', () => {
+  const stall = 'Agent stalled after human clarification.';
+  assert.deepEqual(
+    resolvePrematureCloseOutcome({
+      disposition: resolveStreamCloseDisposition({ stallErrorMessage: stall }),
+      aborted: false,
+      reason: 'closed',
+    }),
+    { status: 'failed', error: stall },
+  );
+});
+
+test('with no cause named, the transport close is all there is to report', () => {
+  assert.deepEqual(
+    resolvePrematureCloseOutcome({
+      disposition: resolveStreamCloseDisposition({}),
+      aborted: false,
+      reason: 'aborted',
+    }),
+    { status: 'failed', error: 'Agent stream aborted before completion' },
+  );
+});
+
+test('a user cancellation is cancelled, and carries no error', () => {
+  assert.deepEqual(
+    resolvePrematureCloseOutcome({
+      disposition: resolveStreamCloseDisposition({ aborted: true }),
+      aborted: true,
+      reason: 'aborted',
+    }),
+    { status: 'cancelled', error: undefined },
+  );
+});
+
+test('an emitted interrupt survives a premature close', () => {
+  // The normal shape of an approval: the backend closes the stream as soon as
+  // it parses the interrupt, so the close is expected, not a failure.
+  const disposition = resolveStreamCloseDisposition({ sawInterruptPayload: { type: 'interrupt' } });
+  assert.equal(disposition.preserveInterrupt, true);
+  assert.equal(disposition.status, 'awaiting_approval');
 });
