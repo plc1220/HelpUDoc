@@ -13,7 +13,9 @@ services:
       - ../.postgres-data:/var/lib/postgresql/data
 
   minio:
-    image: minio/minio:latest
+    # MinIO's Docker Hub repository is no longer publicly pullable ("pull access denied"),
+    # so default to their own registry. Override to pin a digest if needed.
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
     container_name: helpudoc-minio
     restart: unless-stopped
     environment:
@@ -26,21 +28,24 @@ services:
       - "9000:9000"
       - "9001:9001"
   minio-setup:
-    image: minio/mc:latest
+    image: ${MINIO_MC_IMAGE:-quay.io/minio/mc:latest}
     depends_on:
       - minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     entrypoint: [ "/bin/sh", "-c" ]
-    command: >
-      set -e;
-      until (mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"); do
-        sleep 1;
-      done;
-      mc mb -p local/helpudoc || true;
-      mc anonymous set none local/helpudoc;
-      exit 0;
+    # See infra/docker-compose.yml: a string `command:` is word-split by
+    # compose, so the script must be a single block-literal list item.
+    command:
+      - |
+        set -eu
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+          sleep 1
+        done
+        mc mb -p local/helpudoc
+        mc mb -p local/langfuse
+        mc anonymous set none local/helpudoc
   redis:
     image: redis:7-alpine
     container_name: helpudoc-redis

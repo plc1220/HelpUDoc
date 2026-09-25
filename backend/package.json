@@ -10,7 +10,9 @@
     "worker:knowledge": "ts-node --transpile-only -r tsconfig-paths/register src/workers/knowledgeWorker.ts",
     "test": "node -r ts-node/register/transpile-only -r tsconfig-paths/register --test tests/*.test.ts",
     "generate:daily-reflection": "ts-node --transpile-only -r tsconfig-paths/register src/jobs/generateDailyReflection.ts",
-    "validate:env": "ts-node -r tsconfig-paths/register scripts/validate-env.ts"
+    "validate:env": "ts-node -r tsconfig-paths/register scripts/validate-env.ts",
+    "workspace:restore": "ts-node -T scripts/restore-purged-workspace.ts",
+    "workspace:hard-purge": "ts-node -T scripts/hard-purge-workspace.ts"
   },
   "keywords": [],
   "author": "",

@@ -1,6 +1,6 @@
 import { Request, Router } from 'express';
-import { UserService } from '../services/userService';
-import { GoogleOAuthService, GoogleOAuthConfigError } from '../services/googleOAuthService';
+import { UserService, isUserDeactivated } from '../services/userService';
+import { GoogleOAuthService, GoogleOAuthConfigError, GOOGLE_OIDC_ISSUER } from '../services/googleOAuthService';
 
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
 
@@ -18,6 +18,8 @@ type StartState = {
   state: string;
   codeVerifier: string;
   returnTo?: string;
+  extraScopes?: string[];
+  expectedUserId?: string;
   createdAt: number;
 };
 
@@ -71,6 +73,17 @@ function sanitizeReturnPath(raw?: string): string | undefined {
   return raw;
 }
 
+/**
+ * `open` (default) keeps today's behaviour: anyone who can authenticate gets an
+ * account. `invite_only` admits only identities that already have an account or
+ * a pre-registration. Read per request rather than at module load, matching how
+ * `AUTH_MODE` is handled — module-level reads observe the pre-dotenv env.
+ */
+export type SignupMode = 'open' | 'invite_only';
+export const signupMode = (): SignupMode => (
+  (process.env.SIGNUP_MODE || '').trim().toLowerCase() === 'invite_only' ? 'invite_only' : 'open'
+);
+
 export default function authRoutes(userService: UserService, googleOAuthService: GoogleOAuthService) {
   const router = Router();
   const sessionCookieOptions = {
@@ -108,11 +121,23 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       const codeChallenge = googleOAuthService.createPkceChallenge(codeVerifier);
       const state = googleOAuthService.createStateToken();
       const returnTo = sanitizeReturnPath(typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined);
+      const requestedExtras = typeof req.query.extraScopes === 'string'
+        ? req.query.extraScopes.split(/[\s,]+/).filter(Boolean)
+        : [];
+      const extraScopes = [...new Set(requestedExtras)];
+      if (extraScopes.some((scope) => scope !== 'https://www.googleapis.com/auth/drive.file')) {
+        return res.status(400).json({ error: 'Unsupported additional Google OAuth scope' });
+      }
+      if (extraScopes.length && !req.userContext?.userId) {
+        return res.status(401).json({ error: 'Sign in before connecting Google Drive publishing' });
+      }
 
       const statePayload: StartState = {
         state,
         codeVerifier,
         returnTo,
+        extraScopes,
+        expectedUserId: extraScopes.length ? req.userContext?.userId : undefined,
         createdAt: Date.now(),
       };
 
@@ -149,7 +174,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
           secure,
         });
       }
-      const redirectUrl = googleOAuthService.getAuthStartUrl({ state, codeChallenge });
+      const redirectUrl = googleOAuthService.getAuthStartUrl({ state, codeChallenge, extraScopes });
       return res.redirect(302, redirectUrl);
     } catch (error) {
       if (error instanceof GoogleOAuthConfigError) {
@@ -200,11 +225,40 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       }
       const profile = await googleOAuthService.fetchProfile(tokenResponse.accessToken);
 
+      // Under invite-only, a Google identity that matches neither an existing
+      // account nor a pre-registered address is refused before any row is
+      // created. Existing accounts are never gated, so turning the flag on
+      // cannot lock out the people already using the system.
+      if (signupMode() === 'invite_only') {
+        const admissible = await userService.isAdmissibleSignIn({
+          externalId: `google-${profile.sub}`,
+          email: profile.email,
+          oidcIssuer: GOOGLE_OIDC_ISSUER,
+          oidcSubject: profile.sub,
+        });
+        if (!admissible) {
+          return redirectWithError('not_invited');
+        }
+      }
+
       const user = await userService.ensureUser({
         externalId: `google-${profile.sub}`,
         displayName: profile.name || profile.email || `google-${profile.sub}`,
         email: profile.email,
+        emailVerified: profile.emailVerified,
+        oidcIssuer: GOOGLE_OIDC_ISSUER,
+        oidcSubject: profile.sub,
       });
+
+      // Refuse before a session exists. Minting one and relying on the request
+      // middleware to reject it afterwards would leave the user in a sign-in
+      // loop with no explanation of why.
+      if (isUserDeactivated(user)) {
+        return redirectWithError('account_deactivated');
+      }
+      if (oauthState.expectedUserId && oauthState.expectedUserId !== user.id) {
+        return redirectWithError('google_account_mismatch');
+      }
 
       await googleOAuthService.upsertUserGoogleToken(user.id, tokenResponse);
 

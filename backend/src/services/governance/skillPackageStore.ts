@@ -118,6 +118,46 @@ export class SkillPackageStore {
     }
   }
 
+  async readMaterializedFile(
+    skillKey: string,
+    versionId: string,
+    filePath: string,
+    contentHash: string,
+  ): Promise<Buffer> {
+    const normalizedPath = normalizeGovernedFilePath(filePath);
+    const packageRoot = path.resolve(this.versionsRoot, skillKey, versionId);
+    const target = path.resolve(packageRoot, normalizedPath);
+    if (!target.startsWith(`${packageRoot}${path.sep}`)) {
+      governanceError(503, 'SKILL_MATERIALIZATION_UNAVAILABLE', 'Immutable package path escaped its boundary');
+    }
+    try {
+      const content = await fs.readFile(target);
+      if (sha256(content) !== contentHash) {
+        governanceError(503, 'SKILL_MATERIALIZATION_UNAVAILABLE', 'Materialized skill content failed its integrity check');
+      }
+      return content;
+    } catch (error) {
+      if (error instanceof SkillGovernanceError) throw error;
+      throw new SkillGovernanceError(503, 'SKILL_MATERIALIZATION_UNAVAILABLE', 'Immutable skill content cannot be read');
+    }
+  }
+
+  async readVersionFile(
+    skillKey: string,
+    versionId: string,
+    file: FileSnapshot,
+  ): Promise<Buffer> {
+    try {
+      return await this.readBlob(file.contentHash);
+    } catch (error) {
+      // A package can remain executable and byte-verifiable even if its local
+      // content-blob cache was lost during a mount/PVC transition. Use the
+      // immutable materialized snapshot as a read-only fallback for catalogues.
+      if (!(error instanceof SkillGovernanceError)) throw error;
+      return this.readMaterializedFile(skillKey, versionId, file.path, file.contentHash);
+    }
+  }
+
   async draftFiles(revisionId: string): Promise<FileSnapshot[]> {
     const rows = await this.db('skill_draft_revision_files')
       .where({ draftRevisionId: revisionId })
@@ -254,7 +294,10 @@ export class SkillPackageStore {
     return files.sort((a, b) => a.path.localeCompare(b.path));
   }
 
-  async readSkillMetadata(files: FileSnapshot[]): Promise<{
+  async readSkillMetadata(
+    files: FileSnapshot[],
+    readContent: (file: FileSnapshot) => Promise<Buffer> = (file) => this.readBlob(file.contentHash),
+  ): Promise<{
     name?: string;
     description?: string;
     tools: string[];
@@ -264,7 +307,7 @@ export class SkillPackageStore {
     const skillFile = files.find((file) => file.path === 'SKILL.md');
     if (!skillFile) return { tools: [], mcpServers: [], scripts: [] };
     try {
-      const raw = extractFrontmatter((await this.readBlob(skillFile.contentHash)).toString('utf-8'));
+      const raw = extractFrontmatter((await readContent(skillFile)).toString('utf-8'));
       const parsed = raw ? parseYaml(raw) : null;
       if (!parsed || typeof parsed !== 'object') return { tools: [], mcpServers: [], scripts: [] };
       const metadata = parsed as any;

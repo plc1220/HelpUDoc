@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { UserService } from '../services/userService';
+import { UserService, isUserDeactivated } from '../services/userService';
 
 export function requireSystemAdmin(userService: UserService) {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -12,10 +12,21 @@ export function requireSystemAdmin(userService: UserService) {
       if (!latestUser) {
         return res.status(401).json({ error: 'User not found' });
       }
+      if (isUserDeactivated(latestUser)) {
+        return res.status(403).json({
+          error: 'This account has been deactivated. Contact an administrator.',
+          code: 'account_deactivated',
+        });
+      }
+
+      // `isPlatformAdmin` rather than the bare `isAdmin` column: the governance
+      // services already honour a `platform_role_bindings` row, and an admin who
+      // passes there but fails here is a confusing half-privilege.
+      const isAdmin = await userService.isPlatformAdmin(latestUser.id);
 
       const refreshedContext = {
         ...req.userContext,
-        isAdmin: latestUser.isAdmin,
+        isAdmin,
       };
 
       req.userContext = refreshedContext;
@@ -24,7 +35,7 @@ export function requireSystemAdmin(userService: UserService) {
         req.session.userContext = refreshedContext;
       }
 
-      if (!latestUser.isAdmin) {
+      if (!isAdmin) {
         return res.status(403).json({ error: 'Admin access required' });
       }
 

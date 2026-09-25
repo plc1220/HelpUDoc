@@ -54,6 +54,12 @@ API base URL: `http://localhost:3000/api`
 | `GOOGLE_OAUTH_SCOPES` | Google API scopes requested during sign-in. |
 | `OAUTH_TOKEN_ENCRYPTION_KEY` | Encryption key for stored delegated OAuth tokens. |
 
+Published file artifacts remain in the configured publication object store. A
+user can separately copy the current published artifact to the root of their
+own Google Drive; this uses incremental `drive.file` consent and never changes
+the archived GCS object. Users with older Google grants can choose **Connect
+Drive publishing** when the copy action reports the missing scope.
+
 ### Persistence and infrastructure
 
 | Variable | Purpose |

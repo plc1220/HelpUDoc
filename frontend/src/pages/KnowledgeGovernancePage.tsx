@@ -366,6 +366,16 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
   const [addSourceId, setAddSourceId] = useState('');
   const [uploads, setUploads] = useState<Array<{ name: string; status: string }>>([]);
   const [explorerSource, setExplorerSource] = useState<{ id: number; title: string } | null>(null);
+
+  // Kept stable so the explorer's effects depend on them without refetching on
+  // every render of this page.
+  const explorerFetchers = useMemo(() => ({
+    fetchBundle: (sourceId: number) => fetchKnowledgeBaseSourceBundle(knowledgeBaseId, sourceId),
+    fetchBundleFile: (sourceId: number, path: string) =>
+      fetchKnowledgeBaseSourceBundleFile(knowledgeBaseId, sourceId, path),
+    fetchGraph: (sourceId: number) => fetchKnowledgeBaseSourceGraph(knowledgeBaseId, sourceId),
+    fetchSnapshots: (sourceId: number) => fetchKnowledgeBaseSourceSnapshots(knowledgeBaseId, sourceId),
+  }), [knowledgeBaseId]);
   const [uploadGuidance, setUploadGuidance] = useState('');
 
   const reload = useCallback(async () => {
@@ -597,10 +607,10 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
         knowledgeId={explorerSource.id}
         title={explorerSource.title}
         canPublish={false}
-        fetchBundle={(sid) => fetchKnowledgeBaseSourceBundle(knowledgeBaseId, sid)}
-        fetchBundleFile={(sid, path) => fetchKnowledgeBaseSourceBundleFile(knowledgeBaseId, sid, path)}
-        fetchGraph={(sid) => fetchKnowledgeBaseSourceGraph(knowledgeBaseId, sid)}
-        fetchSnapshots={(sid) => fetchKnowledgeBaseSourceSnapshots(knowledgeBaseId, sid)}
+        fetchBundle={explorerFetchers.fetchBundle}
+        fetchBundleFile={explorerFetchers.fetchBundleFile}
+        fetchGraph={explorerFetchers.fetchGraph}
+        fetchSnapshots={explorerFetchers.fetchSnapshots}
         onClose={() => setExplorerSource(null)}
       />
     ) : null}

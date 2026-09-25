@@ -5,7 +5,8 @@ import agentRoutes from './agent';
 import authRoutes from './auth';
 import workspaceRoutes from './workspaces';
 import workspaceCollaborationRoutes from './workspaceCollaboration';
-import internalAgentRoutes from './internalAgent';import fileRoutes from './files';
+import internalAgentRoutes from './internalAgent';
+import fileRoutes from './files';
 import conversationRoutes from './conversations';
 import scheduleRoutes from './schedules';
 import settingsRoutes from './settings';
@@ -13,6 +14,7 @@ import knowledgeRoutes from './knowledge';
 import knowledgeCatalogRoutes from './knowledgeCatalog';
 import knowledgeBaseRoutes from './knowledgeBases';
 import usersRoutes from './users';
+import adminWorkspaceRoutes from './adminWorkspaces';
 import settingsReflectionRoutes from './settingsReflections';
 import governanceRoutes from './governance';
 import meMemoryRoutes from './meMemory';
@@ -23,6 +25,8 @@ import { WorkspacePublicationService } from '../services/workspacePublicationSer
 import { WorkspaceCollaborationService } from '../services/workspaceCollaborationService';
 import { WorkspaceTeamChatAgentService } from '../services/workspaceTeamChatAgentService';
 import { FileService } from '../services/fileService';
+import { FileStatusService } from '../services/fileStatusService';
+import { FilePublicationService } from '../services/filePublicationService';
 import { ConversationService } from '../services/conversationService';
 import { UserService } from '../services/userService';
 import { KnowledgeService } from '../services/knowledgeService';
@@ -51,6 +55,8 @@ export default function(
     workspacePublicationService,
     fileService,
   );
+  const filePublicationService = new FilePublicationService(dbService, fileService, workspaceService);
+  const fileStatusService = new FileStatusService(dbService, workspaceService, filePublicationService, fileService);
   const conversationService = new ConversationService(dbService, workspaceService);
   const notificationService = new NotificationService(dbService.getDb());
   configureAgentRunServices({ conversationService, fileService, notificationService });
@@ -86,7 +92,14 @@ export default function(
   ));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService }));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
-  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
+  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
+  // Read-only workspace oversight. Every route under it is a GET; see the note
+  // in `adminWorkspaces.ts` for why the mutation surface is deliberately empty.
+  router.use(
+    '/admin/workspaces',
+    requireSystemAdmin(userService),
+    adminWorkspaceRoutes(workspaceService, fileService),
+  );
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
   router.use('/knowledge-catalog', knowledgeCatalogRoutes(knowledgeService));
   // Not admin-gated: team leads manage their own bases; access is enforced in the service.
@@ -100,7 +113,9 @@ export default function(
   // browser userContext middleware; each route verifies the signed agent token
   // and its bound scope itself.
   router.use('/internal/agent', internalAgentRoutes(workspaceCollaborationService));
-  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService));
+  router.use('/workspaces/:workspaceId/files', fileRoutes(
+    fileService, workspaceService, googleOAuthService, undefined, fileStatusService, filePublicationService,
+  ));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));

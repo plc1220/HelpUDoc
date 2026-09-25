@@ -11,6 +11,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Warm Lumo palette for the compact file lifecycle indicators. */
+.file-status-color-dot[data-file-status='draft'] > span {
+  background-color: #d9cbb9;
+}
+.file-status-color-dot[data-file-status='in_review'] > span {
+  background-color: #ad8c68;
+}
+.file-status-color-dot[data-file-status='approved'] > span {
+  background-color: #80664b;
+}
+.file-status-color-dot[data-file-status='published'] > span {
+  background-color: #493728;
+}
+:root[data-theme='dark'] .file-status-color-dot[data-file-status='draft'] > span {
+  background-color: #e8ddce;
+}
+:root[data-theme='dark'] .file-status-color-dot[data-file-status='in_review'] > span {
+  background-color: #d4b590;
+}
+:root[data-theme='dark'] .file-status-color-dot[data-file-status='approved'] > span {
+  background-color: #b3916b;
+}
+:root[data-theme='dark'] .file-status-color-dot[data-file-status='published'] > span {
+  background-color: #927354;
+}
+
 html[data-astryx-theme="neutral"] {
   --app-bg: var(--color-background-body);
   --surface: var(--color-background-surface);

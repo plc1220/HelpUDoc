@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from pathlib import Path
 from uuid import uuid4
@@ -60,6 +61,7 @@ from helpudoc_agent.skills_registry import (
     build_loaded_skill_text,
     collect_tool_names,
     find_skill_for_context,
+    governed_pin_for,
     is_skill_allowed,
     load_skills,
     read_helpudoc_learnings,
@@ -192,6 +194,80 @@ def _record_terminal_tool_failure(
         return False
     counts[normalized_name] = counts.get(normalized_name, 0) + 1
     return counts[normalized_name] >= _TERMINAL_SANDBOX_FAILURE_LIMIT
+
+
+def _safe_repr(value: Any) -> str:
+    """repr() that cannot raise, naming the type when the object refuses to describe itself."""
+    try:
+        return repr(value)
+    except Exception:
+        return f"<unrepresentable {type(value).__name__}>"
+
+
+def _safe_json(value: Any) -> str:
+    """JSON-encode a value for display, never raising.
+
+    Streamed tool payloads can contain objects json has no encoder for. LangChain injects a
+    `ToolRuntime` into any tool that declares one (`load_mcp_tools` does), and encoding that
+    object previously raised `TypeError` out of the event stream and failed the entire run while
+    building a cosmetic preview label.
+    """
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+    # `default=str` invokes __str__/__repr__, which can themselves raise. Degrade element-wise so
+    # a single hostile member still leaves the rest of the payload readable and names the culprit.
+    try:
+        if isinstance(value, dict):
+            return json.dumps(
+                {_safe_repr(key): _safe_repr(item) for key, item in value.items()},
+                ensure_ascii=False,
+            )
+        if isinstance(value, (list, tuple)):
+            return json.dumps([_safe_repr(item) for item in value], ensure_ascii=False)
+    except Exception:
+        pass
+    return _safe_repr(value)
+
+
+@dataclass(frozen=True)
+class ContractFailure:
+    """A completion contract that a finished run did not satisfy.
+
+    Both the streaming and non-streaming chat endpoints evaluate contracts through one function and
+    render this same result, so a gate can never again exist on one path but not the other. The
+    non-streaming endpoint previously had no checks at all, which let a research run finish with
+    zero required artifacts and still report success.
+    """
+
+    progress_label: str
+    error_message: str
+    progress_detail: str | None = None
+    error_code: str = ""
+    retryable: bool = False
+    missing: List[str] | None = None
+    done_error: str | None = None
+    context_flag: str = ""
+
+    def contract_error_payload(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"type": "contract_error", "message": self.error_message}
+        if self.error_code:
+            payload["errorCode"] = self.error_code
+            payload["retryable"] = self.retryable
+        if self.missing is not None:
+            payload["missing"] = self.missing
+        return payload
+
+    def http_detail(self) -> Dict[str, Any]:
+        detail: Dict[str, Any] = {
+            "message": self.error_message,
+            "code": self.error_code or "CONTRACT_NOT_SATISFIED",
+            "retryable": self.retryable,
+        }
+        if self.missing is not None:
+            detail["missing"] = self.missing
+        return detail
 
 
 def _research_source_contract_error(
@@ -345,13 +421,25 @@ def register_chat_routes(
         user_request: str,
     ) -> str:
         fallback_request = user_request.strip() or "Continue with the selected skill."
-        skill = find_skill_for_context(settings.backend.skills_root, skill_id, runtime.workspace_state.context)
+        context = runtime.workspace_state.context
+        context.pop("skill_activation_failure", None)
+        skill = find_skill_for_context(settings.backend.skills_root, skill_id, context)
         if skill is None:
+            # A signed pin that will not resolve is an infrastructure fault, not a missing skill.
+            # Recording the distinction lets the run fail loudly instead of quietly continuing
+            # without the instructions the user asked for.
+            pinned = governed_pin_for(context, skill_id)
+            context["skill_activation_failure"] = {
+                "skillId": skill_id,
+                "reason": "pin_unresolvable" if pinned else "not_found",
+                "versionId": str(pinned.get("versionId") or "") if pinned else "",
+            }
             return (
                 f"The user explicitly selected skill '{skill_id}', but it was not found in the configured skills registry.\n\n"
                 f"User request:\n{fallback_request}"
             )
-        if not is_skill_allowed(skill, runtime.workspace_state.context):
+        if not is_skill_allowed(skill, context):
+            context["skill_activation_failure"] = {"skillId": skill.skill_id, "reason": "not_allowed"}
             return (
                 f"The user explicitly selected skill '{skill.skill_id}', but it is not allowed for this user.\n\n"
                 f"User request:\n{fallback_request}"
@@ -359,6 +447,11 @@ def register_chat_routes(
         try:
             content = read_skill_content(skill)
         except Exception as exc:
+            context["skill_activation_failure"] = {
+                "skillId": skill_id,
+                "reason": "unreadable",
+                "detail": str(exc),
+            }
             return (
                 f"The user explicitly selected skill '{skill_id}', but the skill could not be read: {exc}\n\n"
                 f"User request:\n{fallback_request}"
@@ -798,6 +891,19 @@ def register_chat_routes(
         if manager and hasattr(manager, "reset_session"):
             manager.reset_session()
         payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
+        # Fail before the model runs, matching the streaming path. Answering an explicit skill
+        # request without the skill burns a turn and returns output that looks compliant.
+        activation_error, activation_code = _skill_activation_contract_error(runtime)
+        if activation_error:
+            logger.error("skill activation failed: %s (%s)", activation_error, activation_code)
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": activation_error,
+                    "code": activation_code,
+                    "retryable": activation_code == "SKILL_VERSION_UNVERIFIABLE",
+                },
+            )
         lf = langfuse_langchain_callbacks()
         config = _build_agent_config(runtime, message, callbacks=lf or None)
         if hasattr(agent, "ainvoke"):
@@ -1385,11 +1491,11 @@ def register_chat_routes(
                     text = _event_text(value.get(key), stringify_objects=stringify_objects)
                     if text:
                         return text
-            return json.dumps(value, ensure_ascii=False) if stringify_objects else ""
+            return _safe_json(value) if stringify_objects else ""
         text = _message_to_text(value)
         if text and not re.match(r"^[A-Za-z]+Message", text):
             return text
-        return json.dumps(value, ensure_ascii=False, default=str) if stringify_objects else text
+        return _safe_json(value) if stringify_objects else text
 
     def _event_payload_value(data: Any, *keys: str) -> Any:
         if isinstance(data, dict):
@@ -1399,20 +1505,31 @@ def register_chat_routes(
         return None
 
     def _event_input_preview(data: Any) -> str:
-        value = _event_payload_value(data, "input", "inputs", "args")
-        if value is None and isinstance(data, dict):
-            content = data.get("content")
-            if isinstance(content, dict):
-                value = content.get("args")
-        if value is None:
-            value = data
-        return _event_text(value, stringify_objects=True).strip()
+        # Previews are cosmetic. A tool payload can legitimately contain objects that json
+        # cannot encode -- LangChain injects a `ToolRuntime` into tools that declare it, which
+        # previously raised out of the event stream and failed the whole run over a label.
+        try:
+            value = _event_payload_value(data, "input", "inputs", "args")
+            if value is None and isinstance(data, dict):
+                content = data.get("content")
+                if isinstance(content, dict):
+                    value = content.get("args")
+            if value is None:
+                value = data
+            return _event_text(value, stringify_objects=True).strip()
+        except Exception:  # pragma: no cover - never fail a run for a preview string
+            logger.debug("tool input preview could not be rendered", exc_info=True)
+            return ""
 
     def _event_output_text(data: Any) -> str:
-        value = _event_payload_value(data, "output", "result", "return_value", "message")
-        if value is None:
-            value = data
-        return _event_text(value, stringify_objects=True)
+        try:
+            value = _event_payload_value(data, "output", "result", "return_value", "message")
+            if value is None:
+                value = data
+            return _event_text(value, stringify_objects=True)
+        except Exception:  # pragma: no cover - never fail a run for a preview string
+            logger.debug("tool output preview could not be rendered", exc_info=True)
+            return ""
 
     def _event_chunk_text(data: Any) -> str:
         value = _event_payload_value(data, "chunk", "message", "delta", "content")
@@ -1779,6 +1896,86 @@ def register_chat_routes(
                 missing.append(item)
         return missing
 
+    def _skill_activation_contract_error(runtime: AgentRuntimeState) -> tuple[str, str]:
+        """Return (message, errorCode) when an explicitly selected skill failed to activate.
+
+        Without this the agent proceeds on the generic assistant and improvises an answer that
+        merely resembles the requested skill, which is exactly how a stranded version pin went
+        unnoticed in production. An explicit selection that cannot be honoured is a failed run.
+        """
+        context = runtime.workspace_state.context or {}
+        failure = context.get("skill_activation_failure")
+        if not isinstance(failure, dict):
+            return "", ""
+        skill_id = str(failure.get("skillId") or "the selected skill")
+        reason = str(failure.get("reason") or "")
+        if reason == "pin_unresolvable":
+            version_id = str(failure.get("versionId") or "")
+            return (
+                f"Skill '{skill_id}' could not be started because its approved version "
+                f"{version_id or '(unknown)'} failed verification. The immutable package is missing "
+                "or its contents no longer match the signed manifest, so the run was stopped rather "
+                "than answering without the skill. Republish the skill to recover.",
+                "SKILL_VERSION_UNVERIFIABLE",
+            )
+        if reason == "not_allowed":
+            return (
+                f"Skill '{skill_id}' is not available to this user, so the run was stopped instead "
+                "of answering without it.",
+                "SKILL_NOT_ENTITLED",
+            )
+        if reason == "unreadable":
+            return (
+                f"Skill '{skill_id}' could not be read: {failure.get('detail') or 'unknown error'}.",
+                "SKILL_UNREADABLE",
+            )
+        return (
+            f"Skill '{skill_id}' was requested but is not present in the skills registry, so the "
+            "run was stopped instead of answering without it.",
+            "SKILL_NOT_FOUND",
+        )
+
+    def _evaluate_completion_contracts(
+        runtime: AgentRuntimeState,
+        *,
+        reject_plan_resume: bool = False,
+    ) -> ContractFailure | None:
+        """Evaluate every completion contract in priority order.
+
+        Single source of truth for both chat endpoints. Order matters: an unapproved plan explains a
+        missing artifact, and absent sources explain an unwritten report, so reporting the earliest
+        cause avoids sending an operator down the wrong path.
+        """
+        plan_error = "" if reject_plan_resume else _completion_plan_contract_error(runtime)
+        if plan_error:
+            return ContractFailure(
+                progress_label="Plan approval contract not satisfied",
+                progress_detail=plan_error,
+                error_message=plan_error,
+            )
+
+        source_error = _research_source_contract_error(runtime, source_tracker)
+        if source_error:
+            return ContractFailure(
+                progress_label="Research source contract not satisfied",
+                progress_detail=source_error,
+                error_message=source_error,
+                error_code="RESEARCH_SOURCES_UNAVAILABLE",
+                retryable=True,
+                done_error=source_error,
+                context_flag="source_contract_failed",
+            )
+
+        missing = _missing_required_artifacts(runtime)
+        if missing:
+            return ContractFailure(
+                progress_label="Artifact contract not satisfied",
+                error_message="Artifact contract not satisfied.",
+                missing=missing,
+                context_flag="artifact_contract_failed",
+            )
+        return None
+
     def _completion_plan_contract_error(runtime: AgentRuntimeState) -> str:
         context = runtime.workspace_state.context or {}
         if str(context.get("active_skill") or "").strip() != "data/dashboard":
@@ -1822,6 +2019,7 @@ def register_chat_routes(
         context.pop("_data_workspace_query_executions", None)
         context.pop("_current_sandbox_run_ids", None)
         context.pop("_inline_sandbox_executions", None)
+        context.pop("skill_activation_failure", None)
         reset_document_tool_run_state(context)
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
@@ -1978,6 +2176,27 @@ def register_chat_routes(
 
         if resume_decisions is None and resume_value is None:
             payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
+            # Stop before the model runs. Answering an explicit skill request without the skill
+            # wastes a turn and produces output that looks compliant but is not.
+            activation_error, activation_code = _skill_activation_contract_error(runtime)
+            if activation_error:
+                logger.error("skill activation failed: %s (%s)", activation_error, activation_code)
+                yield _json_line({
+                    "type": "progress",
+                    "phase": "failed",
+                    "label": "Selected skill could not be started",
+                    "detail": activation_error,
+                    "status": "error",
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                })
+                yield _json_line({
+                    "type": "contract_error",
+                    "message": activation_error,
+                    "errorCode": activation_code,
+                    "retryable": activation_code == "SKILL_VERSION_UNVERIFIABLE",
+                })
+                yield _json_line({"type": "done", "status": "failed", "error": activation_error})
+                return
         else:
             payload = _prepare_payload(message)
             context = runtime.workspace_state.context
@@ -2721,7 +2940,6 @@ def register_chat_routes(
                 ):
                     stream_error_message = handler.fatal_tool_failure_message
                     task.cancel()
-            source_tracker.update_final_report(runtime.workspace_state)
             if saw_interrupt:
                 yield _json_line({"type": "done", "status": "interrupted"})
             elif stream_error_message:
@@ -2752,65 +2970,27 @@ def register_chat_routes(
                 )
                 yield _json_line({"type": "done", "status": "failed"})
             else:
-                plan_contract_error = (
-                    ""
-                    if reject_plan_resume
-                    else _completion_plan_contract_error(runtime)
+                failure = _evaluate_completion_contracts(
+                    runtime, reject_plan_resume=reject_plan_resume,
                 )
-                source_contract_error = _research_source_contract_error(runtime, source_tracker)
-                missing = _missing_required_artifacts(runtime)
-                if plan_contract_error:
-                    yield _json_line({
+                if failure:
+                    if failure.context_flag:
+                        runtime.workspace_state.context[failure.context_flag] = True
+                    progress: Dict[str, Any] = {
                         "type": "progress",
                         "phase": "failed",
-                        "label": "Plan approval contract not satisfied",
-                        "detail": plan_contract_error,
+                        "label": failure.progress_label,
                         "status": "error",
                         "timestamp": datetime.utcnow().isoformat() + "Z",
-                    })
-                    yield _json_line(
-                        {
-                            "type": "contract_error",
-                            "message": plan_contract_error,
-                        }
-                    )
-                    yield _json_line({"type": "done", "status": "failed"})
-                elif source_contract_error:
-                    runtime.workspace_state.context["source_contract_failed"] = True
-                    yield _json_line({
-                        "type": "progress",
-                        "phase": "failed",
-                        "label": "Research source contract not satisfied",
-                        "detail": source_contract_error,
-                        "status": "error",
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
-                    })
-                    yield _json_line(
-                        {
-                            "type": "contract_error",
-                            "message": source_contract_error,
-                            "errorCode": "RESEARCH_SOURCES_UNAVAILABLE",
-                            "retryable": True,
-                        }
-                    )
-                    yield _json_line({"type": "done", "status": "failed", "error": source_contract_error})
-                elif missing:
-                    runtime.workspace_state.context["artifact_contract_failed"] = True
-                    yield _json_line({
-                        "type": "progress",
-                        "phase": "failed",
-                        "label": "Artifact contract not satisfied",
-                        "status": "error",
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
-                    })
-                    yield _json_line(
-                        {
-                            "type": "contract_error",
-                            "message": "Artifact contract not satisfied.",
-                            "missing": missing,
-                        }
-                    )
-                    yield _json_line({"type": "done", "status": "failed"})
+                    }
+                    if failure.progress_detail is not None:
+                        progress["detail"] = failure.progress_detail
+                    yield _json_line(progress)
+                    yield _json_line(failure.contract_error_payload())
+                    done: Dict[str, Any] = {"type": "done", "status": "failed"}
+                    if failure.done_error is not None:
+                        done["error"] = failure.done_error
+                    yield _json_line(done)
                 else:
                     yield _json_line({
                         "type": "progress",
@@ -2834,8 +3014,22 @@ def register_chat_routes(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+        # This endpoint has no event stream to carry a contract_error frame, so a violated
+        # contract is surfaced as 422 with a structured body. Returning 200 here is what let a
+        # research run finish with none of its 15 required artifacts and still look successful.
         result = await _invoke_agent(runtime, chat_request)
-        source_tracker.update_final_report(runtime.workspace_state)
+
+        failure = _evaluate_completion_contracts(runtime)
+        if failure:
+            if failure.context_flag:
+                runtime.workspace_state.context[failure.context_flag] = True
+            logger.error(
+                "completion contract not satisfied: %s (%s)",
+                failure.error_message,
+                failure.error_code or "CONTRACT_NOT_SATISFIED",
+            )
+            raise HTTPException(status_code=422, detail=failure.http_detail())
+
         return ChatResponse(reply=result)
 
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream")

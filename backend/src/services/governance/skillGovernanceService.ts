@@ -1297,10 +1297,13 @@ export class SkillGovernanceService {
     const files = defaultVersion
       ? await this.packageStore.versionFiles(defaultVersion.id)
       : [];
+    const readVersionFile = (file: FileSnapshot) => defaultVersion
+      ? this.packageStore.readVersionFile(visibleSkill.skillKey, defaultVersion.id, file)
+      : this.packageStore.readBlob(file.contentHash);
     const readableFiles = await Promise.all(files.map(async (file) => ({
       ...file,
       content: isTextMime(file.mimeType)
-        ? (await this.packageStore.readBlob(file.contentHash)).toString('utf-8')
+        ? (await readVersionFile(file)).toString('utf-8')
         : undefined,
       encoding: isTextMime(file.mimeType) ? 'utf-8' : 'binary',
     })));
@@ -1308,7 +1311,7 @@ export class SkillGovernanceService {
       defaultVersion?.validationSummary,
       {},
     );
-    const metadata = await this.packageStore.readSkillMetadata(files);
+    const metadata = await this.packageStore.readSkillMetadata(files, readVersionFile);
     const declaredCapabilities = validationSummary.declaredCapabilities;
     const capabilities = {
       tools: Array.from(new Set([...(declaredCapabilities?.tools || []), ...metadata.tools])),

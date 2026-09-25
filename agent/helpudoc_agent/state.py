@@ -12,14 +12,10 @@ class WorkspaceState:
 
     workspace_id: str
     root_path: Path
-    final_report_path: Path = field(init=False)
-    question_path: Path = field(init=False)
     context: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.root_path.mkdir(parents=True, exist_ok=True)
-        self.final_report_path = self.root_path / "final_report.md"
-        self.question_path = self.root_path / "question.txt"
 
 
 class AgentRuntimeState:

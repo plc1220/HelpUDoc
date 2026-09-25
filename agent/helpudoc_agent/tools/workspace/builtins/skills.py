@@ -22,6 +22,7 @@ from ....skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
     find_skill_for_context,
+    governed_pin_for,
     is_skill_allowed,
     load_skills,
     load_context_skills,
@@ -270,6 +271,16 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
         normalized = skill_id.strip()
         skill = find_skill_for_context(skills_root, normalized, workspace_state.context)
         if skill is None:
+            if governed_pin_for(workspace_state.context, normalized):
+                # The skill exists and is entitled, but its approved package failed verification.
+                # Say so explicitly: improvising a substitute here is what made a stranded pin
+                # look like a working run for 38 hours.
+                return (
+                    f"Skill '{normalized}' is entitled to this user but its approved version could not "
+                    "be verified, so it cannot be loaded. This is a platform fault, not a missing skill. "
+                    "Do not substitute your own approach or approximate the skill's workflow. Tell the "
+                    "user the skill is temporarily unavailable and stop."
+                )
             available = ", ".join(sorted({s.skill_id for s in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"
 

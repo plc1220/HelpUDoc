@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import type { DropdownMenuOption } from '@astryxdesign/core/DropdownMenu';
+
+import FileStatusChip from './FileStatusChip';
 import {
-  Check,
   ChevronDown,
   ChevronRight,
   Folder,
@@ -11,7 +13,7 @@ import {
 } from 'lucide-react';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 
-import type { DashboardArtifactInfo, File as WorkspaceFile } from '../types';
+import type { DashboardArtifactInfo, File as WorkspaceFile, FileStatus } from '../types';
 import { getFileDisplayName, getFileTypeIcon } from '../utils/files';
 import { isEditorImageName, WORKSPACE_IMAGE_DRAG_MIME } from '../utils/editorImages';
 import {
@@ -90,6 +92,9 @@ interface WorkspaceFileTreeProps {
   selectedFiles: Set<string>;
   copiedPublicUrlFileId: string | null;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
+  fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
+  workspaceId?: string;
+  onStatusChanged?: () => void;
   readOnly?: boolean;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
@@ -202,6 +207,9 @@ const TreeFileRow: React.FC<{
   selected: boolean;
   selectedFiles: Set<string>;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
+  fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
+  workspaceId?: string;
+  onStatusChanged?: () => void;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
   onToggleFileSelection: (fileId: string) => void;
@@ -221,6 +229,9 @@ const TreeFileRow: React.FC<{
   selected,
   selectedFiles,
   dashboardArtifactsByPath,
+  fileStatusById,
+  workspaceId,
+  onStatusChanged,
   isDraftWorkspaceFile,
   onSelectFile,
   onToggleFileSelection,
@@ -251,15 +262,32 @@ const TreeFileRow: React.FC<{
     : isDarkMode
       ? 'hover:bg-slate-800/80'
       : 'hover:bg-slate-100/80';
-  const actionsClassName = isDarkMode
-    ? 'border-slate-700/80 bg-slate-950/96 shadow-[0_18px_50px_-34px_rgba(2,6,23,0.98)]'
-    : 'border-slate-200/80 bg-white/95 shadow-sm';
-  const actionButtonClassName = isDarkMode
-    ? 'pointer-events-auto rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100'
-    : 'pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700';
   const dashboardPath = (file.path || file.name || '').replace(/\\/g, '/');
   const dashboardArtifact = dashboardPath ? dashboardArtifactsByPath?.[dashboardPath] : undefined;
   const dashboardBadge = dashboardArtifact?.status;
+  const actionItems: DropdownMenuOption[] = [];
+  if (file.publicUrl && !isDraft) {
+    actionItems.push({
+      label: copiedPublicUrlFileId === file.id ? 'Copied public URL' : 'Copy public URL',
+      icon: <LinkIcon size={16} />,
+      onClick: () => onCopyPublicUrl(file),
+    });
+  }
+  if (!isDraft && !readOnly) {
+    actionItems.push({
+      label: 'Rename',
+      icon: <Edit size={16} />,
+      onClick: () => onRenameFile(file),
+    });
+  }
+  if (!readOnly) {
+    if (actionItems.length > 0) actionItems.push({ type: 'divider' });
+    actionItems.push({
+      label: 'Delete',
+      icon: <Trash size={16} />,
+      onClick: () => onDeleteFile(file),
+    });
+  }
   const handleDragStart = (event: React.DragEvent) => {
     if (!isDraggable) {
       return;
@@ -283,7 +311,6 @@ const TreeFileRow: React.FC<{
       className={`group relative flex items-start gap-2 rounded-lg px-2 py-1.5 transition-colors ${rowClassName} ${
         isBeingDragged ? 'opacity-40' : ''
       }`}
-      title={node.path}
       data-workspace-file-id={fileId}
       draggable={isDraggable}
       onDragStart={handleDragStart}
@@ -334,6 +361,23 @@ const TreeFileRow: React.FC<{
               {fileIcon}
             </span>
             <SlidingFileName name={displayName} colorMode={colorMode} />
+            {workspaceId && fileStatusById?.[String(file.id)] && (
+              <span
+                className="shrink-0"
+                onClick={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <FileStatusChip
+                  workspaceId={workspaceId}
+                  fileId={file.id}
+                  status={fileStatusById[String(file.id)].status}
+                  drift={fileStatusById[String(file.id)].drift}
+                  extraItems={actionItems}
+                  compact
+                  onChanged={onStatusChanged}
+                />
+              </span>
+            )}
             {dashboardBadge && (
               <span
                 className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
@@ -351,50 +395,6 @@ const TreeFileRow: React.FC<{
             )}
           </div>
         </div>
-      </div>
-      <div className={`pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border pl-2 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${actionsClassName}`}>
-          {file.publicUrl && !isDraft && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onCopyPublicUrl(file);
-              }}
-              className={actionButtonClassName}
-              title={copiedPublicUrlFileId === file.id ? 'Copied!' : 'Copy public URL'}
-              aria-label={copiedPublicUrlFileId === file.id ? 'Copied to clipboard' : 'Copy public URL'}
-            >
-              {copiedPublicUrlFileId === file.id ? (
-                <Check size={14} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
-              ) : (
-                <LinkIcon size={14} />
-              )}
-            </button>
-          )}
-          {!isDraft && !readOnly && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onRenameFile(file);
-              }}
-              className={actionButtonClassName}
-              title="Rename"
-            >
-              <Edit size={14} />
-            </button>
-          )}
-          {!readOnly ? <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDeleteFile(file);
-            }}
-            className={actionButtonClassName}
-            title="Delete"
-          >
-            <Trash size={14} />
-          </button> : null}
       </div>
     </div>
   );
@@ -619,6 +619,9 @@ const renderTreeNodes = (
     selectedDashboardPath?: string | null;
     selectedFiles: Set<string>;
     dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
+    fileStatusById?: Record<string, { status: FileStatus; drift: boolean }>;
+    workspaceId?: string;
+    onStatusChanged?: () => void;
     isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
     onSelectFile: (file: WorkspaceFile) => void;
     onSelectFolder?: (folderPath: string) => void;
@@ -680,6 +683,9 @@ const renderTreeNodes = (
         selected={String(options.selectedFileId) === String(node.file.id)}
         selectedFiles={options.selectedFiles}
         dashboardArtifactsByPath={options.dashboardArtifactsByPath}
+        fileStatusById={options.fileStatusById}
+        workspaceId={options.workspaceId}
+        onStatusChanged={options.onStatusChanged}
         isDraftWorkspaceFile={options.isDraftWorkspaceFile}
         onSelectFile={options.onSelectFile}
         onToggleFileSelection={options.onToggleFileSelection}
@@ -707,6 +713,9 @@ export default function WorkspaceFileTree({
   selectedDashboardPath,
   selectedFiles,
   dashboardArtifactsByPath,
+  fileStatusById,
+  workspaceId,
+  onStatusChanged,
   readOnly = false,
   isDraftWorkspaceFile,
   onSelectFile,
@@ -875,6 +884,9 @@ export default function WorkspaceFileTree({
               selectedDashboardPath,
               selectedFiles,
               dashboardArtifactsByPath,
+              fileStatusById,
+              workspaceId,
+              onStatusChanged,
               isDraftWorkspaceFile,
               onSelectFile,
               onSelectFolder,

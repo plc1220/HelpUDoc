@@ -12,6 +12,8 @@ export type WorkspaceRoleCapabilities = {
   canView: boolean;
   canComment: boolean;
   canPropose: boolean;
+  /** May approve a file for release, or send an approved file back. */
+  canApprove: boolean;
   canPublish: boolean;
   canManageAccess: boolean;
 };
@@ -21,6 +23,7 @@ const CAPABILITIES: Record<WorkspaceRole, WorkspaceRoleCapabilities> = {
     canView: true,
     canComment: false,
     canPropose: false,
+    canApprove: false,
     canPublish: false,
     canManageAccess: false,
   },
@@ -28,6 +31,7 @@ const CAPABILITIES: Record<WorkspaceRole, WorkspaceRoleCapabilities> = {
     canView: true,
     canComment: true,
     canPropose: false,
+    canApprove: false,
     canPublish: false,
     canManageAccess: false,
   },
@@ -35,6 +39,7 @@ const CAPABILITIES: Record<WorkspaceRole, WorkspaceRoleCapabilities> = {
     canView: true,
     canComment: true,
     canPropose: true,
+    canApprove: false,
     canPublish: false,
     canManageAccess: false,
   },
@@ -42,6 +47,7 @@ const CAPABILITIES: Record<WorkspaceRole, WorkspaceRoleCapabilities> = {
     canView: true,
     canComment: true,
     canPropose: true,
+    canApprove: true,
     canPublish: true,
     canManageAccess: false,
   },
@@ -49,6 +55,7 @@ const CAPABILITIES: Record<WorkspaceRole, WorkspaceRoleCapabilities> = {
     canView: true,
     canComment: true,
     canPropose: true,
+    canApprove: true,
     canPublish: true,
     canManageAccess: true,
   },

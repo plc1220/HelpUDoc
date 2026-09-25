@@ -185,11 +185,23 @@ export const compareSemanticVersions = (left: string, right: string): number => 
   return 0;
 };
 
+/**
+ * Order manifest entries by UTF-16 code unit, never by locale collation.
+ *
+ * The agent recomputes this hash in Python (`_compute_governed_manifest_hash`) using a plain
+ * byte-order sort to verify a signed version pin. `localeCompare` disagrees with byte order
+ * whenever case differs across a boundary — `SKILL.md` vs `scripts/` being the case that occurs
+ * in essentially every skill package. That produced a different element order, a different JSON
+ * encoding, and a different digest, so the agent rejected every multi-file package and silently
+ * fell back to "skill not found".
+ */
+const byByteOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 export const computePackageManifestHash = (
   files: Array<Pick<FileSnapshot, 'path' | 'contentHash' | 'mode' | 'sizeBytes'>>,
 ): string => {
   const manifest = [...files]
-    .sort((a, b) => a.path.localeCompare(b.path))
+    .sort((a, b) => byByteOrder(a.path, b.path))
     .map((file) => ({
       path: file.path,
       contentHash: file.contentHash,

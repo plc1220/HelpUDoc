@@ -11,7 +11,7 @@ from langchain_core.tools import Tool, tool
 from ....interaction_contract import mark_gate_completed, mark_gate_pending
 from ....interaction_workflows import frontend_slides_gate_id
 from ....clarification_responses import normalize_clarification_resume_payload
-from ....interrupt_payloads import build_plan_approval_interrupt_value
+from ....interrupt_payloads import build_plan_approval_interrupt_value, normalize_plan_steps
 from ....state import WorkspaceState
 from ..clarification_parse import (
     clarification_input_mode,
@@ -97,12 +97,19 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
         reviewer_feedback: str = "",
         edited_plan_content: str = "",
     ) -> str:
-        """Request human approval/edit/rejection for a proposed execution plan."""
+        """Request human approval/edit/rejection for a proposed execution plan.
+
+        Each entry in `steps` should be an object shaped like:
+        {"title": "What this step does", "detail": "optional elaboration",
+         "state": "pending|in_progress|completed"}
+        Only `title` is required. Other key names are accepted and coerced, but supplying `title`
+        keeps the reviewer-facing plan exact.
+        """
         title = (plan_title or "").strip()
         summary = (plan_summary or "").strip()
         summary_markdown = (plan_summary_markdown or "").strip()
         checklist = (execution_checklist or "").strip()
-        normalized_steps = steps if isinstance(steps, list) else []
+        normalized_steps = normalize_plan_steps(steps)
         plan_path = (plan_file_path or "").strip() or "research_plan.md"
         status = (status_label or "").strip() or "Pending Approval"
         risks = (risky_actions or "").strip()
