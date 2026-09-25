@@ -28,6 +28,7 @@ from .builtins.skills import (
     build_load_skill_tool,
     build_run_skill_python_script_tool,
 )
+from .builtins.team_thread_history import build_team_thread_history_tool
 from .builtins.workspace_files import (
     build_append_to_report_tool,
     build_create_pdf_from_images_tool,
@@ -76,6 +77,7 @@ class ToolFactory:
             "request_interaction": lambda ws: build_request_interaction_tool(ws),
             "workflow_action": lambda ws: build_workflow_action_tool(ws),
             "run_skill_python_script": lambda ws: build_run_skill_python_script_tool(self.settings, ws),
+            "team_thread_history": lambda ws: build_team_thread_history_tool(ws),
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:

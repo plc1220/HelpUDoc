@@ -64,6 +64,12 @@ type StartRunParams = {
   history?: AgentHistoryEntry[];
   forceReset?: boolean;
   turnId?: string;
+  // Stable, durably-persisted runner identity supplied by the caller (e.g. the
+  // team dispatcher persists it in SQL BEFORE dispatch). When provided, the run
+  // registers under this exact id instead of inventing a random one, so a crash
+  // between dispatch and persisting the returned id cannot desynchronize the
+  // durable identity from the runtime run.
+  runId?: string;
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
@@ -185,7 +191,202 @@ const DEBUG_AGENT_RUN_STREAM =
 
 const runAbortControllers = new Map<string, AbortController>();
 const runContexts = new Map<string, RunContext>();
+// Runs whose worker this process is currently launching or running. This is the
+// synchronous, in-process mutual-exclusion signal: it is set before any await so
+// two concurrent dispatch paths in this process cannot both launch the same run.
+// It is rolled back if the launch attempt fails before the worker takes over.
+const launchingRuns = new Set<string>();
 const workspaceRunLease = new WorkspaceRunLeaseManager(redisClient);
+
+const buildLaunchLeaseKey = (runId: string) => `agent:run:${runId}:launch`;
+// The launch lease covers the window between "this process decided to launch" and
+// "the worker registered its abort controller / flipped status to running". A
+// crashed launcher stops renewing; the lease lapses, and because the status is
+// still `queued`, a retry can reclaim launch ownership and recover the work.
+//
+// Production-safe TTL mirrors the workspace mutation lease strategy so a launcher
+// that is briefly paused (GC/event-loop stall) is not spuriously superseded by a
+// competing worker. Tests override it to exercise crash-recovery without waiting
+// the full production window.
+const launchLeaseTtlMs = (): number => {
+  const raw = Number(process.env.AGENT_RUN_LAUNCH_LEASE_TTL_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 90_000;
+};
+
+// Grant launch ownership only when the run is still `queued` (definitive proof no
+// live worker exists yet — a worker flips the status to `running` as it starts)
+// and the lease is unclaimed or lapsed. Atomic, so concurrent cross-process
+// dispatch cannot both win, while a lapsed lease from a crashed launcher is
+// reclaimable. A running/terminal run is never relaunched here.
+const CLAIM_LAUNCH_LEASE_LUA =
+  'local status = redis.call("HGET", KEYS[2], "status") '
+  + 'if status ~= "queued" then return "SKIP" end '
+  + 'if redis.call("SET", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then return "LAUNCH" end '
+  + 'return "SKIP"';
+
+// Token-scoped release: only delete the lease if we still own it. A delayed
+// launcher that already lost ownership must not delete the new owner's lease.
+const RELEASE_LAUNCH_LEASE_LUA =
+  'if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end';
+
+// Token-scoped renewal: extend the lease TTL only while we still own the token.
+// Returns 1 when renewed, 0 when ownership was lost (so the worker can stop).
+const RENEW_LAUNCH_LEASE_LUA =
+  'if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("PEXPIRE", KEYS[1], ARGV[2]) else return 0 end';
+
+// Live launchers renewing their lease. A queued worker that is waiting for the
+// workspace mutation lease keeps its launch ownership alive (token-scoped) so a
+// concurrent retry cannot reclaim it; the renewal is stopped once the worker
+// owns the workspace lease and has transitioned the run to running.
+const launchLeaseRenewals = new Map<string, NodeJS.Timeout>();
+
+const startLaunchLeaseRenewal = (runId: string, launchToken: string): void => {
+  if (launchLeaseRenewals.has(runId)) return;
+  const ttl = launchLeaseTtlMs();
+  // Renew well inside the TTL so a briefly-paused event loop does not drop it.
+  const interval = Math.max(50, Math.floor(ttl / 3));
+  const timer = setInterval(() => {
+    void redisClient.eval(RENEW_LAUNCH_LEASE_LUA, {
+      keys: [buildLaunchLeaseKey(runId)],
+      arguments: [launchToken, String(launchLeaseTtlMs())],
+    }).then((renewed) => {
+      if (Number(renewed) !== 1) stopLaunchLeaseRenewal(runId);
+    }).catch(() => undefined);
+  }, interval);
+  timer.unref?.();
+  launchLeaseRenewals.set(runId, timer);
+};
+
+const stopLaunchLeaseRenewal = (runId: string): void => {
+  const timer = launchLeaseRenewals.get(runId);
+  if (timer) {
+    clearInterval(timer);
+    launchLeaseRenewals.delete(runId);
+  }
+};
+
+/**
+ * Confirm this worker still owns the launch lease token. Used to fence a delayed
+ * launcher: if ownership was reclaimed (e.g. after a crash + recovery), the stale
+ * launcher must not begin external work (workspace lease / AI streaming).
+ */
+const ownsLaunchLease = async (runId: string, launchToken: string): Promise<boolean> => {
+  try {
+    const current = await redisClient.get(buildLaunchLeaseKey(runId));
+    return current === launchToken;
+  } catch (error) {
+    console.error('Failed to verify agent run launch ownership', safeErrorForLog(error));
+    return false;
+  }
+};
+
+/**
+ * Launch the run worker at most once per runId, recoverably and with fencing.
+ *
+ * - Concurrent identical dispatch (same process): the synchronous `launchingRuns`
+ *   marker admits exactly one launcher; the loser is a no-op.
+ * - Concurrent identical dispatch (cross process): the launch lease is claimed
+ *   atomically with SET NX under a `status == queued` guard, so only one process
+ *   launches.
+ * - Ordinary exception after the lease is claimed but before launch: the catch
+ *   compare-and-releases our own token so a same-process retry recovers at once.
+ * - True process death after claiming: the lease has a bounded TTL and is not
+ *   renewed by a dead launcher; with the status still `queued`, a retry reclaims
+ *   launch ownership and launches the SAME runId. The new owner's token fences
+ *   any delayed original launcher out of external work.
+ *
+ * Returns true when this call actually launched the worker.
+ */
+const ensureRunWorkerLaunched = async (
+  runId: string,
+  params: StartRunParams,
+  resumePayload?: ResumePayload,
+  previousInterrupt?: RunPendingInterrupt,
+): Promise<boolean> => {
+  // Synchronous in-process guard: claim the local launch slot before any await.
+  if (launchingRuns.has(runId) || runAbortControllers.has(runId)) {
+    return false;
+  }
+  launchingRuns.add(runId);
+  const launchToken = `${runId}:${randomUUID()}`;
+  let claimed = false;
+  try {
+    const decision = await redisClient.eval(CLAIM_LAUNCH_LEASE_LUA, {
+      keys: [buildLaunchLeaseKey(runId), buildMetaKey(runId)],
+      arguments: [launchToken, String(launchLeaseTtlMs())],
+    });
+    if (decision !== 'LAUNCH') {
+      // Another launcher owns the lease (still within TTL) or the run is no longer
+      // queued (already running/terminal). Release only our in-process slot; the
+      // durable lease belongs to the other launcher until it lapses.
+      launchingRuns.delete(runId);
+      return false;
+    }
+    claimed = true;
+  } catch (error) {
+    launchingRuns.delete(runId);
+    if (claimed) {
+      // Ordinary failure after a known-owner claim: compare-and-release our token
+      // so a retry in this process reclaims immediately (no waiting for TTL).
+      await redisClient.eval(RELEASE_LAUNCH_LEASE_LUA, {
+        keys: [buildLaunchLeaseKey(runId)],
+        arguments: [launchToken],
+      }).catch((releaseError) => console.error('Failed to release launch lease after error', safeErrorForLog(releaseError)));
+    }
+    console.error('Failed to claim agent run launch lease', safeErrorForLog(error));
+    throw error;
+  }
+  runContexts.set(runId, { params });
+  // Fire-and-forget: runAgentRunWorker fences on launchToken before external work,
+  // registers the abort controller, and flips the status to `running`, at which
+  // point it — not the launch lease — owns the run. Cleared on terminal state.
+  launchAgentRunWorker(runId, params, resumePayload, previousInterrupt, launchToken);
+  return true;
+};
+
+const clearLaunchGuard = async (runId: string, launchToken?: string): Promise<void> => {
+  launchingRuns.delete(runId);
+  stopLaunchLeaseRenewal(runId);
+  try {
+    if (launchToken) {
+      await redisClient.eval(RELEASE_LAUNCH_LEASE_LUA, {
+        keys: [buildLaunchLeaseKey(runId)],
+        arguments: [launchToken],
+      });
+    } else {
+      await redisClient.del(buildLaunchLeaseKey(runId));
+    }
+  } catch (error) {
+    console.error('Failed to clear agent run launch lease', safeErrorForLog(error));
+  }
+};
+
+/**
+ * Recover a queued run whose launcher died after claiming the launch lease.
+ *
+ * A crashed launcher cannot release its lease, so an immediate relaunch attempt
+ * is refused until the lease lapses (its TTL). This bounded poll retries the
+ * launch for the SAME run identity — never a new one — waiting for the lease to
+ * lapse, up to a small multiple of the configured lease TTL. It stops early if
+ * the run leaves `queued` (a live worker took over) or the launch succeeds.
+ */
+const recoverQueuedRunLaunch = async (runId: string, params: StartRunParams): Promise<void> => {
+  // Cap the wait at ~1.5x the lease TTL plus a small margin. In production this
+  // is bounded by the configured lease; tests shorten the lease via env.
+  const ttlMs = launchLeaseTtlMs();
+  const deadline = Date.now() + Math.ceil(ttlMs * 1.5) + 500;
+  const pollMs = Math.min(200, Math.max(25, Math.floor(ttlMs / 8)));
+  // First attempt immediately: covers the case where the lease was released
+  // (ordinary-exception cleanup) or was never durably claimed.
+  if (await ensureRunWorkerLaunched(runId, params)) return;
+  while (Date.now() < deadline) {
+    const status = await redisClient.hGet(buildMetaKey(runId), 'status').catch(() => undefined);
+    if (status && status !== 'queued') return; // a live worker owns it now
+    if (await ensureRunWorkerLaunched(runId, params)) return;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+};
+
 let runTelemetryService: RunTelemetryService | null = null;
 let runProvenanceService: AgentRunProvenanceService | null = null;
 let userMemoryService: UserMemoryService | null = null;
@@ -3130,6 +3331,10 @@ const markRunFinished = async (runId: string, status: AgentRunStatus, error?: st
   });
   if (status === 'completed' || status === 'failed' || status === 'cancelled') {
     runContexts.delete(runId);
+    // Release the single-launch guard on terminal state so the in-process set
+    // stays bounded. The durable meta/dedupe records remain the source of truth
+    // for dedupe decisions; the guard only serializes launches for a live runId.
+    await clearLaunchGuard(runId);
   }
   return completedAt;
 };
@@ -3143,19 +3348,171 @@ const markRunAwaitingApproval = async (runId: string, interruptPayload: string, 
   });
 };
 
+export class AgentRunDispatchRetryableError extends Error {
+  readonly retryable = true;
+  readonly code = 'RUN_DISPATCH_RETRYABLE';
+  constructor(message: string) {
+    super(message);
+    this.name = 'AgentRunDispatchRetryableError';
+  }
+}
+
+// Atomically claim the durable run identity for a turn AND initialize its queued
+// metadata in a single round trip. This removes the claim-then-persist race: a
+// dedupe key is never observable pointing at a run without metadata. If the key
+// already exists, the existing runId is returned without writing anything.
+//   KEYS[1] = dedupe key
+//   ARGV[1] = candidate runId, ARGV[2] = dedupe TTL (s), ARGV[3] = meta TTL (s)
+//   ARGV[4..] = flattened meta field/value pairs
+const CLAIM_RUN_IDENTITY_LUA =
+  'if redis.call("SET", KEYS[1], ARGV[1], "NX", "EX", ARGV[2]) then '
+  + 'local metaKey = "agent:run:" .. ARGV[1] .. ":meta" '
+  + 'redis.call("DEL", metaKey) '
+  + 'for i = 4, #ARGV, 2 do redis.call("HSET", metaKey, ARGV[i], ARGV[i + 1]) end '
+  + 'redis.call("EXPIRE", metaKey, ARGV[3]) '
+  + 'return "CLAIMED:" .. ARGV[1] '
+  + 'end '
+  + 'return "EXISTS:" .. redis.call("GET", KEYS[1])';
+
+const buildQueuedMetaFields = (params: StartRunParams, queuedAt: string): string[] => {
+  const meta: Record<string, unknown> = {
+    workspaceId: params.workspaceId,
+    userId: params.userId,
+    persona: params.persona,
+    status: 'queued',
+    sharedTeamChannel: params.sharedTeamChannel,
+    createdAt: queuedAt,
+    turnId: params.turnId,
+    pendingInterrupt: '',
+    interactionGateState: JSON.stringify({ completedGateIds: [] }),
+    runContext: serializeRunContext(params),
+  };
+  const flat: string[] = [];
+  Object.entries(meta).forEach(([key, value]) => {
+    if (value !== undefined) {
+      flat.push(key, String(value));
+    }
+  });
+  return flat;
+};
+
 export async function startAgentRun(params: StartRunParams): Promise<{ runId: string; status: AgentRunStatus }> {
-  if (params.turnId?.trim()) {
-    const existingRunId = await redisClient.get(
-      buildRunDedupeKey(params.workspaceId, params.persona, params.turnId.trim(), params.userId),
+  const turnId = params.turnId?.trim();
+  const terminalStatuses: AgentRunStatus[] = ['completed', 'failed', 'cancelled'];
+
+  // No turnId: nothing to deduplicate against, dispatch a fresh standalone run.
+  if (!turnId) {
+    return dispatchFreshRun(params.runId || randomUUID(), params);
+  }
+
+  const dedupeKey = buildRunDedupeKey(params.workspaceId, params.persona, turnId, params.userId);
+  // Bounded retry: we only loop when a terminal, non-shared run is being
+  // superseded (its key is released and re-claimed).
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    // Prefer the caller's stable, SQL-persisted identity so the runtime run and
+    // the durable dispatch row share one id; fall back to a fresh id otherwise.
+    const candidateRunId = params.runId || randomUUID();
+    const queuedAt = new Date().toISOString();
+    const result = String(
+      await redisClient.eval(CLAIM_RUN_IDENTITY_LUA, {
+        keys: [dedupeKey],
+        arguments: [
+          candidateRunId,
+          String(STREAM_TTL_SECONDS),
+          String(STREAM_TTL_SECONDS),
+          ...buildQueuedMetaFields(params, queuedAt),
+        ],
+      }),
     );
-    if (existingRunId) {
-      const existingMeta = await getRunMeta(existingRunId);
-      if (existingMeta && (params.sharedTeamChannel || !['completed', 'failed', 'cancelled'].includes(existingMeta.status))) {
+
+    if (result.startsWith('CLAIMED:')) {
+      // We own a brand-new identity for this turn; queued metadata is already
+      // registered atomically. Record telemetry, then launch under the guard.
+      await redisClient.del(buildStreamKey(candidateRunId));
+      runContexts.set(candidateRunId, { params });
+      if (runTelemetryService) {
+        await runTelemetryService.recordQueuedRun({
+          runId: candidateRunId,
+          workspaceId: params.workspaceId,
+          userId: params.userId,
+          conversationId: params.conversationId,
+          turnId: params.turnId,
+          persona: params.persona,
+          queuedAt,
+        });
+      }
+      await ensureRunWorkerLaunched(candidateRunId, params);
+      return { runId: candidateRunId, status: 'queued' };
+    }
+
+    const existingRunId = result.startsWith('EXISTS:') ? result.slice('EXISTS:'.length) : '';
+    if (!existingRunId) {
+      // Key vanished between the NX failure and GET inside the script; retry.
+      continue;
+    }
+    const existingMeta = await getRunMeta(existingRunId);
+    if (!existingMeta) {
+      // The dedupe key points at a run whose metadata was lost or evicted. We
+      // CANNOT know whether that run already executed. Silently minting a new
+      // identity here would risk re-executing uncertain work, so we surface a
+      // retryable failure. The durable SQL outbox row owned by the team
+      // dispatcher is the authority on whether to re-dispatch; a later retry
+      // with fresh state (or an expired dedupe key) resolves it safely.
+      throw new AgentRunDispatchRetryableError(
+        'Run state for this turn is temporarily unavailable; retry dispatch.',
+      );
+    }
+    if (terminalStatuses.includes(existingMeta.status)) {
+      if (params.sharedTeamChannel) {
+        // A shared-channel turn keeps its terminal result; the caller reads the
+        // existing single response rather than launching a duplicate run.
         return { runId: existingRunId, status: existingMeta.status };
       }
+      // A non-shared turn re-using the same turnId supersedes the old terminal
+      // run. Atomically release the key only if it still points at that run.
+      await redisClient.eval(
+        'if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end',
+        { keys: [dedupeKey], arguments: [existingRunId] },
+      ).catch(() => 0);
+      continue;
     }
+    // Non-terminal existing run: this is the dedupe / crash-recovery path. If a
+    // prior attempt registered queued metadata but never launched the worker
+    // (crash before launch, telemetry throw, or crash right after claiming the
+    // launch lease), recover it for the SAME runId. recoverQueuedRunLaunch fences
+    // and is idempotent; it waits (bounded) for a dead launcher's lease to lapse
+    // and never mints a new identity.
+    //
+    // Guard: only an INITIAL queued run (no startedAt) is recovered this way. A
+    // queued run WITH startedAt is a resumption re-queued after human input — its
+    // continuation is owned by the resume path (resumeAgentRun*), NOT by
+    // startAgentRun, which would wrongly re-run the original prompt from scratch.
+    if (existingMeta.status === 'queued' && !existingMeta.startedAt) {
+      await recoverQueuedRunLaunch(existingRunId, params);
+    }
+    const refreshed = await getRunMeta(existingRunId);
+    return { runId: existingRunId, status: refreshed?.status ?? existingMeta.status };
   }
-  const runId = randomUUID();
+
+  // Dedupe retries exhausted for a turnId request. Do NOT fall back to a fresh
+  // standalone run — that would execute the same turn twice. Surface a retryable
+  // failure so the caller (team dispatcher) retries against fresh state.
+  throw new AgentRunDispatchRetryableError(
+    'Could not resolve a stable run identity for this turn; retry dispatch.',
+  );
+}
+
+/**
+ * Initialize durable queued metadata and launch the worker exactly once for a
+ * freshly-claimed run identity. Telemetry runs before launch and remains fatal
+ * so a caller observes a queued-registration failure, but because the launch
+ * guard is only claimed at launch time, a retry for the same turn can recover
+ * the queued work.
+ */
+async function dispatchFreshRun(
+  runId: string,
+  params: StartRunParams,
+): Promise<{ runId: string; status: AgentRunStatus }> {
   const streamKey = buildStreamKey(runId);
   const metaKey = buildMetaKey(runId);
   const queuedAt = new Date().toISOString();
@@ -3174,13 +3531,6 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     interactionGateState: JSON.stringify({ completedGateIds: [] }),
     runContext: serializeRunContext(params),
   });
-  if (params.turnId?.trim()) {
-    await redisClient.set(
-      buildRunDedupeKey(params.workspaceId, params.persona, params.turnId.trim(), params.userId),
-      runId,
-      { EX: STREAM_TTL_SECONDS },
-    );
-  }
   runContexts.set(runId, { params });
   if (runTelemetryService) {
     await runTelemetryService.recordQueuedRun({
@@ -3218,8 +3568,8 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     }
   }
 
-  // Fire and forget worker
-  launchAgentRunWorker(runId, params);
+  // Fire and forget worker (single launch guaranteed by the launch guard).
+  await ensureRunWorkerLaunched(runId, params);
 
   return { runId, status: 'queued' };
 }
@@ -3260,12 +3610,27 @@ async function runAgentRunWorker(
   params: StartRunParams,
   resumePayload?: ResumePayload,
   previousInterrupt?: RunPendingInterrupt,
+  launchToken?: string,
 ) {
   const controller = new AbortController();
   runAbortControllers.set(runId, controller);
+  // Fence a delayed launcher: if the launch lease was reclaimed (crash + recovery
+  // relaunched the same runId under a new owner), this stale launcher must not
+  // acquire the workspace mutation lease or start external work. Abort quietly and
+  // leave the durable state and the new owner's lease untouched.
+  if (launchToken && !(await ownsLaunchLease(runId, launchToken))) {
+    runAbortControllers.delete(runId);
+    launchingRuns.delete(runId);
+    return;
+  }
+  // Keep launch ownership alive (token-scoped) while this live worker waits for
+  // the workspace mutation lease, so a concurrent retry cannot reclaim launch
+  // ownership from a worker that is legitimately queued behind the lease.
+  if (launchToken) startLaunchLeaseRenewal(runId, launchToken);
   try {
     await workspaceRunLease.acquire(runId, params.workspaceId, controller);
   } catch (error) {
+    if (launchToken) stopLaunchLeaseRenewal(runId);
     const persistedStatus = await redisClient.hGet(buildMetaKey(runId), 'status').catch(() => undefined);
     if (!persistedStatus || ['queued', 'running'].includes(persistedStatus)) {
       const cancelled = controller.signal.aborted;
@@ -3278,6 +3643,22 @@ async function runAgentRunWorker(
     await cleanupRunWorker(runId);
     return;
   }
+  // Re-fence after acquiring the workspace lease and BEFORE any external work: if
+  // launch ownership was reclaimed while we waited (e.g. this worker was actually
+  // dead and a new owner took over), abort without touching the new owner's run.
+  if (launchToken && !(await ownsLaunchLease(runId, launchToken))) {
+    stopLaunchLeaseRenewal(runId);
+    await workspaceRunLease.release(runId).catch(() => undefined);
+    runAbortControllers.delete(runId);
+    launchingRuns.delete(runId);
+    return;
+  }
+  // Launch renewal REMAINS ACTIVE across the rest of the initial queued period —
+  // including potentially slow workspace mirror reconciliation and baseline/
+  // telemetry prep below — until the run is durably recorded as `running`. Until
+  // then the status is still `queued`, so without renewal a concurrent retry could
+  // reclaim launch ownership and double-launch. The renewal is stopped right after
+  // the running transition is persisted (and on any error/terminal cleanup).
   if (fileService && params.userId && !params.readOnlyWorkspace) {
     await fileService.reconcileWorkspaceMirror(
       params.workspaceId,
@@ -3348,6 +3729,10 @@ async function runAgentRunWorker(
     error: '',
     pendingInterrupt: '',
   });
+  // The running transition is durably recorded. From here the run's `running`
+  // status — not the launch lease — guards against recovery/reclaim, so launch
+  // ownership renewal can stop. (clearLaunchGuard on terminal is the backstop.)
+  if (launchToken) stopLaunchLeaseRenewal(runId);
   if (runTelemetryService) {
     await runTelemetryService.markRunStarted(runId, startedAt);
   }
@@ -4412,8 +4797,9 @@ function launchAgentRunWorker(
   params: StartRunParams,
   resumePayload?: ResumePayload,
   previousInterrupt?: RunPendingInterrupt,
+  launchToken?: string,
 ) {
-  void runAgentRunWorker(runId, params, resumePayload, previousInterrupt).catch(async (error) => {
+  void runAgentRunWorker(runId, params, resumePayload, previousInterrupt, launchToken).catch(async (error) => {
     console.error('Agent run worker failed before stream ownership was established', safeErrorForLog(error));
     try {
       const status = await redisClient.hGet(buildMetaKey(runId), 'status');

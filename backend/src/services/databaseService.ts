@@ -47,9 +47,18 @@ export class DatabaseService {
     await this.createWorkspacePublicationLinksTable();
     await this.createWorkspaceTeamMessagesTable();
     await this.createWorkspaceTeamMessageMentionsTable();
+    await this.createWorkspaceTeamThreadsTable();
+    await this.createWorkspaceTeamThreadUserStateTable();
+    await this.createWorkspaceTeamThreadRunsTable();
+    await this.ensureWorkspaceTeamMessageThreadColumns();
     await this.createWorkspaceCollaborationObjectsTable();
     await this.createWorkspaceCollaborationMessagesTable();
     await this.createWorkspaceCollaborationMentionsTable();
+    await this.createWorkspaceProposalChangeSetsTable();
+    await this.createWorkspaceProposalReviewsTable();
+    await this.createWorkspacePrivateCopyOriginsTable();
+    await this.ensureWorkspaceCollaborationThreadColumns();
+    await this.ensureFileVersionProvenanceColumns();
     await this.createKnowledgeSourcesTable();
     await this.createKnowledgeSourceGroupGrantsTable();
     await this.createKnowledgeBaseTables();
@@ -1430,6 +1439,282 @@ export class DatabaseService {
       });
       console.log('Created "workspace_collaboration_mentions" table.');
     }
+  }
+
+  private async createWorkspaceTeamThreadsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_team_threads');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_team_threads', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        // Deferrable so the thread can be inserted with its root id set before
+        // the root message row exists within the same transaction (spec 5.1).
+        table.uuid('rootMessageId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('CASCADE')
+          .deferrable('deferred');
+        table.string('title', 255);
+        table.uuid('createdBy').references('id').inTable('users').onDelete('SET NULL');
+        table.string('status', 16).notNullable().defaultTo('open');
+        table.uuid('resolvedBy').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('resolvedAt', { useTz: true });
+        table.bigInteger('lastMessageSeq').notNullable().defaultTo(0);
+        table.timestamp('lastActivityAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        // A root message belongs to exactly one thread.
+        table.unique(['rootMessageId'], { indexName: 'workspace_team_threads_root_uidx' });
+        // Composite unique for workspace-scoped foreign keys.
+        table.unique(['workspaceId', 'id'], { indexName: 'workspace_team_threads_workspace_id_uidx' });
+        // Thread list ordering: activity desc then id for deterministic ties.
+        table.index(['workspaceId', 'lastActivityAt', 'id'], 'workspace_team_threads_activity_idx');
+      });
+      console.log('Created "workspace_team_threads" table.');
+    }
+    // Deferred integrity: at COMMIT, every thread must have a root message that
+    // belongs to the same thread and workspace. This permits a temporary null
+    // rootMessageId inside the create transaction (spec 5.1) but rejects a
+    // committed thread with a missing/mismatched root.
+    //
+    // BOTH the function AND the trigger DDL run inside ONE advisory-locked
+    // transaction. `CREATE OR REPLACE FUNCTION` is NOT safe under concurrent
+    // catalog writes (Postgres raises "tuple concurrently updated" when two
+    // sessions replace the same pg_proc row at once), and `CREATE TRIGGER` races
+    // on 42710. Serializing all related catalog DDL under a single
+    // transaction-scoped advisory lock, and only creating each object when absent,
+    // makes concurrent DatabaseService.initialize() calls (multi-process startup /
+    // concurrent test setup) atomic and idempotent.
+    await this.db.transaction(async (tx) => {
+      await tx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', ['workspace_team_threads_root_trg']);
+      // Create the function only when it does not already exist, avoiding the
+      // concurrent-catalog-update hazard of CREATE OR REPLACE under contention.
+      await tx.raw(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'workspace_team_threads_root_check') THEN
+            CREATE FUNCTION workspace_team_threads_root_check() RETURNS trigger AS $fn$
+            DECLARE ok boolean;
+            BEGIN
+              IF NEW."rootMessageId" IS NULL THEN
+                RAISE EXCEPTION 'thread % committed without a root message', NEW.id;
+              END IF;
+              SELECT (m."threadId" = NEW.id AND m."workspaceId" = NEW."workspaceId")
+                INTO ok FROM workspace_team_messages m WHERE m.id = NEW."rootMessageId";
+              IF ok IS NULL OR ok = false THEN
+                RAISE EXCEPTION 'thread % root % does not belong to the thread/workspace', NEW.id, NEW."rootMessageId";
+              END IF;
+              RETURN NEW;
+            END;
+            $fn$ LANGUAGE plpgsql;
+          END IF;
+        END $$;
+      `);
+      await tx.raw(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgname = 'workspace_team_threads_root_trg'
+              AND tgrelid = 'workspace_team_threads'::regclass
+          ) THEN
+            CREATE CONSTRAINT TRIGGER workspace_team_threads_root_trg
+            AFTER INSERT OR UPDATE ON workspace_team_threads
+            DEFERRABLE INITIALLY DEFERRED
+            FOR EACH ROW EXECUTE FUNCTION workspace_team_threads_root_check();
+          END IF;
+        END $$;
+      `);
+    });
+  }
+
+  private async createWorkspaceTeamThreadUserStateTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_team_thread_user_state');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_team_thread_user_state', (table) => {
+        table.uuid('threadId').notNullable().references('id').inTable('workspace_team_threads').onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.bigInteger('lastReadSeq').notNullable().defaultTo(0);
+        table.boolean('following').notNullable().defaultTo(false);
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['threadId', 'userId']);
+        table.index(['userId'], 'workspace_team_thread_user_state_user_idx');
+      });
+      console.log('Created "workspace_team_thread_user_state" table.');
+    }
+  }
+
+  private async createWorkspaceTeamThreadRunsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_team_thread_runs');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_team_thread_runs', (table) => {
+        // Durable dispatch identity created before calling the runner so a crash
+        // between dispatch and persisting the runner runId cannot spawn two runs.
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('threadId').notNullable().references('id').inTable('workspace_team_threads').onDelete('CASCADE');
+        // Exactly one run request per source message.
+        table.uuid('sourceMessageId').notNullable().references('id').inTable('workspace_team_messages').onDelete('CASCADE');
+        table.string('runId'); // runner id, filled once the runner returns it
+        table.string('status', 24).notNullable().defaultTo('queued');
+        // Durable dispatch-attempt phase, distinct from runId reservation and from
+        // the lifecycle status. 'reserved' = identity created but the runner was
+        // never invoked (safe to dispatch). 'dispatching' = the runner was
+        // invoked at least once (a crash here means the run MAY have executed; if
+        // its runtime state is later lost this is uncertain and must not replay).
+        table.string('dispatchPhase', 16).notNullable().defaultTo('reserved');
+        table.uuid('requestedBy').references('id').inTable('users').onDelete('SET NULL');
+        table.bigInteger('contextCutoffSeq');
+        table.jsonb('contextManifest');
+        table.jsonb('policySnapshot');
+        table.string('contextBuilderVersion', 32);
+        table.string('errorCode', 64);
+        table.text('error');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['sourceMessageId'], { indexName: 'workspace_team_thread_runs_source_uidx' });
+      });
+      // The runner runId, once assigned, must be globally unique.
+      await this.db.raw(
+        'CREATE UNIQUE INDEX IF NOT EXISTS workspace_team_thread_runs_run_uidx ON workspace_team_thread_runs ("runId") WHERE "runId" IS NOT NULL',
+      );
+      console.log('Created "workspace_team_thread_runs" table.');
+    }
+    // At most one nonterminal run per thread (queued/running/awaiting_input).
+    await this.db.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS workspace_team_thread_runs_active_slot_uidx
+       ON workspace_team_thread_runs ("threadId")
+       WHERE status IN ('queued', 'running', 'awaiting_input')`,
+    );
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspace_team_thread_runs_thread_idx ON workspace_team_thread_runs ("threadId", "createdAt")',
+    );
+    // Durable dispatch-attempt phase for existing tables (see create block).
+    await this.ensureColumn('workspace_team_thread_runs', 'dispatchPhase', (table) =>
+      table.string('dispatchPhase', 16).notNullable().defaultTo('reserved'));
+  }
+
+  private async ensureWorkspaceTeamMessageThreadColumns(): Promise<void> {
+    await this.ensureColumn('workspace_team_messages', 'threadId', (table) =>
+      table.uuid('threadId').references('id').inTable('workspace_team_threads').onDelete('CASCADE'));
+    await this.ensureColumn('workspace_team_messages', 'sequence', (table) =>
+      table.bigInteger('sequence'));
+    await this.ensureColumn('workspace_team_messages', 'clientMessageId', (table) =>
+      table.string('clientMessageId', 128));
+    await this.ensureColumn('workspace_team_messages', 'clientPayloadHash', (table) =>
+      table.string('clientPayloadHash', 64));
+    // (threadId, sequence) is unique — ordering never comes solely from timestamps.
+    await this.db.raw(
+      'CREATE UNIQUE INDEX IF NOT EXISTS workspace_team_messages_thread_seq_uidx ON workspace_team_messages ("threadId", "sequence") WHERE "threadId" IS NOT NULL AND "sequence" IS NOT NULL',
+    );
+    // Idempotent human sends per (workspace, author, clientMessageId).
+    await this.db.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS workspace_team_messages_client_uidx
+       ON workspace_team_messages ("workspaceId", "authorId", "clientMessageId")
+       WHERE "clientMessageId" IS NOT NULL AND "authorType" = 'user'`,
+    );
+    // Legacy deep-link resolution and thread ordering.
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspace_team_messages_thread_seq_idx ON workspace_team_messages ("threadId", "sequence")',
+    );
+  }
+
+  private async createWorkspaceProposalChangeSetsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_proposal_change_sets');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_proposal_change_sets', (table) => {
+        // Immutable frozen manifest of a submitted selection of changes.
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('objectId').notNullable().references('id').inTable('workspace_collaboration_objects').onDelete('CASCADE');
+        table.uuid('sourceThreadId').references('id').inTable('workspace_team_threads').onDelete('SET NULL');
+        table.uuid('sourceMessageId').references('id').inTable('workspace_team_messages').onDelete('SET NULL');
+        table.uuid('privateWorkspaceId').references('id').inTable('workspaces').onDelete('SET NULL');
+        table.integer('baseSharedRevision').notNullable();
+        table.integer('basePrivateRevision');
+        // Snapshot of selected operations: {path, fileId, changeKind, baseVersionId,
+        // proposedVersionId, sha256}. Server-derived, never trusted from the client.
+        table.jsonb('operations').notNullable().defaultTo('[]');
+        table.text('publicExplanation');
+        table.uuid('submittedBy').references('id').inTable('users').onDelete('SET NULL');
+        table.string('status', 24).notNullable().defaultTo('submitted');
+        table.integer('appliedSharedRevision');
+        table.timestamp('appliedAt', { useTz: true });
+        table.uuid('appliedBy').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['objectId', 'createdAt'], 'workspace_proposal_change_sets_object_idx');
+      });
+      console.log('Created "workspace_proposal_change_sets" table.');
+    }
+  }
+
+  private async createWorkspaceProposalReviewsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_proposal_reviews');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_proposal_reviews', (table) => {
+        table.uuid('id').primary();
+        table.uuid('submissionId').notNullable().references('id').inTable('workspace_proposal_change_sets').onDelete('CASCADE');
+        table.uuid('objectId').notNullable().references('id').inTable('workspace_collaboration_objects').onDelete('CASCADE');
+        table.uuid('reviewerId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('verdict', 24).notNullable(); // approved | changes_requested
+        table.text('comment');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['submissionId', 'createdAt'], 'workspace_proposal_reviews_submission_idx');
+      });
+      console.log('Created "workspace_proposal_reviews" table.');
+    }
+  }
+
+  private async createWorkspacePrivateCopyOriginsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_private_copy_origins');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_private_copy_origins', (table) => {
+        // Author-private record that a private working copy was used to work on a
+        // given team thread (spec F7: "Record the originating thread on the private
+        // activity"). A single reused private copy may have MULTIPLE origin threads
+        // over time, so this is a many-to-many record keyed on (privateWorkspaceId,
+        // sourceThreadId) — it never overwrites a single origin. This grants NOBODY
+        // else access to the private activity; it is only visible to the owner.
+        table.uuid('id').primary();
+        table.uuid('privateWorkspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('sharedWorkspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('sourceThreadId').notNullable().references('id').inTable('workspace_team_threads').onDelete('CASCADE');
+        table.uuid('objectId').references('id').inTable('workspace_collaboration_objects').onDelete('SET NULL');
+        table.uuid('userId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['privateWorkspaceId', 'sourceThreadId'], { indexName: 'workspace_private_copy_origins_uidx' });
+        table.index(['privateWorkspaceId'], 'workspace_private_copy_origins_private_idx');
+      });
+      console.log('Created "workspace_private_copy_origins" table.');
+    }
+  }
+
+  private async ensureWorkspaceCollaborationThreadColumns(): Promise<void> {
+    await this.ensureColumn('workspace_collaboration_objects', 'sourceThreadId', (table) =>
+      table.uuid('sourceThreadId').references('id').inTable('workspace_team_threads').onDelete('SET NULL'));
+    await this.ensureColumn('workspace_collaboration_objects', 'submittedChangeSetId', (table) =>
+      table.uuid('submittedChangeSetId'));
+    await this.ensureColumn('workspace_collaboration_objects', 'submissionRevision', (table) =>
+      table.integer('submissionRevision'));
+    // Immutable file-version reference for annotation anchors (Release B, F8).
+    await this.ensureColumn('workspace_collaboration_objects', 'anchorVersionId', (table) =>
+      table.uuid('anchorVersionId').references('id').inTable('file_versions').onDelete('SET NULL'));
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspace_collaboration_objects_source_thread_idx ON workspace_collaboration_objects ("sourceThreadId")',
+    );
+  }
+
+  private async ensureFileVersionProvenanceColumns(): Promise<void> {
+    await this.ensureColumn('file_versions', 'sourceThreadId', (table) =>
+      table.uuid('sourceThreadId').references('id').inTable('workspace_team_threads').onDelete('SET NULL'));
+    await this.ensureColumn('file_versions', 'sourceMessageId', (table) =>
+      table.uuid('sourceMessageId').references('id').inTable('workspace_team_messages').onDelete('SET NULL'));
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS file_versions_source_thread_idx ON file_versions ("workspaceId", "sourceThreadId", "createdAt")',
+    );
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS file_versions_source_run_idx ON file_versions ("workspaceId", "sourceRunId")',
+    );
   }
 
   private async ensureFilesTableColumns(): Promise<void> {

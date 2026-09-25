@@ -37,7 +37,7 @@ async function setup(page: Page, baseURL: string, role = 'owner', visibility = '
     function Harness(){const [prompt,setPrompt]=React.useState('');const [draft,setDraft]=React.useState('');return React.createElement(AppThemeRoot,{},
       React.createElement('input',{'aria-label':'Agent chat draft',value:draft,onChange:event=>setDraft(event.target.value)}),
       React.createElement('pre',{'data-testid':'prompt',style:{maxHeight:80,overflow:'auto',fontSize:11}},prompt),
-      React.createElement('div',{style:{height:640}},React.createElement(CanvasAnnotations,{workspace:{id:'personal',visibility:'${visibility}',role:'${role}'},filePath:'review.md',onAgentChat:next=>setPrompt(draft?draft+'\\n\\n'+next:next)},
+      React.createElement('div',{style:{height:640}},React.createElement(CanvasAnnotations,{workspace:{id:'personal',visibility:'${visibility}',role:'${role}'},filePath:'review.md',anchorVersionId:'anchor-fixture-uuid',onAgentChat:next=>setPrompt(draft?draft+'\\n\\n'+next:next)},
         React.createElement('p',{'data-testid':'passage'},'First passage Second passage Third passage'))));}
     ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Harness));
     </script></body></html>` }));

@@ -38,6 +38,18 @@ export type AgentContextTokenPayload = {
   mcpAuth?: Record<string, Record<string, string>>;
   mcpAuthFingerprint?: string;
   isAdmin?: boolean;
+  /**
+   * Team Chat (F3) authenticated thread-history reader scope. Bound at sign time
+   * to the run's workspace/user/thread and immutable cutoff so the agent tool can
+   * only read that exact scope; the model cannot supply or widen it.
+   */
+  threadHistoryScope?: {
+    workspaceId: string;
+    userId: string;
+    threadId: string;
+    cutoffSeq: number;
+    sourceMessageId?: string;
+  };
   iat?: number;
   exp?: number;
 } & JsonRecord;
@@ -62,4 +74,42 @@ export function signAgentContextToken(payload: AgentContextTokenPayload): string
   const sig = crypto.createHmac('sha256', secret).update(signingInput).digest();
   const sigB64 = b64url(sig);
   return `${signingInput}.${sigB64}`;
+}
+
+/**
+ * Verify an agent context token that the backend itself signed. Used by the
+ * internal agent-callback endpoint so the Python agent can authenticate with the
+ * same signed context it was issued (spec F3.4). This is a real Bearer-JWT
+ * verification path, distinct from the browser/x-user-id userContext middleware
+ * which does NOT verify agent tokens.
+ *
+ * Returns the decoded payload on a valid, unexpired HS256 signature, else null.
+ */
+export function verifyAgentContextToken(token: string): AgentContextTokenPayload | null {
+  const secret = getAgentJwtSecret();
+  if (!secret || !token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [headerB64, payloadB64, sigB64] = parts;
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const expected = crypto.createHmac('sha256', secret).update(signingInput).digest();
+  let provided: Buffer;
+  try {
+    provided = Buffer.from(sigB64, 'base64url');
+  } catch {
+    return null;
+  }
+  if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+    return null;
+  }
+  let payload: AgentContextTokenPayload;
+  try {
+    payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
+  } catch {
+    return null;
+  }
+  if (typeof payload.exp === 'number' && payload.exp < Math.floor(Date.now() / 1000)) {
+    return null;
+  }
+  return payload;
 }

@@ -41,24 +41,28 @@ export default function(
     content: z.string(),
     version: z.number().int().positive().optional(),
     strictVersion: z.boolean().optional(),
+    sourceThreadId: z.string().uuid().optional(),
   }).refine(value => !value.strictVersion || value.version !== undefined, {
     message: 'Strict saves require the expected version',
   });
 
   const restoreFileVersionSchema = z.object({
     version: z.number().int().positive().optional(),
+    sourceThreadId: z.string().uuid().optional(),
   });
 
   const createTextFileSchema = z.object({
     name: z.string().min(1),
     content: z.string(),
     mimeType: z.string().min(1).optional(),
+    sourceThreadId: z.string().uuid().optional(),
   });
 
   const renameFileSchema = z.object({
     name: z.string().min(1).optional(),
     path: z.string().optional(),
     version: z.number().int().positive().optional(),
+    sourceThreadId: z.string().uuid().optional(),
   }).refine((value) => value.name !== undefined || value.path !== undefined, {
     message: 'Missing destination name',
   });
@@ -83,6 +87,7 @@ export default function(
 
   const uploadFileSchema = z.object({
     path: z.string().min(1).optional(),
+    sourceThreadId: z.string().uuid().optional(),
   });
 
   const googleDriveSearchSchema = z.object({
@@ -543,6 +548,7 @@ export default function(
           req.params.versionId,
           user.userId,
           payload.version,
+          payload.sourceThreadId !== undefined ? { sourceThreadId: payload.sourceThreadId } : undefined,
         );
         res.json(file);
       } catch (error) {
@@ -583,6 +589,7 @@ export default function(
           fileBuffer,
           req.file.mimetype,
           user.userId,
+          payload.sourceThreadId !== undefined ? { sourceThreadId: payload.sourceThreadId } : undefined,
         );
         res.status(201).json(newFile);
       } catch (error) {
@@ -620,6 +627,7 @@ export default function(
         payload.content,
         user.userId,
         payload.mimeType,
+        payload.sourceThreadId !== undefined ? { sourceThreadId: payload.sourceThreadId } : undefined,
       );
       res.status(201).json(created);
     } catch (error) {
@@ -634,8 +642,11 @@ export default function(
     try {
       const { fileId } = req.params;
       const user = requireUserContext(req);
-      const { content, version, strictVersion } = updateFileSchema.parse(req.body);
-      const updatedFile = await fileService.updateFile(parseInt(fileId, 10), content, user.userId, version, { strictVersion });
+      const { content, version, strictVersion, sourceThreadId } = updateFileSchema.parse(req.body);
+      const updatedFile = await fileService.updateFile(parseInt(fileId, 10), content, user.userId, version, {
+        strictVersion,
+        ...(sourceThreadId !== undefined ? { sourceThreadId } : {}),
+      });
       res.json(updatedFile);
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: 'Invalid content update payload' });
@@ -697,7 +708,10 @@ export default function(
     try {
       const { fileId } = req.params;
       const user = requireUserContext(req);
-      await fileService.deleteFile(parseInt(fileId, 10), user.userId);
+      const sourceThreadId = typeof req.query.sourceThreadId === 'string' && req.query.sourceThreadId
+        ? req.query.sourceThreadId
+        : undefined;
+      await fileService.deleteFile(parseInt(fileId, 10), user.userId, sourceThreadId !== undefined ? { sourceThreadId } : undefined);
       res.status(204).send();
     } catch (error) {
       handleError(res, error, 'Failed to delete file');
@@ -708,7 +722,7 @@ export default function(
     try {
       const { fileId } = req.params;
       const user = requireUserContext(req);
-      const { name, path: destinationPath, version } = renameFileSchema.parse(req.body);
+      const { name, path: destinationPath, version, sourceThreadId } = renameFileSchema.parse(req.body);
       const updatedFile = await fileService.renameFile(
         parseInt(fileId, 10),
         {
@@ -717,6 +731,7 @@ export default function(
         },
         user.userId,
         version,
+        sourceThreadId !== undefined ? { sourceThreadId } : undefined,
       );
       res.json(updatedFile);
     } catch (error) {

@@ -27,6 +27,8 @@ export type StartRunParams = {
   sharedTeamChannel?: boolean;
   readOnlyWorkspace?: boolean;
   turnId?: string;
+  // Stable, durably-persisted runner identity supplied by the caller.
+  runId?: string;
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;

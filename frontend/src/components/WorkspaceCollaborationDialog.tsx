@@ -24,6 +24,8 @@ import CloseIcon from '@mui/icons-material/Close';
 
 import type { Workspace } from '../types';
 import WorkspaceReviewChangesDialog from './WorkspaceReviewChangesDialog';
+import TeamThreadProposalReview from './chat/TeamThreadProposalReview';
+import { getAuthUser } from '../auth/authStore';
 import {
   applyWorkspaceCollaborationProposal,
   convertWorkspaceCollaborationObjectToProposal,
@@ -41,8 +43,40 @@ type Props = {
   open: boolean;
   workspace: Workspace | null;
   filePath?: string | null;
+  /**
+   * Release B (F8): open focused on a specific existing object (any type —
+   * annotation on any file, or a proposal). Opens the ORIGINAL object and its
+   * discussion; never duplicates replies. Cleared by the host after it is
+   * consumed so re-opening the dialog normally is unaffected.
+   */
+  initialObjectId?: string | null;
+  /**
+   * Release B readiness for this workspace. Gates the thread-linked frozen
+   * submission/review + author submit panels. When false, a thread-linked
+   * proposal does NOT fall back to the unsafe legacy whole-copy Apply.
+   */
+  releaseBReady?: boolean;
   onClose: () => void;
   onWorkspaceListChanged?: () => Promise<unknown> | void;
+};
+
+/**
+ * Read the Release B thread link off a collaboration object without editing the
+ * A-owned service type. The backend contract (F7/F8) adds `sourceThreadId` to
+ * the object; until it lands in the shared type we read it defensively so a
+ * thread-linked proposal renders the frozen-submission review path.
+ */
+const readSourceThreadId = (object: WorkspaceCollaborationObject | null): string | undefined => {
+  const value = (object as unknown as { sourceThreadId?: string | null } | null)?.sourceThreadId;
+  return typeof value === 'string' && value ? value : undefined;
+};
+
+/** True when the current user authored the proposal object (author-only submit
+ *  UI). The private navigation endpoint is the real authorization gate; this is
+ *  only a UI hint to decide whether to render the submit panel. */
+const isProposalAuthor = (object: WorkspaceCollaborationObject | null): boolean => {
+  const me = getAuthUser()?.id;
+  return Boolean(me && object?.authorId && object.authorId === me);
 };
 
 const roleCanComment = (role: Workspace['role']) =>
@@ -67,6 +101,8 @@ const WorkspaceCollaborationDialog = ({
   open,
   workspace,
   filePath,
+  initialObjectId,
+  releaseBReady,
   onClose,
   onWorkspaceListChanged,
 }: Props) => {
@@ -88,6 +124,9 @@ const WorkspaceCollaborationDialog = ({
   const [reply, setReply] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [reviewCopy, setReviewCopy] = useState<{ id: string; name: string } | null>(null);
+  // Bumped after a successful author submit so the sibling review panel
+  // refreshes and selects the new frozen submission in the same open dialog.
+  const [submitRefreshToken, setSubmitRefreshToken] = useState(0);
 
   const selected = useMemo(
     () => objects.find((object) => object.id === selectedId) || null,
@@ -132,6 +171,17 @@ const WorkspaceCollaborationDialog = ({
     setType(filePath ? 'annotation' : 'sticky_note');
     void loadObjects();
   }, [canComment, filePath, loadObjects, open]);
+
+  // Release B (F8): when opened focused on a specific object, select it once it
+  // is present in the loaded list (any type — annotation on any file, or a
+  // proposal). This opens the ORIGINAL object's discussion; replies are never
+  // duplicated.
+  useEffect(() => {
+    if (!open || !initialObjectId) return;
+    if (objects.some((object) => object.id === initialObjectId)) {
+      setSelectedId(initialObjectId);
+    }
+  }, [open, initialObjectId, objects]);
 
   useEffect(() => {
     if (!open) setReviewCopy(null);
@@ -371,6 +421,7 @@ const WorkspaceCollaborationDialog = ({
                     ) : null}
                   {canModerate
                     && selected.type === 'change_proposal'
+                    && !readSourceThreadId(selected)
                     && Boolean(selected.linkedPrivateWorkspaceId)
                     && (selected.status === 'proposed' || selected.status === 'discussing') ? (
                       <>
@@ -391,6 +442,49 @@ const WorkspaceCollaborationDialog = ({
                       </>
                     ) : null}
                 </Stack>
+                {/* Release B (F7): a THREAD-LINKED proposal uses the frozen,
+                    explicitly-selected submission + review + apply-once flow
+                    instead of the legacy whole-private-copy apply above. The
+                    reviewer reads authorized snapshot bytes without private
+                    access; apply pins the exact submission + expected revision. */}
+                {selected.type === 'change_proposal' && readSourceThreadId(selected) ? (
+                  releaseBReady ? (
+                  <Box sx={{ my: 2 }}>
+                    {/* AUTHOR: explicitly select which private changes to submit.
+                        Uses the current shared revision; expectedPrivateRevision
+                        is sourced from the candidate snapshot (never a newer nav
+                        revision). Only the proposal author sees this. */}
+                    {isProposalAuthor(selected) ? (
+                      <TeamThreadProposalReview
+                        workspaceId={workspaceId!}
+                        objectId={selected.id}
+                        sourceThreadId={readSourceThreadId(selected)}
+                        targetWorkspaceLabel={workspace?.name}
+                        expectedSharedRevision={workspace?.contentRevision ?? 0}
+                        mode="submit"
+                        onRefreshRevision={() => void onWorkspaceListChanged?.()}
+                        onSubmitted={() => { setSubmitRefreshToken((n) => n + 1); void loadObjects(); }}
+                      />
+                    ) : null}
+                    <TeamThreadProposalReview
+                      workspaceId={workspaceId!}
+                      objectId={selected.id}
+                      sourceThreadId={readSourceThreadId(selected)}
+                      targetWorkspaceLabel={workspace?.name}
+                      mode="review"
+                      canReview={canComment}
+                      canApply={canModerate}
+                      refreshToken={submitRefreshToken}
+                      onApplied={() => void Promise.all([loadObjects(), onWorkspaceListChanged?.()])}
+                    />
+                  </Box>
+                  ) : (
+                    <Alert severity="info" sx={{ my: 2 }} data-testid="thread-proposal-b-off">
+                      This is a thread-linked submission. Its review and apply require Release B, which is not
+                      enabled for this workspace yet. It is intentionally not applied via the legacy whole-copy path.
+                    </Alert>
+                  )
+                ) : null}
                 <Divider />
                 <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Discussion</Typography>
                 <Stack spacing={1.5}>

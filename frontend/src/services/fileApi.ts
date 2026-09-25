@@ -1,8 +1,23 @@
 import { API_URL, apiFetch, buildApiUrl } from './apiClient';
+import { getAssociatedThreadId } from './teamThreadAssociation';
 import type {
   GoogleDrivePickerScope,
   GoogleDriveSearchResult,
 } from '../types';
+
+/**
+ * Release B (F6) provenance: resolve the thread id to stamp on a human file
+ * mutation. An explicit `sourceThreadId` argument wins; otherwise we fall back
+ * to the user's active per-user/workspace "attribute future edits" association
+ * (see services/teamThreadAssociation.ts). When there is no association the
+ * result is undefined and the edit stays unattributed in workspace history —
+ * the correct default. This is validated server-side; the client never invents
+ * attribution and opening a thread never changes it.
+ */
+const resolveSourceThreadId = (
+  workspaceId: string,
+  explicit?: string,
+): string | undefined => explicit ?? getAssociatedThreadId(workspaceId);
 
 export const getFiles = async (workspaceId: string) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files`);
@@ -39,18 +54,42 @@ export const getFileVersions = async (workspaceId: string, fileId: string | numb
   return Array.isArray(payload?.versions) ? payload.versions : [];
 };
 
+/**
+ * Fetch the RAW source text of a specific immutable file version (by version
+ * number) via the authenticated download endpoint. Used by the annotation
+ * reattach flow so the user can select a NEW excerpt against the exact source
+ * bytes (UTF-16 offsets on this text), rather than pretending rendered-markdown
+ * offsets equal source bytes. Returns null when the bytes are not decodable as
+ * text (binary), so the caller can show an honest "no source selection" state.
+ */
+export const getFileVersionText = async (
+  workspaceId: string,
+  fileId: string | number,
+  version: number,
+): Promise<{ text: string | null; contentType: string }> => {
+  const response = await apiFetch(getFileDownloadUrl(workspaceId, fileId, version));
+  if (!response.ok) throw new Error('Failed to fetch file version content');
+  const contentType = (response.headers.get('Content-Type') || '').split(';')[0].trim();
+  const buffer = await response.arrayBuffer();
+  const textual = /^(text\/|application\/(json|xml|javascript|x-ndjson)|application\/.*\+(json|xml))/i.test(contentType);
+  if (!textual) return { text: null, contentType: contentType || 'application/octet-stream' };
+  return { text: new TextDecoder('utf-8', { fatal: false }).decode(buffer), contentType };
+};
+
 export const restoreFileVersion = async (
   workspaceId: string,
   fileId: string | number,
   versionId: string,
   expectedVersion?: number,
+  sourceThreadId?: string,
 ) => {
+  const threadId = resolveSourceThreadId(workspaceId, sourceThreadId);
   const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}/versions/${versionId}/restore`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: expectedVersion }),
+      body: JSON.stringify({ version: expectedVersion, ...(threadId ? { sourceThreadId: threadId } : {}) }),
     },
   );
   if (!response.ok) throw new Error('Failed to restore file version');
@@ -76,11 +115,15 @@ export const getWorkspaceFilePreview = async (workspaceId: string, relativePath:
   return response.json();
 };
 
-export const createFile = async (workspaceId: string, file: File, path?: string) => {
+export const createFile = async (workspaceId: string, file: File, path?: string, sourceThreadId?: string) => {
   const formData = new FormData();
   formData.append('file', file);
   if (path?.trim()) {
     formData.append('path', path.trim());
+  }
+  const threadId = resolveSourceThreadId(workspaceId, sourceThreadId);
+  if (threadId) {
+    formData.append('sourceThreadId', threadId);
   }
 
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files`, {
@@ -128,13 +171,15 @@ export const createFolder = async (workspaceId: string, path: string) => {
 export const createTextFile = async (
   workspaceId: string,
   payload: { name: string; content: string; mimeType?: string },
+  sourceThreadId?: string,
 ) => {
+  const threadId = resolveSourceThreadId(workspaceId, sourceThreadId);
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/text`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(threadId ? { ...payload, sourceThreadId: threadId } : payload),
   });
   if (!response.ok) {
     throw new Error('Failed to create text file');
@@ -148,7 +193,9 @@ export const updateFileContent = async (
   content: string,
   version?: number,
   strictVersion = false,
+  sourceThreadId?: string,
 ) => {
+  const threadId = resolveSourceThreadId(workspaceId, sourceThreadId);
   const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}/content`,
     {
@@ -156,7 +203,7 @@ export const updateFileContent = async (
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ content, version, strictVersion }),
+      body: JSON.stringify({ content, version, strictVersion, ...(threadId ? { sourceThreadId: threadId } : {}) }),
     },
   );
   if (!response.ok) {
@@ -166,13 +213,15 @@ export const updateFileContent = async (
   return response.json();
 };
 
-export const deleteFile = async (workspaceId: string, fileId: string) => {
-  const response = await apiFetch(
-    `${API_URL}/workspaces/${workspaceId}/files/${fileId}`,
-    {
-      method: 'DELETE',
-    },
-  );
+export const deleteFile = async (workspaceId: string, fileId: string, sourceThreadId?: string) => {
+  const threadId = resolveSourceThreadId(workspaceId, sourceThreadId);
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/${fileId}`);
+  if (threadId) {
+    url.searchParams.set('sourceThreadId', threadId);
+  }
+  const response = await apiFetch(url.toString(), {
+    method: 'DELETE',
+  });
   if (!response.ok) {
     throw new Error('Failed to delete file');
   }
@@ -234,7 +283,9 @@ export const renameFile = async (
   workspaceId: string,
   fileId: string,
   payload: { name?: string; path?: string; version?: number },
+  sourceThreadId?: string,
 ) => {
+  const threadId = resolveSourceThreadId(workspaceId, sourceThreadId);
   const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}`,
     {
@@ -242,7 +293,7 @@ export const renameFile = async (
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(threadId ? { ...payload, sourceThreadId: threadId } : payload),
     },
   );
   if (!response.ok) {

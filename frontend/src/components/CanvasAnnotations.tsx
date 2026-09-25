@@ -15,10 +15,51 @@ import {
   type WorkspaceCollaborationObject, type WorkspaceCollaborationMessage,
 } from '../services/workspaceCollaborationApi';
 import { annotationThreadsChatPrompt, locateAnnotationText, textRange, documentPin, documentAnchorLabel, type AnnotationAnchor } from '../utils/canvasAnnotations';
+import { clearThreadAssociation } from '../services/teamThreadAssociation';
 import { CanvasAnnotationContext } from './CanvasAnnotationContext';
 import './CanvasAnnotations.css';
 
-type Props = { workspace: Workspace | null; filePath?: string; onAgentChat: (prompt: string) => void; children: ReactNode };
+type Props = {
+  workspace: Workspace | null;
+  filePath?: string;
+  onAgentChat: (prompt: string) => void;
+  children: ReactNode;
+  /**
+   * Release B (F8): when set, a NEWLY created workspace-audience annotation on
+   * this surface is explicitly linked to this thread (so it appears in the
+   * thread's linked-items panel and opens the ORIGINAL discussion). This is an
+   * explicit link, not implicit sharing: PRIVATE annotations are never linked
+   * — a private annotation must be shared before a team link can expose it, and
+   * linking never invokes the agent.
+   */
+  sourceThreadId?: string;
+  /**
+   * Canonical file identity for the surface. The backend validates a supplied
+   * `originVersionId` against this identity and rejects a version from another
+   * file (F8). Optional so non-file surfaces still work.
+   */
+  fileId?: number;
+  /**
+   * The EXACT immutable file version currently being viewed (incl. a published
+   * or historical view). A new annotation pins THIS version as its anchor
+   * version (sent as `anchorVersionId`). When it is unavailable we intentionally
+   * send NOTHING rather than pinning the wrong (latest/Working) version.
+   */
+  anchorVersionId?: string;
+  /**
+   * True when the editor has unsaved changes for this file. A NEW anchored
+   * annotation is blocked while dirty (the exact viewed immutable version does
+   * not contain the unsaved text — pinning it would be a false claim). Replies
+   * to existing annotations remain allowed.
+   */
+  canvasDirty?: boolean;
+  /**
+   * Release B readiness for this workspace. Gates the Share-to-workspace and
+   * thread-linking controls so B surfaces never appear (or send B requests)
+   * when the workspace is not B-ready.
+   */
+  releaseBReady?: boolean;
+};
 
 export default function CanvasAnnotations(props: Props) {
   // Keep annotation state scoped to the current workspace and file.
@@ -26,7 +67,7 @@ export default function CanvasAnnotations(props: Props) {
   return <AnnotationSurface key={`${props.workspace.id}:${props.filePath}`} {...props} workspace={props.workspace} filePath={props.filePath} />;
 }
 
-function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props & { workspace: Workspace; filePath: string }) {
+function AnnotationSurface({ workspace, filePath, onAgentChat, children, sourceThreadId, fileId, anchorVersionId, canvasDirty, releaseBReady }: Props & { workspace: Workspace; filePath: string }) {
   const openedNotificationRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const agentChatRef = useRef(onAgentChat);
@@ -44,9 +85,19 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [drafting, setDrafting] = useState(false);
   const [draftNotice, setDraftNotice] = useState('');
+  const [sharePending, setSharePending] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const [marks, setMarks] = useState<Array<{ id: string; x: number; y: number; width: number; height: number; pin?: boolean }>>([]);
   const canComment = ['owner', 'editor', 'contributor', 'commenter'].includes(workspace.role || '');
+  // A NEW anchored annotation requires an exact immutable version to pin AND a
+  // clean (saved) canvas. Otherwise the anchor would falsely claim a version
+  // that does not contain the current text. Replies are unaffected.
+  const anchorBlockReason = !anchorVersionId
+    ? 'This view has no immutable version id, so a new comment cannot be pinned to an exact version. Publish or open a saved version to anchor a comment.'
+    : canvasDirty
+      ? 'Save your changes first — a new comment cannot be pinned while this file has unsaved edits.'
+      : '';
+  const canAnchor = !anchorBlockReason;
   const selected = objects.find(item => item.id === selectedId);
   const annotations = useMemo(() => objects.filter(item => item.status !== 'resolved' && item.status !== 'addressed'), [objects]);
   const checkedObjects = objects.filter(item => checkedIds.includes(item.id));
@@ -144,8 +195,25 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
         const detail = await getWorkspaceCollaborationObject(workspace.id, selected.id);
         setMessages(detail.messages);
       } else if (anchor) {
+        // Guard: never POST a new anchored annotation without an exact viewed
+        // version or with a dirty canvas — the backend would otherwise pin the
+        // current Working version, contradicting the honest-pin promise.
+        if (!canAnchor) {
+          setError(anchorBlockReason);
+          setBusy(false);
+          return;
+        }
+        const visibility = workspace.visibility === 'team' ? 'workspace_audience' : 'private';
+        // Release B (F8): send the canonical file identity (fileId + path) and
+        // the EXACT immutable version being viewed so the backend pins the
+        // annotation to that version — never the latest. A private annotation
+        // never carries sourceThreadId (it must be shared before a team link can
+        // expose it); a workspace-audience annotation links atomically on create.
         const created = await createWorkspaceCollaborationObject(workspace.id, {
-          type: 'annotation', visibility: workspace.visibility === 'team' ? 'workspace_audience' : 'private', filePath, body: body.trim(), ...anchor,
+          type: 'annotation', visibility, filePath, body: body.trim(), ...anchor,
+          ...(fileId !== undefined ? { fileId } : {}),
+          ...(anchorVersionId ? { anchorVersionId } : {}),
+          ...(sourceThreadId && visibility === 'workspace_audience' ? { sourceThreadId } : {}),
         });
         setSelectedId(created.id); setAnchor(null);
       }
@@ -174,12 +242,59 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
     finally { setDrafting(false); }
   };
 
+  // Release B (F8): explicitly SHARE a selected PRIVATE annotation to the
+  // workspace audience. Discloses exactly the selected excerpt + this
+  // annotation's own body (NOT its private reply transcript) as a NEW
+  // workspace-audience object, preserving THIS annotation's OWN canonical
+  // identity — its recorded `originVersionId` (the exact version it was
+  // anchored to) and `filePath` — NOT the current view (round42). If the
+  // private note has no exact pin, sharing is refused until it is explicitly
+  // reattached, so a historical note is never silently re-anchored to a
+  // different current version.
+  const shareSelectedToWorkspace = async () => {
+    if (!selected || selected.visibility !== 'private' || workspace.visibility !== 'team') return;
+    if (!selected.originVersionId) {
+      setError('This note has no exact anchored version, so it cannot be shared safely. Reattach it to a specific version first.');
+      setSharePending(false);
+      return;
+    }
+    setBusy(true); setError('');
+    try {
+      const created = await createWorkspaceCollaborationObject(workspace.id, {
+        type: 'annotation',
+        visibility: 'workspace_audience',
+        // Preserve the ORIGINAL note's file + version identity (never current).
+        filePath: selected.filePath ?? filePath,
+        anchorVersionId: selected.originVersionId,
+        body: selected.body,
+        ...(selected.anchorText ? { anchorText: selected.anchorText } : {}),
+        ...(selected.anchorStart !== undefined ? { anchorStart: selected.anchorStart } : {}),
+        ...(selected.anchorEnd !== undefined ? { anchorEnd: selected.anchorEnd } : {}),
+        ...(selected.blockId ? { blockId: selected.blockId } : {}),
+        ...(selected.anchorFingerprint ? { anchorFingerprint: selected.anchorFingerprint } : {}),
+        ...(sourceThreadId ? { sourceThreadId } : {}),
+      });
+      if (!mountedRef.current) return;
+      setSelectedId(created.id);
+      setSharePending(false);
+      setDraftNotice('Shared the selected excerpt and this comment with the workspace. Your private note is unchanged.');
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Unable to share this comment'); }
+    finally { setBusy(false); }
+  };
+
   return <CanvasAnnotationContext.Provider value={context}>
     <div className="canvas-annotations" data-testid="annotation-canvas">
       <div className="canvas-annotations-toolbar">
         {canComment && <ToggleButton label="Annotate" icon={<MessageSquarePlus size={14} />} size="sm" isPressed={active} onPressedChange={setActive} />}
         <Button label={`Comments (${annotations.length})`} icon={<MessageSquare size={14} />} variant="ghost" size="sm" onClick={() => setPanel(!panel)} />
         {active && <Text type="supporting" maxLines={1}>Select text or click a page, slide, or HTML element</Text>}
+        {sourceThreadId ? (
+          <span data-testid="editor-thread-association" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Text type="supporting" maxLines={1}>Your edits here attribute to a thread.</Text>
+            <Button label="Clear" variant="ghost" size="sm" onClick={() => clearThreadAssociation()} />
+          </span>
+        ) : null}
       </div>
       <div className="canvas-annotations-body">
         <div className="canvas-annotations-content">
@@ -248,13 +363,44 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children }: Props
               </div>)}
               <div className="canvas-annotations-actions">
                 <Button label={drafting ? 'Adding…' : 'Add to agent chat'} icon={<Send size={13}/>} variant="secondary" size="sm" isDisabled={loadingThread || drafting} onClick={() => void draftThreads([selected.id])} />
+                {releaseBReady && canComment && selected.visibility === 'private' && workspace.visibility === 'team' && !sharePending ? (
+                  <Button label="Share to workspace" variant="secondary" size="sm" isDisabled={busy} onClick={() => { setSharePending(true); setError(''); }} />
+                ) : null}
                 {canComment && <Button label={selected.status === 'resolved' ? 'Reopen' : 'Resolve'} icon={<Check size={13}/>} variant="ghost" size="sm" isDisabled={busy} onClick={() => void resolve()} />}
               </div>
+              {releaseBReady && sharePending && selected.visibility === 'private' && workspace.visibility === 'team' ? (
+                <Card variant="default" padding={3} data-testid="share-disclosure">
+                  <Text type="label" display="block">Share this comment with the workspace?</Text>
+                  <Text type="supporting" display="block">
+                    This discloses ONLY the excerpt and this comment below — not your private replies.
+                    It is pinned to this note’s original version{selected.originVersionId ? ` (${selected.originVersionId.slice(0, 8)})` : ''}
+                    {sourceThreadId ? ' and linked to the active thread.' : '.'}
+                  </Text>
+                  <Card variant="default" padding={2} className="canvas-annotations-quote">
+                    <Text type="supporting" display="block">{selected.anchorText || selected.blockId || filePath}</Text>
+                    <Text type="body" display="block">{selected.body}</Text>
+                  </Card>
+                  {!selected.originVersionId ? (
+                    <Text type="supporting" display="block">This note has no exact anchored version — reattach it to a specific version before sharing.</Text>
+                  ) : null}
+                  <div className="canvas-annotations-actions">
+                    <Button label={busy ? 'Sharing…' : 'Confirm share'} variant="primary" size="sm" isDisabled={busy || !selected.originVersionId} onClick={() => void shareSelectedToWorkspace()} />
+                    <Button label="Cancel" variant="ghost" size="sm" isDisabled={busy} onClick={() => setSharePending(false)} />
+                  </div>
+                </Card>
+              ) : null}
             </>}
             {canComment && <form className="canvas-annotations-composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
               <TextArea label={selected ? 'Reply to annotation' : 'Annotation comment'} isLabelHidden placeholder={selected ? 'Write a reply…' : 'Leave a comment…'} value={body} maxLength={20000} onChange={setBody} rows={3} size="sm" width="100%" />
               <Text type="supporting" display="block">{workspace.visibility !== 'team' || selected?.visibility === 'private' ? 'Private comment. Only you can see this thread.' : 'Visible to this workspace. Other members will be notified.'}</Text>
-              <div className="canvas-annotations-submit"><Button type="submit" label={busy ? 'Saving…' : selected ? 'Reply' : 'Post comment'} variant="primary" size="sm" isDisabled={busy || !body.trim()} /></div>
+              {!selected && anchor ? (
+                <Text type="supporting" display="block">
+                  {canAnchor
+                    ? 'Anchored to the exact version you are viewing.'
+                    : anchorBlockReason}
+                </Text>
+              ) : null}
+              <div className="canvas-annotations-submit"><Button type="submit" label={busy ? 'Saving…' : selected ? 'Reply' : 'Post comment'} variant="primary" size="sm" isDisabled={busy || !body.trim() || (!selected && !!anchor && !canAnchor)} /></div>
             </form>}
           </> : <>
             {!objects.length && <Text type="supporting" display="block">No comments on this file yet. Turn on Annotate to select a passage or place a pin.</Text>}
