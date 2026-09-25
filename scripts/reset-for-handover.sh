@@ -20,6 +20,7 @@
 # you when.
 #
 # Usage:
+#   scripts/reset-for-handover.sh skills            # read the PVC, change nothing
 #   scripts/reset-for-handover.sh reset             # dry run, changes nothing
 #   scripts/reset-for-handover.sh reset --confirm
 #   scripts/reset-for-handover.sh restore --confirm
@@ -49,8 +50,8 @@ while [ $# -gt 0 ]; do
 done
 
 case "$PHASE" in
-  reset|restore|verify) ;;
-  *) echo "Usage: $0 reset|restore|verify [--target gke|local] [--namespace NAME] [--confirm]" >&2; exit 2 ;;
+  skills|reset|restore|verify) ;;
+  *) echo "Usage: $0 skills|reset|restore|verify [--target gke|local] [--namespace NAME] [--confirm]" >&2; exit 2 ;;
 esac
 
 case "$TARGET" in
@@ -301,6 +302,46 @@ SQL
   note "done"
 }
 
+HELPER_POD="handover-skills-maint"
+
+# Runs a shell command against skills-pvc with the app scaled to zero.
+#
+# `skills-pvc` is ReadWriteOnce and only `helpudoc-app` mounts it, so there is
+# no running pod to exec into once the app is stopped -- and the truncate
+# requires it to be stopped. A short-lived pod claims the volume in that gap.
+# It is deleted whether the command succeeds or fails, because a pod holding a
+# ReadWriteOnce claim blocks the app from starting again.
+with_skills_volume() {
+  local script="$1"
+  kubectl -n "$NAMESPACE" delete pod "$HELPER_POD" --ignore-not-found --wait >/dev/null 2>&1 || true
+  kubectl -n "$NAMESPACE" apply -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${HELPER_POD}
+  labels:
+    app.kubernetes.io/managed-by: reset-for-handover
+spec:
+  restartPolicy: Never
+  containers:
+    - name: maint
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep 900"]
+      volumeMounts:
+        - name: skills
+          mountPath: /app/skills
+  volumes:
+    - name: skills
+      persistentVolumeClaim:
+        claimName: skills-pvc
+YAML
+  # shellcheck disable=SC2064
+  trap "kubectl -n '${NAMESPACE}' delete pod '${HELPER_POD}' --ignore-not-found --wait >/dev/null 2>&1 || true" RETURN
+  kubectl -n "$NAMESPACE" wait --for=condition=Ready "pod/${HELPER_POD}" --timeout=180s >/dev/null \
+    || die "The maintenance pod did not become ready. Check that helpudoc-app is scaled to zero, because skills-pvc is ReadWriteOnce."
+  kubectl -n "$NAMESPACE" exec "$HELPER_POD" -- sh -c "$script"
+}
+
 # Only on GKE. Locally /app/skills is a bind mount onto the repo's own skills/
 # directory, so wiping it would delete the source tree, not a PVC.
 wipe_skills_pvc() {
@@ -310,15 +351,23 @@ wipe_skills_pvc() {
     note "The local catalog already matches the repo, so there is nothing to wipe."
     return 0
   fi
-  [ -n "$APP_POD" ] || die "No helpudoc-app pod found. Scale it to 1, wipe, then back to 0, or wipe from another pod mounting skills-pvc."
   say "Emptying /app/skills on skills-pvc"
-  kubectl -n "$NAMESPACE" exec "$APP_POD" -c backend -- sh -lc '
+  with_skills_volume '
     set -eu
     test -d /app/skills || { echo "no /app/skills"; exit 1; }
+    echo "before: $(ls -A /app/skills | wc -l) entries"
     find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-    ls -A /app/skills | head
+    echo "after:  $(ls -A /app/skills | wc -l) entries"
   '
   note "seed-skills will re-copy the image tree on next start, because the guard file is gone"
+}
+
+# Reads the PVC without changing it. Run before a reset to see what is there.
+show_skills_pvc() {
+  [ "$TARGET" = "gke" ] || return 0
+  say "Current skills on skills-pvc"
+  with_skills_volume 'ls -A /app/skills' | tr '\n' ' '
+  printf '\n'
 }
 
 phase_reset() {
@@ -413,6 +462,22 @@ SQL
   note "Drop handover_grant_backup once you are satisfied: DROP TABLE handover_grant_backup;"
 }
 
+# Shows what is on the PVC and what the image would seed in its place. Needs the
+# app scaled to zero, because skills-pvc is ReadWriteOnce.
+phase_skills() {
+  resolve_targets
+  if [ "$TARGET" = "local" ]; then
+    say "Local skills tree (${REPO_ROOT}/skills)"
+    ls -A "${REPO_ROOT}/skills" | tr '\n' ' '; printf '\n'
+    return 0
+  fi
+  show_skills_pvc
+  say "Governed skill keys the repo would seed"
+  (cd "$REPO_ROOT" && git ls-files skills/ | grep 'SKILL.md$' | sed 's|^skills/||; s|/SKILL.md$||' | sort | tr '\n' ' ')
+  printf '\n'
+  note "The PVC is only re-seeded when it is empty, so a redeploy alone never changes it."
+}
+
 phase_verify() {
   resolve_targets
   say "State"
@@ -432,6 +497,7 @@ SQL
 }
 
 case "$PHASE" in
+  skills) phase_skills ;;
   reset) phase_reset ;;
   restore) phase_restore ;;
   verify) phase_verify ;;
