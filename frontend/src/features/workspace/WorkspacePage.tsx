@@ -235,6 +235,7 @@ import {
   sanitizeRunPolicy,
 } from '../../utils/messages';
 import { getImplicitContinuationContext, buildContinuationPrompt } from '../../utils/implicitSkillContinuation';
+import { isAwaitingUserInput } from '../../utils/messages';
 import {
   findKnowledgeBaseMentions,
   parseComposerDirective,
@@ -1276,15 +1277,17 @@ export default function WorkspacePage() {
       ),
     [messages],
   );
-  const hasPendingInterruptMessage = useMemo(
-    () =>
-      messages.some(
-        (message) =>
-          message.sender === 'agent' &&
-          (Boolean(message.metadata?.pendingInterrupt) || message.metadata?.status === 'awaiting_approval'),
-      ),
-    [messages],
-  );
+  /**
+   * Whether the agent is waiting on the user *right now*.
+   *
+   * The latest agent message only. This used to ask whether any message in the
+   * conversation held an interrupt, which meant one unanswered question
+   * suppressed the Stop button for every later run in that conversation — and
+   * nothing cleared the flag, because `clearPendingInterruptForRun` is only
+   * reached by answering. A question from five turns ago says nothing about
+   * whether the run happening now can be stopped.
+   */
+  const hasPendingInterruptMessage = useMemo(() => isAwaitingUserInput(messages), [messages]);
   const isStreaming = useMemo(
     () =>
       !hasPendingInterruptMessage &&
@@ -4606,6 +4609,46 @@ export default function WorkspacePage() {
     [updateMessagesForConversation],
   );
 
+  /**
+   * Retire an interrupt the user answered by typing instead of using its card.
+   *
+   * Nothing else does this. `clearPendingInterruptForRun` is reached only from
+   * the five handlers that answer an interrupt, so a question the user walked
+   * past kept its card — still rendered, still clickable, still resolving to a
+   * run that has been superseded — and kept the conversation looking as though
+   * the agent were waiting.
+   *
+   * Client state only. The abandoned run stays `awaiting_approval` on the
+   * server, which costs nothing: its worker has already cleaned up and released
+   * the workspace lease, so it blocks neither the new run nor anything else.
+   */
+  const dismissSupersededInterrupts = useCallback((conversationId: string) => {
+    updateMessagesForConversation(conversationId, (prev) => {
+      let changed = false;
+      const next = prev.map((message) => {
+        if (message.sender !== 'agent') {
+          return message;
+        }
+        const metadata = (message.metadata as ConversationMessageMetadata | undefined) || undefined;
+        if (!metadata?.pendingInterrupt && metadata?.status !== 'awaiting_approval') {
+          return message;
+        }
+        changed = true;
+        return {
+          ...message,
+          metadata: {
+            ...metadata,
+            pendingInterrupt: undefined,
+            // Reads as "Run stopped", which is what walking away from the
+            // question did to it.
+            status: 'cancelled' as AgentRunStatus,
+          },
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [updateMessagesForConversation]);
+
   const reconcileAgentProgress = useCallback(
     async (
       runInfo: ActiveRunInfo,
@@ -6894,6 +6937,9 @@ export default function WorkspacePage() {
       }
 
       cancelStreamForConversation(conversationId);
+      // Sending a new instruction is an answer to "what next", so any question
+      // still on screen is no longer the live one.
+      dismissSupersededInterrupts(conversationId);
       lastUserMessageMapRef.current[conversationId] = messageContent;
       setChatMessage('');
       setChatAttachments((prev) => {

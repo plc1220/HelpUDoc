@@ -108,3 +108,28 @@ export const buildMessageMetadata = (
 };
 
 export { sanitizeRunPolicy };
+
+/**
+ * Whether the agent is waiting on the user right now.
+ *
+ * The latest agent message decides it, and nothing before that. The Stop button
+ * is hidden while the agent is waiting — answering is the thing to do, not
+ * stopping — and this used to ask whether *any* message in the conversation
+ * held an interrupt. One question the user walked past therefore hid Stop for
+ * every later run in that conversation, with no way back: the clearing path
+ * runs only when an interrupt is answered through its card.
+ *
+ * A question from five turns ago says nothing about whether the run happening
+ * now can be stopped.
+ */
+export const isAwaitingUserInput = (messages: readonly ConversationMessage[]): boolean => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.sender !== 'agent') {
+      continue;
+    }
+    const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
+    return Boolean(metadata?.pendingInterrupt) || metadata?.status === 'awaiting_approval';
+  }
+  return false;
+};
