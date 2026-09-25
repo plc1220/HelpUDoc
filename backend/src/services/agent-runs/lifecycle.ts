@@ -3864,12 +3864,13 @@ async function runAgentRunWorker(
         runId,
         skillId,
         hadInterrupt,
-        sawInterruptPayload,
+        // The signals the heuristic fired on, not the text it read. They are
+        // what decides the outcome, so they answer "why did the two differ"
+        // exactly — and a workspace document's contents must not reach the
+        // server log to do it (spec §13).
+        signals: [...collectImplicitInputSignals(assistantText.trim().slice(-1500))].sort(),
         assistantTextLength: assistantText.length,
-        // The window the heuristic actually judged, which is what the guard
-        // would have had to see to agree.
-        assistantTextTail: assistantText.slice(-400),
-        promptDetected: implicitInput.prompt || null,
+        promptDetected: Boolean(implicitInput.prompt),
       });
     }
 

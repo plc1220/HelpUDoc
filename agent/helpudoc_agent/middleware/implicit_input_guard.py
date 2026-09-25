@@ -20,7 +20,7 @@ from helpudoc_agent.interaction_workflows import (
     FRONTEND_SLIDES_STYLE_PATH_QUESTIONS,
     frontend_slides_gate_id,
 )
-from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
+from helpudoc_agent.implicit_input_detection import _collect_signals, detect_implicit_input_awaiting
 from helpudoc_agent.interaction_contract import (
     next_pending_gate,
     record_gate_source,
@@ -710,11 +710,14 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
                 # text looks like a question, to stay quiet on ordinary turns.
                 trailing = _extract_message_text(last_ai_msg).rstrip()
                 if trailing.endswith("?"):
+                    # Length and shape only. The prose is workspace content and
+                    # does not belong in a server log (spec §13).
                     logger.info(
                         "Interaction input guard: skipped a tool-calling message whose prose ends in a "
-                        "question. skill=%s tail=%r",
+                        "question. skill=%s chars=%d tool_calls=%d",
                         skill_id,
-                        trailing[-200:],
+                        len(trailing),
+                        len(last_ai_msg.tool_calls),
                     )
                 return None
             valid, _ = response_has_valid_interaction_call(last_ai_msg, pending_gate)
@@ -764,9 +767,11 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             # made them differ.
             if assistant_text.rstrip().endswith("?"):
                 logger.info(
-                    "Interaction input guard: declined a question-shaped ending. skill=%s tail=%r",
+                    "Interaction input guard: declined a question-shaped ending. skill=%s chars=%d "
+                    "signals=%s",
                     skill_id,
-                    assistant_text.rstrip()[-200:],
+                    len(assistant_text),
+                    sorted(_collect_signals(assistant_text.strip()[-1500:])),
                 )
             return None
 

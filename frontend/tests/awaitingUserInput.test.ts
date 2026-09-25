@@ -64,3 +64,16 @@ test('a latest agent message with no metadata is not awaiting', () => {
   assert.equal(isAwaitingUserInput([agent(null)]), false);
   assert.equal(isAwaitingUserInput([agent({})]), false);
 });
+
+test('a local notice does not mask the question it is complaining about', () => {
+  // `addLocalSystemMessage` posts with sender 'agent' and no metadata, often
+  // while an interrupt is still open — a failed decision submission being the
+  // case that matters most.
+  const messages = [agent({ status: 'awaiting_approval' }), agent(null)];
+  assert.equal(isAwaitingUserInput(messages), true);
+});
+
+test('a real turn after a notice still decides', () => {
+  const messages = [agent({ status: 'awaiting_approval' }), agent(null), agent({ status: 'running' })];
+  assert.equal(isAwaitingUserInput(messages), false);
+});

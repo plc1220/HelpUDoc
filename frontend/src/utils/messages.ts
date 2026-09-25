@@ -129,7 +129,15 @@ export const isAwaitingUserInput = (messages: readonly ConversationMessage[]): b
       continue;
     }
     const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
-    return Boolean(metadata?.pendingInterrupt) || metadata?.status === 'awaiting_approval';
+    // A local notice — "Failed to submit your decision", and the like — is
+    // posted with `sender: 'agent'` and no metadata. It is not a turn, and it
+    // often appears while a question is still open, precisely when the user
+    // needs the prompt. Treating it as the latest turn would answer "not
+    // waiting" on top of the interrupt it is complaining about.
+    if (!metadata) {
+      continue;
+    }
+    return Boolean(metadata.pendingInterrupt) || metadata.status === 'awaiting_approval';
   }
   return false;
 };
