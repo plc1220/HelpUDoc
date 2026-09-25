@@ -45,7 +45,18 @@ export default function PublishedWorkspaceChatHeader({
     <div className={`sticky top-0 z-30 border-b px-3 py-2 backdrop-blur-md ${
       isDarkMode ? 'border-slate-800/70 bg-slate-900/95' : 'border-slate-200/80 bg-white/92'
     }`}>
-      <div className="flex min-w-0 items-center justify-between gap-2">
+      {/*
+        Wraps rather than overflows. The pane is user-resizable, and at the
+        widths people actually drag it to, "Workspace Chat" plus "Private" plus
+        the actions do not fit on one line: the row had no wrap and no shrink
+        control, so the action group was pushed past the pane edge and the
+        sticky-note and full-screen buttons became unreachable.
+
+        `ml-auto` on the actions keeps them right-aligned whether they share the
+        line or fall to their own, which `justify-between` could not do once the
+        row was allowed to wrap.
+      */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <IconButton
             label={isAgentPaneVisible ? 'Collapse collaboration pane' : 'Expand collaboration pane'}
@@ -83,7 +94,7 @@ export default function PublishedWorkspaceChatHeader({
           ) : null}
         </div>
         {isAgentPaneVisible ? (
-          <ButtonGroup label="Shared workspace chat actions" size="sm">
+          <ButtonGroup label="Shared workspace chat actions" size="sm" className="ml-auto shrink-0">
             <IconButton
               label="Collaboration board"
               icon={<StickyNote size={15} />}
