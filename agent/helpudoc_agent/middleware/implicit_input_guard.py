@@ -702,6 +702,20 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
         if last_ai_msg.tool_calls:
             pending_gate = next_pending_gate(runtime_context)
             if pending_gate is None:
+                # The guard never reads a tool-calling message's prose, so a
+                # question asked alongside a tool call passes straight through.
+                # The backend judges the run's whole assistant text and can still
+                # call it "awaiting input", which is one way the two disagree and
+                # the run ends up in the continuation loop. Logged only when the
+                # text looks like a question, to stay quiet on ordinary turns.
+                trailing = _extract_message_text(last_ai_msg).rstrip()
+                if trailing.endswith("?"):
+                    logger.info(
+                        "Interaction input guard: skipped a tool-calling message whose prose ends in a "
+                        "question. skill=%s tail=%r",
+                        skill_id,
+                        trailing[-200:],
+                    )
                 return None
             valid, _ = response_has_valid_interaction_call(last_ai_msg, pending_gate)
             if valid:
@@ -743,6 +757,17 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             else None
         )
         if not detection.awaiting and not missing_gate:
+            # Declining here is what leaves the turn to complete. The backend
+            # runs the same heuristic over the run's whole assistant text and
+            # may still annotate it; pair this line with
+            # `[ImplicitInputAwaiting]` in the backend log to see which input
+            # made them differ.
+            if assistant_text.rstrip().endswith("?"):
+                logger.info(
+                    "Interaction input guard: declined a question-shaped ending. skill=%s tail=%r",
+                    skill_id,
+                    assistant_text.rstrip()[-200:],
+                )
             return None
 
         logger.warning(

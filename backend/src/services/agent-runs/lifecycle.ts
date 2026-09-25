@@ -3847,6 +3847,32 @@ async function runAgentRunWorker(
       assistantText,
     });
 
+    // Says which of the two detectors fired, when they disagree.
+    //
+    // The agent runs the same heuristic in `ImplicitInputGuardMiddleware`, and
+    // when it fires there it converts the prose question into a real interrupt
+    // and the run keeps going. Reaching here instead means the guard declined:
+    // the run completed, and this only labels it "Awaiting your input", which
+    // the user answers and the next turn can end the same way — the loop.
+    //
+    // The two read different text. The guard sees one AI message and returns
+    // early if that message carried tool calls; this sees the run's whole
+    // assistant text. That gap is the thing to measure, so log the inputs
+    // rather than guessing at them from the outside.
+    if (implicitInput.awaiting) {
+      console.info('[ImplicitInputAwaiting] backend annotated a completed run', {
+        runId,
+        skillId,
+        hadInterrupt,
+        sawInterruptPayload,
+        assistantTextLength: assistantText.length,
+        // The window the heuristic actually judged, which is what the guard
+        // would have had to see to agree.
+        assistantTextTail: assistantText.slice(-400),
+        promptDetected: implicitInput.prompt || null,
+      });
+    }
+
     if (implicitInput.awaiting) {
       const recoveredInterruptPayload = normalizeInterruptPayloadRecord({
         type: 'interrupt',
