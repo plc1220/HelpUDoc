@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ConversationMessage } from '../src/types.ts';
-import { isAwaitingUserInput } from '../src/utils/messages.ts';
+import { isAgentRunInFlight, isAwaitingUserInput, stopInFlightAgentMessages } from '../src/utils/messages.ts';
 
 /**
  * The Stop button is hidden while the agent is waiting on the user, because
@@ -76,4 +76,73 @@ test('a local notice does not mask the question it is complaining about', () => 
 test('a real turn after a notice still decides', () => {
   const messages = [agent({ status: 'awaiting_approval' }), agent(null), agent({ status: 'running' })];
   assert.equal(isAwaitingUserInput(messages), false);
+});
+
+/**
+ * `isAgentRunInFlight` decides whether the composer offers Stop. It has the
+ * same scope rule as `isAwaitingUserInput` and for a sharper reason: a bubble
+ * is reliably left at `running` when a newer stream supersedes an older one,
+ * because the older stream skips its own status update to avoid clobbering the
+ * newer turn. Under a whole-conversation scan that one bubble pinned Stop on
+ * for the life of the conversation, naming a run that no longer existed.
+ */
+
+test('a running latest turn is in flight', () => {
+  assert.equal(isAgentRunInFlight([agent({ status: 'running' })]), true);
+});
+
+test('a stale running turn behind a finished one is not in flight', () => {
+  // The reported bug: Stop stayed on screen and pressing it did nothing.
+  const messages = [agent({ status: 'running' }), user(), agent({ status: 'completed' })];
+  assert.equal(isAgentRunInFlight(messages), false);
+});
+
+test('a local notice does not end a run that is still going', () => {
+  assert.equal(isAgentRunInFlight([agent({ status: 'running' }), agent(null)]), true);
+});
+
+test('awaiting input is not in flight, so Stop gives way to Send', () => {
+  assert.equal(isAgentRunInFlight([agent({ status: 'awaiting_approval' })]), false);
+  assert.equal(isAgentRunInFlight([]), false);
+});
+
+test('stopping settles a running turn and drops its interrupt', () => {
+  const [settled] = stopInFlightAgentMessages([agent({ status: 'running', runId: 'r1' })]);
+  assert.equal(settled.metadata?.status, 'cancelled');
+  assert.equal(settled.metadata?.pendingInterrupt, undefined);
+  assert.equal(settled.metadata?.runId, 'r1', 'the run id survives, so the bubble stays attributable');
+});
+
+test('stopping settles an unanswered question too', () => {
+  const [settled] = stopInFlightAgentMessages([agent({ pendingInterrupt: { kind: 'clarification' } })]);
+  assert.equal(settled.metadata?.status, 'cancelled');
+  assert.equal(settled.metadata?.pendingInterrupt, undefined);
+});
+
+test('stopping leaves finished turns and user messages alone', () => {
+  const messages = [user(), agent({ status: 'completed', runActiveMs: 1200 }), agent(null)];
+  const settled = stopInFlightAgentMessages(messages);
+  assert.equal(settled[0].sender, 'user');
+  assert.equal(settled[1].metadata?.status, 'completed');
+  assert.equal(settled[1].metadata?.runActiveMs, 1200, 'a finished run keeps its timing');
+  assert.equal(settled[2].metadata, null);
+});
+
+test('stopping a conversation with nothing live changes no statuses', () => {
+  const messages = [agent({ status: 'completed' })];
+  const settled = stopInFlightAgentMessages(messages);
+  assert.deepEqual(settled.map((m) => m.metadata?.status), ['completed']);
+});
+
+test('stopping clears every live bubble, not just the newest', () => {
+  // Stop is a statement about the screen: nothing should still be spinning.
+  const settled = stopInFlightAgentMessages([
+    agent({ status: 'running', runId: 'old' }),
+    user(),
+    agent({ status: 'running', runId: 'new' }),
+  ]);
+  assert.deepEqual(
+    settled.filter((m) => m.sender === 'agent').map((m) => m.metadata?.status),
+    ['cancelled', 'cancelled'],
+  );
 });

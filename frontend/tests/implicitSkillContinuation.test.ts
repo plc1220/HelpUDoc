@@ -135,3 +135,28 @@ test('explicit pendingInterrupt messages do NOT trigger implicit continuation', 
   const result = getImplicitContinuationContext(messages);
   assert.equal(result.shouldContinue, false);
 });
+
+test('a local notice does not cancel the continuation it sits behind', () => {
+  // `addLocalSystemMessage` posts sender 'agent' with no metadata. Treating it
+  // as the latest turn dropped the continuation directive, so the agent
+  // restarted the skill and re-asked its opening question.
+  const messages = [
+    {
+      id: 1,
+      sender: 'agent',
+      text: 'Which market should I focus on?',
+      metadata: {
+        awaitingImplicitInput: true,
+        implicitInputPrompt: 'Which market should I focus on?',
+        runPolicy: { skill: 'research' },
+      },
+    },
+    { id: 2, sender: 'agent', text: 'Failed to submit your decision.', metadata: null },
+  ] as unknown as ConversationMessage[];
+
+  const context = getImplicitContinuationContext(messages);
+  assert.equal(context.shouldContinue, true);
+  if (context.shouldContinue) {
+    assert.equal(context.skillId, 'research');
+  }
+});

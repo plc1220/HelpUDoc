@@ -235,7 +235,7 @@ import {
   sanitizeRunPolicy,
 } from '../../utils/messages';
 import { getImplicitContinuationContext, buildContinuationPrompt } from '../../utils/implicitSkillContinuation';
-import { isAwaitingUserInput } from '../../utils/messages';
+import { isAgentRunInFlight, isAwaitingUserInput, stopInFlightAgentMessages } from '../../utils/messages';
 import {
   findKnowledgeBaseMentions,
   parseComposerDirective,
@@ -1270,13 +1270,7 @@ export default function WorkspacePage() {
     () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
     [activeConversationId, conversationMessages],
   );
-  const hasRunningAgentMessage = useMemo(
-    () =>
-      messages.some(
-        (message) => message.sender === 'agent' && message.metadata?.status === 'running',
-      ),
-    [messages],
-  );
+  const hasRunningAgentMessage = useMemo(() => isAgentRunInFlight(messages), [messages]);
   /**
    * Whether the agent is waiting on the user *right now*.
    *
@@ -2195,6 +2189,23 @@ export default function WorkspacePage() {
       cancelRun(activeRun.runId).catch((error) => {
         console.error('Failed to cancel run', error);
       });
+    } else if (activeConversationId) {
+      /**
+       * Stop with no run to cancel still has to settle the screen.
+       *
+       * Everything above is keyed on an entry in the active-run map, and the
+       * common case for a bubble stuck at `running` is exactly the one where
+       * that entry is gone: the map is emptied when a stream closes, and a
+       * stream that a newer one superseded never settles its own bubble.
+       * Falling through to `cancelStreamForConversation` alone only clears the
+       * streaming flag, and `isStreaming` also reads the message status — so
+       * Stop stayed Stop and pressing it again did the same nothing.
+       *
+       * Client state only. There is no run id to cancel, so there is nothing to
+       * tell the server, and any run still alive on the server has already lost
+       * its stream.
+       */
+      updateMessagesForConversation(activeConversationId, (prev) => stopInFlightAgentMessages(prev));
     }
     cancelStreamForConversation(activeConversationId);
   };
@@ -5591,6 +5602,38 @@ export default function WorkspacePage() {
               status: 'awaiting_approval',
               pendingInterrupt: effectivePendingInterrupt,
             }));
+        } else if (finalStatus !== 'running' && finalStatus !== 'queued') {
+          /**
+           * The stream is over, so the bubble must stop claiming to be live.
+           *
+           * The branch above only fires for an approval that arrived with its
+           * interrupt payload. Two cases fell through it and left the bubble at
+           * `running` for good: the server reports `awaiting_approval` but the
+           * payload is still missing after the retry loop, and a newer stream
+           * superseded this one.
+           *
+           * Both used to be invisible, because `isStreaming` read the whole
+           * conversation — one stale bubble anywhere kept the composer showing
+           * Stop, and the run it named no longer existed, so pressing it did
+           * nothing. Writing the status the server actually reported is what
+           * ends the run on screen; the superseded case is still skipped above,
+           * so this cannot overwrite a newer turn's interrupt.
+           */
+          updateMessageMetadataAtIndex(conversationId, agentMessageIndexForFinalStatus, (metadata) => {
+            if (metadata?.status !== 'running') {
+              return metadata;
+            }
+            // Settle this run's own bubble and no other. When a newer stream
+            // superseded this one the index can resolve to the newer turn,
+            // which is also `running`, and marking that one finished would end
+            // a run that is still going. An unset `runId` is only safe when
+            // nothing has superseded us.
+            const ownsMessage = metadata.runId ? metadata.runId === runId : !supersededByNewerStream;
+            if (!ownsMessage) {
+              return metadata;
+            }
+            return { ...metadata, ...(runId ? { runId } : {}), status: finalStatus };
+          });
         }
         // Copy the run's working time onto the message while it is still
         // readable. Run metadata is Redis with a 24-hour TTL, so a conversation

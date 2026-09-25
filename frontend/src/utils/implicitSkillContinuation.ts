@@ -49,9 +49,23 @@ export const buildContinuationPrompt = (
   return parts.filter(Boolean).join('\n');
 };
 
+/**
+ * The newest real agent turn.
+ *
+ * Messages with no metadata are stepped over. `addLocalSystemMessage` posts a
+ * notice as `sender: 'agent'` carrying none, and one landing between the
+ * question and the user's reply used to make `awaitingImplicitInput` read
+ * undefined. The reply then went as a plain prompt with no `[CONTINUATION]`
+ * block and no `/skill`, so the agent restarted the skill and asked its opening
+ * question again — the cycle the user sees.
+ *
+ * Same rule as `isAwaitingUserInput` in `utils/messages`, deliberately: two
+ * copies of "which message is the current turn" that disagree is how this
+ * started.
+ */
 const findLastAgentMessage = (messages: ConversationMessage[]): ConversationMessage | undefined => {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].sender === 'agent') {
+    if (messages[i].sender === 'agent' && messages[i].metadata) {
       return messages[i];
     }
   }

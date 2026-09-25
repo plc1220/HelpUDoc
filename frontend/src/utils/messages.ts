@@ -123,21 +123,89 @@ export { sanitizeRunPolicy };
  * now can be stopped.
  */
 export const isAwaitingUserInput = (messages: readonly ConversationMessage[]): boolean => {
+  const metadata = latestAgentTurnMetadata(messages);
+  if (!metadata) {
+    return false;
+  }
+  return Boolean(metadata.pendingInterrupt) || metadata.status === 'awaiting_approval';
+};
+
+/**
+ * The metadata of the newest real agent turn, or undefined when there is none.
+ *
+ * "Real" excludes messages with no metadata. A local notice — "Failed to submit
+ * your decision", and the like — is posted with `sender: 'agent'` and carries
+ * none. It is not a turn, and it often appears while a question is still open,
+ * precisely when the user needs the prompt, so treating it as the latest turn
+ * answers about the notice instead of the run.
+ */
+const latestAgentTurnMetadata = (
+  messages: readonly ConversationMessage[],
+): ConversationMessageMetadata | undefined => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.sender !== 'agent') {
       continue;
     }
     const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
-    // A local notice — "Failed to submit your decision", and the like — is
-    // posted with `sender: 'agent'` and no metadata. It is not a turn, and it
-    // often appears while a question is still open, precisely when the user
-    // needs the prompt. Treating it as the latest turn would answer "not
-    // waiting" on top of the interrupt it is complaining about.
     if (!metadata) {
       continue;
     }
-    return Boolean(metadata.pendingInterrupt) || metadata.status === 'awaiting_approval';
+    return metadata;
   }
-  return false;
+  return undefined;
+};
+
+/**
+ * Whether a run is on screen and still going.
+ *
+ * The newest agent turn decides it. Asking whether *any* message in the
+ * conversation was left at `running` is the same mistake `isAwaitingUserInput`
+ * used to make, and it fails the same way — except this one has no clearing
+ * path at all, so it sticks for the life of the conversation.
+ *
+ * A message is reliably left at `running`. When a newer stream supersedes an
+ * older one, the older stream's cleanup skips its own status update to avoid
+ * clobbering the newer turn, so its bubble keeps `running` forever. Under a
+ * whole-conversation scan that one bubble pins Stop on: the composer offers
+ * Stop, the run it refers to is long gone, and pressing it cannot settle
+ * anything.
+ */
+export const isAgentRunInFlight = (messages: readonly ConversationMessage[]): boolean =>
+  latestAgentTurnMetadata(messages)?.status === 'running';
+
+/**
+ * Settles whatever the newest agent turn is still showing as live.
+ *
+ * Stop has to work even when the client no longer holds the run: the active-run
+ * map is emptied when a stream closes, and a superseded stream never settles
+ * its own bubble, so the common case for a stuck `running` bubble is precisely
+ * the one where there is nothing left to cancel. Without this the composer
+ * keeps offering Stop and pressing it changes nothing.
+ *
+ * Client state only, and deliberately narrow: only messages still claiming to
+ * be live are touched, so a finished turn keeps its own status and its history.
+ */
+export const stopInFlightAgentMessages = (
+  messages: readonly ConversationMessage[],
+): ConversationMessage[] => {
+  let changed = false;
+  const next = messages.map((message) => {
+    if (message.sender !== 'agent') {
+      return message;
+    }
+    const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
+    if (!metadata) {
+      return message;
+    }
+    if (metadata.status !== 'running' && !metadata.pendingInterrupt) {
+      return message;
+    }
+    changed = true;
+    return {
+      ...message,
+      metadata: { ...metadata, status: 'cancelled' as const, pendingInterrupt: undefined },
+    };
+  });
+  return changed ? next : [...messages];
 };
