@@ -119,10 +119,23 @@ export async function resolveTeamGrantRole(
  * more when `publisher` was unreachable, and it still decides what an older or
  * mistyped row means.
  */
-export const storedTeamGrantRole = (role: unknown): WorkspaceRole => {
+export const storedTeamGrantRole = (role: unknown): WorkspaceRole =>
+  namedGrantToLegacyWorkspaceRole(namedTeamGrantRole(role));
+
+/**
+ * The same read, in the named-grant vocabulary the sharing API speaks.
+ *
+ * Callers returning a role to the client need `publisher`, not the `editor` it
+ * resolves to internally. Both readers go through this one list, because the
+ * two that did not — a pair of `role === 'contributor' ? … : 'viewer'`
+ * ternaries written when a team could only be a contributor or a viewer —
+ * reported a publisher team as "Viewer access" and folded its members in with
+ * a viewer's `canEdit`.
+ */
+export const namedTeamGrantRole = (role: unknown): WorkspaceNamedGrantRole => {
   const stored = String(role || '').trim();
   if (!TEAM_GRANT_STORED_ROLES.includes(stored as WorkspaceNamedGrantRole)) return 'viewer';
-  return namedGrantToLegacyWorkspaceRole(stored as WorkspaceNamedGrantRole);
+  return stored as WorkspaceNamedGrantRole;
 };
 
 /**
@@ -1840,7 +1853,7 @@ export class WorkspaceService {
         .orderBy('users.displayName', 'asc');
       const roleByTeamId = new Map(teams.map((team) => [
         team.id,
-        (team.role === 'contributor' ? 'contributor' : 'viewer') as WorkspaceRole,
+        storedTeamGrantRole(team.role),
       ]));
       groupMembers.forEach((row: any) => {
         const existing = effectiveCollaborators.get(row.userId);
@@ -1867,7 +1880,7 @@ export class WorkspaceService {
       teams: teams.map((row: any) => ({
         id: row.id,
         name: row.name,
-        role: row.role === 'contributor' ? 'contributor' as const : 'viewer' as const,
+        role: namedTeamGrantRole(row.role),
       })),
     };
   }

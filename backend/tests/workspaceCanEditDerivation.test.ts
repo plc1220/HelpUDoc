@@ -16,9 +16,11 @@ import {
   TEAM_GRANT_STORED_ROLES,
   isWorkspaceContentLocked,
   resolveWorkspaceContentEditAccess,
+  namedTeamGrantRole,
   storedTeamGrantRole,
   strongestWorkspaceRole,
 } from '../src/services/workspaceService';
+import { namedGrantToLegacyWorkspaceRole } from '../src/services/workspaceAudiencePolicy';
 import { getWorkspaceRoleCapabilities } from '../src/services/workspaceCollaborationPolicy';
 
 type Role = 'owner' | 'editor' | 'contributor' | 'viewer';
@@ -175,4 +177,42 @@ test('a contributor reached through a team may edit a Freeflow workspace', () =>
   // from another.
   assert.equal(resolve({ role: strongestWorkspaceRole('viewer', 'contributor') }).canEdit, true);
   assert.equal(resolve({ role: strongestWorkspaceRole('viewer', null) }).canEdit, false);
+});
+
+/**
+ * The sharing API returns the named vocabulary, so a publisher team must read
+ * back as `publisher`. Two ternaries in `listCollaborators` predated the tier
+ * and mapped anything that was not `contributor` to `viewer`: the dialog said
+ * "Team members have Viewer access" over a grant stored as `publisher`, and the
+ * same collapse gave that team's members a viewer's `canEdit`.
+ */
+test('a team grant reads back in the named vocabulary', () => {
+  assert.equal(namedTeamGrantRole('publisher'), 'publisher');
+  assert.equal(namedTeamGrantRole('contributor'), 'contributor');
+  assert.equal(namedTeamGrantRole('viewer'), 'viewer');
+});
+
+test('the named read fails closed exactly as the legacy read does', () => {
+  // `editor` is the legacy spelling and is never stored in this table.
+  assert.equal(namedTeamGrantRole('editor'), 'viewer');
+  assert.equal(namedTeamGrantRole(''), 'viewer');
+  assert.equal(namedTeamGrantRole(null), 'viewer');
+  assert.equal(namedTeamGrantRole('owner'), 'viewer');
+});
+
+test('both reads of a team grant agree on every stored tier', () => {
+  // One list decides both, so a new tier cannot reach one reader and not the other.
+  TEAM_GRANT_STORED_ROLES.forEach((stored) => {
+    assert.equal(
+      storedTeamGrantRole(stored),
+      namedGrantToLegacyWorkspaceRole(namedTeamGrantRole(stored)),
+      `disagreement on ${stored}`,
+    );
+  });
+});
+
+test('a publisher team keeps publisher authority when folded into members', () => {
+  assert.equal(storedTeamGrantRole('publisher'), 'editor');
+  assert.equal(getWorkspaceRoleCapabilities(storedTeamGrantRole('publisher')).canPublish, true);
+  assert.equal(getWorkspaceRoleCapabilities(storedTeamGrantRole('contributor')).canPublish, false);
 });
