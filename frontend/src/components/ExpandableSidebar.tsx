@@ -27,7 +27,13 @@ const ExpandableSidebar: React.FC<SidebarProps> = ({ handleDrawerToggle, isDrawe
         borderColor: 'divider',
         transition: 'width 0.3s ease, padding 0.3s ease',
         overflow: 'hidden',
-        height: '100vh',
+        // Its parent, not the viewport. This rail sits in the flex row below
+        // `GovernmentStrip`, so that row is 34px shorter than the screen. At
+        // `100vh` the rail overflowed by exactly the strip's height into a
+        // parent that hides overflow, and `space-between` parks the Settings
+        // button in precisely that clipped band — so the gear was cut in half
+        // whenever the workspace panel was collapsed and the rail was showing.
+        height: '100%',
       }}
     >
       {!isDrawerOpen && (
