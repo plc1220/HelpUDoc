@@ -317,6 +317,29 @@ export const isWorkspaceContentLocked = (workspace: Pick<WorkspaceRecord,
 );
 
 /**
+ * Whether this member may withdraw the workspace's current lock.
+ *
+ * Kept apart from `canPublish` on purpose. `canPublish` also offers a new lock,
+ * which needs a live audience, so it requires an active workspace. Withdrawing
+ * does not. A lock outlives unsharing, and the owner is the only person left
+ * who can lift it, so an unshared workspace still allows the withdraw. Without
+ * this the owner had to re-share, withdraw, and unshare again, which let the
+ * old audience back in for that time.
+ */
+export const resolveCanWithdrawLock = (input: {
+  isShared: boolean;
+  status?: WorkspaceRecord['status'];
+  hasCurrentLock: boolean;
+  roleCanPublish: boolean;
+}): boolean => {
+  const status = input.status || 'active';
+  return input.isShared
+    && (status === 'active' || status === 'unshared' || status === 'archived')
+    && input.hasCurrentLock
+    && input.roleCanPublish;
+};
+
+/**
  * The single definition of "may this member change workspace content".
  *
  * Three call sites answered this question independently — `ensureMembership`,
@@ -526,6 +549,7 @@ export class WorkspaceService {
     role: WorkspaceRole;
     canEdit: boolean;
     canPublish: boolean;
+    canWithdrawLock: boolean;
     teamName?: string | null;
     teams: Array<{ id: string; name: string; role: WorkspaceNamedGrantRole }>;
     canLeave: boolean;
@@ -801,6 +825,12 @@ export class WorkspaceService {
         canPublish: (row.status || 'active') === 'active'
           && visibility === 'team'
           && getWorkspaceRoleCapabilities(effectiveRole).canPublish,
+        canWithdrawLock: resolveCanWithdrawLock({
+          isShared: visibility === 'team',
+          status: row.status || 'active',
+          hasCurrentLock: Boolean(row.currentPublishedVersionId),
+          roleCanPublish: getWorkspaceRoleCapabilities(effectiveRole).canPublish,
+        }),
         teams,
         // Kept until every reader moves to `teams`. Derived from the same list
         // rather than a second join, so the two cannot disagree.

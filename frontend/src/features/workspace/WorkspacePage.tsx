@@ -947,13 +947,18 @@ export default function WorkspacePage() {
   //
   // Also excludes an unshared workspace: its lock is moot while nobody else can
   // reach it, and the banner's private-copy offer would be pointless there.
+  const selectedWorkspaceLifecycleStatus = getWorkspaceLifecycleStatus(selectedWorkspace);
+  // Unshared too, not only active: a lock outlives unsharing, and without the
+  // banner the owner saw every edit refused with no reason and no way out.
   const isSelectedWorkspaceLocked = isWorkspaceContentLocked(selectedWorkspace)
     && !isPublishedMode
-    && getWorkspaceLifecycleStatus(selectedWorkspace) === 'active';
+    && selectedWorkspaceLifecycleStatus !== 'trashed';
   // Only a role that may actually propose gets offered a private copy; the
   // sidebar action already gets this right, and `createPrivateCopy` refuses a
-  // viewer, so offering it to one was a dead end.
-  const canTakePrivateCopy = roleCanPropose(selectedWorkspace?.role);
+  // viewer, so offering it to one was a dead end. An unshared workspace has no
+  // reviewers left, so the review path is not offered there either.
+  const canTakePrivateCopy = roleCanPropose(selectedWorkspace?.role)
+    && selectedWorkspaceLifecycleStatus === 'active';
   /**
    * Changes waiting for this person to approve.
    *
@@ -9331,7 +9336,9 @@ export default function WorkspacePage() {
                   <span>
                     {canTakePrivateCopy
                       ? 'Direct editing is off for everyone. Work in a private copy and submit your changes for review.'
-                      : 'Direct editing is off for everyone while this version is locked.'}
+                      : selectedWorkspaceLifecycleStatus === 'unshared'
+                        ? 'Direct editing is off while this version is locked. Withdraw the lock to edit again.'
+                        : 'Direct editing is off for everyone while this version is locked.'}
                   </span>
                   <div className="ml-auto flex items-center gap-2">
                     {canTakePrivateCopy ? (
@@ -9347,7 +9354,7 @@ export default function WorkspacePage() {
                         Work in a private copy
                       </button>
                     ) : null}
-                    {selectedWorkspace.canPublish ? (
+                    {selectedWorkspace.canWithdrawLock ? (
                       <button
                         type="button"
                         onClick={() => setWithdrawWorkspaceTarget(selectedWorkspace)}

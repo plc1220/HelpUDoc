@@ -234,7 +234,9 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         icon: <History fontSize="small" />,
         onClick: () => onHistoryWorkspace(workspace),
       } : null,
-      isSharedWorkspace && lifecycleStatus === 'active' && workspace.canPublish && workspace.currentPublishedVersionNumber != null && onWithdrawWorkspace ? {
+      // `canWithdrawLock`, not `canPublish`: the server keeps it true for an
+      // unshared workspace, where the owner is the only one who can lift a lock.
+      workspace.canWithdrawLock && onWithdrawWorkspace ? {
         label: `Withdraw current lock`,
         icon: <Unpublished fontSize="small" />,
         onClick: () => onWithdrawWorkspace(workspace),

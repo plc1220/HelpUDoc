@@ -21,6 +21,12 @@ export interface Workspace {
   role?: 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
   canEdit?: boolean;
   canPublish?: boolean;
+  /**
+   * Whether this user may withdraw the current lock. Unlike `canPublish`, this
+   * stays true once the workspace is unshared, because a lock outlives the
+   * unshare and only its owner can lift it. Absent is treated as false.
+   */
+  canWithdrawLock?: boolean;
   visibility?: 'private' | 'team';
   workspaceType?: 'private' | 'team';
   editingPolicy?: 'direct' | 'review' | null;

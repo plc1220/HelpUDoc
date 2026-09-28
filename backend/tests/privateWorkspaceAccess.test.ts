@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { WorkspaceService } from '../src/services/workspaceService';
+import { WorkspaceService, resolveCanWithdrawLock } from '../src/services/workspaceService';
 
 const privateWorkspace = {
   id: 'workspace-private',
@@ -359,4 +359,18 @@ test('workspace object bucket denies anonymous download in the GKE deployment', 
   );
   assert.match(manifest, /mc anonymous set none local\/"\$S3_BUCKET_NAME"/);
   assert.doesNotMatch(manifest, /mc anonymous set download/);
+});
+
+test('the owner of an unshared workspace can still withdraw its lock', () => {
+  // `canPublish` needs an active workspace, because a new lock needs an
+  // audience. Withdrawing does not: a lock outlives unsharing, and the owner is
+  // the only person left who can lift it.
+  const base = { isShared: true, hasCurrentLock: true, roleCanPublish: true };
+  assert.equal(resolveCanWithdrawLock({ ...base, status: 'active' }), true);
+  assert.equal(resolveCanWithdrawLock({ ...base, status: 'unshared' }), true);
+  assert.equal(resolveCanWithdrawLock({ ...base, status: 'archived' }), true);
+  assert.equal(resolveCanWithdrawLock({ ...base, status: 'trashed' }), false);
+  assert.equal(resolveCanWithdrawLock({ ...base, status: 'unshared', hasCurrentLock: false }), false);
+  assert.equal(resolveCanWithdrawLock({ ...base, status: 'unshared', roleCanPublish: false }), false);
+  assert.equal(resolveCanWithdrawLock({ ...base, isShared: false }), false);
 });
