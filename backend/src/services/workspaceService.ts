@@ -1341,9 +1341,8 @@ export class WorkspaceService {
     const { membership } = await this.ensureMembership(workspaceId, userId, options);
     const workspacePolicy = await this.db('workspaces')
       // `status` is selected so an unshared workspace cannot present itself as
-      // live: Team Chat's agent gates on `workspaceMode`, and without this it
-      // resolved to `shared_live` and let the agent keep writing into a chat
-      // nobody else could reach.
+      // live: Team Chat's agent gates on `workspaceMode`, and `shared_live`
+      // would let it keep writing into a chat nobody else could reach.
       .select('skipPlanApprovals', 'visibility', 'editingPolicy', 'status')
       .where({ id: workspaceId })
       .first();
@@ -1367,22 +1366,26 @@ export class WorkspaceService {
       console.warn('Failed to load mcp_server_grants; continuing without explicit allow/deny', error);
     }
 
+    // Unsharing leaves `visibility` at 'team', so `visibility` alone does not
+    // say whether an audience still exists. Only the owner reaches an unshared
+    // workspace, so the agent treats it as private: the owner's agent may write
+    // wherever the owner may write by hand. Folding the status into the write
+    // flag alone would deny the agent while `membership.canEdit` lets the owner
+    // edit the same file.
     const isActive = (workspacePolicy?.status || 'active') === 'active';
-    const isSharedFreeflow = workspacePolicy?.visibility === 'team'
-      && workspacePolicy.editingPolicy === 'direct'
-      && isActive;
+    const isLiveShared = workspacePolicy?.visibility === 'team' && isActive;
 
     return {
       mcpServerAllowIds: Array.from(new Set(allow)).sort(),
       mcpServerDenyIds: Array.from(new Set(deny)).sort(),
       isAdmin,
       skipPlanApprovals: Boolean(workspacePolicy?.skipPlanApprovals),
-      workspaceMode: workspacePolicy?.visibility === 'team' ? 'shared_live' : 'private',
+      workspaceMode: isLiveShared ? 'shared_live' : 'private',
       workspaceRole: membership.role,
-      canWriteWorkspace: workspacePolicy?.visibility !== 'team'
-        ? membership.canEdit
-        : isSharedFreeflow && membership.canEdit,
-      editingPolicy: workspacePolicy?.visibility === 'team'
+      canWriteWorkspace: isLiveShared
+        ? workspacePolicy.editingPolicy === 'direct' && membership.canEdit
+        : membership.canEdit,
+      editingPolicy: isLiveShared
         ? (workspacePolicy.editingPolicy === 'direct' ? 'direct' : 'review')
         : null,
     };

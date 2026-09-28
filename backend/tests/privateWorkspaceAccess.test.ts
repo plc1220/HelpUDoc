@@ -169,6 +169,8 @@ function workspaceServiceForSharedWorkspace(
   role: 'owner' | 'editor' | 'contributor' | 'viewer',
   /** A current locked version makes the workspace read-only for content. */
   currentPublishedVersionId: string | null = null,
+  /** 'unshared' keeps `visibility: 'team'` but revokes the audience. */
+  status: 'active' | 'unshared' = 'active',
 ) {
   const sharedWorkspace = {
     ...privateWorkspace,
@@ -179,6 +181,7 @@ function workspaceServiceForSharedWorkspace(
     workspaceType: 'team' as const,
     editingPolicy,
     currentPublishedVersionId,
+    status,
   };
   const membership = {
     workspaceId: sharedWorkspace.id,
@@ -316,6 +319,37 @@ test('a locked workspace reports canWriteWorkspace false to the agent', async ()
   // collapses the runtime skill list to pinned-only, which would silently strip
   // every skill from a locked workspace that has no pins.
   assert.equal(policy.workspaceMode, 'shared_live');
+});
+
+test('an unshared workspace lets the owner\'s agent write, as the owner can by hand', async () => {
+  // Unsharing leaves `visibility: 'team'`. The agent policy used to read that
+  // alone, so the owner could still edit files by hand while the agent was
+  // told it could not write.
+  const service = workspaceServiceForSharedWorkspace('direct', 'owner', null, 'unshared');
+  const { membership } = await service.ensureMembership('workspace-shared', 'owner-user');
+  const policy = await service.getMcpServerPolicy('workspace-shared', 'owner-user');
+  assert.equal(membership.canEdit, true);
+  assert.equal(policy.canWriteWorkspace, true);
+  // Not `shared_live`: Team Chat's agent gates on that mode, and the chat is
+  // frozen once the workspace is unshared.
+  assert.equal(policy.workspaceMode, 'private');
+  assert.equal(policy.editingPolicy, null);
+});
+
+test('an unshared Review-mode workspace also lets the owner\'s agent write', async () => {
+  // Review mode routes a shared audience's edits through proposals. With no
+  // audience left, it must not block the owner's agent.
+  const service = workspaceServiceForSharedWorkspace('review', 'owner', null, 'unshared');
+  const policy = await service.getMcpServerPolicy('workspace-shared', 'owner-user');
+  assert.equal(policy.canWriteWorkspace, true);
+});
+
+test('an unshared workspace that is still locked stays read-only to the agent', async () => {
+  // The lock outlives unsharing. The owner cannot edit by hand, so the agent
+  // must not either.
+  const service = workspaceServiceForSharedWorkspace('direct', 'owner', 'version-1', 'unshared');
+  const policy = await service.getMcpServerPolicy('workspace-shared', 'owner-user');
+  assert.equal(policy.canWriteWorkspace, false);
 });
 
 test('workspace object bucket denies anonymous download in the GKE deployment', () => {
