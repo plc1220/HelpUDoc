@@ -288,6 +288,12 @@ spec:
                   name: helpudoc-config
                   key: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
                   optional: true
+            - name: GOOGLE_CLOUD_PRICING_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_CLOUD_PRICING_PROJECT_ID
+                  optional: true
             - name: GCP_COST_SERVICE_ACCOUNT_JSON
               valueFrom:
                 secretKeyRef:
@@ -411,13 +417,13 @@ spec:
             - containerPort: 8001
           startupProbe:
             httpGet:
-              path: /ready
+              path: /health
               port: 8001
             periodSeconds: 5
             failureThreshold: 120
           readinessProbe:
             httpGet:
-              path: /ready
+              path: /health
               port: 8001
             periodSeconds: 10
             timeoutSeconds: 2
@@ -711,6 +717,20 @@ spec:
           image: python:3.13-slim
           ports:
             - containerPort: 8000
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 90
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
           resources:
             requests:
               cpu: "100m"
