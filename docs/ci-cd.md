@@ -46,7 +46,7 @@ When you run **Deploy Full Stack to GKE**, configure these `workflow_dispatch` i
 | `build_frontend` | true | Build/push `helpudoc-frontend` and patch the frontend deployment when true. |
 | `build_agent` | true | Build/push `helpudoc-agent` with pinned OfficeCLI, patch the agent container, align init-container/sandbox images, and run import plus OfficeCLI image smokes. |
 | `deploy_infra` | false | When true: RBAC preflight, `kubectl apply -f infra/gke/k8s/`, first-time demo ConfigMap bootstrap, Langfuse key patching + DB bootstrap/wait. When false: skips manifest/bootstrap work (cluster must already have `helpudoc-config`). |
-| `sync_runtime_assets` | false | Legacy `kubectl exec` sync of `skills/` and `agent/config/runtime.yaml` into PVCs. Prefer init-container seeding (see `docs/deploy.md`); leave false unless you need the old bridge. |
+| `sync_runtime_assets` | false | Sync skills to the PVCs. Agent runtime config is synced automatically whenever `build_agent` is true, then the app restarts to load it. |
 | `environment` | empty | Echo-only label for operators (does not switch GitHub Environment protection rules). |
 | `image_tag_suffix` | empty | Appended to `github.sha` for all image tags in that run (for example `-hotfix1`). |
 

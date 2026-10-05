@@ -794,14 +794,17 @@ jobs:
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc \
             "cd /app && node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/repair-governed-packages.ts --verify"
 
-      - name: Legacy sync Agent Config PVC (kubectl exec)
-        if: ${{ inputs.sync_runtime_assets }}
+      - name: Sync Agent Config PVC after agent deployment
+        if: ${{ inputs.build_agent || inputs.sync_runtime_assets }}
         run: |
           set -euo pipefail
           APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
           test -n "${APP_POD}"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "mkdir -p /agent/config"
           kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "cat > /agent/config/runtime.yaml" < agent/config/runtime.yaml
+          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "grep -A3 'name: gcp-cost' /agent/config/runtime.yaml | grep -q 'transport: http'"
+          kubectl -n helpudoc rollout restart deployment/helpudoc-app
+          kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
 
       - name: Post-deploy smoke (in-cluster HTTP)
         run: |

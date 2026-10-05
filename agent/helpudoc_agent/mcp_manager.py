@@ -492,6 +492,7 @@ def _wrap_tool_for_gemini(
         json_field = {
             "insert_smart_chips": "chips",
             "append_table_rows": "values",
+            "modify_sheet_values": "chips",
         }.get(tool.name)
         properties = sanitized_schema.get("properties", {})
         if json_field and isinstance(properties.get(json_field), dict):

@@ -76,7 +76,7 @@ The primary full-stack deploy path is the manual **Deploy Full Stack to GKE** wo
 
 **Runtime assets (skills + agent config on PVCs):** the `helpudoc-app` pod includes **init containers** (`seed-skills`, `seed-agent-config`) that copy from image paths **`/app/skills-source`** and **`/app/agent-config-source/runtime.yaml`** into the PVC mounts **only when the target paths are empty**, so normal pod restarts do not wipe admin edits. Each image carries `.HELPUDOC_SOURCE_REVISION` (build tag / commit) beside the bundled tree; after a successful seed, the same filename may appear under the PVC for operators to diff **image revision** versus **live PVC** content (`kubectl exec` into the backend container and `cat /app/skills/.HELPUDOC_IMAGE_SOURCE_REVISION` or `/agent/config/.HELPUDOC_IMAGE_SOURCE_REVISION`).
 
-**Legacy PVC sync:** if you temporarily need the old `kubectl exec` tar/rsync behaviour, set **`sync_runtime_assets`** true. It is destructive for `/app/skills` when enabled; prefer init seeding for new clusters.
+**Runtime config sync:** every deployment with **`build_agent`** true copies the repository's `agent/config/runtime.yaml` to the agent-config PVC and restarts the app after the copy, so MCP server definitions do not remain stale. Set **`sync_runtime_assets`** true only when you also need to sync skills; that legacy skills sync is destructive for `/app/skills` and should be used sparingly.
 
 Required GitHub secrets:
 - `GCP_PROJECT_ID`
