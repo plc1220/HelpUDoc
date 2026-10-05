@@ -719,14 +719,14 @@ spec:
             - containerPort: 8000
           startupProbe:
             httpGet:
-              path: /ready
+              path: /health
               port: 8000
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 90
           readinessProbe:
             httpGet:
-              path: /ready
+              path: /health
               port: 8000
             periodSeconds: 5
             timeoutSeconds: 2
