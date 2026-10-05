@@ -168,6 +168,20 @@ services:
     ports:
       - "3300:3000"
 
+  helpudoc-aws-pricing-mcp:
+    build:
+      context: ./aws-pricing-mcp
+    restart: unless-stopped
+    environment:
+      AWS_REGION: ${AWS_PRICING_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_PRICING_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_PRICING_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_PRICING_SESSION_TOKEN:-}
+      AWS_EC2_METADATA_DISABLED: "true"
+    # Internal-only HTTP endpoint; credentials are separate from MinIO.
+    expose:
+      - "8000"
+
   google-workspace-mcp:
     image: python:3.13-slim
     restart: unless-stopped
@@ -331,6 +345,8 @@ services:
       # Demo: MCP auth for toolbox-bq-demo.
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       GOOGLE_WORKSPACE_MCP_URL: ${GOOGLE_WORKSPACE_MCP_URL:-http://google-workspace-mcp:8000/mcp}
+      GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID: ${GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID:-}
+      GOOGLE_CLOUD_PRICING_PROJECT_ID: ${GOOGLE_CLOUD_PRICING_PROJECT_ID:-}
       AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
       WORKSPACE_ROOT: /app/workspaces
       SKILLS_ROOT: /app/skills

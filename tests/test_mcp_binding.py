@@ -647,3 +647,65 @@ def test_agent_registry_passes_mode_specific_max_output_tokens(
     assert captured["model_name"] == "gemini-pro-latest"
     # Graph passes HelpUDoc model_config field; gemini_chat maps to LangChain ChatGoogleGenerativeAI max_tokens.
     assert captured["kwargs"]["max_output_tokens"] == 32000
+
+
+@pytest.mark.parametrize(
+    'name,field,alternatives,payload',
+    [
+        ('insert_smart_chips', 'chips', [
+            {'type': 'string'}, {'type': 'object', 'additionalProperties': True},
+            {'type': 'array', 'items': {}},
+        ], '[{"type":"person","email":"person@example.com"}]'),
+        ('append_table_rows', 'values', [
+            {'type': 'string'}, {'type': 'array', 'items': {'type': 'array', 'items': {}}},
+        ], '[["name",42,true,null]]'),
+    ],
+)
+def test_workspace_json_inputs_pass_gemini_preflight_and_reach_server_unchanged(
+    name, field, alternatives, payload,
+):
+    original_schema = {
+        'type': 'object',
+        'properties': {field: {'anyOf': alternatives}},
+        'required': [field],
+    }
+    received = []
+
+    def invoke(**kwargs):
+        received.append(kwargs)
+        return 'ok'
+
+    original = StructuredTool(
+        name=name, description='Sheets operation', args_schema=original_schema, func=invoke,
+    )
+    # Reproduce the upstream schema failure using the actual Gemini converter.
+    with pytest.raises(ValueError, match=r'items missing'):
+        _preflight_gemini_tools([original])
+    wrapped, schema = _wrap_tool_for_gemini('google-workspace', original)
+    _preflight_gemini_tools([wrapped])
+    assert schema['properties'][field]['type'] == 'string'
+    assert schema['required'] == [field]
+    assert original_schema['properties'][field]['anyOf'] == alternatives
+    assert wrapped.invoke({field: payload}) == 'ok'
+    assert asyncio.run(wrapped.ainvoke({field: payload})) == 'ok'
+    assert received == [{field: payload}, {field: payload}]
+
+
+@pytest.mark.parametrize('allowed,expected', [(None, ['list_prices', 'set_iam_policy']), (['list_prices'], ['list_prices']), ([], [])])
+def test_manager_filters_tools_before_binding(tmp_path, monkeypatch, allowed, expected):
+    import langchain_mcp_adapters.client as client_module
+
+    class FakeClient:
+        def __init__(self, configs):
+            pass
+
+        async def get_tools(self):
+            return [_good_tool('list_prices'), _good_tool('set_iam_policy')]
+
+    monkeypatch.setattr(client_module, 'MultiServerMCPClient', FakeClient)
+    settings = _build_settings(tmp_path)
+    settings.mcp_servers['google-workspace'].allowed_tools = allowed
+    manager = MCPServerManager(settings, WorkspaceState(workspace_id='test', root_path=tmp_path))
+    asyncio.run(manager.initialize(candidate_server_names=['google-workspace'], preflight_gemini=True))
+    assert manager.get_rejected_servers() == {}
+    assert [t.name for t in manager.get_tools_by_server()['google-workspace']] == expected

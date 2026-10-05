@@ -16,6 +16,8 @@ spec:
         app: helpudoc-app
     spec:
       serviceAccountName: helpudoc-agent
+      nodeSelector:
+        iam.gke.io/gke-metadata-server-enabled: "true"
       initContainers:
         # Copy image-bundled skills/config into PVCs only when the mount is empty,
         # so admin edits on the PVC are preserved across restarts.
@@ -476,11 +478,6 @@ spec:
                 secretKeyRef:
                   name: helpudoc-secrets
                   key: POSTGRES_PASSWORD
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: helpudoc-secrets
-                  key: GEMINI_API_KEY
             - name: GEMINI_SEARCH_HTTP_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:

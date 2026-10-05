@@ -13,7 +13,7 @@ model:
   image_name: gemini-3.1-flash-image
   project: my-rd-coe-demo-gen-ai
   location: global
-  use_vertex_ai: false
+  use_vertex_ai: true
 backend:
   workspace_root: backend/workspaces
   virtual_mode: true
@@ -156,14 +156,23 @@ mcp_servers:
     url: https://knowledge-mcp.global.api.aws
     description: Hosted AWS Knowledge MCP endpoint
   - name: gcp-cost
-    transport: stdio
+    transport: http
     default_access: allow
-    command: /usr/local/bin/gcp-cost-mcp-wrapper
-    env_passthrough:
-      - GOOGLE_APPLICATION_CREDENTIALS
-      - GOOGLE_CLOUD_PROJECT
-      - GOOGLE_CLOUD_QUOTA_PROJECT
-      - GCP_COST_SERVICE_ACCOUNT_JSON
-      - GCP_COST_SERVICE_ACCOUNT_JSON_B64
-    description: GCP Cost MCP server for Google Cloud pricing and cost estimation
-      via the Cloud Billing Catalog API
+    url: https://cloudbilling.googleapis.com/mcp
+    delegated_auth_provider: google
+    headers_from_env:
+      X-goog-user-project: GOOGLE_CLOUD_PRICING_PROJECT_ID
+    allowed_tools:
+      - list_services
+      - get_service
+      - list_skus
+      - get_sku
+      - list_prices
+      - get_price
+      - list_sku_groups
+      - get_sku_group
+      - list_sku_group_skus
+      - get_sku_group_sku
+    description: Official Google Cloud Billing MCP (Preview) for public service
+      catalogs, SKUs and current list prices. Combine unit prices with workload
+      assumptions for estimates; excludes account billing and mutation tools.

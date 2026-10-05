@@ -205,7 +205,31 @@ def _preflight_gemini_tools(tools: List[Tool]) -> None:
         converted_schema = declaration.get("parameters") or {}
         if not isinstance(converted_schema, dict):
             raise ValueError(f"tool '{tool_name}' produced non-dict Gemini parameters")
+        _validate_gemini_array_items(converted_schema, path=f"{tool_name}.parameters")
         _validate_gemini_schema_pair(raw_schema, converted_schema, path="parameters")
+
+
+def _validate_gemini_array_items(schema: Dict[str, Any], *, path: str) -> None:
+    """Check every converted branch, including arrays nested inside unions."""
+    kind = schema.get("type_", schema.get("type"))
+    # tool_to_dict in newer adapters expands google.genai Type enums to dicts.
+    if isinstance(kind, dict):
+        kind = kind.get("_value_")
+    kind = getattr(kind, "value", kind)
+    is_array = kind == _GEMINI_ARRAY_TYPE or str(kind).lower() == "array"
+    if is_array and not schema.get("items"):
+        raise ValueError(f"{path}.items missing after Gemini conversion")
+    for key, value in schema.items():
+        if key == "properties" and isinstance(value, dict):
+            for name, child in value.items():
+                if isinstance(child, dict):
+                    _validate_gemini_array_items(child, path=f"{path}.properties.{name}")
+        elif key == "items" and isinstance(value, dict):
+            _validate_gemini_array_items(value, path=f"{path}.items")
+        elif key in {"anyOf", "oneOf", "any_of", "one_of"} and isinstance(value, list):
+            for index, child in enumerate(value):
+                if isinstance(child, dict):
+                    _validate_gemini_array_items(child, path=f"{path}.{key}[{index}]")
 
 
 def _remove_null_union(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -462,6 +486,24 @@ def _wrap_tool_for_gemini(
 
     if server_name == "aws-pricing":
         sanitized_schema, transform = _aws_pricing_tool_overrides(tool.name, raw_schema)
+    elif server_name == "google-workspace":
+        # These upstream Sheets tools support JSON strings natively. Their
+        # alternative List[Any]/List[List] schemas cannot be sent to Gemini.
+        json_field = {
+            "insert_smart_chips": "chips",
+            "append_table_rows": "values",
+        }.get(tool.name)
+        properties = sanitized_schema.get("properties", {})
+        if json_field and isinstance(properties.get(json_field), dict):
+            original = properties[json_field]
+            properties[json_field] = {
+                key: original[key] for key in ("title", "description") if key in original
+            }
+            properties[json_field]["type"] = "string"
+            properties[json_field]["description"] = (
+                str(original.get("description") or "")
+                + " Supply a JSON-encoded string; encode arrays and objects as JSON text."
+            ).strip()
 
     async def _async_call(**kwargs: Any) -> Any:
         payload = transform(kwargs)
@@ -686,6 +728,9 @@ class MCPServerManager:
 
                 client = MultiServerMCPClient({name: server_config})
                 tools = await client.get_tools()
+                if cfg.allowed_tools is not None:
+                    permitted_tools = set(cfg.allowed_tools)
+                    tools = [tool for tool in tools if tool.name in permitted_tools]
                 wrapped_tools = list(tools or [])
                 if preflight_gemini:
                     try:
