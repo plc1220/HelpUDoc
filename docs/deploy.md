@@ -174,7 +174,7 @@ cp env/prod/config.env.example env/prod/config.env
 # - GOOGLE_OAUTH_CLIENT_ID
 # - GOOGLE_OAUTH_REDIRECT_URI=https://lc-demo.com/api/auth/google/callback
 # - GOOGLE_OAUTH_POST_LOGIN_REDIRECT=https://lc-demo.com/login
-# - GOOGLE_OAUTH_SCOPES must include https://www.googleapis.com/auth/cloud-platform for Google Developer Knowledge and Cloud Billing MCPs
+# - GOOGLE_OAUTH_SCOPES must include https://www.googleapis.com/auth/cloud-platform and https://www.googleapis.com/auth/devprofiles.full_control for Google Cloud Billing and Developer Knowledge MCPs
 # - GOOGLE_WORKSPACE_MCP_URL=http://127.0.0.1:8000/mcp when using the in-pod Google Workspace sidecar
 # - GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID=my-rd-coe-demo-gen-ai
 # - GOOGLE_CLOUD_PRICING_PROJECT_ID=my-rd-coe-demo-gen-ai

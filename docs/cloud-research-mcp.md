@@ -28,10 +28,12 @@ AWS_PRICING_SESSION_TOKEN=
 ```
 
 Use `AUTH_MODE=oidc` and `VITE_AUTH_MODE=oidc`. Google OAuth scopes must include
-`https://www.googleapis.com/auth/cloud-platform`. Users whose existing grants
-lack that scope must sign in and consent again. Enable Developer Knowledge and
-Cloud Billing APIs in the selected quota project and ensure the caller has the
-required access. The project is sent in the `X-goog-user-project` header.
+`https://www.googleapis.com/auth/cloud-platform` for Cloud Billing and
+`https://www.googleapis.com/auth/devprofiles.full_control` for Developer
+Knowledge. Users whose existing grants lack either scope must sign in and
+consent again. Enable Developer Knowledge and Cloud Billing APIs in the selected
+quota project and ensure the caller has the required access. The project is
+sent in the `X-goog-user-project` header.
 
 AWS Pricing needs AWS credentials with pricing API read permissions. Supply them
 through the dedicated `AWS_PRICING_*` variables, never the MinIO credentials.
