@@ -139,7 +139,7 @@ steps:
         set -euo pipefail
         docker run --rm --entrypoint python \
           gcr.io/$PROJECT_ID/helpudoc-inline-sandbox:$BUILD_ID \
-          -c "import importlib.util, os, pathlib; assert os.getuid() == 1000; assert importlib.util.find_spec('pip') is None; assert importlib.util.find_spec('ensurepip') is None; assert pathlib.Path('/opt/helpudoc/sandbox_supervisor.py').is_file()"
+          -c "import importlib.util, os, pathlib; from docx import Document; assert Document is not None; assert os.getuid() == 1000; assert importlib.util.find_spec('pip') is None; assert importlib.util.find_spec('ensurepip') is None; assert pathlib.Path('/opt/helpudoc/sandbox_supervisor.py').is_file()"
 
   - id: push-inline-sandbox
     name: 'gcr.io/cloud-builders/docker'

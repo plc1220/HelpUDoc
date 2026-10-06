@@ -1,6 +1,11 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.12-slim-bookworm
 
+# Keep document generation available to the docx skill's inline sandbox while
+# retaining the package-manager-free runtime image below.
+RUN pip install --no-cache-dir python-docx==1.2.0 \
+  && python -c "from docx import Document; assert Document is not None"
+
 # This image is deliberately separate from the agent image: no cloud CLIs,
 # Kubernetes client, office suite, package cache, application credentials, or
 # network-facing service code is included.

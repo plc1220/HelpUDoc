@@ -243,6 +243,23 @@ jobs:
             -t "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
             --push \
             .
+      - name: Build and push inline sandbox image
+        env:
+          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
+        run: |
+          set -euo pipefail
+          CACHE_REF="gcr.io/${PROJECT_ID}/helpudoc-buildcache-inline-sandbox:buildcache"
+          docker buildx build \
+            -f agent/Dockerfile.sandbox \
+            --cache-from "type=registry,ref=${CACHE_REF}" \
+            --cache-to "type=registry,ref=${CACHE_REF},mode=max" \
+            -t "gcr.io/${PROJECT_ID}/helpudoc-inline-sandbox:${IMAGE_TAG}" \
+            --push \
+            .
+          docker pull "gcr.io/${PROJECT_ID}/helpudoc-inline-sandbox:${IMAGE_TAG}"
+          docker run --rm --entrypoint python \
+            "gcr.io/${PROJECT_ID}/helpudoc-inline-sandbox:${IMAGE_TAG}" \
+            -c "from docx import Document; assert Document is not None"
       - name: Agent image smoke import
         env:
           IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
@@ -569,6 +586,7 @@ jobs:
           BACKEND_IMG="gcr.io/${PROJECT_ID}/helpudoc-backend:${TAG}"
           FRONTEND_IMG="gcr.io/${PROJECT_ID}/helpudoc-frontend:${TAG}"
           AGENT_IMG="gcr.io/${PROJECT_ID}/helpudoc-agent:${TAG}"
+          INLINE_SANDBOX_IMG="gcr.io/${PROJECT_ID}/helpudoc-inline-sandbox:${TAG}"
 
           APP_ARGS=()
           if [[ "${{ inputs.build_backend }}" == "true" ]]; then
@@ -585,6 +603,10 @@ jobs:
           fi
           if (( ${#APP_ARGS[@]} > 0 )); then
             kubectl -n helpudoc set image deployment/helpudoc-app "${APP_ARGS[@]}"
+          fi
+          if [[ "${{ inputs.build_agent }}" == "true" ]]; then
+            kubectl -n helpudoc set env deployment/helpudoc-app \
+              "HELPUDOC_INLINE_SANDBOX_IMAGE=${INLINE_SANDBOX_IMG}"
           fi
 
           if [[ "${{ inputs.build_agent }}" == "true" ]]; then
