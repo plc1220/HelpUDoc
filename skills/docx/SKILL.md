@@ -6,6 +6,13 @@ tools:
   - document_inspection
   - document_execute
   - run_skill_python_script
+sandbox_scripts:
+  - name: create_from_markdown
+    path: scripts/create_from_markdown.py
+    sha256: f3e84eab06fc48e7541adce1b94dbf24284dfb8c3028e8a928dd1a53f66b5fac
+    timeout_seconds: 120
+    outputs:
+      - out/tool_artifacts.json
 ---
 
 # Documents Skill (Read • Create • Edit • Redline • Comment)
@@ -34,6 +41,18 @@ them visually.
   Inline mode is operator-controlled and may be disabled; if so, use a declared
   reviewed script when one fits or report that the exceptional transformation
   is unavailable.
+- For a requested conversion from a tagged or named Markdown/text source to a
+  DOCX, use the declared `create_from_markdown` script. Call
+  `run_skill_python_script` with `script_name="create_from_markdown"`, pass the
+  exact source workspace path in `input_paths`, and provide `--source` with the
+  source basename plus `--output-path` with the desired workspace-relative
+  `.docx` path in `args`. This script carries the full source text into a Word
+  document, maps Markdown headings to real Word heading styles, preserves
+  paragraphs, lists, code blocks, and simple tables, applies the
+  `standard_business_brief` typography and page geometry, validates the OOXML
+  package, and publishes the `.docx` into the workspace. Do not finish a DOCX
+  creation request after only reading the source or listing the workspace; call
+  the generator and confirm the published output path.
 - Treat the `document_execute.operations` tool schema as the canonical OfficeCLI
   recipe. Use `get`, `query`, or `view` to discover stable targets; use `add`,
   `set`, `remove`, `move`, or `swap` for mutations; supply only the fields listed

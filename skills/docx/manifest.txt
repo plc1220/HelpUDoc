@@ -61,6 +61,7 @@ scripts/docx_ooxml_patch.py
 scripts/privacy_scrub.py
 scripts/insert_note.py
 scripts/make_fixtures.py
+scripts/create_from_markdown.py
 scripts/content_controls.py
 scripts/style_normalize.py
 scripts/fields_materialize.py
