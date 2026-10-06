@@ -42,6 +42,67 @@ from agent.helpudoc_agent.state import WorkspaceState
 from agent.helpudoc_agent.tool_guard import GuardedTool
 
 
+def test_docx_declared_conversion_survives_exhausted_inline_budget(tmp_path: Path):
+    """The reviewed skill must publish the whole report without inline execution."""
+    from docx import Document
+
+    skills_root = Path(__file__).resolve().parents[1] / "skills"
+    skill = next(skill for skill in load_skills(skills_root) if skill.skill_id == "docx")
+    workspace = WorkspaceState(workspace_id="docx-conversion", root_path=tmp_path / "workspace")
+    activate_skill_context(workspace.context, skill)
+    workspace.context["_inline_sandbox_executions"] = INLINE_MAX_EXECUTIONS_PER_AGENT_RUN
+    (workspace.root_path / "sources").mkdir(parents=True)
+    source = workspace.root_path / "sources" / "report.md"
+    source.write_text(
+        "# Full Research Report\n\n## Evidence\n\n**Bold** and *italic* and `code`.\n\n"
+        "- First bullet\n  - Nested bullet\n\n3. Ordered item\n4. Next item\n\n"
+        "| Claim | Evidence |\n| --- | --- |\n| Complete | Verified |\n\n"
+        "[Source](https://example.com/source)\n\n```python\nprint('preserved')\n```\n\n"
+        + "\n\n".join(f"Paragraph {n}: all of the source content is retained." for n in range(150))
+        + "\n\n## Last Section\n\nEND_OF_COMPLETE_SOURCE\n",
+        encoding="utf-8",
+    )
+    result = run_skill_python_script_locally(
+        skills_root=skills_root,
+        workspace_state=workspace,
+        script_name="apply_template_styles",
+        input_paths=["sources/report.md"],
+        args=["--markdown", "report.md", "--out", "reports/report.docx"],
+    )
+    destination = workspace.root_path / "reports" / "report.docx"
+    document = Document(destination)
+    texts = [paragraph.text for paragraph in document.paragraphs]
+    assert "END_OF_COMPLETE_SOURCE" in texts
+    assert sum(text.startswith("Paragraph ") for text in texts) == 150
+    assert "Source (https://example.com/source)" in texts
+    assert "print('preserved')" in texts
+    assert document.paragraphs[0].style.name == "Heading 1"
+    assert document.styles["Heading 2"].font.size.pt == 13
+    assert document.tables[0].cell(1, 1).text == "Verified"
+    assert document.tables[0]._tbl.tblPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tblW").get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}w") == "9360"
+    assert next(p for p in document.paragraphs if p.text == "First bullet")._p.pPr.numPr is not None
+    assert workspace.context["_inline_sandbox_executions"] == INLINE_MAX_EXECUTIONS_PER_AGENT_RUN
+    artifact_file = next(file for file in result.output_files if file.path.endswith("/out/tool_artifacts.json"))
+    metadata = json.loads((workspace.root_path / artifact_file.path.lstrip("/")).read_text())
+    assert metadata["files"][0]["path"] == "/reports/report.docx"
+    assert metadata["files"][0]["size"] == destination.stat().st_size
+
+
+def test_docx_template_script_preserves_existing_mode(tmp_path: Path):
+    from docx import Document
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parents[1] / "skills/docx/scripts/apply_template_styles.py"
+    template, target, output = [tmp_path / name for name in ("template.docx", "target.docx", "styled.docx")]
+    document = Document()
+    document.save(template)
+    document.add_paragraph("Existing template conversion remains available.")
+    document.save(target)
+    subprocess.run([sys.executable, str(script), "--template", str(template), "--target", str(target), "--out", str(output)], check=True)
+    assert Document(output).paragraphs[0].text == "Existing template conversion remains available."
+
+
 def _write_skill(
     tmp_path: Path,
     *,

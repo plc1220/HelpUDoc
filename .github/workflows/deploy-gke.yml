@@ -816,6 +816,26 @@ jobs:
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc \
             "cd /app && node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/repair-governed-packages.ts --verify"
 
+      - name: Sync reviewed DOCX skill after agent deployment
+        if: ${{ inputs.build_agent }}
+        run: |
+          set -euo pipefail
+          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
+          test -n "${APP_POD}"
+          # The PVC survives rollouts. Publish changed bundled DOCX bytes as a new
+          # governed version so runtime pins and reviewed script hashes stay aligned.
+          if kubectl -n helpudoc exec "${APP_POD}" -c agent -- python -c \
+            'from pathlib import Path; import sys; files=["SKILL.md", "scripts/apply_template_styles.py"]; src=Path("/app/skills-source/docx"); dst=Path("/app/skills/docx"); sys.exit(0 if all((dst/f).is_file() and (src/f).read_bytes() == (dst/f).read_bytes() for f in files) else 1)'; then
+            echo "DOCX skill already matches the deployed image."
+          else
+            kubectl -n helpudoc exec "${APP_POD}" -c agent -- tar -C /app/skills-source -cf - docx \
+              | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- tar -xf - -C /app/skills
+            kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc \
+              'cd /app && node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/repair-governed-packages.ts --apply --force --only docx'
+          fi
+          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc \
+            'cd /app && node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/repair-governed-packages.ts --verify --only docx'
+
       - name: Sync Agent Config PVC after agent deployment
         if: ${{ inputs.build_agent || inputs.sync_runtime_assets }}
         run: |

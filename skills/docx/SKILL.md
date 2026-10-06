@@ -6,6 +6,14 @@ tools:
   - document_inspection
   - document_execute
   - run_skill_python_script
+sandbox_scripts:
+  - name: apply_template_styles
+    path: scripts/apply_template_styles.py
+    sha256: 17b9a26935f73733645f3ba030b8e21fed0c2b6cf8bb782a48b96fc2288aabf1
+    timeout_seconds: 120
+    outputs:
+      - out/tool_artifacts.json
+      - out/result.json
 ---
 
 # Documents Skill (Read • Create • Edit • Redline • Comment)
@@ -23,7 +31,7 @@ them visually.
   original file on demand; do not wait for background parsing or require a
   vector index.
 - For document creation and deterministic OOXML edits, it is still acceptable to use the bundled Python/OOXML helper scripts in this skill package when the JS surface is incomplete.
-- For normal deterministic DOCX creation and edits, prefer one atomic
+- For deterministic DOCX edits and creation without a Markdown/text source, prefer one atomic
   `document_execute` call with workspace-relative `source_path`/`output_path`
   and typed OfficeCLI operations. The host creates or copies a working file,
   runs the batch, validates the result, and publishes only on success. Re-open
@@ -34,16 +42,26 @@ them visually.
   Inline mode is operator-controlled and may be disabled; if so, use a declared
   reviewed script when one fits or report that the exceptional transformation
   is unavailable.
-- For a new DOCX from a tagged or named Markdown/text source, preserve the
-  complete source content. Use `document_execute` when its typed operations can
-  express the document within the tool's limits. For longer documents, use the
-  existing `run_skill_python_script` inline sandbox with `python-docx`: stage
-  the exact source using `input_paths`, save the finished `.docx` at the desired
-  workspace-relative path, and declare that same path in `output_paths` so the
-  sandbox publishes it. Inline code must create and save the document; reading
-  or listing files is not a completed conversion. If inline execution is
-  unavailable, use `document_execute` or explain the specific limitation rather
-  than claiming the file was created.
+- For a new DOCX from a tagged or named Markdown/text source, use the existing
+  declared `apply_template_styles` script. It converts the entire source with
+  `python-docx`, applies the `standard_business_brief` heading/style preset,
+  verifies that Word can reopen it, and publishes the named DOCX in one call.
+  Invoke it immediately after loading this skill; do not spend sandbox calls on
+  environment/package checks, `--help`, or reading the source into many chunks.
+  The runtime already supplies `python-docx`, the Markdown parser, and the
+  reviewed script. Stage the exact source via `input_paths`; the runner makes it
+  available by basename. Example:
+
+  ```json
+  {"script_name":"apply_template_styles","input_paths":["final-research-report.md"],"args":["--markdown","final-research-report.md","--out","final-research-report.docx"]}
+  ```
+
+  Do not pass `inline_code`, `output_paths`, or `timeout_seconds` with this
+  declared script. Publication and structural verification happen inside the
+  script. Its result includes `Workspace output file: /final-research-report.docx`.
+  Use inline code only for exceptional transformations this reviewed script
+  cannot express; inline mode permits two executions per task, so combine any
+  required checks and creation in one call.
 - After creation, confirm the published `.docx` path from the tool result,
   reopen it with `search_document`/`inspect_document`, and complete the visual
   render gate below. End with a user-facing message that links to the generated
