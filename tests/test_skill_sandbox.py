@@ -103,6 +103,26 @@ def test_docx_template_script_preserves_existing_mode(tmp_path: Path):
     assert Document(output).paragraphs[0].text == "Existing template conversion remains available."
 
 
+def test_docx_renderer_uses_bundled_pymupdf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import fitz
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / "skills/docx/render_docx.py"
+    spec = importlib.util.spec_from_file_location("docx_renderer", script)
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+    source = tmp_path / "source.pdf"
+    with fitz.open() as pdf:
+        for text in ("First page", "Final page"):
+            pdf.new_page(width=612, height=792).insert_text((72, 72), text)
+        pdf.save(source)
+    monkeypatch.setattr(renderer, "convert_to_pdf", lambda *args, **kwargs: (str(source), ""))
+    assert renderer.calc_dpi_via_pdf("unused.docx", 612, 792, False) == 72
+    images = renderer.rasterize("unused.docx", str(tmp_path / "render"), 72, False, True)
+    assert [Path(image).name for image in images] == ["page-1.png", "page-2.png"]
+    assert all(Path(image).read_bytes().startswith(b"\x89PNG") for image in images)
+
+
 def _write_skill(
     tmp_path: Path,
     *,

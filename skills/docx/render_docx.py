@@ -1,7 +1,6 @@
 import argparse
 import glob
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -9,10 +8,10 @@ import tempfile
 import xml.etree.ElementTree as ET
 from os import makedirs, replace
 from os.path import abspath, basename, exists, expanduser, join, splitext
-from typing import Sequence, cast
+from typing import Sequence
 from zipfile import ZipFile
 
-from pdf2image import convert_from_path, pdfinfo_from_path
+import pymupdf as fitz
 
 TWIPS_PER_INCH: int = 1440
 
@@ -287,24 +286,10 @@ def calc_dpi_via_pdf(input_path: str, max_w_px: int, max_h_px: int, verbose: boo
             if not (pdf_path and exists(pdf_path)):
                 raise RuntimeError("Failed to convert input to PDF for DPI computation.\n" + debug)
 
-            info = pdfinfo_from_path(pdf_path)
-            size_val = info.get("Page size")
-            if not size_val:
-                for k, v in info.items():
-                    if isinstance(v, str) and "size" in k.lower() and "pts" in v:
-                        size_val = v
-                        break
-            if not isinstance(size_val, str):
-                raise RuntimeError("Failed to read PDF page size for DPI computation.")
-
-            # Example formats:
-            # - "612 x 792 pts"
-            # - "612.0 x 792.0 pts (letter)"
-            m = re.search(r"(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*pts", size_val)
-            if not m:
-                raise RuntimeError("Unrecognized PDF page size format.")
-            width_pts = float(m.group(1))
-            height_pts = float(m.group(2))
+            with fitz.open(pdf_path) as pdf:
+                if not len(pdf):
+                    raise RuntimeError("PDF has no pages.")
+                width_pts, height_pts = pdf[0].rect.width, pdf[0].rect.height
             width_in = width_pts / 72.0
             height_in = height_pts / 72.0
             if width_in <= 0 or height_in <= 0:
@@ -344,30 +329,16 @@ def rasterize(
                 shutil.copy2(pdf_path, tmp_pdf)
                 replace(tmp_pdf, dst_pdf)
 
-            paths_raw = cast(
-                list[str],
-                convert_from_path(
-                    pdf_path,
-                    dpi=dpi,
-                    fmt="png",
-                    thread_count=8,
-                    output_folder=out_dir,
-                    paths_only=True,
-                    output_file="page",
-                ),
-            )
-
-    # Rename convert_from_path's output format f'page{thread_id:04d}-{page_num:02d}.png' to 'page-<num>.png'
-    pages: list[tuple[int, str]] = []
-    for src_path in paths_raw:
-        base = splitext(basename(src_path))[0]
-        page_num_str = base.split("-")[-1]
-        page_num = int(page_num_str)
-        dst_path = join(out_dir, f"page-{page_num}.png")
-        replace(src_path, dst_path)
-        pages.append((page_num, dst_path))
-    pages.sort(key=lambda t: t[0])
-    return [path for _, path in pages]
+            paths = []
+            # PyMuPDF is already part of the document runtime. It avoids the
+            # undeclared pdf2image/Poppler dependency and renders one page at a
+            # time rather than retaining an entire report's bitmaps in memory.
+            with fitz.open(pdf_path) as pdf:
+                for index, page in enumerate(pdf):
+                    destination = join(out_dir, f"page-{index + 1}.png")
+                    page.get_pixmap(dpi=dpi, alpha=False).save(destination)
+                    paths.append(destination)
+            return paths
 
 
 def main() -> None:

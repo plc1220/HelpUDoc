@@ -825,7 +825,7 @@ jobs:
           # The PVC survives rollouts. Publish changed bundled DOCX bytes as a new
           # governed version so runtime pins and reviewed script hashes stay aligned.
           if kubectl -n helpudoc exec "${APP_POD}" -c agent -- python -c \
-            'from pathlib import Path; import sys; files=["SKILL.md", "scripts/apply_template_styles.py"]; src=Path("/app/skills-source/docx"); dst=Path("/app/skills/docx"); sys.exit(0 if all((dst/f).is_file() and (src/f).read_bytes() == (dst/f).read_bytes() for f in files) else 1)'; then
+            'from pathlib import Path; import sys; src=Path("/app/skills-source/docx"); dst=Path("/app/skills/docx"); files=[p.relative_to(src) for p in src.rglob("*") if p.is_file() and "__pycache__" not in p.parts]; sys.exit(0 if all((dst/f).is_file() and (src/f).read_bytes() == (dst/f).read_bytes() for f in files) else 1)'; then
             echo "DOCX skill already matches the deployed image."
           else
             kubectl -n helpudoc exec "${APP_POD}" -c agent -- tar -C /app/skills-source -cf - docx \
