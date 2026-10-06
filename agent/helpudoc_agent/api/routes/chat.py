@@ -1893,26 +1893,30 @@ def register_chat_routes(
             if not (root / rel).exists():
                 missing.append(item)
 
-        requested = context.get("requested_artifact_contract")
-        if isinstance(requested, dict) and requested.get("extension") == ".docx":
-            baseline = requested.get("baseline")
-            baseline = baseline if isinstance(baseline, dict) else {}
-            created_or_updated_docx = False
-            try:
-                for child in root.rglob("*.docx"):
-                    if not child.is_file():
-                        continue
-                    rel = child.relative_to(root).as_posix()
-                    stat = child.stat()
-                    current = {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
-                    if baseline.get(rel) != current:
-                        created_or_updated_docx = True
-                        break
-            except OSError:
-                created_or_updated_docx = False
-            if not created_or_updated_docx:
-                missing.append("a new or updated .docx file")
+        if _requested_docx_artifact_missing(runtime):
+            missing.append("a new or updated .docx file")
         return missing
+
+    def _requested_docx_artifact_missing(runtime: AgentRuntimeState) -> bool:
+        context = runtime.workspace_state.context or {}
+        requested = context.get("requested_artifact_contract")
+        if not isinstance(requested, dict) or requested.get("extension") != ".docx":
+            return False
+        baseline = requested.get("baseline")
+        baseline = baseline if isinstance(baseline, dict) else {}
+        root = runtime.workspace_state.root_path
+        try:
+            for child in root.rglob("*.docx"):
+                if not child.is_file():
+                    continue
+                rel = child.relative_to(root).as_posix()
+                stat = child.stat()
+                current = {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
+                if baseline.get(rel) != current:
+                    return False
+        except OSError:
+            return True
+        return True
 
     def _skill_activation_contract_error(runtime: AgentRuntimeState) -> tuple[str, str]:
         """Return (message, errorCode) when an explicitly selected skill failed to activate.
@@ -2851,6 +2855,55 @@ def register_chat_routes(
                             "role": "assistant",
                         }
                     )
+
+                requested_artifact = runtime.workspace_state.context.get(
+                    "requested_artifact_contract"
+                )
+                if (
+                    not is_resume_stream
+                    and not saw_interrupt
+                    and isinstance(requested_artifact, dict)
+                    and requested_artifact.get("extension") == ".docx"
+                    and _requested_docx_artifact_missing(runtime)
+                ):
+                    original_request = str(
+                        runtime.workspace_state.context.get("current_user_prompt")
+                        or message.message
+                        or ""
+                    ).strip()
+                    await _emit_progress(
+                        handler,
+                        "executing",
+                        "Creating the requested Word document",
+                        status="running",
+                    )
+                    logger.warning(
+                        "DOCX request finished without an artifact; dispatching one recovery turn "
+                        "(workspace=%s)",
+                        runtime.workspace_state.workspace_id,
+                    )
+                    recovery_input = {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "The requested Word document has not been created yet. Continue the "
+                                    "user's task now, using the already loaded docx skill and its existing "
+                                    "tool flow. Read the requested source file, create and style the .docx "
+                                    "in the workspace, and verify the saved file. Use the existing inline "
+                                    "sandbox tool with python-docx; do not create a new script and do not "
+                                    "finish with an explanation in place of the artifact.\n\n"
+                                    f"Original request:\n{original_request}"
+                                ),
+                            }
+                        ]
+                    }
+                    final_result, interrupted = await _consume_event_stream(
+                        recovery_input,
+                        include_message_fallback=False,
+                    )
+                    if interrupted:
+                        return
 
                 await _emit_progress(
                     handler,
