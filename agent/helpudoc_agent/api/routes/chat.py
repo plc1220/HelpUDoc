@@ -2882,25 +2882,33 @@ def register_chat_routes(
                         "(workspace=%s)",
                         runtime.workspace_state.workspace_id,
                     )
-                    recovery_input = {
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": (
-                                    "The requested Word document has not been created yet. Continue the "
-                                    "user's task now, using the already loaded docx skill and its existing "
-                                    "tool flow. Read the requested source file, create and style the .docx "
-                                    "in the workspace, and verify the saved file. Use the existing inline "
-                                    "sandbox tool with python-docx; do not create a new script and do not "
-                                    "finish with an explanation in place of the artifact.\n\n"
-                                    f"Original request:\n{original_request}"
-                                ),
-                            }
-                        ]
+                    recovery_prompt = (
+                        "The requested Word document has not been created yet. Continue the user's task "
+                        "now, using the already loaded docx skill and its existing tool flow. Read the "
+                        "requested source file, create and style the .docx in the workspace, and verify "
+                        "the saved file. Use the existing inline sandbox tool with python-docx; do not "
+                        "create a new script and do not finish with an explanation in place of the "
+                        "artifact.\n\n"
+                        f"Original request:\n{original_request}"
+                    )
+                    recovery_input = _validated_fresh_stream_input(
+                        [{"role": "user", "content": recovery_prompt}],
+                        recovery_prompt,
+                    )
+                    recovery_config = {
+                        **stream_config,
+                        "configurable": {
+                            **stream_config.get("configurable", {}),
+                            "thread_id": (
+                                f"{stream_config.get('configurable', {}).get('thread_id') or uuid4()}"
+                                f":docx-recovery:{uuid4()}"
+                            ),
+                        },
                     }
                     final_result, interrupted = await _consume_event_stream(
                         recovery_input,
                         include_message_fallback=False,
+                        config_override=recovery_config,
                     )
                     if interrupted:
                         return
