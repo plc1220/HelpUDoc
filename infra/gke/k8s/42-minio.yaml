@@ -17,7 +17,12 @@ spec:
     spec:
       containers:
         - name: minio
-          image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+          # MinIO no longer serves images publicly: Docker Hub and Quay both answer
+          # 401. A node only pulls when the pod lands on it, so the outage arrives at
+          # the next node replacement (a GKE auto-upgrade did it on 2026-10-05).
+          # Pull from our own registry instead. Cloud Build rewrites the project id.
+          # This image also ships `mc`, so the setup Jobs in 43 and 46 use it too.
+          image: gcr.io/ccob-my-ai-engine-dev/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
           args: ["server", "/data", "--console-address", ":9001"]
           resources:
             requests:

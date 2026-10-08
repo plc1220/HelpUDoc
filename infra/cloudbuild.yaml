@@ -158,6 +158,9 @@ steps:
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/52-daily-reflection-cron.yaml
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-agent:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-frontend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
+        # The mirrored MinIO image keeps its tag and digest; only the project changes,
+        # so each cluster pulls from its own registry.
+        sed -i -E "s|image: gcr.io/[^/]+/minio:|image: gcr.io/$PROJECT_ID/minio:|g" infra/gke/k8s/42-minio.yaml infra/gke/k8s/43-minio-setup.yaml infra/gke/k8s/46-minio-private-object-policy.yaml
 
   # 5. Deploy to GKE
   - id: deploy
