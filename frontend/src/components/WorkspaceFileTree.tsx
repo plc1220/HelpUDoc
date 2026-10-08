@@ -8,9 +8,11 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Download,
   Link as LinkIcon,
   Trash,
   Edit,
+  X,
 } from 'lucide-react';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 
@@ -105,6 +107,8 @@ interface WorkspaceFileTreeProps {
   onSelectFolder?: (folderPath: string) => void;
   onToggleFileSelection: (fileId: string) => void;
   onCopyPublicUrl: (file: WorkspaceFile) => void;
+  onDownloadFile: (file: WorkspaceFile) => void;
+  downloadFailedFileId: string | null;
   onRenameFile: (file: WorkspaceFile) => void;
   onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onCreateSubfolder?: (folder: WorkspaceFileTreeFolderNode) => void;
@@ -222,6 +226,8 @@ const TreeFileRow: React.FC<{
   onSelectFile: (file: WorkspaceFile) => void;
   onToggleFileSelection: (fileId: string) => void;
   onCopyPublicUrl: (file: WorkspaceFile) => void;
+  onDownloadFile: (file: WorkspaceFile) => void;
+  downloadFailedFileId: string | null;
   copiedPublicUrlFileId: string | null;
   onRenameFile: (file: WorkspaceFile) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
@@ -245,6 +251,8 @@ const TreeFileRow: React.FC<{
   onSelectFile,
   onToggleFileSelection,
   onCopyPublicUrl,
+  onDownloadFile,
+  downloadFailedFileId,
   copiedPublicUrlFileId,
   onRenameFile,
   onDeleteFile,
@@ -428,6 +436,27 @@ const TreeFileRow: React.FC<{
                 <Check size={14} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
               ) : (
                 <LinkIcon size={14} />
+              )}
+            </button>
+          )}
+          {/* Downloads the stored original. Office previews are text only,
+              so this is how a user gets the real deck, document or workbook.
+              A draft has no stored object yet. */}
+          {!isDraft && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDownloadFile(file);
+              }}
+              className={actionButtonClassName}
+              title={downloadFailedFileId === file.id ? 'Download failed. Try again.' : 'Download'}
+              aria-label={downloadFailedFileId === file.id ? 'Download failed. Try again.' : `Download ${displayName}`}
+            >
+              {downloadFailedFileId === file.id ? (
+                <X size={14} className={isDarkMode ? 'text-red-400' : 'text-red-600'} />
+              ) : (
+                <Download size={14} />
               )}
             </button>
           )}
@@ -706,6 +735,8 @@ const renderTreeNodes = (
     onSelectFolder?: (folderPath: string) => void;
     onToggleFileSelection: (fileId: string) => void;
     onCopyPublicUrl: (file: WorkspaceFile) => void;
+    onDownloadFile: (file: WorkspaceFile) => void;
+    downloadFailedFileId: string | null;
     copiedPublicUrlFileId: string | null;
     onRenameFile: (file: WorkspaceFile) => void;
     onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
@@ -772,6 +803,8 @@ const renderTreeNodes = (
         onSelectFile={options.onSelectFile}
         onToggleFileSelection={options.onToggleFileSelection}
         onCopyPublicUrl={options.onCopyPublicUrl}
+        onDownloadFile={options.onDownloadFile}
+        downloadFailedFileId={options.downloadFailedFileId}
         copiedPublicUrlFileId={options.copiedPublicUrlFileId}
         onRenameFile={options.onRenameFile}
         onDeleteFile={options.onDeleteFile}
@@ -805,6 +838,8 @@ export default function WorkspaceFileTree({
   onSelectFolder,
   onToggleFileSelection,
   onCopyPublicUrl,
+  onDownloadFile,
+  downloadFailedFileId,
   copiedPublicUrlFileId,
   onRenameFile,
   onRenameFolder,
@@ -999,6 +1034,8 @@ export default function WorkspaceFileTree({
               onSelectFolder,
               onToggleFileSelection,
               onCopyPublicUrl,
+              onDownloadFile,
+              downloadFailedFileId,
               copiedPublicUrlFileId,
               onRenameFile,
               onRenameFolder,

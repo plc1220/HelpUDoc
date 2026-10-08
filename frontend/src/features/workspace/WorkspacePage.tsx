@@ -18,7 +18,7 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History, Lock } from 'lucide-react';
+import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History, Lock } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -67,11 +67,6 @@ import {
   renameFile,
   downloadWorkspaceFile,
 } from '../../services/fileApi';
-import {
-  HTML_FILE_EXTENSIONS,
-  MARKDOWN_FILE_EXTENSIONS,
-  resolveWorkspaceFileExportActions,
-} from '../../utils/workspaceFileExport';
 import {
   cancelRun,
   fetchSlashMetadata,
@@ -524,6 +519,8 @@ type ScheduleDialogState = {
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
 const LUMO_VISIBILITY_STORAGE_KEY = 'helpudoc-lumo-visible';
+const MARKDOWN_FILE_EXTENSIONS = ['.md'];
+const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
 
 const generateTurnId = () => {
@@ -1143,7 +1140,7 @@ export default function WorkspacePage() {
   );
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
-  const [workspaceDownloadFailed, setWorkspaceDownloadFailed] = useState(false);
+  const [downloadFailedFileId, setDownloadFailedFileId] = useState<string | null>(null);
   const [copiedPublicUrlFileId, setCopiedPublicUrlFileId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
@@ -1832,10 +1829,7 @@ export default function WorkspacePage() {
   const isMarkdownFile = !!activeFile && MARKDOWN_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isHtmlFile = !!activeFile && HTML_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isImageFile = !!activeFile && IMAGE_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
-  const fileExportActions = resolveWorkspaceFileExportActions({
-    fileName: activeFile ? activeFileName : null,
-    isDraft: isDraftWorkspaceFile(activeFile),
-  });
+  const canPrintFile = Boolean(activeFile && (isMarkdownFile || isHtmlFile));
   const canCopyImageUrl = Boolean(isImageFile && activeFile?.publicUrl);
   const canvasBlocks = useMemo<UIBlock[]>(() => {
     if (!activeFile) {
@@ -1867,35 +1861,22 @@ export default function WorkspacePage() {
     setCanvasZoom(1);
   }, []);
 
-  const handleDownloadActiveFile = useCallback(async () => {
-    if (!activeFile || !fileExportActions.downloadSource) {
+  // The file list downloads the stored original, not the canvas text: an
+  // Office preview is lossy, and a list row should give the saved file.
+  const handleDownloadFile = useCallback(async (file: WorkspaceFile) => {
+    if (!selectedWorkspace?.id) {
       return;
     }
-    if (fileExportActions.downloadSource === 'stored') {
-      if (!selectedWorkspace?.id) {
-        return;
-      }
-      try {
-        await downloadWorkspaceFile(selectedWorkspace.id, activeFile.id, activeFile.name);
-      } catch (error) {
-        console.error('Failed to download workspace file', error);
-        setWorkspaceDownloadFailed(true);
-        window.setTimeout(() => setWorkspaceDownloadFailed(false), 3000);
-      }
-      return;
+    try {
+      await downloadWorkspaceFile(selectedWorkspace.id, file.id, file.name);
+    } catch (error) {
+      console.error('Failed to download workspace file', error);
+      setDownloadFailedFileId(file.id);
+      window.setTimeout(() => {
+        setDownloadFailedFileId((current) => (current === file.id ? null : current));
+      }, 3000);
     }
-    const blob = new Blob([fileContent], {
-      type: isMarkdownFile ? 'text/markdown;charset=utf-8' : 'text/html;charset=utf-8',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = activeFile.name;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, [activeFile, fileContent, fileExportActions.downloadSource, isMarkdownFile, selectedWorkspace?.id]);
+  }, [selectedWorkspace?.id]);
 
   const handlePrintActiveFile = useCallback(() => {
     if (!activeFile || !(isMarkdownFile || isHtmlFile)) {
@@ -9702,6 +9683,8 @@ export default function WorkspacePage() {
                         onSelectFolder={handleDashboardFolderSelect}
                         onToggleFileSelection={handleFileSelect}
                         onCopyPublicUrl={handleCopyFilePublicUrl}
+                        onDownloadFile={handleDownloadFile}
+                        downloadFailedFileId={downloadFailedFileId}
                         onRenameFile={handleRenameFile}
                         onRenameFolder={handleRenameFolder}
                         onCreateSubfolder={(folder) => { void handleCreateFolder(folder.path); }}
@@ -9726,11 +9709,19 @@ export default function WorkspacePage() {
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
                   isDarkMode ? 'bg-slate-900' : 'bg-gray-50'
                 }`}>
-                  <div className={`px-4 py-3 flex justify-between items-center ${
+                  {/* The title truncates down to min-w-16, then the actions wrap
+                      onto a second line. Before, the title wrapped and pushed the
+                      actions past the pane edge when the chat panel was open. */}
+                  <div className={`px-4 py-3 flex flex-wrap justify-between items-center gap-x-3 gap-y-2 ${
                     isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
                   }`}>
-                    <div className="flex items-center gap-3">
-                      <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
+                    <div className="flex flex-1 items-center gap-3">
+                      <h3
+                        className={`min-w-16 truncate text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}
+                        title={canvasTitle}
+                      >
+                        {canvasTitle}
+                      </h3>
                       {/* The chip beside it already names the status; this says
                           what the status *does*, which is the part a user hits
                           when the editor will not take their typing. */}
@@ -9765,7 +9756,7 @@ export default function WorkspacePage() {
                         />
                       )}
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex shrink-0 items-center space-x-2">
                       {selectedWorkspace?.linkedTeamWorkspaceId
                         && selectedWorkspace.publicationStatus !== 'detached' ? (
                         <Button
@@ -9793,34 +9784,21 @@ export default function WorkspacePage() {
                         onClick={handleCopyWorkspaceContent}
                         isDisabled={!selectedFile}
                       />
-                      {/* Download is not gated on Print. Office files preview as
-                          text only, so the stored original is the only way to see
-                          the real slides, pages or sheets. */}
-                      {(fileExportActions.canPrint || fileExportActions.downloadSource) && (
-                        <ButtonGroup label="Export file" size="sm">
-                          {fileExportActions.canPrint && (
-                            <IconButton
-                              label="Print file"
-                              icon={<Printer size={16} />}
-                              variant="secondary"
-                              onClick={handlePrintActiveFile}
-                            />
-                          )}
-                          {fileExportActions.downloadSource && (
-                            <IconButton
-                              label={workspaceDownloadFailed ? 'Download failed. Try again.' : 'Download file'}
-                              tooltip={workspaceDownloadFailed ? 'Download failed. Try again.' : 'Download file'}
-                              icon={workspaceDownloadFailed ? <X size={16} /> : <Download size={16} />}
-                              variant="secondary"
-                              clickAction={handleDownloadActiveFile}
-                            />
-                          )}
-                        </ButtonGroup>
+                      {/* Download lives on the file list row, not here: the
+                          canvas pane is narrow when the chat panel is open. */}
+                      {canPrintFile && (
+                        <IconButton
+                          label="Print file"
+                          icon={<Printer size={16} />}
+                          variant="secondary"
+                          size="sm"
+                          onClick={handlePrintActiveFile}
+                        />
                       )}
                       {/* History is not an export action. Every file carries a
                           provenance trail, including uploads such as PDFs and
                           images that cannot be printed or rendered here, so this
-                          must not sit behind the export actions. */}
+                          must not sit behind canPrintFile. */}
                       {selectedFile && (
                         <IconButton
                           label="File history"
@@ -9845,13 +9823,16 @@ export default function WorkspacePage() {
                           }}
                         />
                       )}
-                      {isPublishedMode ? null : (
+                      {/* Save and the zoom group take turns: Save in edit mode,
+                          zoom in view mode. A disabled Save in view mode only
+                          took width the narrow canvas pane does not have. */}
+                      {isPublishedMode || !isEditMode ? null : (
                         <Button
                           label="Save"
                           variant="primary"
                           size="sm"
                           onClick={() => selectedFile && runTrackedWorkspaceSave(selectedFile, fileContent)}
-                          isDisabled={!canMutateContent || !isEditMode}
+                          isDisabled={!canMutateContent}
                         />
                       )}
                       {!isEditMode && (
