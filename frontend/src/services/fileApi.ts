@@ -1,4 +1,4 @@
-import { API_URL, apiFetch, buildApiUrl } from './apiClient';
+import { API_URL, apiFetch, buildApiUrl, downloadThroughApi } from './apiClient';
 import type {
   GcsBrowseResult,
   GcsBucketSummary,
@@ -56,6 +56,10 @@ export const getFileDownloadUrl = (workspaceId: string, fileId: string | number,
   if (version) url.searchParams.set('version', String(version));
   return url.toString();
 };
+
+/** Saves the stored original, so Office files keep the layout the preview drops. */
+export const downloadWorkspaceFile = (workspaceId: string, fileId: string | number, fileName: string) =>
+  downloadThroughApi(getFileDownloadUrl(workspaceId, fileId), fileName);
 
 export const getFilePreviewUrl = (workspaceId: string, fileId: string | number, version?: number) => {
   const url = buildApiUrl(`/workspaces/${workspaceId}/files/${fileId}/preview`);

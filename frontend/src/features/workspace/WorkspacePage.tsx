@@ -65,7 +65,13 @@ import {
   moveFolder,
   renameFolder,
   renameFile,
+  downloadWorkspaceFile,
 } from '../../services/fileApi';
+import {
+  HTML_FILE_EXTENSIONS,
+  MARKDOWN_FILE_EXTENSIONS,
+  resolveWorkspaceFileExportActions,
+} from '../../utils/workspaceFileExport';
 import {
   cancelRun,
   fetchSlashMetadata,
@@ -518,8 +524,6 @@ type ScheduleDialogState = {
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
 const LUMO_VISIBILITY_STORAGE_KEY = 'helpudoc-lumo-visible';
-const MARKDOWN_FILE_EXTENSIONS = ['.md'];
-const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
 
 const generateTurnId = () => {
@@ -1139,6 +1143,7 @@ export default function WorkspacePage() {
   );
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
+  const [workspaceDownloadFailed, setWorkspaceDownloadFailed] = useState(false);
   const [copiedPublicUrlFileId, setCopiedPublicUrlFileId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
@@ -1827,7 +1832,10 @@ export default function WorkspacePage() {
   const isMarkdownFile = !!activeFile && MARKDOWN_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isHtmlFile = !!activeFile && HTML_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isImageFile = !!activeFile && IMAGE_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
-  const canPrintOrDownloadFile = Boolean(activeFile && (isMarkdownFile || isHtmlFile));
+  const fileExportActions = resolveWorkspaceFileExportActions({
+    fileName: activeFile ? activeFileName : null,
+    isDraft: isDraftWorkspaceFile(activeFile),
+  });
   const canCopyImageUrl = Boolean(isImageFile && activeFile?.publicUrl);
   const canvasBlocks = useMemo<UIBlock[]>(() => {
     if (!activeFile) {
@@ -1859,8 +1867,21 @@ export default function WorkspacePage() {
     setCanvasZoom(1);
   }, []);
 
-  const handleDownloadActiveFile = useCallback(() => {
-    if (!activeFile || !(isMarkdownFile || isHtmlFile)) {
+  const handleDownloadActiveFile = useCallback(async () => {
+    if (!activeFile || !fileExportActions.downloadSource) {
+      return;
+    }
+    if (fileExportActions.downloadSource === 'stored') {
+      if (!selectedWorkspace?.id) {
+        return;
+      }
+      try {
+        await downloadWorkspaceFile(selectedWorkspace.id, activeFile.id, activeFile.name);
+      } catch (error) {
+        console.error('Failed to download workspace file', error);
+        setWorkspaceDownloadFailed(true);
+        window.setTimeout(() => setWorkspaceDownloadFailed(false), 3000);
+      }
       return;
     }
     const blob = new Blob([fileContent], {
@@ -1874,7 +1895,7 @@ export default function WorkspacePage() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [activeFile, fileContent, isHtmlFile, isMarkdownFile]);
+  }, [activeFile, fileContent, fileExportActions.downloadSource, isMarkdownFile, selectedWorkspace?.id]);
 
   const handlePrintActiveFile = useCallback(() => {
     if (!activeFile || !(isMarkdownFile || isHtmlFile)) {
@@ -9772,26 +9793,34 @@ export default function WorkspacePage() {
                         onClick={handleCopyWorkspaceContent}
                         isDisabled={!selectedFile}
                       />
-                      {canPrintOrDownloadFile && (
+                      {/* Download is not gated on Print. Office files preview as
+                          text only, so the stored original is the only way to see
+                          the real slides, pages or sheets. */}
+                      {(fileExportActions.canPrint || fileExportActions.downloadSource) && (
                         <ButtonGroup label="Export file" size="sm">
-                          <IconButton
-                            label="Print file"
-                            icon={<Printer size={16} />}
-                            variant="secondary"
-                            onClick={handlePrintActiveFile}
-                          />
-                          <IconButton
-                            label="Download file"
-                            icon={<Download size={16} />}
-                            variant="secondary"
-                            onClick={handleDownloadActiveFile}
-                          />
+                          {fileExportActions.canPrint && (
+                            <IconButton
+                              label="Print file"
+                              icon={<Printer size={16} />}
+                              variant="secondary"
+                              onClick={handlePrintActiveFile}
+                            />
+                          )}
+                          {fileExportActions.downloadSource && (
+                            <IconButton
+                              label={workspaceDownloadFailed ? 'Download failed. Try again.' : 'Download file'}
+                              tooltip={workspaceDownloadFailed ? 'Download failed. Try again.' : 'Download file'}
+                              icon={workspaceDownloadFailed ? <X size={16} /> : <Download size={16} />}
+                              variant="secondary"
+                              clickAction={handleDownloadActiveFile}
+                            />
+                          )}
                         </ButtonGroup>
                       )}
                       {/* History is not an export action. Every file carries a
                           provenance trail, including uploads such as PDFs and
                           images that cannot be printed or rendered here, so this
-                          must not sit behind canPrintOrDownloadFile. */}
+                          must not sit behind the export actions. */}
                       {selectedFile && (
                         <IconButton
                           label="File history"

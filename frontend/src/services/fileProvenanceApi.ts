@@ -1,4 +1,4 @@
-import { API_URL, apiFetch } from './apiClient';
+import { API_URL, apiFetch, downloadThroughApi } from './apiClient';
 import type {
   FileAuditEvent,
   FileProvenanceDocument,
@@ -81,34 +81,6 @@ export const verifyFileProvenance = (workspaceId: string, fileId: number | strin
     undefined,
     'Failed to verify file history',
   );
-
-/**
- * Saves a file the API guards behind an identity header.
- *
- * A plain navigation or `window.open` cannot carry `X-User-Id`, so under header
- * auth the request arrives anonymous and the browser saves the 401 body as the
- * file. Fetching it here keeps the header and hands the browser a blob instead.
- */
-const downloadThroughApi = async (url: string, fallbackName: string): Promise<void> => {
-  const response = await apiFetch(url);
-  if (!response.ok) return apiError(response, 'Failed to download');
-
-  const disposition = response.headers.get('content-disposition') || '';
-  const named = /filename="?([^"]+)"?/.exec(disposition);
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement('a');
-    anchor.href = objectUrl;
-    anchor.download = named?.[1] || fallbackName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    // Revoking immediately can cancel the download in some browsers.
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
-  }
-};
 
 export const downloadFileProvenance = (workspaceId: string, fileId: number | string) =>
   downloadThroughApi(

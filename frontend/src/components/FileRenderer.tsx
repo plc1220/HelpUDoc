@@ -35,6 +35,8 @@ import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from 'pdfjs-d
 import type { File } from '../types';
 import { apiFetch } from '../services/apiClient';
 import { getFilePreviewUrl } from '../services/fileApi';
+import { Button } from '@astryxdesign/core/Button';
+import { Download } from 'lucide-react';
 import { parsePlotlySpec } from '../utils/plotlySpec';
 import {
   configureMermaid,
@@ -80,6 +82,9 @@ const PARQUET_PREVIEW_MAX_COLUMNS = 20;
 const SPREADSHEET_PREVIEW_MAX_ROWS = 100;
 const SPREADSHEET_PREVIEW_MAX_COLUMNS = 20;
 const PPTX_PREVIEW_MAX_SLIDES = 80;
+const PPTX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const XLSX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 SyntaxHighlighter.registerLanguage('bash', bash);
 SyntaxHighlighter.registerLanguage('c', cpp);
 SyntaxHighlighter.registerLanguage('cpp', cpp);
@@ -545,6 +550,7 @@ const renderTabularPreview = (
   preview: TabularPreview,
   maxRows: number,
   maxColumns: number,
+  options: { note?: string; action?: React.ReactNode } = {},
 ) => {
   const summary = [
     `${preview.totalRows} row${preview.totalRows === 1 ? '' : 's'}`,
@@ -560,9 +566,13 @@ const renderTabularPreview = (
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-gray-200 px-4 py-3 text-xs text-gray-500">
-        <span className="font-medium text-gray-700">{title}</span> • {summary}
-        {truncationLabel ? ` • ${truncationLabel}` : ''}
+      <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 text-xs text-gray-500">
+        <span>
+          <span className="font-medium text-gray-700">{title}</span> • {summary}
+          {truncationLabel ? ` • ${truncationLabel}` : ''}
+          {options.note ? ` • ${options.note}` : ''}
+        </span>
+        {options.action}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="min-w-full divide-y divide-gray-200 border-collapse">
@@ -1026,6 +1036,50 @@ const FileRenderer: React.FC<FileRendererProps> = ({
     }
   };
 
+  const renderOfficeDownloadButton = (mimeType: string, fallbackFileName: string) =>
+    fileContent.trim() ? (
+      <Button
+        label="Download"
+        tooltip={`Download ${file?.name || fallbackFileName}`}
+        size="sm"
+        variant="secondary"
+        icon={<Download size={14} />}
+        onClick={() => downloadBinaryFile(mimeType, fallbackFileName)}
+      />
+    ) : null;
+
+  /**
+   * Office previews are lossy: slide text only, approximate Word layout. The
+   * banner says what is missing and offers the original, so the preview is not
+   * mistaken for the file.
+   */
+  const renderOfficePreviewBanner = ({
+    title,
+    note,
+    download,
+  }: {
+    title: string;
+    note: string;
+    download?: { mimeType: string; fallbackFileName: string };
+  }) => (
+    <div
+      className={`flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2 text-xs ${
+        colorMode === 'dark'
+          ? 'border-slate-700 text-slate-400'
+          : 'border-gray-200 text-gray-500'
+      }`}
+    >
+      <span>
+        <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
+          {title}
+        </span>
+        {' · '}
+        {note}
+      </span>
+      {download ? renderOfficeDownloadButton(download.mimeType, download.fallbackFileName) : null}
+    </div>
+  );
+
   if (!file) {
     return (
       <div className="text-center text-gray-400">
@@ -1323,23 +1377,11 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       );
     }
     if (isDocxFile) {
-      const docxBanner = (
-        <div
-          className={`shrink-0 border-b px-4 py-2 text-xs ${
-            colorMode === 'dark'
-              ? 'border-slate-700 text-slate-400'
-              : 'border-gray-200 text-gray-500'
-          }`}
-        >
-          <span
-            className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}
-          >
-            Word preview
-          </span>
-          {' · '}
-          Approximate layout
-        </div>
-      );
+      const docxBanner = renderOfficePreviewBanner({
+        title: 'Word preview',
+        note: 'Approximate layout. Download the file for exact formatting.',
+        download: { mimeType: DOCX_MIME_TYPE, fallbackFileName: 'document.docx' },
+      });
       const docxProse = [
         colorMode === 'dark' ? 'prose prose-invert' : 'prose prose-slate',
         'max-w-none break-words p-4 text-sm',
@@ -1352,7 +1394,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       if (docxAwaitingPreview) {
         return (
           <div className="flex h-full min-h-0 flex-col">
-            {docxBanner}
+            {renderOfficePreviewBanner({ title: 'Word preview', note: 'Approximate layout' })}
             <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-gray-500">
               Loading preview…
             </div>
@@ -1444,24 +1486,15 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         spreadsheetPreview,
         SPREADSHEET_PREVIEW_MAX_ROWS,
         SPREADSHEET_PREVIEW_MAX_COLUMNS,
+        {
+          note: 'first sheet only, values only',
+          action: renderOfficeDownloadButton(XLSX_MIME_TYPE, file?.name || 'spreadsheet.xlsx'),
+        },
       );
     }
     if (isPptxFile) {
-      const banner = (
-        <div
-          className={`shrink-0 border-b px-4 py-2 text-xs ${
-            colorMode === 'dark'
-              ? 'border-slate-700 text-slate-400'
-              : 'border-gray-200 text-gray-500'
-          }`}
-        >
-          <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
-            PowerPoint preview
-          </span>
-          {' · '}
-          Text extraction
-        </div>
-      );
+      // The failure states already offer Download in their body.
+      const banner = renderOfficePreviewBanner({ title: 'PowerPoint preview', note: 'Text extraction' });
       const awaitingPreview =
         isPptxLoading
         || (fileContent.trim().length > 0 && (pptxPreview === null || pptxPreviewSource !== fileContent) && !pptxError);
@@ -1533,7 +1566,11 @@ const FileRenderer: React.FC<FileRendererProps> = ({
 
       return (
         <div className="flex h-full min-h-0 flex-col">
-          {banner}
+          {renderOfficePreviewBanner({
+            title: 'PowerPoint preview',
+            note: 'Text only. Download the file to see the slides.',
+            download: { mimeType: PPTX_MIME_TYPE, fallbackFileName: 'presentation.pptx' },
+          })}
           <div
             className={`min-h-0 flex-1 overflow-y-auto px-5 py-4 ${
               colorMode === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-gray-50 text-gray-900'

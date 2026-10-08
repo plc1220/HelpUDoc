@@ -56,3 +56,34 @@ export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const headers = mergeAuthHeaders(init.headers as HeadersInit | undefined);
   return fetch(input, { ...init, headers, credentials: 'include' });
 }
+
+/**
+ * Saves a file the API guards behind an identity header.
+ *
+ * A plain navigation or `window.open` cannot carry `X-User-Id`, so under header
+ * auth the request arrives anonymous and the browser saves the 401 body as the
+ * file. Fetching it here keeps the header and hands the browser a blob instead.
+ */
+export async function downloadThroughApi(url: string, fallbackName: string): Promise<void> {
+  const response = await apiFetch(url);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error || 'Failed to download');
+  }
+
+  const disposition = response.headers.get('content-disposition') || '';
+  const named = /filename="?([^"]+)"?/.exec(disposition);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = named?.[1] || fallbackName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    // Revoking immediately can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+  }
+}
