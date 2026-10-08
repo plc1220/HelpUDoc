@@ -76,6 +76,7 @@ import SkillCreatorDialog from '../features/governance/SkillCreatorDialog';
 import SkillDetailsDialog from '../features/governance/SkillDetailsDialog';
 import GovernanceViewToggle, { type GovernanceViewMode } from '../features/governance/GovernanceViewToggle';
 import type { Workspace } from '../types';
+import { describeProposedVersionProblem } from '@helpudoc/contracts/semanticVersion';
 
 type TabId = 'mine' | 'reviews' | 'team-skills' | 'catalog';
 
@@ -243,6 +244,13 @@ const DraftEditor = ({
   const [addingFile, setAddingFile] = useState(false);
   const [semanticVersion, setSemanticVersion] = useState(initialDraft.proposalType === 'new' ? '1.0.0' : '1.0.1');
   const [submissionNote, setSubmissionNote] = useState('');
+  // Shown after the field loses focus or a submit is tried, not on every keystroke:
+  // "1." is a normal step on the way to "1.0.1".
+  const [versionTouched, setVersionTouched] = useState(false);
+  // A rule only the server can check, such as "greater than every existing version".
+  const [versionServerError, setVersionServerError] = useState<string | null>(null);
+  const versionProblem = describeProposedVersionProblem(semanticVersion, initialDraft.proposalType);
+  const versionMessage = (versionTouched ? versionProblem : null) || versionServerError;
   const [validation, setValidation] = useState<SkillValidation | null>(
     initialDraft.validationSummary?.checkedAt ? initialDraft.validationSummary as SkillValidation : null,
   );
@@ -401,8 +409,16 @@ const DraftEditor = ({
   };
 
   const submit = async () => {
+    // Check before saving: the server would reject it anyway, after a save and a
+    // validation round trip, with a message far from the field.
+    if (versionProblem) {
+      setVersionTouched(true);
+      setError(`Proposed version: ${versionProblem}`);
+      return;
+    }
     setBusy('submit');
     setError(null);
+    setVersionServerError(null);
     try {
       const saved = await persist();
       if (!saved) return;
@@ -421,7 +437,11 @@ const DraftEditor = ({
       await onSubmitted();
       onClose();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Submission failed');
+      const message = submitError instanceof Error ? submitError.message : 'Submission failed';
+      if ((submitError as { field?: string } | null)?.field === 'semanticVersion') {
+        setVersionServerError(message);
+      }
+      setError(message);
     } finally {
       setBusy(null);
     }
@@ -554,10 +574,23 @@ const DraftEditor = ({
                 Proposed version
                 <input
                   value={semanticVersion}
-                  onChange={(event) => setSemanticVersion(event.target.value)}
-                  className="settings-control mt-1.5 w-full rounded-xl px-3 py-2.5 font-mono text-sm"
+                  onChange={(event) => {
+                    setSemanticVersion(event.target.value);
+                    setVersionServerError(null);
+                  }}
+                  onBlur={() => setVersionTouched(true)}
+                  aria-invalid={versionMessage ? true : undefined}
+                  aria-describedby={versionMessage ? 'skill-draft-version-error' : undefined}
+                  className={`settings-control mt-1.5 w-full rounded-xl px-3 py-2.5 font-mono text-sm ${
+                    versionMessage ? 'ring-1 ring-rose-300' : ''
+                  }`}
                   placeholder="1.0.0"
                 />
+                {versionMessage ? (
+                  <span id="skill-draft-version-error" role="alert" className="mt-1.5 block text-xs font-normal text-rose-600">
+                    {versionMessage}
+                  </span>
+                ) : null}
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 Submission note

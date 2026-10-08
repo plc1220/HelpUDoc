@@ -16,6 +16,7 @@
       "@helpudoc/contracts/types": ["../packages/contracts/src/types.ts"],
       "@helpudoc/contracts/agentStream": ["../packages/contracts/src/agentStream.ts"],
       "@helpudoc/contracts/composerDirectives": ["../packages/contracts/src/composerDirectives.ts"],
+      "@helpudoc/contracts/semanticVersion": ["../packages/contracts/src/semanticVersion.ts"],
       "*": ["node_modules/*"]
     }
   },

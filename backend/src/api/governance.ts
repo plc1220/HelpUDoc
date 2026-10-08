@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { SkillGovernanceService } from '../services/governance/skillGovernanceService';
 import { SkillGovernanceError } from '../services/governance/skillGovernanceService';
 import { HttpError } from '../errors';
+import { SEMANTIC_VERSION_FORMAT_HINT, SEMANTIC_VERSION_PATTERN } from '@helpudoc/contracts/semanticVersion';
 import { privateSkillRuntimeEnabled } from '../services/skills/constants';
 import { getContextFilesForUser } from './settings/skillBuilder';
 import {
@@ -97,9 +98,11 @@ const builderDraftActionsSchema = z.object({
   expectedDraftRevision: z.number().int().nonnegative(),
 });
 
-const submitDraftSchema = z.object({
+export const submitDraftSchema = z.object({
   owningTeamId: z.string().uuid().optional(),
-  semanticVersion: z.string().min(5).max(64),
+  // Same rule the submit form checks. `min(5)` stood in for it before: it
+  // rejected "1.0" with a message that named no field, and accepted "abcde".
+  semanticVersion: z.string().trim().max(64).regex(SEMANTIC_VERSION_PATTERN, SEMANTIC_VERSION_FORMAT_HINT),
   submissionNote: z.string().max(10_000).optional(),
   expectedDraftRevision: z.number().int().nonnegative(),
 });
@@ -169,11 +172,35 @@ const parsePagination = (req: Request) => ({
   offset: Number(req.query.offset || 0),
 });
 
+/** The labels the skill draft dialog shows, so an error names the field the user sees. */
+const FIELD_LABELS: Record<string, string> = {
+  semanticVersion: 'Proposed version',
+  owningTeamId: 'Owning team',
+  submissionNote: 'Submission note',
+  expectedDraftRevision: 'Draft revision',
+  expectedRequestRevision: 'Review revision',
+  decision: 'Decision',
+  comment: 'Comment',
+};
+
+/**
+ * Zod's own text ("Too small: expected string to have >=5 characters") says what
+ * failed but not where. Prefix the field so the user knows which input to fix.
+ */
+export const describeZodIssue = (issue: z.ZodIssue | undefined): { message: string; field?: string } => {
+  if (!issue) return { message: 'Invalid request' };
+  const field = issue.path.map(String).join('.');
+  if (!field) return { message: issue.message };
+  return { message: `${FIELD_LABELS[field] ?? field}: ${issue.message}`, field };
+};
+
 const handleError = (res: Response, error: unknown) => {
   if (error instanceof z.ZodError) {
+    const { message, field } = describeZodIssue(error.issues[0]);
     return res.status(400).json({
-      error: error.issues[0]?.message || 'Invalid request',
+      error: message,
       code: 'INVALID_SKILL_MANIFEST',
+      field,
       issues: error.issues,
     });
   }

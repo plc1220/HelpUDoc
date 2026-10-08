@@ -6,6 +6,7 @@
   "exports": {
     "./types": "./src/types.ts",
     "./agentStream": "./src/agentStream.ts",
-    "./composerDirectives": "./src/composerDirectives.ts"
+    "./composerDirectives": "./src/composerDirectives.ts",
+    "./semanticVersion": "./src/semanticVersion.ts"
   }
 }

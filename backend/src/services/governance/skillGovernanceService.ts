@@ -9,6 +9,7 @@ import { GovernanceIdempotency } from './governanceIdempotency';
 import { withGovernanceLock } from './governanceLocks';
 import { SkillPackageValidator } from './skillPackageValidator';
 import { GOVERNED_VERSIONS_DIR, SkillPackageStore } from './skillPackageStore';
+import { NEW_SKILL_SEMANTIC_VERSION } from '@helpudoc/contracts/semanticVersion';
 import {
   CommittedSkillGovernanceError,
   DraftMutation,
@@ -499,16 +500,28 @@ export class SkillGovernanceService {
         governanceError(409, 'SKILL_REVISION_CONFLICT', 'The improvement ownership no longer matches its skill');
       }
       const versions = await this.db('skill_versions').select('semanticVersion').where({ skillId: targetSkill.id });
-      if (versions.some((version) => compareSemanticVersions(input.semanticVersion, version.semanticVersion) <= 0)) {
-        governanceError(409, 'SKILL_REVISION_CONFLICT', 'Improvement version must be greater than every existing version');
+      const highest = versions
+        .map((version) => String(version.semanticVersion))
+        .reduce<string | null>((top, version) => (
+          top === null || compareSemanticVersions(version, top) > 0 ? version : top
+        ), null);
+      if (highest !== null && compareSemanticVersions(input.semanticVersion, highest) <= 0) {
+        governanceError(
+          409,
+          'SKILL_REVISION_CONFLICT',
+          `Proposed version must be greater than ${highest}, the highest existing version of this skill.`,
+          { field: 'semanticVersion', highestVersion: highest },
+        );
       }
     } else {
       const existingSkill = await this.db('skills').where({ skillKey }).first();
       if (existingSkill) {
         governanceError(409, 'SKILL_REVISION_CONFLICT', 'This skill ID is already governed');
       }
-      if (input.semanticVersion !== '1.0.0') {
-        governanceError(422, 'SKILL_VALIDATION_FAILED', 'A new skill must begin at semantic version 1.0.0');
+      if (input.semanticVersion !== NEW_SKILL_SEMANTIC_VERSION) {
+        governanceError(422, 'SKILL_VALIDATION_FAILED', `A new skill must start at version ${NEW_SKILL_SEMANTIC_VERSION}.`, {
+          field: 'semanticVersion',
+        });
       }
     }
 

@@ -266,14 +266,18 @@ const apiError = async (response: Response, fallback: string): Promise<never> =>
   const body = await response.json().catch(() => ({})) as {
     error?: string;
     code?: string;
-    details?: { issues?: GovernanceIssue[] };
+    field?: string;
+    details?: { issues?: GovernanceIssue[]; field?: string };
   };
   const error = new Error(body.error || fallback) as Error & {
     code?: string;
+    field?: string;
     issues?: GovernanceIssue[];
     status?: number;
   };
   error.code = body.code;
+  // Request validation names the field at the top level; service rules put it in details.
+  error.field = body.field ?? body.details?.field;
   error.issues = body.details?.issues;
   error.status = response.status;
   throw error;

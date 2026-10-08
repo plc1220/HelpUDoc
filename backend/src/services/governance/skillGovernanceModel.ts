@@ -2,10 +2,13 @@ import crypto from 'crypto';
 import path from 'path';
 import { HttpError } from '../../errors';
 import { IMPORT_ALLOWED_PREFIXES, IMPORT_BLOCKED_EXTENSIONS } from '../skills/paths';
+import {
+  SEMANTIC_VERSION_FORMAT_HINT,
+  SEMANTIC_VERSION_PATTERN as SEMVER_PATTERN,
+} from '@helpudoc/contracts/semanticVersion';
 
 export const GOVERNANCE_POLICY_VERSION = 'governed-skills-mvp-1';
 const SKILL_KEY_PATTERN = /^[a-z0-9_-]+(?:\/[a-z0-9_-]+)*$/;
-const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -189,7 +192,7 @@ export const compareSemanticVersions = (left: string, right: string): number => 
   const parse = (value: string): [number, number, number] => {
     const match = SEMVER_PATTERN.exec(String(value || '').trim());
     if (!match) {
-      throw new SkillGovernanceError(400, 'INVALID_SKILL_MANIFEST', 'Semantic version must use major.minor.patch without prerelease metadata', {
+      throw new SkillGovernanceError(400, 'INVALID_SKILL_MANIFEST', `Proposed version "${value}" is not valid. ${SEMANTIC_VERSION_FORMAT_HINT}`, {
         field: 'semanticVersion',
         value,
       });
