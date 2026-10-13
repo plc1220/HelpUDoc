@@ -1,6 +1,7 @@
 import { Suspense, lazy, type FC, type ReactElement } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth/useAuth';
+import { SessionExpiredDialog } from './components/SessionExpiredDialog';
 
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
 const AgentSettingsPage = lazy(() => import('./pages/AgentSettingsPage'));
@@ -13,7 +14,7 @@ const BillingPage = lazy(() => import('./pages/BillingPage'));
 const SkillGovernancePage = lazy(() => import('./pages/SkillGovernancePage'));
 
 const RequireAuth: FC<{ children: ReactElement }> = ({ children }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, authExpired, signOut } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -28,7 +29,14 @@ const RequireAuth: FC<{ children: ReactElement }> = ({ children }) => {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  return children;
+  // Signing out clears `user`, so the redirect above takes the user to /login and,
+  // after sign-in, back to this page.
+  return (
+    <>
+      {children}
+      {authExpired ? <SessionExpiredDialog reason={authExpired} onSignIn={signOut} /> : null}
+    </>
+  );
 };
 
 const ProtectedShell: FC = () => {

@@ -150,6 +150,9 @@ import {
   type PublishedVersionSelection,
 } from '../../utils/workspacePublicationMode';
 import { resolveWorkspaceCanvasTitle } from '../../utils/workspaceCanvas';
+import { browserSessionStorage, saveComposerDraft, takeComposerDraft } from '../../utils/composerDraft';
+import { isAuthExpiredSignalled } from '../../services/apiClient';
+import { AUTH_EXPIRED_EVENT } from '../../auth/authExpiry';
 import {
   markInteractionResponseReceived,
   shouldRefreshWorkspaceFilesForRunStatus,
@@ -702,6 +705,13 @@ const hydrateWorkspace = (workspace: Omit<Workspace, 'lastUsed'> & { lastUsed?: 
   lastUsed: workspace.lastUsed ?? formatWorkspaceLastUsed(workspace.updatedAt),
 });
 
+/** The server's reason when it gave one; a retry hint only when the reason lacks one. */
+const describeRunStartFailure = (error: unknown, fallback = 'Failed to start agent run.'): string => {
+  const message = error instanceof Error && error.message.trim() ? error.message.trim() : fallback;
+  const sentence = /[.!?]$/.test(message) ? message : `${message}.`;
+  return /try again/i.test(sentence) ? sentence : `${sentence} Please try again.`;
+};
+
 const isDraftWorkspaceFile = (file?: WorkspaceFile | null): boolean =>
   Boolean(file && typeof file.id === 'string' && String(file.id).startsWith('draft:'));
 
@@ -1230,6 +1240,19 @@ export default function WorkspacePage() {
   useEffect(() => {
     selectedWorkspaceIdRef.current = selectedWorkspace?.id ?? null;
   }, [selectedWorkspace]);
+
+  // A forced sign-in redirects the whole page. Keep whatever the user was typing.
+  useEffect(() => {
+    const keepDraft = () => saveComposerDraft(browserSessionStorage(), selectedWorkspace?.id, chatMessage);
+    window.addEventListener(AUTH_EXPIRED_EVENT, keepDraft);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, keepDraft);
+  }, [chatMessage, selectedWorkspace?.id]);
+
+  // Back from signing in: restore that draft, unless the user has typed since.
+  useEffect(() => {
+    const draft = takeComposerDraft(browserSessionStorage(), selectedWorkspace?.id);
+    if (draft) setChatMessage((current) => (current.trim() ? current : draft));
+  }, [selectedWorkspace?.id]);
 
   useEffect(() => {
     chatAttachmentsRef.current = chatAttachments;
@@ -6893,7 +6916,8 @@ export default function WorkspacePage() {
       await refreshConversationHistory(workspaceId);
     } catch (error) {
       console.error('Failed to rerun agent response', error);
-      addLocalSystemMessage('Rerun failed. Please try again.');
+      if (isAuthExpiredSignalled()) return;
+      addLocalSystemMessage(describeRunStartFailure(error, 'Rerun failed.'));
     }
   };
 
@@ -7187,7 +7211,14 @@ export default function WorkspacePage() {
         });
       } catch (error) {
         console.error('Failed to start agent run', error);
-        addLocalSystemMessage('Failed to start agent run. Please try again.');
+        if (isAuthExpiredSignalled()) {
+          // The sign-in prompt now covers the page. Put the message back, and keep
+          // it across the sign-in redirect, so the user does not have to retype it.
+          setChatMessage(trimmed);
+          saveComposerDraft(browserSessionStorage(), workspaceId, trimmed);
+          return;
+        }
+        addLocalSystemMessage(describeRunStartFailure(error));
       }
     } finally {
       setIsDriveImporting(false);

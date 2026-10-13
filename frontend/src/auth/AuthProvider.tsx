@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getAuthUser, setAuthUser } from './authStore';
 import type { AuthUser } from './authStore';
-import { API_URL, AUTH_MODE, apiFetch } from '../services/apiClient';
+import { API_URL, AUTH_MODE, apiFetch, resetAuthExpiredSignal } from '../services/apiClient';
 import { AuthContext, type AuthContextValue } from './authContext';
+import { AUTH_EXPIRED_EVENT, type AuthExpiredReason } from './authExpiry';
 
 type AuthMeResponse = {
   authenticated: boolean;
@@ -59,10 +60,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<AuthUser | null>(() => (authMode === 'oidc' ? null : getAuthUser()));
   const [loading, setLoading] = useState(authMode !== 'headers');
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const [authExpired, setAuthExpired] = useState<AuthExpiredReason | null>(null);
 
   const persistUser = useCallback((next: AuthUser | null) => {
     setAuthUser(next);
     setUser(next);
+    if (next) {
+      // A fresh sign-in: the next expiry must be reported again.
+      resetAuthExpiredSignal();
+      setAuthExpired(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onAuthExpired = (event: Event) => {
+      const reason = (event as CustomEvent<{ reason?: AuthExpiredReason }>).detail?.reason;
+      setAuthExpired(reason === 'google' ? 'google' : 'session');
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
   }, []);
 
   const refreshSession = useCallback(async () => {
@@ -151,7 +167,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     signInWithHeaders,
     signOut,
     refreshSession,
-  }), [authMode, googleError, loading, refreshSession, signInWithGoogle, signInWithHeaders, signOut, user]);
+    authExpired,
+  }), [authExpired, authMode, googleError, loading, refreshSession, signInWithGoogle, signInWithHeaders, signOut, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

@@ -1,4 +1,5 @@
 import { getAuthUser } from '../auth/authStore';
+import { AUTH_EXPIRED_EVENT, authExpiredReasonFor, canReauthWithGoogle, type AuthExpiredReason } from '../auth/authExpiry';
 import { vitePublicEnv } from '../config/env';
 
 export const API_URL = vitePublicEnv.apiUrl;
@@ -52,9 +53,64 @@ function mergeAuthHeaders(init?: HeadersInit): Headers {
   return headers;
 }
 
-export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+let authExpiredSignalled = false;
+
+/** True once an expired session or Google grant was reported and not yet cleared by a sign-in. */
+export function isAuthExpiredSignalled(): boolean {
+  return authExpiredSignalled;
+}
+
+/** Called after a sign-in, so the next expiry is reported again. */
+export function resetAuthExpiredSignal(): void {
+  authExpiredSignalled = false;
+}
+
+/**
+ * Many requests fail at once when a session ends (polls, streams, the page's own
+ * loads). Report the first only: the sign-in prompt needs one event, not dozens.
+ */
+function signalAuthExpired(reason: AuthExpiredReason): void {
+  if (authExpiredSignalled || typeof window === 'undefined') return;
+  authExpiredSignalled = true;
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { reason } }));
+}
+
+function requestPathname(input: RequestInfo | URL): string {
+  const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+  try {
+    return new URL(raw, origin).pathname;
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Resolves after any expiry signal is sent, so a caller that catches the failed
+ * request already sees `isAuthExpiredSignalled()`. Only a 403 needs its (small)
+ * error body read; a clone keeps the body readable for the caller.
+ */
+async function watchForAuthExpiry(input: RequestInfo | URL, response: Response): Promise<void> {
+  if (response.status !== 401 && response.status !== 403) return;
+  const pathname = requestPathname(input);
+  let body: unknown;
+  if (response.status === 403) {
+    body = await response.clone().json().catch(() => undefined);
+  }
+  const reason = authExpiredReasonFor(pathname, response.status, body);
+  if (!reason) return;
+  // A header-identity user cannot fix a Google failure by signing in again; the
+  // caller shows the error instead. Not signalling also keeps the chat from
+  // treating that error as a sign-in prompt and hiding it.
+  if (reason === 'google' && !canReauthWithGoogle(AUTH_MODE, getAuthUser())) return;
+  signalAuthExpired(reason);
+}
+
+export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const headers = mergeAuthHeaders(init.headers as HeadersInit | undefined);
-  return fetch(input, { ...init, headers, credentials: 'include' });
+  const response = await fetch(input, { ...init, headers, credentials: 'include' });
+  await watchForAuthExpiry(input, response);
+  return response;
 }
 
 /**

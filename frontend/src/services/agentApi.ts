@@ -86,7 +86,9 @@ export const startAgentRun = async (
     }),
   });
   if (!response.ok) {
-    throw new Error('Failed to start agent run');
+    // The server says why (an expired Google sign-in, a Google outage); a fixed
+    // string hid that and left users retrying something retries cannot fix.
+    throw new Error(await readErrorMessage(response, 'Failed to start agent run'));
   }
   return response.json();
 };
