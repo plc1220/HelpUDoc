@@ -57,6 +57,25 @@ export type DelegatedAccessToken = {
 };
 
 export class GoogleOAuthConfigError extends Error {}
+
+/**
+ * Why a delegated Google token could not be produced.
+ *
+ * - `not_connected`, `missing_scopes`: no usable grant is stored.
+ * - `reauth_required`: Google answered `invalid_grant`. The refresh token was revoked,
+ *   or expired. Signing in again issues a new one.
+ * - `reauth_policy`: `invalid_grant` with `invalid_rapt`. The Workspace Google Cloud
+ *   session control forced a re-login. Signing in again also fixes it.
+ * - `unavailable`: Google failed, or the request never reached it. Signing in again
+ *   does not help, so callers must not ask the user to.
+ */
+export type GoogleTokenFailureReason =
+  | 'not_connected'
+  | 'missing_scopes'
+  | 'reauth_required'
+  | 'reauth_policy'
+  | 'unavailable';
+
 export class GoogleOAuthTokenMissingError extends Error {
   /**
    * Populated when the failure is a missing scope rather than a missing
@@ -64,12 +83,31 @@ export class GoogleOAuthTokenMissingError extends Error {
    * instead of just saying "sign in again".
    */
   readonly missingScopes: string[];
+  readonly reason: GoogleTokenFailureReason;
 
-  constructor(message: string, missingScopes: string[] = []) {
+  constructor(message: string, missingScopes: string[] = [], reason?: GoogleTokenFailureReason) {
     super(message);
     this.missingScopes = missingScopes;
+    this.reason = reason ?? (missingScopes.length ? 'missing_scopes' : 'not_connected');
   }
 }
+
+/** Signing in again fixes every reason except a Google outage. */
+export const googleReauthFixes = (reason: GoogleTokenFailureReason): boolean => reason !== 'unavailable';
+
+/**
+ * Maps a failed refresh-token exchange to a reason. Only `invalid_grant` means the
+ * grant itself is gone. Other 4xx answers (`invalid_client`, `unauthorized_client`)
+ * are our configuration, and a re-login would not fix them.
+ */
+export const classifyGoogleRefreshFailure = (
+  body: { error?: unknown; error_subtype?: unknown } | null,
+): GoogleTokenFailureReason => {
+  if (body?.error === 'invalid_grant') {
+    return body.error_subtype === 'invalid_rapt' ? 'reauth_policy' : 'reauth_required';
+  }
+  return 'unavailable';
+};
 
 function oauthConfig() {
   return getBackendEnv().googleOauth;
@@ -379,25 +417,66 @@ export class GoogleOAuthService {
       grant_type: 'refresh_token',
     });
 
-    const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: body.toString(),
-    });
+    let response: Response;
+    try {
+      response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+      });
+    } catch (error) {
+      console.warn('[google-oauth] refresh failed', {
+        userId,
+        status: null,
+        reason: 'unavailable',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new GoogleOAuthTokenMissingError('Could not reach Google to refresh the access token', [], 'unavailable');
+    }
 
     if (!response.ok) {
       const text = await response.text();
+      let parsed: { error?: unknown; error_subtype?: unknown } | null = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = null;
+      }
+      const reason = classifyGoogleRefreshFailure(parsed);
+      // Google's error code says why the grant died: `invalid_rapt` is the Workspace
+      // session-control policy, a plain `invalid_grant` is a revoked or expired grant.
+      // The response body holds no secrets; the refresh token is never logged.
+      console.warn('[google-oauth] refresh failed', {
+        userId,
+        status: response.status,
+        reason,
+        error: typeof parsed?.error === 'string' ? parsed.error : undefined,
+        errorSubtype: typeof parsed?.error_subtype === 'string' ? parsed.error_subtype : undefined,
+      });
+      if (reason !== 'unavailable') {
+        // A dead grant stays dead. Removing it stops every later request from
+        // retrying it, and the next sign-in stores a new one. Delete only if it is
+        // still the token that failed: a sign-in in between may have replaced it.
+        await this.tokenStore
+          .deleteTokenIfRefreshTokenMatches(userId, 'google', existing.refreshToken)
+          .catch((error: unknown) => console.warn('[google-oauth] could not remove a dead token', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          }));
+      }
       throw new GoogleOAuthTokenMissingError(
         `Failed to refresh Google access token (${response.status}): ${text.slice(0, 300)}`,
+        [],
+        reason,
       );
     }
 
     const data = (await response.json()) as Record<string, unknown>;
     const accessToken = typeof data.access_token === 'string' ? data.access_token : '';
     if (!accessToken) {
-      throw new GoogleOAuthTokenMissingError('Google refresh response did not include access_token');
+      throw new GoogleOAuthTokenMissingError('Google refresh response did not include access_token', [], 'unavailable');
     }
 
     const expiresIn = toNumber(data.expires_in);

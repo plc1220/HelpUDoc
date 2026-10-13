@@ -152,4 +152,40 @@ export class UserOAuthTokenService {
   async deleteToken(userId: string, provider: OAuthProvider): Promise<void> {
     await this.db(TOKEN_TABLE).where({ userId, provider }).del();
   }
+
+  /**
+   * Deletes the stored token only if it still holds `refreshToken`.
+   *
+   * Google rejected that refresh token, but a sign-in may have stored a new one
+   * since the refresh started. A plain delete would remove the fresh grant. The
+   * row lock keeps a concurrent sign-in from writing between the check and the
+   * delete. Returns whether a row was deleted.
+   */
+  async deleteTokenIfRefreshTokenMatches(
+    userId: string,
+    provider: OAuthProvider,
+    refreshToken: string,
+  ): Promise<boolean> {
+    return this.db.transaction(async (trx) => {
+      const row = await trx(TOKEN_TABLE)
+        .select('encryptedJson')
+        .where({ userId, provider })
+        .forUpdate()
+        .first();
+      if (!row?.encryptedJson) {
+        return false;
+      }
+      let stored: StoredOAuthToken;
+      try {
+        stored = toStoredToken(decryptJson(String(row.encryptedJson)));
+      } catch {
+        return false;
+      }
+      if (stored.refreshToken !== refreshToken) {
+        return false;
+      }
+      await trx(TOKEN_TABLE).where({ userId, provider }).del();
+      return true;
+    });
+  }
 }

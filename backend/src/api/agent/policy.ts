@@ -5,7 +5,7 @@ import { existsSync } from 'fs';
 import { parse as parseYaml } from 'yaml';
 import { HttpError } from '../../errors';
 import { signAgentContextToken } from '../../services/agentToken';
-import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../../services/googleOAuthService';
+import { GoogleOAuthService, GoogleOAuthTokenMissingError, googleReauthFixes } from '../../services/googleOAuthService';
 import { privateSkillRuntimeEnabled } from '../../services/skills/constants';
 import type { UserService, WorkspaceSkillRuntimePin } from '../../services/userService';
 
@@ -319,9 +319,27 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
         });
       } catch (error) {
         if (error instanceof GoogleOAuthTokenMissingError) {
+          // The route answers with an HttpError, which `handleError` does not log.
+          // Without this line a user's chats fail with no trace on the server.
+          console.warn('[mcp-auth] google unavailable', {
+            userId: input.userId,
+            workspaceId: input.workspaceId,
+            serverIds: delegatedServerIds,
+            reason: error.reason,
+          });
+          if (!googleReauthFixes(error.reason)) {
+            throw new HttpError(
+              503,
+              'Google tools are temporarily unavailable. Please try again in a moment.',
+              { code: 'GOOGLE_TEMPORARILY_UNAVAILABLE' },
+            );
+          }
+          // The app session is still valid, so nothing else tells the user that
+          // signing in again is the fix. The client signs them out on this code.
           throw new HttpError(
             403,
-            'Google access for MCP tools is not connected or is missing required permissions. Please sign in with Google again.',
+            'Your Google sign-in has expired. Please sign in again.',
+            { code: 'GOOGLE_REAUTH_REQUIRED', reason: error.reason },
           );
         }
         if (

@@ -11,11 +11,50 @@ import { FileStatusService } from '../services/fileStatusService';
 import { FilePublicationService } from '../services/filePublicationService';
 import { HttpError } from '../errors';
 import { WorkspaceService } from '../services/workspaceService';
-import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
+import { GoogleOAuthService, GoogleOAuthTokenMissingError, googleReauthFixes } from '../services/googleOAuthService';
 import { GoogleDriveService } from '../services/googleDriveService';
 import { GoogleCloudStorageService } from '../services/googleCloudStorageService';
 import { GcsBucketRegistryService } from '../services/gcsBucketRegistryService';
 import { FILE_STATUS_EVENTS_CHANNEL, redisClient } from '../services/redisService';
+
+/**
+ * How a Drive or Cloud Storage route answers when no Google token is usable.
+ *
+ * Header auth has no Google sign-in, so asking the user to sign in again could not
+ * help: that mode keeps the original 400 "not connected" answer. Elsewhere a dead
+ * grant answers `GOOGLE_REAUTH_REQUIRED`, the same code as the agent routes, so the
+ * client handles it the same way wherever it surfaces.
+ */
+export const googleTokenErrorResponse = (
+  error: GoogleOAuthTokenMissingError,
+  authMode: string | undefined,
+): { status: number; body: Record<string, unknown> } => {
+  if (error.missingScopes.length) {
+    return {
+      status: 400,
+      body: { error: error.message, code: 'google_scope_missing', missingScopes: error.missingScopes },
+    };
+  }
+  if ((authMode || '').trim().toLowerCase() === 'headers') {
+    return { status: 400, body: { error: error.message } };
+  }
+  if (!googleReauthFixes(error.reason)) {
+    return {
+      status: 503,
+      body: {
+        error: 'Google is temporarily unavailable. Please try again in a moment.',
+        details: { code: 'GOOGLE_TEMPORARILY_UNAVAILABLE' },
+      },
+    };
+  }
+  return {
+    status: 403,
+    body: {
+      error: 'Your Google sign-in has expired. Please sign in again.',
+      details: { code: 'GOOGLE_REAUTH_REQUIRED', reason: error.reason },
+    },
+  };
+};
 
 export default function(
   fileService: FileService,
@@ -131,14 +170,8 @@ export default function(
 
   const handleError = (res: Response, error: unknown, fallbackMessage: string) => {
     if (error instanceof GoogleOAuthTokenMissingError) {
-      if (error.missingScopes.length) {
-        return res.status(400).json({
-          error: error.message,
-          code: 'google_scope_missing',
-          missingScopes: error.missingScopes,
-        });
-      }
-      return res.status(400).json({ error: error.message });
+      const { status, body } = googleTokenErrorResponse(error, process.env.AUTH_MODE);
+      return res.status(status).json(body);
     }
     if (error instanceof HttpError) {
       return res.status(error.statusCode).json({ error: error.message, details: error.details });
