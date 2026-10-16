@@ -207,7 +207,15 @@ export const compareSemanticVersions = (left: string, right: string): number => 
   return 0;
 };
 
-export const computePackageManifestHash = (
+/**
+ * The exact text a package's manifest hash is taken over.
+ *
+ * The order is `localeCompare`, which no other runtime reproduces exactly: the agent
+ * cannot rebuild this text from disk for a package of more than one file. Every stored
+ * hash depends on this order, so it stays. The agent checks a package against a copy of
+ * this text instead (see `SkillPackageStore.writeManifestSidecar`).
+ */
+export const canonicalPackageManifest = (
   files: Array<Pick<FileSnapshot, 'path' | 'contentHash' | 'mode' | 'sizeBytes'>>,
 ): string => {
   const manifest = [...files]
@@ -218,8 +226,12 @@ export const computePackageManifestHash = (
       mode: file.mode,
       sizeBytes: Number(file.sizeBytes),
     }));
-  return sha256(JSON.stringify(manifest));
+  return JSON.stringify(manifest);
 };
+
+export const computePackageManifestHash = (
+  files: Array<Pick<FileSnapshot, 'path' | 'contentHash' | 'mode' | 'sizeBytes'>>,
+): string => sha256(canonicalPackageManifest(files));
 
 export const mimeTypeForPath = (filePath: string): string => {
   const ext = path.extname(filePath).toLowerCase();

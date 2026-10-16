@@ -75,6 +75,7 @@ export class SkillGovernanceService {
     await this.republishDriftedRegistrySkills();
     await this.reconcileGovernedPackages();
     await this.backfillDraftRevisionValidation();
+    await this.backfillDraftManifestSidecars();
     const migration = await this.validateMigrationParity();
     const log = migration.ready ? console.info : console.warn;
     log('Governed skill migration parity', migration);
@@ -2312,13 +2313,18 @@ export class SkillGovernanceService {
     const target = this.packageStore.versionPackagePath(skillKey, draftRevisionId);
     // A revision is immutable, so an existing package is already correct and
     // `materializeVersion` would fail renaming over it.
-    if (await pathExists(target)) return target;
-    return this.packageStore.materializeVersion(
-      skillKey,
-      draftRevisionId,
-      computePackageManifestHash(files),
-      files,
-    );
+    if (!await pathExists(target)) {
+      await this.packageStore.materializeVersion(
+        skillKey,
+        draftRevisionId,
+        computePackageManifestHash(files),
+        files,
+      );
+    }
+    // Written for an existing package too: packages saved before the sidecar existed
+    // need one, or the agent cannot resolve a draft of more than one file.
+    await this.packageStore.writeManifestSidecar(skillKey, draftRevisionId, files);
+    return target;
   }
 
   /**
@@ -2346,10 +2352,16 @@ export class SkillGovernanceService {
     const revisions = await this.db('skill_draft_revisions').select('id').where({ draftId });
     await Promise.all(revisions
       .filter((revision: any) => !keep.has(String(revision.id)))
-      .map((revision: any) => fs.rm(
-        this.packageStore.versionPackagePath(skillKey, String(revision.id)),
-        { recursive: true, force: true },
-      )));
+      .flatMap((revision: any) => [
+        fs.rm(
+          this.packageStore.versionPackagePath(skillKey, String(revision.id)),
+          { recursive: true, force: true },
+        ),
+        fs.rm(
+          this.packageStore.manifestSidecarPath(skillKey, String(revision.id)),
+          { force: true },
+        ),
+      ]));
   }
 
   async authorizeInvocation(userId: string, workspaceId: string, skillKey: string): Promise<JsonRecord> {
@@ -2838,6 +2850,37 @@ export class SkillGovernanceService {
       }
     }
     if (repaired) console.info('Backfilled skill draft validation', { revisions: repaired });
+  }
+
+  /**
+   * Give every runnable draft a manifest sidecar.
+   *
+   * Drafts saved before the sidecar existed are only rewritten when their owner saves
+   * them again. Until then the agent cannot resolve one of more than one file, so write
+   * the missing sidecars here. Idempotent: `writeManifestSidecar` skips an unchanged file.
+   */
+  private async backfillDraftManifestSidecars(): Promise<void> {
+    const drafts = await this.db('private_skill_drafts as d')
+      .join('skill_draft_revisions as r', 'r.id', 'd.currentDraftRevisionId')
+      .select('d.id', 'd.proposedSkillKey', 'r.id as revisionId', 'r.validationSummary')
+      .where('d.status', 'private');
+
+    for (const draft of drafts as any[]) {
+      const summary = typeof draft.validationSummary === 'string'
+        ? JSON.parse(draft.validationSummary || '{}')
+        : (draft.validationSummary || {});
+      // The runtime skips an invalid revision, and one is never materialized.
+      if (summary?.valid !== true) continue;
+      try {
+        const skillKey = normalizeGovernedSkillKey(draft.proposedSkillKey || '');
+        const files = await this.packageStore.draftFiles(draft.revisionId);
+        if (!files.length) continue;
+        await this.materializeDraftRevision(skillKey, draft.revisionId, files);
+      } catch (error) {
+        // One unreadable draft must not stop the backend from starting.
+        console.warn('Could not write the manifest sidecar for skill draft', draft.id, error);
+      }
+    }
   }
 
   private async backfillLegacyRegistry(): Promise<void> {

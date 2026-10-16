@@ -9,6 +9,7 @@ import { pathExists } from '../skills/registry';
 import {
   FileSnapshot,
   SkillGovernanceError,
+  canonicalPackageManifest,
   computePackageManifestHash,
   governanceError,
   mimeTypeForPath,
@@ -165,6 +166,42 @@ export class SkillPackageStore {
    */
   versionPackagePath(skillKey: string, versionId: string): string {
     return path.join(this.versionsRoot, skillKey, versionId);
+  }
+
+  /**
+   * Where `writeManifestSidecar` places a package's manifest. Beside the package
+   * rather than inside it, so the file is not part of the package it describes.
+   */
+  manifestSidecarPath(skillKey: string, versionId: string): string {
+    return `${this.versionPackagePath(skillKey, versionId)}.manifest.json`;
+  }
+
+  /**
+   * Write the exact text the package's manifest hash is taken over.
+   *
+   * The agent rebuilds the manifest from disk to check a pinned package, but it sorts
+   * paths by code point and the backend sorts with `localeCompare`. For a package of
+   * more than one file the two hashes differ and the agent drops the package as
+   * missing. With this file the agent checks the text against the signed hash and the
+   * files on disk against the text, and never has to reproduce the sort.
+   */
+  async writeManifestSidecar(skillKey: string, versionId: string, files: FileSnapshot[]): Promise<void> {
+    const target = this.manifestSidecarPath(skillKey, versionId);
+    const content = canonicalPackageManifest(files);
+    try {
+      if (await fs.readFile(target, 'utf-8') === content) return;
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    const temporary = `${target}.${uuidv4()}.tmp`;
+    await fs.writeFile(temporary, content, { encoding: 'utf-8', mode: 0o644 });
+    try {
+      await fs.rename(temporary, target);
+    } catch (error) {
+      await fs.rm(temporary, { force: true });
+      throw error;
+    }
   }
 
   async materializeVersion(

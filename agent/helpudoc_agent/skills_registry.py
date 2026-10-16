@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import Any, Iterable, List
 import hashlib
 import json
+import logging
 import re
 import shutil
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -625,14 +628,27 @@ def _load_governed_pin(
     version_root = (governed_root / skill_key / version_id).resolve()
     if governed_root not in version_root.parents or not (version_root / "SKILL.md").is_file():
         return None
-    if _compute_governed_manifest_hash(version_root) != manifest_hash:
+    if (
+        _compute_governed_manifest_hash(version_root) != manifest_hash
+        and not _matches_manifest_sidecar(version_root, manifest_hash)
+    ):
+        # Without this line a pin that fails its check reaches the user only as a
+        # model reply saying the skill "could not be found".
+        logger.warning(
+            "Governed skill package failed its manifest check: skill=%s version=%s",
+            skill_key,
+            version_id,
+        )
         return None
     loaded = load_skills(version_root)
     return replace(loaded[0], skill_id=skill_key) if loaded else None
 
 
-def _compute_governed_manifest_hash(package_root: Path) -> str | None:
-    """Compute the canonical manifest hash used by the governance backend."""
+def _package_manifest_entries(package_root: Path) -> list[dict[str, Any]] | None:
+    """Describe every file in *package_root* the way the governance backend does.
+
+    Sorted by code point. Returns ``None`` for a symlink or an unreadable file.
+    """
     manifest: list[dict[str, Any]] = []
     try:
         for candidate in sorted(package_root.rglob("*"), key=lambda item: item.as_posix()):
@@ -652,8 +668,57 @@ def _compute_governed_manifest_hash(package_root: Path) -> str | None:
             )
     except (OSError, ValueError):
         return None
+    return manifest
+
+
+def _compute_governed_manifest_hash(package_root: Path) -> str | None:
+    """Compute the canonical manifest hash used by the governance backend.
+
+    Matches the backend only while code-point order and the backend's
+    ``localeCompare`` order agree, which in practice means a package of one file.
+    ``_matches_manifest_sidecar`` covers the rest.
+    """
+    manifest = _package_manifest_entries(package_root)
+    if manifest is None:
+        return None
     encoded = json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _matches_manifest_sidecar(package_root: Path, manifest_hash: str) -> bool:
+    """Check *package_root* against the manifest the backend wrote beside it.
+
+    The backend hashes its manifest in ``localeCompare`` order, which Python cannot
+    reproduce, so a package of more than one file fails
+    ``_compute_governed_manifest_hash``. The backend therefore writes the exact text
+    it hashed to ``<versionId>.manifest.json``. That text must hash to the signed
+    *manifest_hash*, and the files on disk must equal its entries exactly: no file
+    missing, none extra, none changed. Order no longer matters, and the check is as
+    strict as the hash.
+    """
+    sidecar = package_root.with_name(f"{package_root.name}.manifest.json")
+    try:
+        if sidecar.is_symlink():
+            return False
+        raw = sidecar.read_bytes()
+    except OSError:
+        return False
+    if hashlib.sha256(raw).hexdigest() != manifest_hash:
+        return False
+    try:
+        recorded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(recorded, list) or not all(isinstance(entry, dict) for entry in recorded):
+        return False
+    on_disk = _package_manifest_entries(package_root)
+    if on_disk is None:
+        return False
+
+    def _key(entry: dict[str, Any]) -> str:
+        return json.dumps(entry, sort_keys=True, ensure_ascii=False)
+
+    return sorted(map(_key, recorded)) == sorted(map(_key, on_disk))
 
 
 def expand_runtime_tool_names(tool_names: Iterable[str]) -> List[str]:
