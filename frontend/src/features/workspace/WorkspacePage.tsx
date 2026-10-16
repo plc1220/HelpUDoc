@@ -164,6 +164,7 @@ import ExpandableSidebar from '../../components/ExpandableSidebar';
 import PaneResizeHandle from '../../components/PaneResizeHandle';
 import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
+import { readStoredBoolean, useStoredBoolean } from '../../hooks/useStoredBoolean';
 import FileProvenanceDialog from '../../components/FileProvenanceDialog';
 import FileStatusChip from '../../components/FileStatusChip';
 import FileListFilters, { type FileStatusFilter } from '../../components/FileListFilters';
@@ -259,6 +260,12 @@ const SLASH_METADATA_TTL_MS = 30_000;
 const FILE_PANE_WIDTH_STORAGE_KEY = 'helpudoc.workspace.filePaneWidth';
 const AGENT_PANE_WIDTH_STORAGE_KEY = 'helpudoc.workspace.agentPaneWidth';
 const DEFAULT_FILE_PANE_WIDTH = 320;
+// Which panes are open is a layout choice like their widths, so it is stored the
+// same way and survives a reload and a sign-in.
+const WORKSPACE_DRAWER_OPEN_STORAGE_KEY = 'helpudoc.workspace.drawerOpen';
+const FILE_PANE_VISIBLE_STORAGE_KEY = 'helpudoc.workspace.filePaneVisible';
+const AGENT_PANE_VISIBLE_STORAGE_KEY = 'helpudoc.workspace.agentPaneVisible';
+const AGENT_PANE_FULL_SCREEN_STORAGE_KEY = 'helpudoc.workspace.agentPaneFullScreen';
 const DEFAULT_AGENT_PANE_WIDTH = 352;
 const COLLAPSED_FILE_PANE_WIDTH = 52;
 const COLLAPSED_AGENT_PANE_WIDTH = 48;
@@ -930,7 +937,8 @@ export default function WorkspacePage() {
   const [chatMessage, setChatMessage] = useState('');
   const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
   const [internetSearchEnabled, setInternetSearchEnabled] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(() => readStoredBoolean(WORKSPACE_DRAWER_OPEN_STORAGE_KEY, false));
+  useStoredBoolean(WORKSPACE_DRAWER_OPEN_STORAGE_KEY, drawerOpen);
   const [shareWorkspace, setShareWorkspace] = useState<Workspace | null>(null);
   const [collaborationWorkspace, setCollaborationWorkspace] = useState<Workspace | null>(null);
   const [publishWorkspaceTarget, setPublishWorkspaceTarget] = useState<Workspace | null>(null);
@@ -1028,12 +1036,17 @@ export default function WorkspacePage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [canvasZoom, setCanvasZoom] = useState(1);
   const [isLumoVisible, setIsLumoVisible] = useState(loadLumoVisibility);
-  const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(true);
-  const [isFilePaneVisible, setIsFilePaneVisible] = useState(true);
+  const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(() => readStoredBoolean(AGENT_PANE_VISIBLE_STORAGE_KEY, true));
+  useStoredBoolean(AGENT_PANE_VISIBLE_STORAGE_KEY, isAgentPaneVisible);
+  const [isFilePaneVisible, setIsFilePaneVisible] = useState(() => readStoredBoolean(FILE_PANE_VISIBLE_STORAGE_KEY, true));
+  useStoredBoolean(FILE_PANE_VISIBLE_STORAGE_KEY, isFilePaneVisible);
   const [isFileActionMenuOpen, setIsFileActionMenuOpen] = useState(false);
   const [showSystemFiles, setShowSystemFiles] = useState(false);
   const [conversationStreaming, setConversationStreaming] = useState<Record<string, boolean>>({});
-  const [isAgentPaneFullScreen, setIsAgentPaneFullScreen] = useState(false);
+  const [isAgentPaneFullScreen, setIsAgentPaneFullScreen] = useState(
+    () => readStoredBoolean(AGENT_PANE_FULL_SCREEN_STORAGE_KEY, false),
+  );
+  useStoredBoolean(AGENT_PANE_FULL_SCREEN_STORAGE_KEY, isAgentPaneFullScreen);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [conversationHistory, setConversationHistory] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
