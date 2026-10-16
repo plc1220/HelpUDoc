@@ -1313,6 +1313,34 @@ body {
   align-items: flex-end;
 }
 
+/*
+ * Full-screen chat. ChatLayout caps its message column at 800px and an assistant
+ * bubble at 80% of that, so expanding the chat only widened the margins and a table
+ * stayed about 540px wide. Here the column grows to the pane, prose and the rest of
+ * a reply keep a readable measure, and only a block holding a table runs wider.
+ * Scoped to full screen: the side pane, mobile and Team Chat keep their layout.
+ */
+.lumo-chat-fullscreen {
+  --lumo-prose-measure: 45rem;
+}
+
+.lumo-chat-fullscreen > :has(> .lumo-message-list) {
+  max-width: min(100%, 75rem);
+}
+
+.lumo-chat-fullscreen .astryx-chat-message-bubble[data-sender='assistant'] {
+  max-width: 100%;
+}
+
+.lumo-chat-fullscreen .astryx-chat-message-bubble[data-sender='user'] {
+  max-width: min(80%, var(--lumo-prose-measure));
+}
+
+.lumo-chat-fullscreen .lumo-assistant-content > :not(:has(.lumo-table-scroll)),
+.lumo-chat-fullscreen .lumo-markdown > :not(.lumo-table-scroll) {
+  max-width: var(--lumo-prose-measure);
+}
+
 .astryx-chat-message[data-sender='user'] .astryx-chat-message-bubble[data-variant='filled'] {
   border: var(--border-width) solid color-mix(in srgb, var(--color-border-blue) 22%, var(--color-border));
   background: color-mix(in srgb, var(--color-background-blue) 56%, var(--color-background-surface));

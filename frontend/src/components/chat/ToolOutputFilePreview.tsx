@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreakTags from '../markdown/remarkBreakTags';
 
 import { getFiles, getFileContent, getWorkspaceFilePreview } from '../../services/fileApi';
 import type { File as WorkspaceFile, ToolOutputFile } from '../../types';
@@ -148,7 +149,7 @@ export default function ToolOutputFilePreview({
   if (normalizedMime.includes('markdown')) {
     return (
       <div className="prose prose-sm mt-2 max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreakTags]} components={markdownComponents}>
           {content}
         </ReactMarkdown>
       </div>

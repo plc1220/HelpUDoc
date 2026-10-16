@@ -2,6 +2,7 @@
 import { Children, Suspense, isValidElement, lazy, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Components } from 'react-markdown';
 import { getWorkspaceFilePreview } from '../../services/fileApi';
+import { shouldWrapTableCell } from './tableCells';
 import { parsePlotlySpec } from '../../utils/plotlySpec';
 import {
   isExternalAssetSource,
@@ -464,13 +465,15 @@ export const createMarkdownComponents = ({
     table({ children }) {
       return (
         <div
-          className={`my-4 overflow-x-auto rounded-2xl border ${
+          className={`lumo-table-scroll my-4 overflow-x-auto rounded-2xl border ${
             colorMode === 'dark' ? 'border-slate-700/70' : 'border-slate-200'
           }`}
         >
-          {/* w-max lets the table exceed the container so the wrapper scrolls;
-              min-w-full keeps a narrow table filling the width. */}
-          <table className="w-max min-w-full border-collapse text-sm">{children}</table>
+          {/* Auto width, not w-max: w-max sized every column to its longest line,
+              so a cell of prose ran the table as wide as one sentence. A table of
+              one-line cells is still as wide as it was, and scrolls when that is
+              wider than the container. min-w-full keeps a narrow table full width. */}
+          <table className="min-w-full border-collapse text-sm">{children}</table>
         </div>
       );
     },
@@ -489,11 +492,16 @@ export const createMarkdownComponents = ({
         </th>
       );
     },
+    // Only a long cell wraps (see `shouldWrapTableCell`). It breaks between words,
+    // never inside one: `break-normal` undoes the inherited `word-break:
+    // break-word`, which would let the column shrink until words split. `min-w-48`
+    // keeps a wrapped column from turning into a narrow strip.
     td({ children, style }) {
+      const wraps = shouldWrapTableCell(children);
       return (
         <td
           style={style}
-          className={`whitespace-nowrap px-3 py-2 align-top ${
+          className={`${wraps ? 'min-w-48 whitespace-normal break-normal' : 'whitespace-nowrap'} px-3 py-2 align-top ${
             colorMode === 'dark'
               ? 'border-b border-slate-800/70 text-slate-200'
               : 'border-b border-slate-100 text-slate-700'

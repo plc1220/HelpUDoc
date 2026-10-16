@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreakTags from './markdown/remarkBreakTags';
 import Papa from 'papaparse';
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/light';
 import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
@@ -1147,7 +1148,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
 
       return (
         <div className={`${markdownContainerClassName} helpudoc-markdown`}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreakTags]} components={markdownComponents}>
             {fileContent}
           </ReactMarkdown>
         </div>

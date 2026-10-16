@@ -21,6 +21,7 @@ import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History, Lock } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreakTags from '../../components/markdown/remarkBreakTags';
 import {
   createWorkspace,
   createPrivateWorkspaceCopy,
@@ -163,8 +164,8 @@ import type { UIBlock } from '../../components/UIBlockRenderer';
 import ExpandableSidebar from '../../components/ExpandableSidebar';
 import PaneResizeHandle from '../../components/PaneResizeHandle';
 import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
-import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import { readStoredBoolean, useStoredBoolean } from '../../hooks/useStoredBoolean';
+import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import FileProvenanceDialog from '../../components/FileProvenanceDialog';
 import FileStatusChip from '../../components/FileStatusChip';
 import FileListFilters, { type FileStatusFilter } from '../../components/FileListFilters';
@@ -259,13 +260,13 @@ const drawerWidth = 280;
 const SLASH_METADATA_TTL_MS = 30_000;
 const FILE_PANE_WIDTH_STORAGE_KEY = 'helpudoc.workspace.filePaneWidth';
 const AGENT_PANE_WIDTH_STORAGE_KEY = 'helpudoc.workspace.agentPaneWidth';
-const DEFAULT_FILE_PANE_WIDTH = 320;
 // Which panes are open is a layout choice like their widths, so it is stored the
 // same way and survives a reload and a sign-in.
 const WORKSPACE_DRAWER_OPEN_STORAGE_KEY = 'helpudoc.workspace.drawerOpen';
 const FILE_PANE_VISIBLE_STORAGE_KEY = 'helpudoc.workspace.filePaneVisible';
 const AGENT_PANE_VISIBLE_STORAGE_KEY = 'helpudoc.workspace.agentPaneVisible';
 const AGENT_PANE_FULL_SCREEN_STORAGE_KEY = 'helpudoc.workspace.agentPaneFullScreen';
+const DEFAULT_FILE_PANE_WIDTH = 320;
 const DEFAULT_AGENT_PANE_WIDTH = 352;
 const COLLAPSED_FILE_PANE_WIDTH = 52;
 const COLLAPSED_AGENT_PANE_WIDTH = 48;
@@ -1842,7 +1843,9 @@ export default function WorkspacePage() {
       ? 'none'
       : 'flex-basis 0.35s ease, flex-grow 0.35s ease, width 0.35s ease',
   };
-  const messageBubbleMaxWidth = isAgentPaneFullScreen ? '900px' : '720px';
+  // In full screen the message may use the whole column; index.css keeps prose at a
+  // readable measure and lets only tables run wider (see `.lumo-chat-fullscreen`).
+  const messageBubbleMaxWidth = isAgentPaneFullScreen ? '100%' : '720px';
   const isDarkMode = colorMode === 'dark';
 
   const activeFile = selectedDashboardPath ? null : (selectedFileDetails || selectedFile);
@@ -1931,7 +1934,7 @@ export default function WorkspacePage() {
         : wrapInDocument(fileContent)
       : wrapInDocument(
         renderToStaticMarkup(
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreakTags]}>{fileContent}</ReactMarkdown>
         )
       );
 

@@ -384,7 +384,7 @@ export default function AgentChatPane({
               </div>
             ) : null}
             <ChatLayout
-              className="lumo-chat-layout"
+              className={`lumo-chat-layout ${isAgentPaneFullScreen ? 'lumo-chat-fullscreen' : ''}`.trim()}
               density={isAgentPaneFullScreen ? 'spacious' : 'balanced'}
               composer={(
                 <ChatInputArea
