@@ -12,7 +12,8 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Item } from '@astryxdesign/core/Item';
 import { TextArea } from '@astryxdesign/core/TextArea';
 import type { Components } from 'react-markdown';
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
+import { areChatMessageBubblePropsEqual } from './chatMessageBubbleProps';
 import { InteractionSurfaceRenderer } from '../../interactions/InteractionSurfaceRenderer';
 import { formatDurationBetween, formatDurationMs } from '../../utils/formatDuration';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
@@ -537,7 +538,7 @@ const sanitizeInteractionSurfacePart = (value: unknown): string | undefined => {
   return sanitized || undefined;
 };
 
-export default function ChatMessageBubble({
+function ChatMessageBubble({
   colorMode,
   message,
   isLatestAgentMessage,
@@ -2667,3 +2668,7 @@ export default function ChatMessageBubble({
     </AstryxChatMessage>
   );
 }
+
+// Re-render a message only when its own data changes (see
+// `areChatMessageBubblePropsEqual`); every chat change used to re-render them all.
+export default memo(ChatMessageBubble, areChatMessageBubblePropsEqual);

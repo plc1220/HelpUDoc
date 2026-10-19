@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreakTags from './remarkBreakTags';
@@ -10,7 +11,7 @@ type LumoMarkdownProps = {
 };
 
 /** Shared renderer boundary for Lumo prose and application-rich Markdown. */
-export default function LumoMarkdown({
+function LumoMarkdown({
   children,
   components,
   className,
@@ -23,3 +24,7 @@ export default function LumoMarkdown({
     </div>
   );
 }
+
+// Parsing is the expensive part of rendering a message. Re-parse only when the text,
+// the component map or the class changes, not whenever the message around it renders.
+export default memo(LumoMarkdown);

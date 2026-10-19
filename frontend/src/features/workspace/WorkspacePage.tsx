@@ -165,6 +165,7 @@ import ExpandableSidebar from '../../components/ExpandableSidebar';
 import PaneResizeHandle from '../../components/PaneResizeHandle';
 import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import { readStoredBoolean, useStoredBoolean } from '../../hooks/useStoredBoolean';
+import { useStableCallback } from '../../hooks/useStableCallback';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import FileProvenanceDialog from '../../components/FileProvenanceDialog';
 import FileStatusChip from '../../components/FileStatusChip';
@@ -529,6 +530,7 @@ type ScheduleDialogState = {
 };
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
+const AGENT_CHUNK_FLUSH_MS = 100;
 const LUMO_VISIBILITY_STORAGE_KEY = 'helpudoc-lumo-visible';
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
@@ -4877,17 +4879,20 @@ export default function WorkspacePage() {
     conversationBuffer.set(index, combineBufferedAgentText(conversationId, bufferedText, chunk));
     agentChunkBufferRef.current.set(conversationId, conversationBuffer);
     if (agentChunkFlushTimerRef.current === null) {
-      agentChunkFlushTimerRef.current = window.requestAnimationFrame(() => {
+      // Every 100ms, not every frame: each flush re-renders and re-parses the streaming
+      // message's Markdown, and a long reply parsed 60 times a second froze the tab.
+      // Ten updates a second still reads as a smooth stream.
+      agentChunkFlushTimerRef.current = window.setTimeout(() => {
         agentChunkFlushTimerRef.current = null;
         flushBufferedAgentChunks();
-      });
+      }, AGENT_CHUNK_FLUSH_MS);
     }
   }, [combineBufferedAgentText, flushBufferedAgentChunks]);
 
   useEffect(() => {
     return () => {
       if (agentChunkFlushTimerRef.current !== null) {
-        window.cancelAnimationFrame(agentChunkFlushTimerRef.current);
+        window.clearTimeout(agentChunkFlushTimerRef.current);
         agentChunkFlushTimerRef.current = null;
       }
     };
@@ -6937,6 +6942,16 @@ export default function WorkspacePage() {
     }
   };
 
+  // Chat messages skip re-rendering unless a prop changes (see
+  // `areChatMessageBubblePropsEqual`). These handlers are rebuilt whenever the composer
+  // text or the message list changes, so they reach the messages through stable
+  // wrappers that always call the latest version.
+  const stableHandleRerunMessage = useStableCallback(handleRerunMessage);
+  const stableOpenScheduleDialog = useStableCallback(openScheduleDialog);
+  const stablePrepareInterruptAction = useStableCallback(prepareInterruptAction);
+  const stableHandleInterruptAction = useStableCallback(handleInterruptAction);
+  const stableHandleInteractionSubmit = useStableCallback(handleInteractionSubmit);
+
   const handleSendMessage = async (workspaceOverride?: Workspace | null) => {
     if (sendLockRef.current || isImportingAttachments) {
       return;
@@ -8460,12 +8475,12 @@ export default function WorkspacePage() {
             toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
             toggleToolActivityVisibility={toggleToolActivityVisibility}
             handleCopyMessageText={handleCopyMessageText}
-            handleRerunMessage={handleRerunMessage}
-            handleScheduleMessage={(message) => openScheduleDialog(message)}
-            handlePrepareInterruptAction={prepareInterruptAction}
-            handleInterruptAction={handleInterruptAction}
+            handleRerunMessage={stableHandleRerunMessage}
+            handleScheduleMessage={stableOpenScheduleDialog}
+            handlePrepareInterruptAction={stablePrepareInterruptAction}
+            handleInterruptAction={stableHandleInterruptAction}
             workspaceId={selectedWorkspace?.id}
-            onInteractionSubmit={handleInteractionSubmit}
+            onInteractionSubmit={stableHandleInteractionSubmit}
           />
           <ChatInputArea
             colorMode={colorMode}
@@ -10031,16 +10046,16 @@ export default function WorkspacePage() {
               onToggleHistory={() => setIsHistoryOpen((prev) => !prev)}
               onNewChat={handleNewChat}
               onScheduleChat={() => openScheduleDialog()}
-              onScheduleMessage={(message) => openScheduleDialog(message)}
+              onScheduleMessage={stableOpenScheduleDialog}
               onToggleFullScreen={toggleAgentPaneFullScreen}
               onCloseHistory={() => setIsHistoryOpen(false)}
               onSelectConversation={handleSelectConversationFromHistory}
               onDeleteConversation={handleDeleteConversation}
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
-              onRerunMessage={handleRerunMessage}
-              onPrepareInterruptAction={prepareInterruptAction}
-              onInterruptAction={handleInterruptAction}
+              onRerunMessage={stableHandleRerunMessage}
+              onPrepareInterruptAction={stablePrepareInterruptAction}
+              onInterruptAction={stableHandleInterruptAction}
               onChatInputChange={handleChatInputChange}
               onChatInputKeyDown={handleChatInputKeyDown}
               onChatInputKeyUp={handleChatInputKeyUp}
@@ -10057,7 +10072,7 @@ export default function WorkspacePage() {
               onRemoveCommandTag={handleRemoveComposerTag}
               onSelectMention={handleSelectMention}
               onSelectCommand={handleSelectCommand}
-              onInteractionSubmit={handleInteractionSubmit}
+              onInteractionSubmit={stableHandleInteractionSubmit}
               onOpenCollaboration={() => {
                 if (selectedWorkspace?.visibility === 'team') {
                   setCollaborationWorkspace(selectedWorkspace);
