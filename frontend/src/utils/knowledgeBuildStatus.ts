@@ -96,3 +96,50 @@ export const describeMemberBuild = (member: KnowledgeBaseMember, now = new Date(
  */
 export const membersLeftOutOfPublish = (members: KnowledgeBaseMember[]): KnowledgeBaseMember[] =>
   members.filter((member) => !member.published);
+
+/**
+ * One line for the whole knowledge base, e.g. "6 documents: 2 built · 2 processing ·
+ * 2 queued". With a batch of large uploads, users saw each file's status but not
+ * where the batch stood, so they could not tell how much was left.
+ */
+export const summarizeMemberBuilds = (members: KnowledgeBaseMember[], now = new Date()): string | null => {
+  if (!members.length) return null;
+  const counts = { built: 0, warnings: 0, failed: 0, processing: 0, queued: 0, notStarted: 0 };
+  for (const member of members) {
+    const { tone } = describeMemberBuild(member, now);
+    if (tone === 'built') counts.built += 1;
+    else if (tone === 'warning') { counts.built += 1; counts.warnings += 1; }
+    else if (tone === 'failed') counts.failed += 1;
+    else if (tone === 'pending' || tone === 'stalled') counts.processing += 1;
+    else if (tone === 'queued') counts.queued += 1;
+    else counts.notStarted += 1;
+  }
+  const total = members.length;
+  const noun = total === 1 ? 'document' : 'documents';
+  if (counts.built === total && !counts.warnings) return total === 1 ? '1 document built' : `All ${total} documents built`;
+  const parts = [
+    `${counts.built} built${counts.warnings ? ` (${counts.warnings} with warnings)` : ''}`,
+    counts.processing ? `${counts.processing} processing` : '',
+    counts.queued ? `${counts.queued} queued` : '',
+    counts.failed ? `${counts.failed} failed` : '',
+    counts.notStarted ? `${counts.notStarted} not built yet` : '',
+  ].filter(Boolean);
+  return `${total} ${noun}: ${parts.join(' · ')}`;
+};
+
+export type UploadRowStatus = 'waiting' | 'uploading' | 'finalizing' | 'queued' | 'failed';
+
+/** What an upload row says. A large file used to show only "uploading" until done. */
+export const describeUploadRow = (status: UploadRowStatus, percent?: number): string => {
+  switch (status) {
+    case 'waiting': return 'Waiting to upload';
+    case 'uploading': return typeof percent === 'number' ? `Uploading ${percent}%` : 'Uploading';
+    case 'finalizing': return 'Finishing upload';
+    case 'queued': return 'Queued for processing';
+    case 'failed': return 'Upload failed';
+  }
+};
+
+/** Rows still sending data: leaving the page now would lose these files. */
+export const isUploadInFlight = (status: UploadRowStatus): boolean =>
+  status === 'waiting' || status === 'uploading' || status === 'finalizing';

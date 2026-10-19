@@ -34,7 +34,14 @@ import {
   selectVisibleKnowledgeBases,
 } from '../utils/knowledgeBaseTeamAccess';
 import KnowledgeBundleExplorer from '../components/KnowledgeBundleExplorer';
-import { describeMemberBuild, membersLeftOutOfPublish } from '../utils/knowledgeBuildStatus';
+import {
+  describeMemberBuild,
+  describeUploadRow,
+  isUploadInFlight,
+  membersLeftOutOfPublish,
+  summarizeMemberBuilds,
+  type UploadRowStatus,
+} from '../utils/knowledgeBuildStatus';
 import { putGlobalKnowledgeUpload } from '../services/knowledgeApi';
 import {
   addKnowledgeBaseSource,
@@ -498,7 +505,7 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [addSourceId, setAddSourceId] = useState('');
-  const [uploads, setUploads] = useState<Array<{ name: string; status: string }>>([]);
+  const [uploads, setUploads] = useState<Array<{ id: string; name: string; status: UploadRowStatus; percent?: number }>>([]);
   const [explorerSource, setExplorerSource] = useState<{ id: number; title: string } | null>(null);
   const [eligibleTeams, setEligibleTeams] = useState<GovernanceTeam[]>([]);
   const [addTeamId, setAddTeamId] = useState('');
@@ -547,9 +554,19 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
 
   const handleUpload = async (files: FileList | null) => {
     if (!files || !files.length) return;
-    for (const file of Array.from(files)) {
-      setUploads((prev) => [...prev, { name: file.name, status: 'uploading' }]);
-      const mark = (status: string) => setUploads((prev) => prev.map((u) => (u.name === file.name ? { ...u, status } : u)));
+    // List the whole batch at once: files are sent one at a time, and a file added only
+    // when its turn came left users unsure what was still to upload.
+    const batchId = Date.now();
+    const batch = Array.from(files).map((file, index) => ({ id: `${batchId}-${index}`, file }));
+    setUploads((prev) => [
+      ...prev,
+      ...batch.map(({ id, file }) => ({ id, name: file.name, status: 'waiting' as UploadRowStatus })),
+    ]);
+    for (const { id, file } of batch) {
+      const mark = (status: UploadRowStatus, percent?: number) => setUploads((prev) => prev.map((u) => (
+        u.id === id ? { ...u, status, percent } : u
+      )));
+      mark('uploading', 0);
       try {
         const session = await createKnowledgeBaseUploadSession(knowledgeBaseId, file, {
           title: file.name,
@@ -562,7 +579,16 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
           },
         });
         const controller = new AbortController();
-        await putGlobalKnowledgeUpload(session, file, () => undefined, controller.signal);
+        // Re-render only when the whole percent changes; progress events fire far
+        // more often than that on a large file.
+        let shownPercent = 0;
+        await putGlobalKnowledgeUpload(session, file, (uploaded, total) => {
+          const percent = total > 0 ? Math.min(100, Math.floor((uploaded / total) * 100)) : 0;
+          if (percent !== shownPercent) {
+            shownPercent = percent;
+            mark('uploading', percent);
+          }
+        }, controller.signal);
         mark('finalizing');
         await completeKnowledgeBaseUpload(knowledgeBaseId, session.id);
         mark('queued');
@@ -571,10 +597,24 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
         setErr(error instanceof Error ? error.message : 'Upload failed');
       }
     }
-    setTimeout(() => setUploads([]), 2500);
+    // Keep failed rows so the user knows which file to upload again.
+    setTimeout(() => setUploads((prev) => prev.filter((u) => u.status === 'failed')), 2500);
     await reload();
     onChanged();
   };
+
+  // Closing or reloading the page mid-upload loses the file being sent and every file
+  // after it; files already queued process on the server either way.
+  const uploadInFlight = uploads.some((upload) => isUploadInFlight(upload.status));
+  useEffect(() => {
+    if (!uploadInFlight) return undefined;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [uploadInFlight]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -650,7 +690,12 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
 
           <section>
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-800">Sources in this base ({detail.members.length})</h3>
+              <span className="flex min-w-0 flex-col">
+                <h3 className="text-sm font-semibold text-slate-800">Sources in this base ({detail.members.length})</h3>
+                {summarizeMemberBuilds(detail.members) ? (
+                  <span className="text-xs text-slate-500" aria-live="polite">{summarizeMemberBuilds(detail.members)}</span>
+                ) : null}
+              </span>
               {detail.hasUnpublishedChanges && detail.status === 'published' ? (
                 <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200">Unpublished changes</span>
               ) : null}
@@ -712,10 +757,17 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
             {uploads.length ? (
               <ul className="mt-2 space-y-1">
                 {uploads.map((upload) => (
-                  <li key={upload.name} className="flex items-center gap-2 text-xs text-slate-500">
-                    {upload.status === 'failed' ? <X size={12} className="text-red-500" /> : <Loader2 size={12} className="animate-spin" />}
+                  <li key={upload.id} className="flex items-center gap-2 text-xs text-slate-500">
+                    {upload.status === 'failed' ? <X size={12} className="shrink-0 text-red-500" /> : null}
+                    {upload.status === 'queued' ? <CheckCircle2 size={12} className="shrink-0 text-emerald-500" /> : null}
+                    {upload.status === 'waiting' ? <Clock size={12} className="shrink-0" /> : null}
+                    {upload.status === 'uploading' || upload.status === 'finalizing'
+                      ? <Loader2 size={12} className="shrink-0 animate-spin" />
+                      : null}
                     <span className="truncate">{upload.name}</span>
-                    <span className="ml-auto">{upload.status}</span>
+                    <span className={`ml-auto shrink-0 tabular-nums ${upload.status === 'failed' ? 'text-red-600' : ''}`}>
+                      {describeUploadRow(upload.status, upload.percent)}
+                    </span>
                   </li>
                 ))}
               </ul>

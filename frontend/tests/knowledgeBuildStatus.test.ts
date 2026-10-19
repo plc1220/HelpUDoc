@@ -4,7 +4,10 @@ import test from 'node:test';
 import {
   SLOW_STEP_MS,
   describeMemberBuild,
+  describeUploadRow,
+  isUploadInFlight,
   membersLeftOutOfPublish,
+  summarizeMemberBuilds,
 } from '../src/utils/knowledgeBuildStatus.ts';
 import type { KnowledgeBaseMember } from '../src/services/knowledgeBaseApi.ts';
 
@@ -108,4 +111,32 @@ test('a document built with lost knowledge is not shown as complete', () => {
     describeMemberBuild(member({ published: true, ingestionStatus: 'published', ingestionWarnings: [] }), now),
     { tone: 'built' },
   );
+});
+
+test('the summary line says where a batch stands', () => {
+  const summary = summarizeMemberBuilds([
+    member({ knowledgeSourceId: 1, published: true, ingestionStatus: 'published' }),
+    member({ knowledgeSourceId: 2, published: true, ingestionStatus: 'published', ingestionWarnings: ['linking failed'] }),
+    member({ knowledgeSourceId: 3, ingestionStatus: 'enriching', ingestionProgress: progress({ label: 'Building knowledge', percent: 65 }) }),
+    member({ knowledgeSourceId: 4, ingestionStatus: 'queued', ingestionProgress: progress({ queuedAhead: 1 }) }),
+    member({ knowledgeSourceId: 5, ingestionStatus: 'queued', ingestionProgress: progress({ queuedAhead: 2 }) }),
+    member({ knowledgeSourceId: 6, ingestionStatus: 'failed', ingestionError: 'timed out' }),
+  ], now);
+  assert.equal(summary, '6 documents: 2 built (1 with warnings) · 1 processing · 2 queued · 1 failed');
+});
+
+test('the summary line is short when everything is built', () => {
+  assert.equal(summarizeMemberBuilds([
+    member({ knowledgeSourceId: 1, published: true, ingestionStatus: 'published' }),
+  ], now), '1 document built');
+  assert.equal(summarizeMemberBuilds([], now), null);
+});
+
+test('upload rows show progress and which rows are still sending', () => {
+  assert.equal(describeUploadRow('uploading', 42), 'Uploading 42%');
+  assert.equal(describeUploadRow('waiting'), 'Waiting to upload');
+  assert.equal(describeUploadRow('queued'), 'Queued for processing');
+  assert.equal(isUploadInFlight('finalizing'), true);
+  assert.equal(isUploadInFlight('queued'), false);
+  assert.equal(isUploadInFlight('failed'), false);
 });
