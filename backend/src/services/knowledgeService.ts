@@ -17,7 +17,11 @@ import {
   preflightWorkspaceDocument,
   reduceKnowledgeMapResults,
 } from './agentService';
-import { KnowledgeIngestionService } from './knowledgeIngestionService';
+import {
+  KnowledgeIngestionService,
+  describeAgentCallFailure,
+  describeIngestionFailure,
+} from './knowledgeIngestionService';
 import { signAgentContextToken } from './agentToken';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 
@@ -2361,35 +2365,54 @@ export class KnowledgeService {
           status: 'reducing', stage: 'reducing', runId, sourceFingerprint, enrichmentMode, okfVersion: OKF_VERSION,
         });
         const reduceStartedAt = Date.now();
-        reductionResult = await reduceKnowledgeMapResults({
-          workspaceId,
-          mapResults,
-          blocks: extracted.blocks,
-          fanIn: Math.max(2, Math.min(8, Number(process.env.KNOWLEDGE_REDUCE_FAN_IN || 6))),
-          guidance: extractionGuidance,
-        }, { authToken: agentAuthToken });
-        await this.db('knowledge_usage_events').insert({
-          id: randomUUID(),
-          runId,
-          stage: 'reduce',
-          provider: reductionResult.provider,
-          model: reductionResult.model,
-          promptVersion: reductionResult.promptVersion,
-          schemaVersion: reductionResult.schemaVersion,
-          inputTokens: Number(reductionResult.usage?.inputTokens || 0),
-          cachedInputTokens: Number(reductionResult.usage?.cachedInputTokens || 0),
-          outputTokens: Number(reductionResult.usage?.outputTokens || 0),
-          retries: Math.max(0, Number(reductionResult.usage?.attempts || 1) - 1),
-          latencyMs: Date.now() - reduceStartedAt,
-          rateCardVersion: knowledgeRateCard().version,
-          estimatedCost: estimateKnowledgeUsageCost(reductionResult.usage || {}),
-        });
+        // Reduce only adds cross-window aliases and relationships; the map results stay
+        // the evidence-bearing source (see below). A reduce that fails, usually by
+        // timing out on a long document, therefore costs those links and not the
+        // whole build: publish from the map results and say so, as the optional
+        // vector index does.
+        try {
+          reductionResult = await reduceKnowledgeMapResults({
+            workspaceId,
+            mapResults,
+            blocks: extracted.blocks,
+            fanIn: Math.max(2, Math.min(8, Number(process.env.KNOWLEDGE_REDUCE_FAN_IN || 6))),
+            guidance: extractionGuidance,
+          }, { authToken: agentAuthToken });
+        } catch (error) {
+          if (await this.isRunCancelled(runId)) return;
+          const reason = describeAgentCallFailure(error);
+          console.warn('Knowledge reduce failed; publishing from map results', { runId, knowledgeId: id, reason });
+          warnings.push({
+            sourceUnit: 'document',
+            code: 'reduce_failed',
+            message: `Sections were built, but linking concepts across sections failed: ${reason}`,
+          });
+          reductionResult = null;
+        }
+        if (reductionResult) {
+          await this.db('knowledge_usage_events').insert({
+            id: randomUUID(),
+            runId,
+            stage: 'reduce',
+            provider: reductionResult.provider,
+            model: reductionResult.model,
+            promptVersion: reductionResult.promptVersion,
+            schemaVersion: reductionResult.schemaVersion,
+            inputTokens: Number(reductionResult.usage?.inputTokens || 0),
+            cachedInputTokens: Number(reductionResult.usage?.cachedInputTokens || 0),
+            outputTokens: Number(reductionResult.usage?.outputTokens || 0),
+            retries: Math.max(0, Number(reductionResult.usage?.attempts || 1) - 1),
+            latencyMs: Date.now() - reduceStartedAt,
+            rateCardVersion: knowledgeRateCard().version,
+            estimatedCost: estimateKnowledgeUsageCost(reductionResult.usage || {}),
+          });
+        }
         // Reduction contributes cross-window aliases and relationships, while
         // raw map results remain the lossless evidence-bearing source. Keeping
         // both prevents a model reducer from silently pruning an entire topic.
         canonicalConcepts = pruneThinOrphanConcepts(canonicalizeMapResults([
           ...mapResults,
-          reductionResult,
+          ...(reductionResult ? [reductionResult] : []),
         ]));
         if (!canonicalConcepts.length && processedSourceUnits > 0) {
           throw new ConflictError('Gemini Lite enrichment produced no publishable concepts');
@@ -2803,14 +2826,10 @@ export class KnowledgeService {
         okfVersion: OKF_VERSION,
       });
     } catch (error) {
-      // Agent (FastAPI) failures surface as axios errors whose useful reason lives in
-      // response.data.detail; error.message alone is just "Request failed with status code NNN".
-      const baseMessage = error instanceof Error ? error.message : String(error);
-      const agentDetail = (error as any)?.response?.data?.detail;
-      const message = agentDetail
-        ? `${baseMessage}: ${typeof agentDetail === 'string' ? agentDetail : JSON.stringify(agentDetail)}`
-        : baseMessage;
+      // Shown to users on the knowledge base page, so it names the step and says what
+      // went wrong in words (see `describeIngestionFailure`).
       const failedSource = await this.db('knowledge_sources').select('metadata').where({ id, workspaceId }).first();
+      const message = describeIngestionFailure(error, this.getIngestionMetadata(failedSource?.metadata)?.stage);
       const failedRunId = this.getIngestionMetadata(failedSource?.metadata)?.runId;
       if (failedRunId) {
         await this.db('knowledge_ingestion_tasks')

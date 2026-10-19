@@ -10,6 +10,20 @@ const client = axios.create({
 
 const DOCUMENT_EXTRACTION_TIMEOUT_MS = 5 * 60 * 1000;
 
+/**
+ * Reduce merges the map results of a whole document in one call, so its time grows
+ * with the document. It shared the 5-minute limit of a single map window, and on
+ * 2026-10-16 the Consumer Credit Act (Act 873) failed there. 15 minutes by default;
+ * never below the per-window limit. The worker renews its lease every 30 seconds, so
+ * a long reduce is not mistaken for a dead worker.
+ */
+export const knowledgeReduceTimeoutMs = (): number => {
+  const configured = Number(process.env.KNOWLEDGE_REDUCE_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.max(DOCUMENT_EXTRACTION_TIMEOUT_MS, configured)
+    : 15 * 60 * 1000;
+};
+
 export type AgentHistoryEntry = {
   role: string;
   content: string;
@@ -477,7 +491,7 @@ export async function reduceKnowledgeMapResults(payload: {
   const headers: Record<string, string> = {};
   if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
   const res = await client.post('/knowledge/ingestion/reduce', payload, {
-    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    timeout: knowledgeReduceTimeoutMs(),
     headers,
   });
   return res.data;

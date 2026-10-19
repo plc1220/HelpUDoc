@@ -235,3 +235,44 @@ export class KnowledgeIngestionService {
     return safeJob;
   }
 }
+
+const STAGE_NAMES: Record<string, string> = {
+  extracting: 'reading',
+  structuring: 'structure',
+  chunking: 'sectioning',
+  enriching: 'concept-building',
+  reducing: 'consolidation',
+  validating: 'validation',
+  indexing: 'indexing',
+  publishing: 'publishing',
+};
+
+/**
+ * Plain-language reason for a failed call to the agent.
+ *
+ * Users read this on the knowledge base page. An axios timeout used to show there as
+ * "timeout of 300000ms exceeded", which reads like a crash. The agent's own reason
+ * lives in `response.data.detail`; `error.message` alone is only the HTTP status.
+ */
+export const describeAgentCallFailure = (error: unknown): string => {
+  const failure = error as { code?: string; message?: string; config?: { timeout?: number }; response?: { data?: { detail?: unknown } } };
+  const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+  const timedOutAfter = /timeout of (\d+)ms exceeded/.exec(message);
+  if (failure?.code === 'ECONNABORTED' || timedOutAfter) {
+    const timeoutMs = Number(failure?.config?.timeout) || Number(timedOutAfter?.[1]) || 0;
+    const minutes = Math.round(timeoutMs / 60_000);
+    return minutes > 0
+      ? `the step took longer than ${minutes} minute${minutes === 1 ? '' : 's'} and was stopped`
+      : 'the step took too long and was stopped';
+  }
+  const detail = failure?.response?.data?.detail;
+  if (detail) return `${message}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+  return message;
+};
+
+/** The message stored on a failed build, naming the step it failed in. */
+export const describeIngestionFailure = (error: unknown, stage?: string | null): string => {
+  const reason = describeAgentCallFailure(error);
+  const step = stage ? STAGE_NAMES[stage] : undefined;
+  return step ? `The ${step} step failed: ${reason}.` : `The build failed: ${reason}.`;
+};
