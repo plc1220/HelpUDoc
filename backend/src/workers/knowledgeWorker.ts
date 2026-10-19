@@ -8,6 +8,7 @@ import { FileService } from '../services/fileService';
 import { KnowledgeService } from '../services/knowledgeService';
 import { WorkspaceService } from '../services/workspaceService';
 import { redisClient } from '../services/redisService';
+import { KnowledgeIngestionPool } from './knowledgeIngestionPool';
 
 const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -30,6 +31,18 @@ async function main() {
   let stopping = false;
   process.on('SIGTERM', () => { stopping = true; });
   process.on('SIGINT', () => { stopping = true; });
+  const pool = new KnowledgeIngestionPool({
+    concurrency,
+    claim: (limit, excludeRunIds) => knowledgeService.claimPendingIngestions(limit, excludeRunIds),
+    run: (job) => knowledgeService.runPendingIngestion(job),
+    onError: (job, error) => {
+      console.error('Knowledge ingestion run failed', {
+        runId: String(job.id),
+        knowledgeId: job.knowledgeId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  });
   console.log(`Knowledge worker started (concurrency=${concurrency}, pollMs=${pollMs})`);
   while (!stopping) {
     try {
@@ -37,13 +50,17 @@ async function main() {
         await knowledgeService.cleanupExpiredUploadSessions();
         lastUploadCleanupAt = Date.now();
       }
-      const claimed = await knowledgeService.processPendingIngestions(concurrency);
-      if (!claimed) await delay(pollMs);
+      await pool.fill();
+      // Wake when a run ends, so its slot is refilled at once, or after pollMs to
+      // pick up newly queued uploads.
+      await pool.waitForSlot(pollMs);
     } catch (error) {
       console.error('Knowledge worker iteration failed', error);
       await delay(pollMs);
     }
   }
+  // Let runs in progress finish. A run cut off here resumes from its expired lease.
+  await pool.drain();
   await databaseService.getDb().destroy();
   if (redisClient.isOpen) await redisClient.quit();
 }

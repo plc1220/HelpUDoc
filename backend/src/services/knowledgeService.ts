@@ -2060,8 +2060,17 @@ export class KnowledgeService {
     this.inFlightIngestions.set(id, promise);
   }
 
-  async processPendingIngestions(limit = 2): Promise<number> {
-    const jobs = await this.db('knowledge_ingestion_jobs as job')
+  /**
+   * Ingestion runs the worker may start now, oldest first.
+   *
+   * *excludeRunIds* are runs this worker is already executing. `runIngestion` claims its
+   * task atomically, so a run cannot execute twice, but it does some work before that
+   * claim; excluding the worker's own runs keeps a poll from starting a second copy that
+   * would only reset the first one's progress.
+   */
+  async claimPendingIngestions(limit: number, excludeRunIds: string[] = []): Promise<any[]> {
+    if (limit < 1) return [];
+    const query = this.db('knowledge_ingestion_jobs as job')
       .join('knowledge_ingestion_tasks as task', 'task.runId', 'job.id')
       .where('task.taskType', 'orchestrate')
       .whereIn('job.status', [
@@ -2072,29 +2081,31 @@ export class KnowledgeService {
         builder.where('task.status', 'queued').orWhere((expired) => {
           expired.where('task.status', 'processing').andWhere('task.leaseExpiresAt', '<', new Date());
         });
-      })
+      });
+    if (excludeRunIds.length) query.whereNotIn('job.id', excludeRunIds);
+    return query
       .select('job.*')
       .orderBy('job.createdAt', 'asc')
-      .limit(Math.max(1, Math.min(8, limit)));
-    await Promise.all(jobs.map(async (job) => {
-      const configuration = this.normalizeMetadata(job.configuration);
-      const userId = String(configuration.requestedBy || '');
-      if (!userId) {
-        await this.ingestionService.transition(String(job.id), {
-          status: 'failed',
-          stage: 'failed',
-          error: 'Knowledge worker cannot resume a run without requestedBy',
-        });
-        return;
-      }
-      await this.runIngestion(
-        String(job.workspaceId),
-        Number(job.knowledgeId),
-        userId,
-        configuration.allowSystemAdmin === true,
-      );
-    }));
-    return jobs.length;
+      .limit(Math.min(8, limit));
+  }
+
+  async runPendingIngestion(job: any): Promise<void> {
+    const configuration = this.normalizeMetadata(job.configuration);
+    const userId = String(configuration.requestedBy || '');
+    if (!userId) {
+      await this.ingestionService.transition(String(job.id), {
+        status: 'failed',
+        stage: 'failed',
+        error: 'Knowledge worker cannot resume a run without requestedBy',
+      });
+      return;
+    }
+    await this.runIngestion(
+      String(job.workspaceId),
+      Number(job.knowledgeId),
+      userId,
+      configuration.allowSystemAdmin === true,
+    );
   }
 
   private async runIngestion(workspaceId: string, id: number, userId: string, allowSystemAdmin = false): Promise<void> {
