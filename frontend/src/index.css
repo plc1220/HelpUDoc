@@ -1314,6 +1314,13 @@ body {
   overflow: visible;
 }
 
+/* "Show earlier messages" above a long conversation's newest messages. */
+.lumo-earlier-messages {
+  display: flex;
+  width: fit-content;
+  margin: var(--spacing-2) auto var(--spacing-3);
+}
+
 .lumo-message-width {
   position: relative;
   min-width: 0;

@@ -2,11 +2,12 @@ import {
   ChatMessageList as AstryxChatMessageList,
   ChatSystemMessage,
 } from '@astryxdesign/core/Chat';
+import { Button } from '@astryxdesign/core/Button';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Icon } from '@astryxdesign/core/Icon';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 import { MessageSquareText } from 'lucide-react';
-import { type Dispatch, type SetStateAction, useMemo } from 'react';
+import { type Dispatch, type SetStateAction, useMemo, useState } from 'react';
 import type { Components } from 'react-markdown';
 
 import type {
@@ -15,6 +16,7 @@ import type {
   InterruptAnswersByQuestionId,
 } from '../../types';
 import ChatMessageBubble from './ChatMessageBubble';
+import { nextMessageWindow, showEarlierMessages, type MessageWindow } from './messageWindow';
 import type { RenderableInterruptAction } from './interruptActions';
 
 type RerunMessageOptions = {
@@ -115,9 +117,23 @@ export default function ChatMessageList({
     return latestAgentMessage?.id ?? null;
   }, [messages]);
 
+  // Render the newest messages only; see `nextMessageWindow`. Updated during render, the
+  // documented way to derive state from props, so the first paint is already windowed.
+  const conversationKey = String(messages[0]?.conversationId ?? '');
+  const [messageWindow, setMessageWindow] = useState<MessageWindow | null>(null);
+  const nextWindow = nextMessageWindow(messageWindow, conversationKey, messages.length);
+  if (nextWindow !== messageWindow) {
+    setMessageWindow(nextWindow);
+  }
+  const windowStart = nextWindow ? Math.min(nextWindow.start, messages.length) : 0;
+  const visibleMessages = useMemo(
+    () => (windowStart > 0 ? messages.slice(windowStart) : messages),
+    [messages, windowStart],
+  );
+
   const messageGroups = useMemo(() => {
     const groups: { dateLabel: string; messages: ConversationMessage[] }[] = [];
-    messages.forEach((message) => {
+    visibleMessages.forEach((message) => {
       const dateLabel = formatDateLabel(message.updatedAt || message.createdAt);
       const lastGroup = groups[groups.length - 1];
       if (!lastGroup || lastGroup.dateLabel !== dateLabel) {
@@ -127,10 +143,19 @@ export default function ChatMessageList({
       lastGroup.messages.push(message);
     });
     return groups;
-  }, [messages]);
+  }, [visibleMessages]);
 
   return (
     <div className="lumo-message-list">
+      {windowStart > 0 && nextWindow ? (
+        <Button
+          className="lumo-earlier-messages"
+          label={`Show earlier messages (${windowStart} hidden)`}
+          variant="ghost"
+          size="sm"
+          onClick={() => setMessageWindow(showEarlierMessages(nextWindow))}
+        />
+      ) : null}
       <AstryxChatMessageList
         density="balanced"
         gap={3}
