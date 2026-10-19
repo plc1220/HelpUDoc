@@ -95,6 +95,12 @@ export default function knowledgeBaseRoutes(service: KnowledgeBaseService, knowl
     } catch (error) { handle(res, error, 'Failed to remove source from knowledge base'); }
   });
 
+  router.post('/:id/sources/:sourceId/rebuild', async (req, res) => {
+    try {
+      res.status(202).json(await service.rebuildSource(userId(req), req.params.id, Number(req.params.sourceId)));
+    } catch (error) { handle(res, error, 'Failed to rebuild knowledge source'); }
+  });
+
   // Read-only OKF explorer data for a member source, authorized via KB access.
   router.get('/:id/sources/:sourceId/graph', async (req, res) => {
     try {

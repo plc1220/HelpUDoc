@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  AlertCircle,
   BookOpen,
   CheckCircle2,
+  Clock,
   FileText,
   FolderOpen,
   History,
@@ -32,6 +34,7 @@ import {
   selectVisibleKnowledgeBases,
 } from '../utils/knowledgeBaseTeamAccess';
 import KnowledgeBundleExplorer from '../components/KnowledgeBundleExplorer';
+import { describeMemberBuild, membersLeftOutOfPublish } from '../utils/knowledgeBuildStatus';
 import { putGlobalKnowledgeUpload } from '../services/knowledgeApi';
 import {
   addKnowledgeBaseSource,
@@ -51,11 +54,13 @@ import {
   fetchKnowledgeBaseVersions,
   grantKnowledgeBaseTeam,
   publishKnowledgeBase,
+  rebuildKnowledgeBaseSource,
   removeKnowledgeBaseSource,
   revokeKnowledgeBaseTeam,
   type AssignableSource,
   type GovernanceTeam,
   type KnowledgeBaseDetail,
+  type KnowledgeBaseMember,
   type KnowledgeBaseStatus,
   type KnowledgeBaseSummary,
   type KnowledgeBaseTeamGrant,
@@ -86,6 +91,93 @@ const guessKnowledgeType = (fileName: string): string => {
   if (['pptx', 'ppt'].includes(ext)) return 'presentation';
   return 'text';
 };
+
+/** The member's name, with what its build is doing or why it failed underneath. */
+function MemberTitle({ member }: { member: KnowledgeBaseMember }) {
+  const status = describeMemberBuild(member);
+  const detail = 'detail' in status ? status.detail : undefined;
+  return (
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="truncate text-sm text-slate-700">{member.title}</span>
+      {detail ? (
+        <span className={`text-xs ${status.tone === 'failed' ? 'text-red-600' : status.tone === 'warning' ? 'text-amber-700' : 'text-slate-500'}`}>{detail}</span>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * A member's build state. Replaces a spinner beside the raw stage name and a grey
+ * "not built" that also covered failed builds (see `describeMemberBuild`).
+ */
+function MemberBuildBadge({
+  member,
+  canRetry,
+  onRetry,
+}: {
+  member: KnowledgeBaseMember;
+  canRetry: boolean;
+  onRetry: () => void;
+}) {
+  const status = describeMemberBuild(member);
+  if (status.tone === 'built') {
+    return <CheckCircle2 size={15} className="shrink-0 text-emerald-500" aria-label="Built" />;
+  }
+  if (status.tone === 'failed') {
+    return (
+      <span className="flex min-w-0 shrink items-center gap-2">
+        <span className="inline-flex min-w-0 items-center gap-1 text-xs font-medium text-red-600">
+          <AlertCircle size={13} className="shrink-0" />
+          <span className="truncate">{status.text}</span>
+        </span>
+        {canRetry ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            <RefreshCw size={12} /> Retry
+          </button>
+        ) : null}
+      </span>
+    );
+  }
+  if (status.tone === 'idle') {
+    return <span className="shrink-0 text-xs text-slate-400">{status.text}</span>;
+  }
+  if (status.tone === 'warning') {
+    // Sections are cached, so a rebuild mostly reruns the cross-section step that
+    // failed, which may succeed when the queue and Gemini are less busy.
+    return (
+      <span className="flex shrink-0 items-center gap-2">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
+          <AlertCircle size={12} className="shrink-0" />
+          <span>{status.text}</span>
+        </span>
+        {canRetry ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            <RefreshCw size={12} /> Rebuild
+          </button>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`shrink-0 inline-flex items-center gap-1 text-xs ${status.tone === 'stalled' ? 'text-amber-700' : status.tone === 'queued' ? 'text-slate-500' : 'text-sky-700'}`}
+    >
+      {status.tone === 'stalled' ? <AlertCircle size={12} className="shrink-0" /> : null}
+      {/* Waiting is not working: a spinner on a queued file read as a stuck build. */}
+      {status.tone === 'queued' ? <Clock size={12} className="shrink-0" /> : null}
+      {status.tone === 'pending' ? <Loader2 size={12} className="shrink-0 animate-spin" /> : null}
+      <span>{status.text}</span>
+    </span>
+  );
+}
 
 const isPendingIngestion = (status?: string | null): boolean => {
   const s = (status || '').toLowerCase();
@@ -523,7 +615,20 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
               type="button"
               disabled={busy || !detail.hasUnpublishedChanges}
               title={detail.hasUnpublishedChanges ? undefined : 'No changes since the last published version'}
-              onClick={() => void run(() => publishKnowledgeBase(knowledgeBaseId, {}))}
+              onClick={() => {
+                // Warn rather than block: one broken document must not stop a team
+                // publishing the rest. A document left out joins the next version.
+                const leftOut = membersLeftOutOfPublish(detail.members);
+                if (leftOut.length) {
+                  const names = leftOut.slice(0, 5).map((member) => `• ${member.title}`).join('\n');
+                  const more = leftOut.length > 5 ? `\n…and ${leftOut.length - 5} more` : '';
+                  const confirmed = window.confirm(
+                    `${leftOut.length} ${leftOut.length === 1 ? 'document is' : 'documents are'} not built yet and will be left out of this version:\n\n${names}${more}\n\nPublish anyway? You can publish again once they are built.`,
+                  );
+                  if (!confirmed) return;
+                }
+                void run(() => publishKnowledgeBase(knowledgeBaseId, {}));
+              }}
               className="settings-portal-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
@@ -557,20 +662,18 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
                 {detail.members.map((member) => (
                   <li key={member.knowledgeSourceId} className="flex items-center gap-3 px-3 py-2.5">
                     <FileText size={16} className="shrink-0 text-slate-400" />
-                    <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{member.title}</span>
+                    <MemberTitle member={member} />
                     {member.addedSincePublish && detail.status === 'published' ? (
                       <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">New</span>
                     ) : null}
                     {member.changedSincePublish ? (
                       <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">Updated</span>
                     ) : null}
-                    {isPendingIngestion(member.ingestionStatus) ? (
-                      <span className="shrink-0 inline-flex items-center gap-1 text-xs text-sky-600"><Loader2 size={12} className="animate-spin" />{member.ingestionStage || 'processing'}</span>
-                    ) : member.published ? (
-                      <CheckCircle2 size={15} className="shrink-0 text-emerald-500" />
-                    ) : (
-                      <span className="shrink-0 text-xs text-slate-400">not built</span>
-                    )}
+                    <MemberBuildBadge
+                      member={member}
+                      canRetry={canManage && !busy}
+                      onRetry={() => void run(() => rebuildKnowledgeBaseSource(knowledgeBaseId, member.knowledgeSourceId))}
+                    />
                     {member.published ? (
                       <button type="button" onClick={() => setExplorerSource({ id: member.knowledgeSourceId, title: member.title })} className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50" aria-label="Explore OKF concepts">
                         <FolderOpen size={13} /> Explore

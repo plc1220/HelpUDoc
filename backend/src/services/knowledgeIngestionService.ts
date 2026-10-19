@@ -276,3 +276,92 @@ export const describeIngestionFailure = (error: unknown, stage?: string | null):
   const step = stage ? STAGE_NAMES[stage] : undefined;
   return step ? `The ${step} step failed: ${reason}.` : `The build failed: ${reason}.`;
 };
+
+export type IngestionProgress = {
+  /** Plain-language step, e.g. "Consolidating concepts", never the raw stage name. */
+  label: string;
+  percent: number;
+  /** Builds ahead of this one in the shared worker queue; only while queued. */
+  queuedAhead: number | null;
+  /** When the current step began. A stage change is the job row's last update. */
+  stageSince: string | null;
+  /**
+   * The worker stopped renewing its lease, so it restarted or died mid-build. Another
+   * pass resumes the build once the lease lapses, so this is a pause, not a failure.
+   */
+  stalled: boolean;
+  /** Sections finished while concepts are built, the longest step; else null. */
+  sections: { done: number; total: number } | null;
+};
+
+/**
+ * Progress for one build, from its job and orchestrate task rows.
+ *
+ * *activeRunIds* are every unfinished build in the worker queue, oldest first. The
+ * worker is shared by all knowledge bases, so a file can wait behind another team's
+ * upload, and "queued" alone gave no hint of how long.
+ */
+export const summarizeIngestionProgress = (input: {
+  runId: string;
+  status: string;
+  activeRunIds: string[];
+  jobUpdatedAt?: Date | string | null;
+  taskStatus?: string | null;
+  taskLeaseExpiresAt?: Date | string | null;
+  sectionsDone?: unknown;
+  sectionsTotal?: unknown;
+  now?: Date;
+}): IngestionProgress => {
+  const progress = JOB_PROGRESS[input.status] || JOB_PROGRESS.queued;
+  const now = input.now ?? new Date();
+  const position = input.activeRunIds.indexOf(input.runId);
+  const leaseExpiresAt = input.taskLeaseExpiresAt ? new Date(input.taskLeaseExpiresAt) : null;
+  return {
+    label: progress.label,
+    percent: progress.percent,
+    queuedAhead: input.status === 'queued' && position >= 0 ? position : null,
+    stageSince: input.jobUpdatedAt ? new Date(input.jobUpdatedAt).toISOString() : null,
+    stalled: input.taskStatus === 'processing'
+      && leaseExpiresAt !== null
+      && leaseExpiresAt.getTime() < now.getTime(),
+    sections: input.status === 'enriching' && Number(input.sectionsTotal) > 0
+      ? {
+        done: Math.min(Number(input.sectionsTotal), Math.max(0, Number(input.sectionsDone) || 0)),
+        total: Number(input.sectionsTotal),
+      }
+      : null,
+  };
+};
+
+/**
+ * Warnings that mean a built document holds less than it should.
+ *
+ * A build that published from its map results after reduce failed, or lost pages,
+ * showed the same green tick as a complete one. Extraction also records page-level
+ * notes (OCR and similar) that are routine, so only these are surfaced.
+ */
+const KNOWLEDGE_LOSS_WARNING_CODES = new Set(['reduce_failed', 'vector_index_failed']);
+
+export const buildQualityWarnings = (ingestion: Record<string, any> | null | undefined): string[] => {
+  if (!ingestion) return [];
+  const messages: string[] = [];
+  const failed = Number(ingestion.failedSourceUnits || 0);
+  const discovered = Number(ingestion.discoveredSourceUnits || 0);
+  if (ingestion.status === 'partial' && failed > 0) {
+    messages.push(discovered > 0
+      ? `${failed} of ${discovered} parts of the document could not be read and are missing.`
+      : `${failed} parts of the document could not be read and are missing.`);
+  }
+  const warnings = Array.isArray(ingestion.warnings) ? ingestion.warnings : [];
+  for (const warning of warnings) {
+    if (warning && KNOWLEDGE_LOSS_WARNING_CODES.has(String(warning.code)) && warning.message) {
+      messages.push(String(warning.message));
+    }
+  }
+  return messages;
+};
+
+export const ACTIVE_INGESTION_STATUSES: KnowledgeJobStatus[] = [
+  'queued', 'extracting', 'structuring', 'chunking', 'enriching',
+  'reducing', 'validating', 'indexing', 'publishing',
+];

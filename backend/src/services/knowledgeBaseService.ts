@@ -2,6 +2,12 @@ import { randomUUID } from 'crypto';
 import { Knex } from 'knex';
 import { DatabaseService } from './databaseService';
 import { KnowledgeService } from './knowledgeService';
+import {
+  ACTIVE_INGESTION_STATUSES,
+  buildQualityWarnings,
+  summarizeIngestionProgress,
+  type IngestionProgress,
+} from './knowledgeIngestionService';
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import {
   DEFAULT_KNOWLEDGE_BASE_ID,
@@ -303,6 +309,49 @@ export class KnowledgeBaseService {
     return { flagged, hasUnpublishedChanges };
   }
 
+  /** Progress for each member still building, keyed by run id. */
+  private async ingestionProgress(sources: Array<{ metadata: unknown }>): Promise<Map<string, IngestionProgress>> {
+    const pending = sources
+      .map((row) => readIngestion(row.metadata))
+      .filter((ingestion) => ingestion?.runId && ACTIVE_INGESTION_STATUSES.includes(ingestion.status))
+      .map((ingestion) => ({
+        runId: String(ingestion!.runId),
+        status: String(ingestion!.status),
+        sectionsDone: ingestion!.sectionsDone,
+        sectionsTotal: ingestion!.sectionsTotal,
+      }));
+    const progress = new Map<string, IngestionProgress>();
+    if (!pending.length) return progress;
+    const runIds = pending.map((item) => item.runId);
+    const [activeJobs, tasks] = await Promise.all([
+      this.db('knowledge_ingestion_jobs')
+        .whereIn('status', ACTIVE_INGESTION_STATUSES)
+        .select('id', 'updatedAt')
+        .orderBy('createdAt', 'asc'),
+      this.db('knowledge_ingestion_tasks')
+        .whereIn('runId', runIds)
+        .where({ taskType: 'orchestrate' })
+        .select('runId', 'status', 'leaseExpiresAt'),
+    ]);
+    const activeRunIds = activeJobs.map((job: any) => String(job.id));
+    const jobById = new Map(activeJobs.map((job: any) => [String(job.id), job]));
+    const taskByRunId = new Map(tasks.map((task: any) => [String(task.runId), task]));
+    for (const item of pending) {
+      const task: any = taskByRunId.get(item.runId);
+      progress.set(item.runId, summarizeIngestionProgress({
+        runId: item.runId,
+        status: item.status,
+        activeRunIds,
+        jobUpdatedAt: (jobById.get(item.runId) as any)?.updatedAt ?? null,
+        taskStatus: task?.status ?? null,
+        taskLeaseExpiresAt: task?.leaseExpiresAt ?? null,
+        sectionsDone: item.sectionsDone,
+        sectionsTotal: item.sectionsTotal,
+      }));
+    }
+    return progress;
+  }
+
   async getDetail(userId: string, knowledgeBaseId: string) {
     const kb = await this.requireKb(knowledgeBaseId);
     if (!await this.canView(userId, kb)) throw new NotFoundError('Knowledge base not found');
@@ -310,18 +359,27 @@ export class KnowledgeBaseService {
       .where({ knowledgeBaseId })
       .select('id', 'title', 'type', 'fileId', 'metadata')
       .orderBy('title', 'asc');
+    const progressByRunId = await this.ingestionProgress(sources);
     const rawMembers = sources.map((row: any) => {
       const ingestion = readIngestion(row.metadata);
       const snapshotHash = readSnapshotHash(row.metadata);
+      const status = ingestion?.status ? String(ingestion.status) : null;
+      const runId = ingestion?.runId ? String(ingestion.runId) : null;
       return {
         knowledgeSourceId: Number(row.id),
         title: String(row.title),
         type: String(row.type),
         snapshotHash,
         published: Boolean(snapshotHash),
-        ingestionStatus: ingestion?.status ? String(ingestion.status) : null,
+        ingestionStatus: status,
         ingestionStage: ingestion?.stage ? String(ingestion.stage) : null,
         coveragePercent: typeof ingestion?.coveragePercent === 'number' ? ingestion.coveragePercent : null,
+        // The page offers Retry on a failed build and shows why it failed; before, a
+        // failure read "not built", the same as a file that was never started.
+        ingestionRunId: runId,
+        ingestionError: status === 'failed' && ingestion?.error ? String(ingestion.error) : null,
+        ingestionProgress: runId ? progressByRunId.get(runId) ?? null : null,
+        ingestionWarnings: buildQualityWarnings(ingestion),
       };
     });
     const publishedMembers = await this.latestPublishedMembers(knowledgeBaseId);
@@ -372,6 +430,24 @@ export class KnowledgeBaseService {
     await this.db('knowledge_sources')
       .where({ id: knowledgeSourceId, knowledgeBaseId })
       .update({ knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID, updatedAt: this.db.fn.now() });
+    return this.getDetail(userId, knowledgeBaseId);
+  }
+
+  /**
+   * Build a member again, usually after a failed build.
+   *
+   * The source-level retry is for Platform Admins only, but whoever manages a base must
+   * be able to recover one of its documents. Queued as the storage actor, the same
+   * identity the upload that created it used.
+   */
+  async rebuildSource(userId: string, knowledgeBaseId: string, knowledgeSourceId: number) {
+    const kb = await this.requireKb(knowledgeBaseId);
+    await this.requireManage(userId, kb);
+    const source = await this.db('knowledge_sources')
+      .where({ id: knowledgeSourceId, knowledgeBaseId })
+      .first('id');
+    if (!source) throw new NotFoundError('Knowledge source not found in this knowledge base');
+    await this.knowledgeService.rebuildGlobal(knowledgeSourceId, KNOWLEDGE_STORAGE_USER_ID);
     return this.getDetail(userId, knowledgeBaseId);
   }
 

@@ -1976,6 +1976,29 @@ export class KnowledgeService {
     };
   }
 
+  /**
+   * How many sections the concept-building step has finished, for the knowledge base
+   * page. It is the longest step, and a single "Building knowledge · 65%" sat unchanged
+   * for minutes on a long document.
+   *
+   * Written with jsonb_set straight to the source row: `updateIngestionMetadata` would
+   * also touch the job row, whose `updatedAt` the page reads as the start of the
+   * current step. Best effort, so a failed write never stops the build.
+   */
+  private async recordSectionProgress(id: number, done: number, total: number): Promise<void> {
+    await this.db('knowledge_sources')
+      .where({ id })
+      .update({
+        metadata: this.db.raw(
+          `jsonb_set(jsonb_set(coalesce(metadata, '{}'::jsonb), '{ingestion,sectionsDone}', to_jsonb(?::int), true), '{ingestion,sectionsTotal}', to_jsonb(?::int), true)`,
+          [done, total],
+        ),
+      })
+      .catch((error: unknown) => {
+        console.warn('Could not record knowledge section progress', { knowledgeId: id, error });
+      });
+  }
+
   private async updateIngestionMetadata(
     workspaceId: string,
     id: number,
@@ -2272,6 +2295,7 @@ export class KnowledgeService {
         const structureById = new Map(extracted.structure.map((node) => [String(node.id), node]));
         const parsedConcurrency = Number(process.env.KNOWLEDGE_MAP_CONCURRENCY || 4);
         const concurrency = Number.isFinite(parsedConcurrency) ? Math.max(1, Math.min(8, parsedConcurrency)) : 4;
+        await this.recordSectionProgress(id, 0, extracted.windows.length);
         for (let offset = 0; offset < extracted.windows.length; offset += concurrency) {
           if (await this.isRunCancelled(runId)) return;
           const batch = extracted.windows.slice(offset, offset + concurrency);
@@ -2360,6 +2384,7 @@ export class KnowledgeService {
               });
           }));
           mapResults.push(...responses);
+          await this.recordSectionProgress(id, mapResults.length, extracted.windows.length);
         }
         await this.updateIngestionMetadata(workspaceId, id, {
           status: 'reducing', stage: 'reducing', runId, sourceFingerprint, enrichmentMode, okfVersion: OKF_VERSION,

@@ -37,6 +37,22 @@ export type KnowledgeBaseMember = {
   ingestionStatus?: string | null;
   ingestionStage?: string | null;
   coveragePercent?: number | null;
+  ingestionRunId?: string | null;
+  /** Why the latest build failed, in words; set only when it failed. */
+  ingestionError?: string | null;
+  /** Set while a build is queued or running. */
+  ingestionProgress?: KnowledgeIngestionProgress | null;
+  /** Ways a built document holds less than it should; empty when complete. */
+  ingestionWarnings?: string[];
+};
+
+export type KnowledgeIngestionProgress = {
+  label: string;
+  percent: number;
+  queuedAhead: number | null;
+  stageSince: string | null;
+  stalled: boolean;
+  sections?: { done: number; total: number } | null;
 };
 
 export type KnowledgeBaseDetail = KnowledgeBaseSummary & {
@@ -144,6 +160,9 @@ export const addKnowledgeBaseSource = (id: string, knowledgeSourceId: number) =>
 
 export const removeKnowledgeBaseSource = (id: string, sourceId: number) =>
   jsonRequest<KnowledgeBaseDetail>(`${API_URL}/knowledge-bases/${encodeURIComponent(id)}/sources/${sourceId}`, jsonBody('DELETE'), 'Failed to remove source');
+
+export const rebuildKnowledgeBaseSource = (id: string, sourceId: number) =>
+  jsonRequest<KnowledgeBaseDetail>(`${API_URL}/knowledge-bases/${encodeURIComponent(id)}/sources/${sourceId}/rebuild`, jsonBody('POST'), 'Failed to rebuild document');
 
 export const publishKnowledgeBase = (id: string, input: { version?: string; note?: string } = {}) =>
   jsonRequest<KnowledgeBaseDetail>(`${API_URL}/knowledge-bases/${encodeURIComponent(id)}/publish`, jsonBody('POST', input), 'Failed to publish knowledge base');
