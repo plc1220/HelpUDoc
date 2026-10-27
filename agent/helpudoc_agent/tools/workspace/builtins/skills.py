@@ -166,7 +166,8 @@ class RunSkillPythonScriptInput(BaseModel):
         default=None,
         description=(
             "Declared sandbox script name from the active skill. The interpreter follows the "
-            "declared file extension: .py runs on Python, .js/.mjs/.cjs on Node.js. "
+            "declared file extension: .py runs on Python, .js/.mjs/.cjs on Node.js, and "
+            ".ts/.mts/.cts on Node.js with type stripping (no enum or namespace). "
             "Mutually exclusive with inline_code."
         ),
     )
@@ -174,7 +175,7 @@ class RunSkillPythonScriptInput(BaseModel):
         default=None,
         description=(
             "Complete Python source to execute in an isolated sandbox Job. Inline runs are Python "
-            "only; declare a script file to use JavaScript. "
+            "only; declare a script file to use JavaScript or TypeScript. "
             "Mutually exclusive with script_name. Inline code has no /workspace mount: read staged "
             "inputs at their workspace-relative staged paths in the run directory and write every artifact to a declared "
             "output_paths entry."

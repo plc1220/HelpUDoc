@@ -7,6 +7,7 @@ import hashlib
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -113,7 +114,23 @@ SCRIPT_LANGUAGE_BY_SUFFIX = {
     ".js": "javascript",
     ".cjs": "javascript",
     ".mjs": "javascript",
+    # Node 22.18+ strips TypeScript types itself, so .ts runs on the same node
+    # binary with no tsx or compile step. Only erasable syntax works: enums,
+    # namespaces and parameter properties fail (see TYPESCRIPT_SYNTAX_HINT).
+    ".ts": "typescript",
+    ".cts": "typescript",
+    ".mts": "typescript",
 }
+
+# Oldest Node that runs .ts without a flag.
+MIN_NODE_FOR_TYPESCRIPT = (22, 18)
+
+TYPESCRIPT_SYNTAX_HINT = (
+    "Node.js runs TypeScript by removing type annotations, so syntax that needs "
+    "compiling is not supported: enum, namespace and constructor parameter "
+    "properties. Use a const object (`const Color = { Red: 'red' } as const`) "
+    "instead of an enum, and plain fields instead of parameter properties."
+)
 
 
 def resolve_script_language(script_path: str | Path) -> str:
@@ -149,11 +166,46 @@ def _local_interpreter(language: str) -> str:
             "This script needs Node.js, which is not installed on this host. "
             "Install Node.js, or run with the Kubernetes sandbox backend."
         )
+    if language == "typescript":
+        version = _node_version(node)
+        if version is not None and version < MIN_NODE_FOR_TYPESCRIPT:
+            raise SandboxExecutionError(
+                f"This TypeScript script needs Node.js "
+                f"{MIN_NODE_FOR_TYPESCRIPT[0]}.{MIN_NODE_FOR_TYPESCRIPT[1]} or later, "
+                f"but this host has {'.'.join(str(part) for part in version)}. "
+                "Upgrade Node.js, or run with the Kubernetes sandbox backend."
+            )
     return node
 
 
+def _node_version(node: str) -> tuple[int, ...] | None:
+    """(major, minor) of the node binary, or None when it cannot be read."""
+    try:
+        output = subprocess.run(
+            [node, "--version"], capture_output=True, text=True, timeout=10, check=False
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.match(r"v(\d+)\.(\d+)", output.strip())
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def with_typescript_syntax_hint(message: str) -> str:
+    """Append a plain explanation when Node rejected TypeScript-only syntax.
+
+    Node's own error names the code and the line, but not what to write instead.
+    """
+    if "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX" in message:
+        return f"{message}\n\n{TYPESCRIPT_SYNTAX_HINT}"
+    return message
+
+
 # In the sandbox image both interpreters are on PATH.
-CONTAINER_INTERPRETER_BY_LANGUAGE = {"python": "python", "javascript": "node"}
+CONTAINER_INTERPRETER_BY_LANGUAGE = {
+    "python": "python",
+    "javascript": "node",
+    "typescript": "node",
+}
 
 
 def _sha256_file(path: Path) -> str:
@@ -580,7 +632,9 @@ def _wait_for_job(
                 max_stderr_bytes=max_stderr_bytes,
             )
             raise SandboxExecutionError(
-                f"Sandbox job '{job_name}' failed.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}".strip()
+                with_typescript_syntax_hint(
+                    f"Sandbox job '{job_name}' failed.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}".strip()
+                )
             )
         time.sleep(poll_interval_seconds)
     stdout, stderr = _collect_logs(
@@ -718,10 +772,12 @@ def run_skill_python_script_locally(
     )
     if completed.returncode != 0:
         raise SandboxExecutionError(
-            (
-                f"Local sandbox script '{script.name}' failed with exit code {completed.returncode}.\n"
-                f"STDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}"
-            ).strip()
+            with_typescript_syntax_hint(
+                (
+                    f"Local sandbox script '{script.name}' failed with exit code {completed.returncode}.\n"
+                    f"STDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}"
+                ).strip()
+            )
         )
     _safe_copy_workspace_outputs(workspace_state, run_dir)
     return SandboxRunResult(
