@@ -16,6 +16,7 @@ import type { WorkspaceService, WorkspaceRole } from './workspaceService';
 import type { UserService } from './userService';
 import type { FileService } from './fileService';
 import type { KnowledgeService } from './knowledgeService';
+import { formatKnowledgeScopeGuidance } from './knowledgeScopeGuidance';
 import type { WorkspaceRunLeaseManager } from './agent-runs/workspaceRunLease';
 
 /**
@@ -294,13 +295,7 @@ export class WorkspaceTeamChatAgentService {
       canWriteSharedWorkspace
         ? 'If you make a change, report what changed and keep the response grounded in the actual tool result.'
         : 'If the team asks for a change, provide a suggested change in your response. In Review mode, the member must use a Private working copy and submit the result through the Review proposal flow.',
-      ...(knowledgeRefs.length
-        ? [[
-          'Tagged Knowledge bundles (the only Knowledge scope for this turn):',
-          ...knowledgeRefs.map((ref) => `- ${ref.title} (knowledge://${ref.id}/index.md)`),
-          'Use knowledge_read or knowledge_search only within these selected bundles.',
-        ].join('\n')]
-        : []),
+      ...(knowledgeRefs.length ? [formatKnowledgeScopeGuidance(knowledgeRefs)] : []),
       `Question from ${sourceMessage.authorName}: ${questionWithFiles || question || sourceMessage.body}`,
     ].join('\n\n');
     // The agent matches this block at the start of the text and treats the rest,

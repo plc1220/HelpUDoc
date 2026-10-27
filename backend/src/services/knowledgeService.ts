@@ -839,12 +839,6 @@ export class KnowledgeService {
   }
 
   /**
-   * Expand knowledge bases into the agent knowledge refs for their published
-   * member sources. Bases the user cannot access are ignored; members without a
-   * published build are skipped (not an error), so selecting a base at chat time
-   * yields exactly the retrievable documents in it.
-   */
-  /**
    * Knowledge bases a user may use, looked up by the name they typed.
    *
    * Shared Workspace Chat carries no structured picker payload -- a team message
@@ -887,6 +881,17 @@ export class KnowledgeService {
     return Array.from(matched);
   }
 
+  /**
+   * Expand knowledge bases into the agent knowledge refs for their published
+   * member sources. Bases the user cannot access are ignored; members without a
+   * published build are skipped (not an error), so selecting a base at chat time
+   * yields exactly the retrievable documents in it.
+   *
+   * Each ref carries the name and version of the base it came from. The prompt
+   * used to list only document titles, so a user who tagged `@kb:WAF Rules Test`
+   * got "no knowledge base with that name" from an agent that held every
+   * document in it.
+   */
   async resolveKnowledgeBaseRefs(userId: string, knowledgeBaseIds: string[]) {
     const ids = Array.from(new Set(
       (knowledgeBaseIds || []).filter((id): id is string => typeof id === 'string' && id.length > 0),
@@ -895,16 +900,35 @@ export class KnowledgeService {
     const accessible = await this.resolveAccessibleKnowledgeBaseIds(userId);
     const allowed = accessible === null ? ids : ids.filter((id) => accessible.includes(id));
     if (!allowed.length) return [];
-    const memberRows = await this.db('knowledge_sources')
-      .whereIn('knowledgeBaseId', allowed)
-      .andWhere('isGlobal', true)
-      .select('id', 'metadata');
+    const [memberRows, baseRows] = await Promise.all([
+      this.db('knowledge_sources')
+        .whereIn('knowledgeBaseId', allowed)
+        .andWhere('isGlobal', true)
+        .select('id', 'metadata', 'knowledgeBaseId'),
+      this.db('knowledge_bases')
+        .whereIn('id', allowed)
+        .select('id', 'name', 'currentVersion'),
+    ]);
+    const baseById = new Map(baseRows.map((row: any) => [String(row.id), row]));
+    const baseBySourceId = new Map<number, any>();
     const publishedIds = memberRows
       .filter((row) => Boolean(this.getIngestionMetadata(row.metadata)?.snapshotHash))
-      .map((row) => Number(row.id))
+      .map((row) => {
+        const id = Number(row.id);
+        baseBySourceId.set(id, baseById.get(String(row.knowledgeBaseId)));
+        return id;
+      })
       .filter((id) => Number.isInteger(id) && id > 0);
     if (!publishedIds.length) return [];
-    return this.resolveTaggedKnowledgeRefs(userId, publishedIds);
+    const refs = await this.resolveTaggedKnowledgeRefs(userId, publishedIds);
+    return refs.map((ref) => {
+      const base = baseBySourceId.get(ref.id);
+      return {
+        ...ref,
+        knowledgeBaseName: base?.name ? String(base.name) : null,
+        knowledgeBaseVersion: base?.currentVersion ? String(base.currentVersion) : null,
+      };
+    });
   }
 
   async listGlobalIngestionJobs(limit = 100) {

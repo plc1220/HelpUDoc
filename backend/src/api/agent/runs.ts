@@ -22,6 +22,7 @@ import {
 import { blockingRedisClient } from '../../services/redisService';
 import { createAgentPolicyApi } from './policy';
 import { safeErrorForLog } from '../../lib/safeError';
+import { formatKnowledgeScopeGuidance } from '../../services/knowledgeScopeGuidance';
 
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
@@ -324,15 +325,12 @@ export function registerRunRoutes(
     ]);
     // A selected base expands to its member sources; dedupe when a source is both
     // individually tagged and part of a selected base.
-    const mergedById = new Map<number, (typeof taggedRefs)[number]>();
+    // Base refs go last so a source in both keeps its base name in the prompt.
+    const mergedById = new Map<number, (typeof taggedRefs)[number] | (typeof baseRefs)[number]>();
     for (const ref of [...taggedRefs, ...baseRefs]) mergedById.set(ref.id, ref);
     const resolved = Array.from(mergedById.values());
     if (!resolved.length) return { prompt, knowledgeRefs: [] };
-    const guidance = [
-      'Tagged Knowledge bundles (the only Knowledge scope for this turn):',
-      ...resolved.map((ref) => `- ${ref.title} (knowledge://${ref.id}/index.md)`),
-      'Use knowledge_read or knowledge_search only within these selected bundles.',
-    ].join('\n');
+    const guidance = formatKnowledgeScopeGuidance(resolved);
     return {
       prompt: `${prompt.trim()}\n\n${guidance}`,
       knowledgeRefs: resolved,
