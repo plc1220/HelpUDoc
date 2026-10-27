@@ -10,7 +10,6 @@ import {
 } from './knowledgeIngestionService';
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import {
-  DEFAULT_KNOWLEDGE_BASE_ID,
   KNOWLEDGE_STORAGE_USER_ID,
   KnowledgeBase,
   KnowledgeBaseStatus,
@@ -423,13 +422,24 @@ export class KnowledgeBaseService {
     return this.getDetail(userId, knowledgeBaseId);
   }
 
+  /**
+   * Remove a document from a base by deleting it.
+   *
+   * Removal used to move the document into the default base. General Knowledge
+   * then filled with every document anyone had removed, still built and still
+   * searchable, and removing one from General Knowledge "moved" it to where it
+   * already was, so it could never leave. A document belongs to exactly one
+   * base, so taking it out of that base deletes it. To change base, use
+   * addSource on the other base, which moves it.
+   */
   async removeSource(userId: string, knowledgeBaseId: string, knowledgeSourceId: number) {
     const kb = await this.requireKb(knowledgeBaseId);
     await this.requireManage(userId, kb);
-    // Sources must always belong to a base; removal returns them to the default base.
-    await this.db('knowledge_sources')
+    const member = await this.db('knowledge_sources')
       .where({ id: knowledgeSourceId, knowledgeBaseId })
-      .update({ knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID, updatedAt: this.db.fn.now() });
+      .first();
+    if (!member) throw new NotFoundError('Knowledge source not found in this knowledge base');
+    await this.knowledgeService.deleteKnowledgeBaseMember(knowledgeSourceId);
     return this.getDetail(userId, knowledgeBaseId);
   }
 

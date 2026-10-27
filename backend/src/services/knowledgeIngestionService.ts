@@ -13,6 +13,28 @@ const TERMINAL_STATUSES = new Set<KnowledgeJobStatus>([
   'published', 'partial', 'failed', 'cancelled', 'superseded',
 ]);
 
+/** A build idle this long is stuck, not running; its run may be removed. */
+const ACTIVE_BUILD_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * Whether a build is writing files right now.
+ *
+ * Deleting a document mid-build lets the build write its bundle back after the
+ * delete removed it, leaving files no document owns. A queued build has written
+ * nothing, and its job is deleted with the document, so it never starts. A build
+ * that stopped updating is stuck and must not block removal for good.
+ */
+export function isBuildInProgress(
+  job: { status?: string | null; updatedAt?: string | Date | null } | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!job) return false;
+  const status = String(job.status || 'queued') as KnowledgeJobStatus;
+  if (status === 'queued' || TERMINAL_STATUSES.has(status)) return false;
+  const updatedAt = job.updatedAt ? new Date(job.updatedAt).getTime() : NaN;
+  return Number.isFinite(updatedAt) && now - updatedAt < ACTIVE_BUILD_WINDOW_MS;
+}
+
 const JOB_PROGRESS: Record<string, { percent: number; label: string }> = {
   queued: { percent: 0, label: 'Queued' },
   processing: { percent: 10, label: 'Starting build' },

@@ -725,7 +725,21 @@ const DetailDialog = ({ knowledgeBaseId, onClose, onChanged, onOpenVersions }: {
                       </button>
                     ) : null}
                     {canManage ? (
-                      <button type="button" disabled={busy} onClick={() => void run(() => removeKnowledgeBaseSource(knowledgeBaseId, member.knowledgeSourceId))} className="shrink-0 text-slate-400 hover:text-red-600" aria-label="Remove source">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          // Removing deletes the document; it no longer moves to General Knowledge.
+                          const confirmed = window.confirm(
+                            `Delete "${member.title}"?\n\nThe document and its build are deleted for everyone who uses this knowledge base. This cannot be undone.\n\nTo keep it, add it to another knowledge base instead; that moves it there.`,
+                          );
+                          if (!confirmed) return;
+                          void run(() => removeKnowledgeBaseSource(knowledgeBaseId, member.knowledgeSourceId));
+                        }}
+                        className="shrink-0 text-slate-400 hover:text-red-600"
+                        aria-label={`Delete ${member.title}`}
+                        title="Delete document"
+                      >
                         <Trash2 size={15} />
                       </button>
                     ) : null}

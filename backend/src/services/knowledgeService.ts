@@ -21,6 +21,7 @@ import {
   KnowledgeIngestionService,
   describeAgentCallFailure,
   describeIngestionFailure,
+  isBuildInProgress,
 } from './knowledgeIngestionService';
 import { signAgentContextToken } from './agentToken';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
@@ -1764,6 +1765,21 @@ export class KnowledgeService {
   async deleteGlobal(id: number, userId: string) {
     const row = await this.getKnowledgeRow(id);
     return this.delete(String(row.workspaceId), id, userId, { allowSystemAdmin: true });
+  }
+
+  /**
+   * Delete a knowledge base document: its row, build and uploaded file.
+   *
+   * Runs as the storage user, which owns the storage workspace. A Team Lead who
+   * manages the base is not a member of that workspace, so acting as them would
+   * fail; the caller has already checked they manage the base.
+   */
+  async deleteKnowledgeBaseMember(id: number) {
+    const row = await this.getKnowledgeRow(id);
+    if (isBuildInProgress(await this.ingestionService.current(id))) {
+      throw new ConflictError('This document is still being built. Remove it once the build has finished.');
+    }
+    return this.delete(String(row.workspaceId), id, KNOWLEDGE_STORAGE_USER_ID, { allowSystemAdmin: true });
   }
 
   async list(workspaceId: string, userId: string) {
