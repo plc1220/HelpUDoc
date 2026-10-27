@@ -239,6 +239,11 @@ export const mimeTypeForPath = (filePath: string): string => {
   if (ext === '.json') return 'application/json';
   if (ext === '.yaml' || ext === '.yml') return 'application/yaml';
   if (ext === '.py') return 'text/x-python';
+  // Skill scripts may be JavaScript or TypeScript. Typed as binary, the draft
+  // editor and the review view returned no content for them, so a reviewer
+  // approved code they could not read.
+  if (ext === '.js' || ext === '.mjs' || ext === '.cjs') return 'text/javascript';
+  if (ext === '.ts' || ext === '.mts' || ext === '.cts') return 'text/x-typescript';
   if (ext === '.csv') return 'text/csv';
   if (ext === '.png') return 'image/png';
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
