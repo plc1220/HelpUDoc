@@ -15,6 +15,14 @@ import {
   normalizeUnique,
 } from './skillGovernanceModel';
 
+/**
+ * Script suffixes the agent sandbox can run. Mirrors SCRIPT_LANGUAGE_BY_SUFFIX in
+ * agent/helpudoc_agent/sandbox_runner.py (a test keeps the two in step). Without
+ * this check a skill declaring `scripts/run.rb` validated and published, then
+ * failed only when someone ran it.
+ */
+export const SANDBOX_SCRIPT_SUFFIXES = ['.py', '.js', '.cjs', '.mjs', '.ts', '.cts', '.mts'] as const;
+
 export class SkillPackageValidator {
   constructor(
     private readonly readBlob: (contentHash: string) => Promise<Buffer>,
@@ -103,6 +111,14 @@ export class SkillPackageValidator {
       } catch {
         issues.push({ code: 'INVALID_SANDBOX_SCRIPT_PATH', message: 'Sandbox script path is invalid', path: scriptPath });
         continue;
+      }
+      const suffix = path.extname(normalizedPath).toLowerCase();
+      if (!(SANDBOX_SCRIPT_SUFFIXES as readonly string[]).includes(suffix)) {
+        issues.push({
+          code: 'INVALID_SANDBOX_SCRIPT_TYPE',
+          message: `Sandbox scripts must be one of ${SANDBOX_SCRIPT_SUFFIXES.join(', ')}; ${suffix || 'no extension'} cannot be run`,
+          path: normalizedPath,
+        });
       }
       const snapshot = files.find((file) => file.path === normalizedPath);
       if (!scriptName || !snapshot || !/^[a-f0-9]{64}$/.test(declaredHash) || snapshot.contentHash !== declaredHash) {
