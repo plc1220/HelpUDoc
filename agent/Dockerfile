@@ -1,4 +1,11 @@
 # syntax=docker/dockerfile:1.7
+# Node.js for declared JavaScript and TypeScript skill scripts. Debian's
+# nodejs is 18, end of life since April 2025, and cannot run .ts. Node 22.18+
+# strips TypeScript types itself, so no tsx or npm is needed. Copy only the
+# binary: with npm present, frontend-slides' export-pptx.py would try to
+# download Playwright inside a sandbox that has no egress and hang to timeout.
+FROM node:24.22.1-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
+
 FROM python:3.12-slim-bookworm
 
 ARG TARGETARCH
@@ -13,8 +20,10 @@ RUN apt-get update \
     libreoffice-calc \
     curl \
     libicu72 \
-    nodejs \
   && rm -rf /var/lib/apt/lists/*
+
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+RUN node --version
 
 # OfficeCLI is part of the agent's pinned local toolchain. Verify the release
 # before installing it; the runner never downloads binaries at request time.
