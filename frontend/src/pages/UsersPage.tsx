@@ -70,6 +70,12 @@ import {
 } from '../services/settingsApi';
 import type { PluginDefinition, SkillDefinition } from '../types';
 import { fetchSkillCatalog, setTeamLead } from '../services/governanceApi';
+import {
+  displayedKnowledgeBaseIds,
+  grantIdsFromSelection,
+  ownedKnowledgeBaseIds,
+  teamKnowledgeOptions,
+} from '../utils/teamKnowledgeAccess';
 
 type ManagementView = 'users' | 'groups';
 type UserTableRow = ManagedUser & Record<string, unknown>;
@@ -186,11 +192,19 @@ const UsersPage = () => {
     }));
   }, [availableMcpServers, availableSkills, visiblePlugins]);
 
+  const ownedKnowledgeIds = useMemo(
+    () => ownedKnowledgeBaseIds(knowledgeBases, selectedGroupId),
+    [knowledgeBases, selectedGroupId],
+  );
+
   const knowledgeOptions = useMemo(
-    () => knowledgeBases
-      .filter((base) => base.status === 'published')
-      .map((base) => ({ value: base.id, label: base.name })),
-    [knowledgeBases],
+    () => teamKnowledgeOptions(knowledgeBases, selectedGroupId),
+    [knowledgeBases, selectedGroupId],
+  );
+
+  const shownKnowledgeIds = useMemo(
+    () => displayedKnowledgeBaseIds(groupAccess.knowledgeBaseIds, ownedKnowledgeIds),
+    [groupAccess.knowledgeBaseIds, ownedKnowledgeIds],
   );
 
   const skillOptions = useMemo(
@@ -1042,7 +1056,7 @@ const UsersPage = () => {
                         <div className="grid gap-4 md:grid-cols-3">
                           <div className="settings-soft-panel rounded-2xl p-4">
                             <BookOpen size={18} className="text-blue-600" />
-                            <p className="mt-3 text-2xl font-semibold text-slate-950">{groupAccess.knowledgeBaseIds.length}</p>
+                            <p className="mt-3 text-2xl font-semibold text-slate-950">{shownKnowledgeIds.length}</p>
                             <p className="text-xs text-slate-500">Knowledge bases</p>
                           </div>
                           <div className="settings-soft-panel rounded-2xl p-4">
@@ -1060,12 +1074,14 @@ const UsersPage = () => {
                         <div className="grid gap-5 lg:grid-cols-3">
                           <MultiSelector
                             label="Knowledge bases"
-                            description="Published knowledge bases this team can reference from any workspace."
+                            description="Published knowledge bases this team can reference from any workspace. Bases the team owns are always included."
                             options={knowledgeOptions}
-                            value={groupAccess.knowledgeBaseIds}
+                            value={shownKnowledgeIds}
                             onChange={(values) => setGroupAccess((previous) => ({
                               ...previous,
-                              knowledgeBaseIds: sortStrings(values),
+                              knowledgeBaseIds: sortStrings(
+                                grantIdsFromSelection(values, previous.knowledgeBaseIds, ownedKnowledgeIds),
+                              ),
                             }))}
                             placeholder="No knowledge access"
                             triggerDisplay="count"
