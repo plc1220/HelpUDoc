@@ -6830,7 +6830,7 @@ export default function WorkspacePage() {
     }
     if (directive.kind === 'mcp') {
       if (!directive.serverId || !directive.prompt) {
-        addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for BMMB.');
+        addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for invoices.');
         return;
       }
       if (!availableMcpServerMap.has(directive.serverId.toLowerCase())) {
@@ -7010,7 +7010,7 @@ export default function WorkspacePage() {
           return;
         }
         if (!directive.serverId || !directive.prompt) {
-          addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for BMMB.');
+          addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for invoices.');
           return;
         }
         if (!availableMcpServerMap.has(directive.serverId.toLowerCase())) {
