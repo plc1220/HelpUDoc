@@ -190,12 +190,16 @@ export default function SkillCreatorDialog({
     setActions([]);
     setRunning(true);
     try {
+      const history = messages
+        .filter((message) => message.role !== 'system')
+        .map((message) => ({ role: message.role, content: message.text }));
       const run = await startSkillBuilderRun({
         prompt: text,
         contextFileIds: selectedContextIds,
-        history: messages
-          .filter((message) => message.role !== 'system')
-          .map((message) => ({ role: message.role, content: message.text })),
+        // Omit an empty history; the backend treats it as optional. On the ARIA
+        // Gateway load balancer, Cloud Armor rule 932236 denies a body that holds
+        // `"history":[]`, so a first message never reached the backend.
+        ...(history.length > 0 ? { history } : {}),
       });
       setRunId(run.runId);
       lastEventIdRef.current = undefined;
