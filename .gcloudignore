@@ -30,6 +30,7 @@ backups/
 skills-pvc-backup-*/
 skills-pvc-backup-*.tar.gz
 skills-backuo-*.tar.gz
+skills_backup/
 *.tar.gz
 trace-*.json
 outputs/

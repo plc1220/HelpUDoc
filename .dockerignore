@@ -25,3 +25,5 @@ frontend/dist
 # Misc
 **/.env
 **/.env.*
+
+.playwright-mcp

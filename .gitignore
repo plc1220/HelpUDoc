@@ -50,3 +50,7 @@ mcp.json
 .codex/
 graphify-out/
 AGENTS.md
+
+
+dev-configmaps.yaml
+dev-secrets.yaml
