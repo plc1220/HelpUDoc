@@ -274,13 +274,8 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                 <div>
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-lg font-semibold text-slate-900">Built-in Tools</h3>
-                        <button
-                            onClick={() => setIsAddingTool(true)}
-                            className={primaryButtonClass}
-                        >
-                            <Plus size={16} />
-                            Add Tool
-                        </button>
+                        {/* The Add Tool button is hidden on purpose. The add form below
+                            stays, so the button can be restored with setIsAddingTool(true). */}
                     </div>
 
                     {isAddingTool && (
