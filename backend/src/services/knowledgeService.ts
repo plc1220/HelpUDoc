@@ -24,6 +24,7 @@ import {
   isBuildInProgress,
 } from './knowledgeIngestionService';
 import { signAgentContextToken } from './agentToken';
+import { startsWithKnowledgeBaseName } from '@helpudoc/contracts/composerDirectives';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 
 export interface KnowledgeInput {
@@ -871,9 +872,9 @@ export class KnowledgeService {
     for (const candidate of candidates) {
       for (const row of byLength) {
         // `@kb:` is followed by free prose, so the typed text runs past the name.
-        // Anchor on a real name and require a word boundary after it, which is
-        // why the boundary is decided here rather than by the message regex.
-        if (candidate === row.name || candidate.startsWith(`${row.name} `)) {
+        // Anchor on a real name and require the same end rule as private chat,
+        // so "@kb:Sales Playbook?" works here too.
+        if (startsWithKnowledgeBaseName(candidate, row.name)) {
           matched.add(row.id);
           break;
         }

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   findKnowledgeBaseMentions,
+  knowledgeBaseMentionPattern,
   parseComposerDirective,
   removeComposerDirective,
 } from '@helpudoc/contracts/composerDirectives';
@@ -109,4 +110,32 @@ test('the longest matching base name wins', () => {
 test('a base name that is not mentioned is not matched', () => {
   const bases = [{ id: 'a', name: 'Policies' }];
   assert.deepEqual(findKnowledgeBaseMentions('@kb:General Knowledge', bases), []);
+});
+
+test('a knowledge base name may end with punctuation', () => {
+  // "What is in @kb:WAF Test KB?" attached nothing: only a space or a bracket
+  // used to end a name, so the agent answered from workspace memory instead.
+  const bases = [{ id: 'waf', name: 'WAF Test KB' }];
+  for (const message of [
+    'What is in @kb:WAF Test KB?',
+    'Summarise @kb:WAF Test KB.',
+    'Compare @kb:WAF Test KB, then report',
+    'Check @kb:WAF Test KB?! now',
+    'Read "@kb:WAF Test KB"',
+    'Read (@kb:WAF Test KB)',
+  ]) {
+    assert.deepEqual(findKnowledgeBaseMentions(message, bases), bases, message);
+  }
+});
+
+test('punctuation inside a longer name does not end a shorter one', () => {
+  const bases = [{ id: 'q4', name: 'Q4' }, { id: 'q41', name: 'Q4.1' }];
+  assert.deepEqual(findKnowledgeBaseMentions('Open @kb:Q4.1 please', bases).map((kb) => kb.id), ['q41']);
+  assert.deepEqual(findKnowledgeBaseMentions('Open @kb:Q4.1x please', bases), []);
+  assert.deepEqual(findKnowledgeBaseMentions('Open @kb:Q4. Then stop', bases).map((kb) => kb.id), ['q4']);
+});
+
+test('stripping removes a mention that ends with punctuation', () => {
+  const stripped = 'What is in @kb:WAF Test KB?'.replace(knowledgeBaseMentionPattern('WAF Test KB', 'gi'), (_m, prefix: string) => prefix);
+  assert.equal(stripped, 'What is in ?');
 });

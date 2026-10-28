@@ -245,6 +245,7 @@ import { getImplicitContinuationContext, buildContinuationPrompt } from '../../u
 import { isAgentRunInFlight, isAwaitingUserInput, stopInFlightAgentMessages } from '../../utils/messages';
 import {
   findKnowledgeBaseMentions,
+  knowledgeBaseMentionPattern,
   parseComposerDirective,
   removeComposerDirective,
 } from '@helpudoc/contracts/composerDirectives';
@@ -2925,7 +2926,8 @@ export default function WorkspacePage() {
       [...knowledgeBaseCatalog]
         .sort((left, right) => right.name.length - left.name.length)
         .forEach((kb) => {
-          const mentionPattern = new RegExp(`(^|[\\s([{])@kb:${escapeRegExp(kb.name)}(?=$|[\\s)\\]}])`, 'gi');
+          // Same end rule as the matcher, so a mention that attached is also removed.
+          const mentionPattern = knowledgeBaseMentionPattern(kb.name, 'gi');
           nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
         });
       const filesByLongestNameFirst = [...visibleFiles].sort((left, right) => right.name.length - left.name.length);

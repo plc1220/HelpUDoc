@@ -83,6 +83,29 @@ export const removeComposerDirective = (rawMessage: string, directive: ComposerD
 };
 
 /**
+ * Where a knowledge base name may end in a message: at the end, before a space
+ * or a closing bracket, or before punctuation that itself ends there.
+ *
+ * Only a space or bracket used to count, so "What is in @kb:WAF Test KB?"
+ * attached nothing and the agent answered from memory. Punctuation counts only
+ * when the text stops after it: otherwise a base named "Q4" would also match
+ * "@kb:Q4.1".
+ */
+export const KNOWLEDGE_BASE_MENTION_END = `(?=$|[\\s)\\]}]|[.,;:!?'"]+(?:$|[\\s)\\]}]))`;
+
+/**
+ * Matches `@kb:<name>`, with what precedes the mention (start, space, opening
+ * bracket or quote) as group 1. Quotes count on both sides, so a quoted
+ * mention works too.
+ */
+export const knowledgeBaseMentionPattern = (name: string, flags = 'i'): RegExp =>
+  new RegExp(`(^|[\\s([{"'])@kb:${escapeRegExp(name)}${KNOWLEDGE_BASE_MENTION_END}`, flags);
+
+/** Whether `text` starts with `name` followed by a point where a mention may end. */
+export const startsWithKnowledgeBaseName = (text: string, name: string): boolean =>
+  new RegExp(`^${escapeRegExp(name)}${KNOWLEDGE_BASE_MENTION_END}`, 'i').test(text);
+
+/**
  * Knowledge bases a message tagged with `@kb:<name>`.
  *
  * A base name may contain spaces, so nothing in the text marks where the name
@@ -108,11 +131,7 @@ export const findKnowledgeBaseMentions = <T extends { name: string }>(
       if (!name) {
         return false;
       }
-      const pattern = new RegExp(
-        `(^|[\\s([{])@kb:${escapeRegExp(name)}(?=$|[\\s)\\]}])`,
-        'i',
-      );
-      return pattern.test(text);
+      return knowledgeBaseMentionPattern(name).test(text);
     });
 };
 
