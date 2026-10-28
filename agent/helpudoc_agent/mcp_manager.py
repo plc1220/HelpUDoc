@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import StructuredTool, Tool
 
-from .configuration import MCPServerConfig, REPO_ROOT, Settings
+from .configuration import MCPProjectGuidance, MCPServerConfig, REPO_ROOT, Settings
 from .state import WorkspaceState
 
 logger = logging.getLogger(__name__)
@@ -451,9 +451,52 @@ def _aws_pricing_tool_overrides(tool_name: str, raw_schema: Dict[str, Any]) -> t
     return sanitized, transform
 
 
+def _apply_project_guidance(
+    schema: Dict[str, Any],
+    transform: Any,
+    guidance: Optional[MCPProjectGuidance],
+) -> tuple[Dict[str, Any], Any]:
+    """Name the default project in the schema, and use it when a call omits one.
+
+    BigQuery's tools require projectId, so the model had to pick a project every
+    time, and it picked from chat history or workspace memory. The argument stays
+    in the schema, so a project the user names still goes through; it only stops
+    being required, and its description states the default and the others.
+    """
+    if guidance is None:
+        return schema, transform
+    properties = schema.get("properties")
+    argument = guidance.argument
+    if not isinstance(properties, dict) or argument not in properties:
+        return schema, transform
+    schema = deepcopy(schema)
+    others = [project for project in guidance.also_available if project and project != guidance.default]
+    note = f"Defaults to {guidance.default} when omitted."
+    if others:
+        note += f" Also available: {', '.join(others)}."
+    note += " Use another project only when the user names it."
+    field = dict(schema["properties"][argument] or {})
+    field["description"] = f"{field.get('description', '').strip()} {note}".strip()
+    schema["properties"][argument] = field
+    required = [name for name in schema.get("required") or [] if name != argument]
+    if required:
+        schema["required"] = required
+    else:
+        schema.pop("required", None)
+
+    def _with_default(payload: Dict[str, Any]) -> Dict[str, Any]:
+        data = transform(payload)
+        if not str(data.get(argument) or "").strip():
+            data[argument] = guidance.default
+        return data
+
+    return schema, _with_default
+
+
 def _wrap_tool_for_gemini(
     server_name: str,
     tool: Tool,
+    project_guidance: Optional[MCPProjectGuidance] = None,
 ) -> tuple[Tool, Dict[str, Any]]:
     raw_schema = _json_schema_for_tool(tool)
     sanitized_schema = deepcopy(raw_schema)
@@ -461,6 +504,7 @@ def _wrap_tool_for_gemini(
 
     if server_name == "aws-pricing":
         sanitized_schema, transform = _aws_pricing_tool_overrides(tool.name, raw_schema)
+    sanitized_schema, transform = _apply_project_guidance(sanitized_schema, transform, project_guidance)
 
     async def _async_call(**kwargs: Any) -> Any:
         payload = transform(kwargs)
@@ -648,11 +692,19 @@ class MCPServerManager:
                 client = MultiServerMCPClient({name: server_config})
                 tools = await client.get_tools()
                 wrapped_tools = list(tools or [])
+                if not preflight_gemini and cfg.project_guidance is not None:
+                    # Project defaults must apply on every provider, not only Gemini.
+                    wrapped_tools = [
+                        _wrap_tool_for_gemini(name, original_tool, cfg.project_guidance)[0]
+                        for original_tool in list(tools or [])
+                    ]
                 if preflight_gemini:
                     try:
                         wrapped_tools = []
                         for original_tool in list(tools or []):
-                            wrapped_tool, _sanitized_schema = _wrap_tool_for_gemini(name, original_tool)
+                            wrapped_tool, _sanitized_schema = _wrap_tool_for_gemini(
+                                name, original_tool, cfg.project_guidance
+                            )
                             wrapped_tools.append(wrapped_tool)
                         _preflight_gemini_tools(wrapped_tools)
                     except Exception as exc:

@@ -240,6 +240,28 @@ class BackendConfig(BaseModel):
         return path.resolve()
 
 
+class MCPProjectGuidance(BaseModel):
+    """Which data project an MCP server's tools should use by default.
+
+    Guidance, not a restriction. The model is told the default and the other
+    projects to prefer, and a call that omits the project gets the default. A
+    project the user names explicitly still goes through. Without this, the
+    project came from chat history or workspace memory, so one workspace drifted
+    to a project nobody chose.
+    """
+
+    argument: str = "projectId"  # the tool argument that names the project
+    default: str
+    also_available: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_camelcase_keys(cls, values: Any) -> Any:
+        if isinstance(values, dict) and "alsoAvailable" in values and "also_available" not in values:
+            values["also_available"] = values.pop("alsoAvailable")
+        return values
+
+
 class MCPServerConfig(BaseModel):
     name: str
     transport: str  # "stdio" | "http" | "sse"
@@ -265,6 +287,9 @@ class MCPServerConfig(BaseModel):
     # RBAC metadata
     default_access: str = Field(default="allow")  # "allow" | "deny"
 
+    # Default data project for tools that take one (e.g. BigQuery projectId).
+    project_guidance: Optional[MCPProjectGuidance] = None
+
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_and_camelcase_keys(cls, values: Any) -> Any:
@@ -279,6 +304,7 @@ class MCPServerConfig(BaseModel):
             "bearerTokenEnvVar": "bearer_token_env_var",
             "delegatedAuthProvider": "delegated_auth_provider",
             "defaultAccess": "default_access",
+            "projectGuidance": "project_guidance",
         }
         for src, dst in mapping.items():
             if src in values and dst not in values:

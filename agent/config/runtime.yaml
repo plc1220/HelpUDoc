@@ -138,6 +138,13 @@ mcp_servers:
     default_access: allow
     headers_from_env:
       X-goog-user-project: GOOGLE_CLOUD_PROJECT
+    # The data project to query. X-goog-user-project above is only the billing
+    # project. Guidance, not a block: a project the user names still runs.
+    project_guidance:
+      argument: projectId
+      default: ccob-my-cdlp-dev
+      also_available:
+        - ccob-my-ai-engine-dev
     description: Google managed BigQuery MCP endpoint
   - name: data-artifacts
     transport: stdio
