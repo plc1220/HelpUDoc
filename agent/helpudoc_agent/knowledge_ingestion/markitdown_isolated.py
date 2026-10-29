@@ -22,7 +22,11 @@ from pathlib import Path
 
 from .conversion import MarkItDownConversion
 
-DEFAULT_TIMEOUT_SECONDS = 120.0
+# MarkItDown took 180 s for a 437-page annual report on the 2-CPU GKE agent. 240 s
+# leaves a third more for a busier agent and stays a minute under the backend's
+# 300 s limit for the whole extraction step (DOCUMENT_EXTRACTION_TIMEOUT_MS), so an
+# overrun still falls back to native Markdown instead of failing the step.
+DEFAULT_TIMEOUT_SECONDS = 240.0
 # Two concurrent children match the knowledge worker's default concurrency of two
 # runs. One semaphore per event loop: an asyncio primitive must not cross loops.
 _MAX_CHILDREN = 2
