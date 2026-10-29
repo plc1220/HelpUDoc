@@ -498,3 +498,98 @@ def test_markitdown_timeout_keeps_native_markdown_and_warns(tmp_path: Path, monk
     assert "Renewal notice is required" in plan.markdown
     warnings = [warning for warning in plan.manifest.warnings if warning.code == "markitdown_fallback"]
     assert warnings and "MarkItDown exceeded 120s" in warnings[0].message
+
+
+def _reduce_blocks() -> list[SourceBlock]:
+    return [
+        SourceBlock(
+            id=block_id, ordinal=index, text=f"Text {block_id}", blockType="paragraph",
+            paragraph=index + 1, unit=1, unitType="page", page=1,
+            extractionMethod="native", extractionConfidence=1.0, contentHash=f"sha256:{block_id}",
+        )
+        for index, block_id in enumerate(["pdf-p269-b5", "pdf-p420-b6", "pdf-p1-b1"])
+    ]
+
+
+def _garbled_reduction() -> WindowEnrichment:
+    return WindowEnrichment(concepts=[
+        CandidateConcept(
+            candidateId="notes-2030",
+            kind="instrument",
+            name="Notes due 2030",
+            description="Convertible notes.",
+            assertions=[CandidateAssertion(
+                text="The notes mature in 2030.",
+                confidence=0.9,
+                evidence=[CandidateEvidence(blockIds=["pdf-p269-b5 Block ID cleanup],targetKind:'"])],
+            )],
+        ),
+        CandidateConcept(
+            candidateId="legal-department",
+            kind="organisation",
+            name="Legal department",
+            description="Group legal.",
+            assertions=[
+                CandidateAssertion(text="Kept.", confidence=0.8, evidence=[CandidateEvidence(blockIds=["pdf-p1-b1"])]),
+                CandidateAssertion(text="Dropped.", confidence=0.8, evidence=[CandidateEvidence(blockIds=["invented-b9"])]),
+            ],
+        ),
+        CandidateConcept(
+            candidateId="legal-department",
+            kind="organisation",
+            name="Legal department",
+            description="Duplicate.",
+            aliases=["Group Legal"],
+            assertions=[CandidateAssertion(text="Also kept.", confidence=0.7, evidence=[CandidateEvidence(blockIds=["pdf-p420-b6"])])],
+        ),
+    ])
+
+
+def test_reduction_pruning_repairs_and_drops_bad_citations_instead_of_failing() -> None:
+    from helpudoc_agent.knowledge_ingestion.enrichment import (
+        prune_unsupported_reduction,
+        validate_reduction_enrichment,
+    )
+
+    blocks = _reduce_blocks()
+    garbled = _garbled_reduction()
+    assert validate_reduction_enrichment(garbled, blocks)  # the input really is invalid
+
+    pruned, warnings = prune_unsupported_reduction(garbled, blocks)
+
+    assert validate_reduction_enrichment(pruned, blocks) == []
+    by_id = {concept.candidateId: concept for concept in pruned.concepts}
+    assert by_id["notes-2030"].assertions[0].evidence[0].blockIds == ["pdf-p269-b5"]
+    legal = by_id["legal-department"]
+    assert [assertion.text for assertion in legal.assertions] == ["Kept.", "Also kept."]
+    assert legal.aliases == ["Group Legal"]
+    assert any(warning.startswith("repaired 1 block IDs") for warning in warnings)
+    assert any("merged duplicate candidateId legal-department" in warning for warning in warnings)
+    assert any("pruned legal-department assertion 1" in warning for warning in warnings)
+
+
+def test_reduce_batch_returns_pruned_result_after_retries_instead_of_raising() -> None:
+    """One garbled ID used to discard every cross-section link in the document."""
+    import asyncio
+
+    from helpudoc_agent.knowledge_ingestion.enrichment import reduce_enrichment_batch
+
+    class GarbledModel:
+        def with_structured_output(self, *_args, **_kwargs):
+            return self
+
+        async def ainvoke(self, _messages):
+            return {"parsed": _garbled_reduction(), "raw": None}
+
+    warnings: list[str] = []
+    result = asyncio.run(reduce_enrichment_batch(
+        GarbledModel(),
+        children=[WindowEnrichment(), WindowEnrichment()],
+        blocks=_reduce_blocks(),
+        level=1,
+        batch_index=1,
+        validation_warnings=warnings,
+    ))
+
+    assert {concept.candidateId for concept in result.concepts} == {"notes-2030", "legal-department"}
+    assert warnings

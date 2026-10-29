@@ -159,6 +159,7 @@ def register_document_routes(
                 for item in req.mapResults
             ]
             usage: list[dict[str, object]] = []
+            validation_warnings: list[str] = []
             reduced = await hierarchical_reduce_enrichments(
                 gemini_manager.get_reduce_chat_model(),
                 results=results,
@@ -166,6 +167,7 @@ def register_document_routes(
                 fan_in=req.fanIn,
                 guidance=req.guidance,
                 usage_records=usage,
+                validation_warnings=validation_warnings,
             )
             return KnowledgeMapResponse(
                 result=reduced.model_dump(mode="json"),
@@ -179,6 +181,7 @@ def register_document_routes(
                     "outputTokens": sum(int(item.get("outputTokens") or 0) for item in usage),
                     "attempts": len(usage),
                 },
+                validationWarnings=validation_warnings,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

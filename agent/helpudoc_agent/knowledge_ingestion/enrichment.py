@@ -183,6 +183,81 @@ def prune_unsupported_evidence(
     return pruned, warnings
 
 
+_BLOCK_ID_PREFIX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*")
+
+
+def prune_unsupported_reduction(
+    result: WindowEnrichment,
+    blocks: list[SourceBlock],
+) -> tuple[WindowEnrichment, list[str]]:
+    """Keep what a reduce got right instead of rejecting the whole merge.
+
+    On large documents the reducer sometimes leaks fragments of its own output
+    into block IDs, for example "pdf-p269-b5 Block ID cleanup],targetKind:'".
+    Rejecting the whole result for one such ID discarded every cross-section link
+    in the document. Instead:
+
+    - repair an ID that is a known block ID followed by junk;
+    - drop citations that still name no known block, and any assertion or
+      relationship left without evidence;
+    - merge concepts that reuse a candidateId.
+    """
+    known = {block.id for block in blocks}
+    warnings: list[str] = []
+    repaired_count = 0
+
+    def resolve(block_id: str) -> str | None:
+        nonlocal repaired_count
+        if block_id in known:
+            return block_id
+        match = _BLOCK_ID_PREFIX.match(block_id.strip())
+        if match and match.group(0) in known:
+            repaired_count += 1
+            return match.group(0)
+        return None
+
+    merged: dict[str, CandidateConcept] = {}
+    for concept in result.model_copy(deep=True).concepts:
+        assertions = []
+        for index, assertion in enumerate(concept.assertions):
+            evidence = []
+            for item in assertion.evidence:
+                ids = [resolved for resolved in (resolve(block_id) for block_id in item.blockIds) if resolved]
+                if ids:
+                    item.blockIds = list(dict.fromkeys(ids))
+                    evidence.append(item)
+            if evidence:
+                assertion.evidence = evidence
+                assertions.append(assertion)
+            else:
+                warnings.append(f"pruned {concept.candidateId} assertion {index}: no known evidence blocks")
+        relationships = []
+        for index, relationship in enumerate(concept.relationships):
+            ids = [resolved for resolved in (resolve(block_id) for block_id in relationship.evidenceBlockIds) if resolved]
+            if ids:
+                relationship.evidenceBlockIds = list(dict.fromkeys(ids))
+                relationships.append(relationship)
+            else:
+                warnings.append(f"pruned {concept.candidateId} relationship {index}: no known evidence blocks")
+        concept.assertions = assertions
+        concept.relationships = relationships
+
+        existing = merged.get(concept.candidateId)
+        if existing is None:
+            merged[concept.candidateId] = concept
+            continue
+        warnings.append(f"merged duplicate candidateId {concept.candidateId}")
+        existing.aliases = list(dict.fromkeys([*existing.aliases, *concept.aliases]))
+        existing.tags = list(dict.fromkeys([*existing.tags, *concept.tags]))
+        existing.assertions.extend(concept.assertions)
+        existing.relationships.extend(concept.relationships)
+
+    if repaired_count:
+        warnings.insert(0, f"repaired {repaired_count} block IDs with trailing text")
+    pruned = result.model_copy(update={"concepts": list(merged.values())})
+    return pruned, warnings
+
+
 async def enrich_processing_window(
     model: Any,
     *,
@@ -322,6 +397,7 @@ async def reduce_enrichment_batch(
     guidance: str | None = None,
     max_attempts: int = 2,
     usage_records: list[dict[str, Any]] | None = None,
+    validation_warnings: list[str] | None = None,
 ) -> WindowEnrichment:
     """Merge structured child outputs without rereading the complete source."""
     system_prompt = (
@@ -397,6 +473,12 @@ async def reduce_enrichment_batch(
         if attempt < max_attempts:
             feedback = "\nValidation failed. Repair only these issues:\n- " + "\n- ".join(errors[:30])
             continue
+        if parsed is not None:
+            pruned, warnings = prune_unsupported_reduction(result, blocks)
+            if pruned.concepts and not validate_reduction_enrichment(pruned, blocks):
+                if validation_warnings is not None:
+                    validation_warnings.extend(warnings)
+                return pruned
         # Final attempt failed. When the structured output never came back (parsed is None),
         # the merged object most likely exceeded the model output budget and was truncated.
         # Splitting the batch lets each reduce emit a smaller object; merging duplicates
@@ -413,6 +495,7 @@ async def reduce_enrichment_batch(
                     guidance=guidance,
                     max_attempts=max_attempts,
                     usage_records=usage_records,
+                    validation_warnings=validation_warnings,
                 ),
                 reduce_enrichment_batch(
                     model,
@@ -423,6 +506,7 @@ async def reduce_enrichment_batch(
                     guidance=guidance,
                     max_attempts=max_attempts,
                     usage_records=usage_records,
+                    validation_warnings=validation_warnings,
                 ),
             )
             return await reduce_enrichment_batch(
@@ -434,6 +518,7 @@ async def reduce_enrichment_batch(
                 guidance=guidance,
                 max_attempts=max_attempts,
                 usage_records=usage_records,
+                validation_warnings=validation_warnings,
             )
         raise ValueError("Invalid Knowledge reduction result: " + "; ".join(errors[:30]))
     raise RuntimeError("Knowledge reduction exhausted attempts")
@@ -448,6 +533,7 @@ async def hierarchical_reduce_enrichments(
     concurrency: int = 8,
     guidance: str | None = None,
     usage_records: list[dict[str, Any]] | None = None,
+    validation_warnings: list[str] | None = None,
 ) -> WindowEnrichment:
     if not results:
         return WindowEnrichment()
@@ -477,6 +563,7 @@ async def hierarchical_reduce_enrichments(
                     batch_index=batch_index,
                     guidance=guidance,
                     usage_records=usage_records,
+                    validation_warnings=validation_warnings,
                 )
 
         next_level = list(await asyncio.gather(*(reduce_one(item) for item in batches)))
