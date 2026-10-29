@@ -63,6 +63,14 @@ def render_blocks_markdown(title: str, blocks: list[SourceBlock]) -> str:
     return "\n".join(lines).strip()
 
 
+def markitdown_mode(mode: str | None = None) -> str:
+    """Resolve the MarkItDown mode from the argument or KNOWLEDGE_MARKITDOWN_MODE."""
+    selected = str(mode or os.environ.get("KNOWLEDGE_MARKITDOWN_MODE", "primary")).strip().lower()
+    if selected not in MARKITDOWN_MODES:
+        raise ValueError(f"Invalid KNOWLEDGE_MARKITDOWN_MODE {selected!r}")
+    return selected
+
+
 def _markitdown_version() -> str:
     try:
         return importlib.metadata.version("markitdown")
@@ -163,9 +171,7 @@ def route_document(
     markitdown_converter: Callable[[Path], MarkItDownConversion] | None = None,
 ) -> RoutedDocument:
     """Route one local document and return Markdown plus locator-aware blocks."""
-    selected_mode = str(mode or os.environ.get("KNOWLEDGE_MARKITDOWN_MODE", "primary")).strip().lower()
-    if selected_mode not in MARKITDOWN_MODES:
-        raise ValueError(f"Invalid KNOWLEDGE_MARKITDOWN_MODE {selected_mode!r}")
+    selected_mode = markitdown_mode(mode)
 
     suffix = path.suffix.lower()
     title = path.name

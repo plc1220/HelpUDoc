@@ -11,6 +11,8 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from .blocking import run_pymupdf
+
 
 class OcrBlock(BaseModel):
     text: str
@@ -119,11 +121,19 @@ class GeminiFlashLiteOcrAdapter:
         return self._outcomes.get(page_number)
 
     def _fingerprint(self, pdf_path: Path) -> str:
-        digest = hashlib.sha256()
-        with pdf_path.open("rb") as handle:
-            while chunk := handle.read(1024 * 1024):
-                digest.update(chunk)
-        return digest.hexdigest()
+        # Every page's cache path needs this hash, and it runs on the event loop.
+        # Hash each file once instead of once per page: a 26 MB PDF with 40 OCR
+        # pages otherwise reads about 1 GB on the loop.
+        stat = pdf_path.stat()
+        key = (str(pdf_path), stat.st_size, stat.st_mtime_ns)
+        cache: dict[tuple[str, int, int], str] = self.__dict__.setdefault("_fingerprint_cache", {})
+        if key not in cache:
+            digest = hashlib.sha256()
+            with pdf_path.open("rb") as handle:
+                while chunk := handle.read(1024 * 1024):
+                    digest.update(chunk)
+            cache[key] = digest.hexdigest()
+        return cache[key]
 
     def _cache_dir(self, pdf_path: Path) -> Path:
         model_key = hashlib.sha256(
@@ -221,7 +231,7 @@ class GeminiFlashLiteOcrAdapter:
             )
         ]
         for page_number in page_numbers:
-            image_bytes, artifact = self._render_page(document, page_number)
+            image_bytes, artifact = await run_pymupdf(self._render_page, document, page_number)
             self.media_artifacts.append(artifact)
             contents.extend([
                 f"PAGE {page_number}",
@@ -301,7 +311,7 @@ class GeminiFlashLiteOcrAdapter:
             return
         import fitz  # type: ignore
 
-        document = fitz.open(str(pdf_path))
+        document = await run_pymupdf(fitz.open, str(pdf_path))
         try:
             batches = [pending[index:index + self.batch_size] for index in range(0, len(pending), self.batch_size)]
             semaphore = asyncio.Semaphore(self.concurrency)
@@ -312,4 +322,4 @@ class GeminiFlashLiteOcrAdapter:
 
             await asyncio.gather(*(run_batch(batch) for batch in batches))
         finally:
-            document.close()
+            await run_pymupdf(document.close)

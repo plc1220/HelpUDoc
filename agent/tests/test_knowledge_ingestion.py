@@ -310,6 +310,19 @@ def test_markitdown_failure_is_visible_and_native_extraction_survives(tmp_path: 
     assert "converter unavailable" in routed.manifest.warnings[0].message
 
 
+
+def _small_pdf(path: Path, pages: int = 2) -> Path:
+    import fitz  # type: ignore
+
+    document = fitz.open()
+    for index in range(pages):
+        page = document.new_page()
+        page.insert_text((72, 72), f"Section {index + 1}\n\nRenewal notice is required on page {index + 1}.")
+    document.save(str(path))
+    document.close()
+    return path
+
+
 def test_pdf_extraction_leaves_the_event_loop_free(tmp_path: Path, monkeypatch) -> None:
     """A large PDF must not freeze the agent's loop, or /health stops answering.
 
@@ -335,10 +348,11 @@ def test_pdf_extraction_leaves_the_event_loop_free(tmp_path: Path, monkeypatch) 
         time.sleep(0.6)
         return [1]
 
-    def slow_plan(_path: Path, *, ocr_adapter: object) -> str:
+    def slow_plan(_path: Path, **_kwargs) -> str:
         time.sleep(0.6)
         return "plan"
 
+    monkeypatch.setenv("KNOWLEDGE_MARKITDOWN_MODE", "off")
     monkeypatch.setattr(pipeline, "GeminiFlashLiteOcrAdapter", FakeAdapter)
     monkeypatch.setattr(pipeline, "pdf_pages_requiring_ocr", slow_targets)
     monkeypatch.setattr(pipeline, "_build_plan", slow_plan)
@@ -370,3 +384,117 @@ def test_pdf_extraction_leaves_the_event_loop_free(tmp_path: Path, monkeypatch) 
 
     assert plan == "plan"
     assert longest_gap < 0.3, f"event loop was blocked for {longest_gap:.2f}s"
+
+
+def test_pymupdf_is_only_called_from_the_pymupdf_thread(tmp_path: Path, monkeypatch) -> None:
+    """PyMuPDF documents that using it from more than one thread can crash Python."""
+    import asyncio
+    import threading
+
+    import fitz  # type: ignore
+
+    from helpudoc_agent.knowledge_ingestion import pipeline
+    from helpudoc_agent.knowledge_ingestion.blocking import PYMUPDF_THREAD_NAME
+
+    source = _small_pdf(tmp_path / "policy.pdf")
+    original_open = fitz.open
+    callers: list[str] = []
+
+    def guarded_open(*args, **kwargs):
+        callers.append(threading.current_thread().name)
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setenv("KNOWLEDGE_MARKITDOWN_MODE", "off")
+    monkeypatch.setattr(fitz, "open", guarded_open)
+
+    plan = asyncio.run(
+        pipeline.extract_and_plan_document_with_gemini(source, client=object(), model="test", ocr_mode="auto")
+    )
+
+    assert plan.blocks
+    assert callers, "extraction never opened the PDF"
+    assert all(name.startswith(PYMUPDF_THREAD_NAME) for name in callers), callers
+
+
+def test_run_pymupdf_never_runs_two_calls_at_once() -> None:
+    import asyncio
+    import threading
+    import time
+
+    from helpudoc_agent.knowledge_ingestion.blocking import run_pymupdf
+
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def work() -> None:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+
+    async def scenario() -> None:
+        await asyncio.gather(*(run_pymupdf(work) for _ in range(4)))
+
+    asyncio.run(scenario())
+    assert peak == 1
+
+
+def test_markitdown_child_process_converts_a_local_file(tmp_path: Path) -> None:
+    import asyncio
+
+    from helpudoc_agent.knowledge_ingestion.markitdown_isolated import convert_with_markitdown_isolated
+
+    source = tmp_path / "notes.md"
+    source.write_text("# Notes\n\nNotice is required.", encoding="utf-8")
+
+    conversion = asyncio.run(convert_with_markitdown_isolated(source, timeout_seconds=60))
+
+    assert "Notice is required." in conversion.markdown
+    assert conversion.converter.startswith("markitdown/")
+
+
+def test_markitdown_child_process_is_killed_on_timeout(tmp_path: Path, monkeypatch) -> None:
+    """An overrunning conversion must stop, not keep a CPU busy after the job gave up."""
+    import asyncio
+    import sys
+    import time
+
+    import pytest
+
+    from helpudoc_agent.knowledge_ingestion import markitdown_isolated
+
+    monkeypatch.setattr(
+        markitdown_isolated,
+        "_worker_command",
+        lambda _path: [sys.executable, "-c", "import time; time.sleep(30)"],
+    )
+    started = time.perf_counter()
+    with pytest.raises(TimeoutError, match="exceeded 0.5s"):
+        asyncio.run(markitdown_isolated.convert_with_markitdown_isolated(tmp_path / "x.pdf", timeout_seconds=0.5))
+    assert time.perf_counter() - started < 5
+
+
+def test_markitdown_timeout_keeps_native_markdown_and_warns(tmp_path: Path, monkeypatch) -> None:
+    """A slow MarkItDown pass must not fail the source; native extraction carries it."""
+    import asyncio
+
+    from helpudoc_agent.knowledge_ingestion import pipeline
+
+    async def overrun(_path: Path, **_kwargs):
+        raise TimeoutError("MarkItDown exceeded 120s")
+
+    monkeypatch.setenv("KNOWLEDGE_MARKITDOWN_MODE", "primary")
+    monkeypatch.setattr(pipeline, "convert_with_markitdown_isolated", overrun)
+    source = _small_pdf(tmp_path / "report.pdf")
+
+    plan = asyncio.run(
+        pipeline.extract_and_plan_document_with_gemini(source, client=object(), model="test", ocr_mode="off")
+    )
+
+    assert "Renewal notice is required" in plan.markdown
+    warnings = [warning for warning in plan.manifest.warnings if warning.code == "markitdown_fallback"]
+    assert warnings and "MarkItDown exceeded 120s" in warnings[0].message

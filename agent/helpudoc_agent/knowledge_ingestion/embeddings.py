@@ -9,6 +9,8 @@ from typing import Any
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from .blocking import run_pymupdf
+
 
 class EmbeddingInput(BaseModel):
     id: str
@@ -75,6 +77,18 @@ async def embed_knowledge_inputs(
     return [output for output in outputs if output is not None]
 
 
+def _single_page_pdf(document: Any, page_number: int) -> bytes:
+    """Copy one page into its own PDF. Runs on the PyMuPDF thread only."""
+    import fitz  # type: ignore
+
+    page_document = fitz.open()
+    try:
+        page_document.insert_pdf(document, from_page=page_number - 1, to_page=page_number - 1)
+        return page_document.tobytes(garbage=4, deflate=True)
+    finally:
+        page_document.close()
+
+
 async def embed_pdf_pages(
     client: Any,
     *,
@@ -87,17 +101,15 @@ async def embed_pdf_pages(
     import hashlib
     import fitz  # type: ignore
 
-    document = fitz.open(str(pdf_path))
+    document = await run_pymupdf(fitz.open, str(pdf_path))
+    page_count = await run_pymupdf(lambda: document.page_count)
     semaphore = asyncio.Semaphore(max(1, min(8, concurrency)))
     outputs: list[EmbeddingOutput | None] = [None] * len(pages)
 
     async def embed_page(index: int, page_number: int) -> None:
-        if page_number < 1 or page_number > document.page_count:
+        if page_number < 1 or page_number > page_count:
             raise ValueError(f"PDF page {page_number} is out of range")
-        page_document = fitz.open()
-        page_document.insert_pdf(document, from_page=page_number - 1, to_page=page_number - 1)
-        page_bytes = page_document.tobytes(garbage=4, deflate=True)
-        page_document.close()
+        page_bytes = await run_pymupdf(_single_page_pdf, document, page_number)
         digest = hashlib.sha256(page_bytes).hexdigest()
         async with semaphore:
             response = await client.aio.models.embed_content(
@@ -125,5 +137,5 @@ async def embed_pdf_pages(
     try:
         await asyncio.gather(*(embed_page(index, page) for index, page in enumerate(pages)))
     finally:
-        document.close()
+        await run_pymupdf(document.close)
     return [output for output in outputs if output is not None]

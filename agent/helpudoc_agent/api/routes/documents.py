@@ -14,7 +14,7 @@ from helpudoc_agent.knowledge_ingestion.enrichment import (
     hierarchical_reduce_enrichments,
     WindowEnrichment,
 )
-from helpudoc_agent.knowledge_ingestion.blocking import run_blocking
+from helpudoc_agent.knowledge_ingestion.blocking import run_blocking, run_pymupdf
 from helpudoc_agent.knowledge_ingestion.models import ProcessingWindow, SourceBlock
 from helpudoc_agent.knowledge_ingestion.extractors import preflight_document
 from helpudoc_agent.knowledge_ingestion.embeddings import (
@@ -107,7 +107,7 @@ def register_document_routes(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not candidate.is_file():
             raise HTTPException(status_code=404, detail="Workspace file not found")
-        return await run_blocking(preflight_document, candidate)
+        return await run_pymupdf(preflight_document, candidate)
 
     @app.post("/knowledge/ingestion/map", response_model=KnowledgeMapResponse)
     async def map_knowledge_window(request: Request, req: KnowledgeMapRequest = Body(...)):
