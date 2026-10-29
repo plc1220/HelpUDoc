@@ -107,6 +107,12 @@ test('a document built with lost knowledge is not shown as complete', () => {
   }), now);
   assert.equal(status.tone, 'warning');
   assert.equal((status as { text: string }).text, 'Built with warnings');
+  assert.deepEqual(status, {
+    tone: 'warning',
+    text: 'Built with warnings',
+    detail: '1 warning',
+    warnings: ['Sections were built, but linking concepts across sections failed: the step took longer than 15 minutes and was stopped'],
+  });
   assert.deepEqual(
     describeMemberBuild(member({ published: true, ingestionStatus: 'published', ingestionWarnings: [] }), now),
     { tone: 'built' },

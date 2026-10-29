@@ -18,6 +18,7 @@ import {
   Users2,
   X,
 } from 'lucide-react';
+import { Collapsible } from '@astryxdesign/core/Collapsible';
 import SettingsShell from '../components/settings/SettingsShell';
 import {
   SettingsEmptyState,
@@ -103,11 +104,27 @@ const guessKnowledgeType = (fileName: string): string => {
 function MemberTitle({ member }: { member: KnowledgeBaseMember }) {
   const status = describeMemberBuild(member);
   const detail = 'detail' in status ? status.detail : undefined;
+  if (status.tone === 'warning') {
+    // Closed by default: a large document's warnings run to several long lines each,
+    // and shown in full they pushed the rest of the source list off screen.
+    return (
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sm text-slate-700">{member.title}</span>
+        <Collapsible defaultIsOpen={false} trigger={<span className="text-xs text-amber-700">{status.detail}</span>}>
+          <ul className="flex flex-col gap-1 text-xs text-amber-700">
+            {status.warnings.map((warning, index) => (
+              <li key={index} className="break-words">{warning}</li>
+            ))}
+          </ul>
+        </Collapsible>
+      </span>
+    );
+  }
   return (
     <span className="flex min-w-0 flex-1 flex-col">
       <span className="truncate text-sm text-slate-700">{member.title}</span>
       {detail ? (
-        <span className={`text-xs ${status.tone === 'failed' ? 'text-red-600' : status.tone === 'warning' ? 'text-amber-700' : 'text-slate-500'}`}>{detail}</span>
+        <span className={`text-xs ${status.tone === 'failed' ? 'text-red-600' : 'text-slate-500'}`}>{detail}</span>
       ) : null}
     </span>
   );

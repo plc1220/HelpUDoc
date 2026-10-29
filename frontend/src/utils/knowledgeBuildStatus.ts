@@ -5,7 +5,7 @@ export const SLOW_STEP_MS = 5 * 60 * 1000;
 
 export type MemberBuildStatus =
   | { tone: 'built' }
-  | { tone: 'warning'; text: string; detail: string }
+  | { tone: 'warning'; text: string; detail: string; warnings: string[] }
   | { tone: 'queued'; text: string }
   | { tone: 'pending'; text: string; detail?: string }
   | { tone: 'stalled'; text: string; detail: string }
@@ -81,8 +81,15 @@ export const describeMemberBuild = (member: KnowledgeBaseMember, now = new Date(
     const warnings = member.ingestionWarnings || [];
     // Published from its sections after a reduce failure, or with pages missing: usable,
     // but not the same as a complete build, so it must not wear the same green tick.
+    // `detail` is a one-line count; the full warnings stay a list so the page can
+    // collapse them. Joined into one string, a long build's warnings filled the dialog.
     return warnings.length
-      ? { tone: 'warning', text: 'Built with warnings', detail: warnings.join(' ') }
+      ? {
+        tone: 'warning',
+        text: 'Built with warnings',
+        detail: warnings.length === 1 ? '1 warning' : `${warnings.length} warnings`,
+        warnings,
+      }
       : { tone: 'built' };
   }
   return { tone: 'idle', text: 'Not built yet' };
