@@ -308,3 +308,65 @@ def test_markitdown_failure_is_visible_and_native_extraction_survives(tmp_path: 
     assert routed.blocks[0].text == "Still available natively."
     assert routed.manifest.warnings[0].code == "markitdown_fallback"
     assert "converter unavailable" in routed.manifest.warnings[0].message
+
+
+def test_pdf_extraction_leaves_the_event_loop_free(tmp_path: Path, monkeypatch) -> None:
+    """A large PDF must not freeze the agent's loop, or /health stops answering.
+
+    The liveness probe then kills the agent and every in-flight ingestion job fails.
+    Both synchronous extraction steps stand in here as sleeps; a heartbeat on the
+    loop records the longest gap between its ticks.
+    """
+    import asyncio
+    import time
+
+    from helpudoc_agent.knowledge_ingestion import pipeline
+
+    class FakeAdapter:
+        mode = "auto"
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        async def prepare_pdf(self, _path: Path, _targets: list[int]) -> None:
+            return None
+
+    def slow_targets(_path: Path, *, mode: str) -> list[int]:
+        time.sleep(0.6)
+        return [1]
+
+    def slow_plan(_path: Path, *, ocr_adapter: object) -> str:
+        time.sleep(0.6)
+        return "plan"
+
+    monkeypatch.setattr(pipeline, "GeminiFlashLiteOcrAdapter", FakeAdapter)
+    monkeypatch.setattr(pipeline, "pdf_pages_requiring_ocr", slow_targets)
+    monkeypatch.setattr(pipeline, "_build_plan", slow_plan)
+    source = tmp_path / "large-report.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+
+    async def scenario() -> tuple[object, float]:
+        longest_gap = 0.0
+        done = asyncio.Event()
+
+        async def heartbeat() -> None:
+            nonlocal longest_gap
+            last = time.perf_counter()
+            while not done.is_set():
+                await asyncio.sleep(0.02)
+                now = time.perf_counter()
+                longest_gap = max(longest_gap, now - last)
+                last = now
+
+        ticker = asyncio.create_task(heartbeat())
+        # Let the heartbeat take its first reading; a freeze before then goes unseen.
+        await asyncio.sleep(0.05)
+        plan = await pipeline.extract_and_plan_document_with_gemini(source, client=object(), model="test")
+        done.set()
+        await ticker
+        return plan, longest_gap
+
+    plan, longest_gap = asyncio.run(scenario())
+
+    assert plan == "plan"
+    assert longest_gap < 0.3, f"event loop was blocked for {longest_gap:.2f}s"

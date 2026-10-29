@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .blocking import run_blocking
 from .chunking import plan_windows
 from .conversion import route_document
 from .extractors import pdf_pages_requiring_ocr
@@ -69,7 +70,9 @@ async def extract_and_plan_document_with_gemini(
             mode=ocr_mode,
             cache_root=cache_root,
         )
-        targets = pdf_pages_requiring_ocr(path, mode=adapter.mode)
+        targets = await run_blocking(pdf_pages_requiring_ocr, path, mode=adapter.mode)
         if targets:
             await adapter.prepare_pdf(path, targets)
-    return _build_plan(path, ocr_adapter=adapter)
+    # The adapter only serves OCR results that prepare_pdf already fetched, so the
+    # plan can be built on another thread.
+    return await run_blocking(_build_plan, path, ocr_adapter=adapter)

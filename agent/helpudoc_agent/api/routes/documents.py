@@ -14,6 +14,7 @@ from helpudoc_agent.knowledge_ingestion.enrichment import (
     hierarchical_reduce_enrichments,
     WindowEnrichment,
 )
+from helpudoc_agent.knowledge_ingestion.blocking import run_blocking
 from helpudoc_agent.knowledge_ingestion.models import ProcessingWindow, SourceBlock
 from helpudoc_agent.knowledge_ingestion.extractors import preflight_document
 from helpudoc_agent.knowledge_ingestion.embeddings import (
@@ -106,7 +107,7 @@ def register_document_routes(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not candidate.is_file():
             raise HTTPException(status_code=404, detail="Workspace file not found")
-        return preflight_document(candidate)
+        return await run_blocking(preflight_document, candidate)
 
     @app.post("/knowledge/ingestion/map", response_model=KnowledgeMapResponse)
     async def map_knowledge_window(request: Request, req: KnowledgeMapRequest = Body(...)):
@@ -236,4 +237,4 @@ def register_document_routes(
         context = require_internal_user_context(request, agent_jwt_secret=agent_jwt_secret)
         if str(context.get("workspace_id") or "") != req.workspaceId:
             raise HTTPException(status_code=403, detail="Agent context does not allow this workspace")
-        return analyze_canonical_graph(req.concepts)
+        return await run_blocking(analyze_canonical_graph, req.concepts)
