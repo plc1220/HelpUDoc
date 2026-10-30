@@ -212,6 +212,50 @@ def _is_internal_agent_path(file_path: Any) -> bool:
     return any(part in _INTERNAL_AGENT_DIR_NAMES for part in normalized.split("/") if part)
 
 
+class ReadOnlySkillsBackend(FilesystemBackend):
+    """Serve the shared skill catalog at /skills/ for reading only.
+
+    The agent reads a loaded skill's references and assets from here. Writes were never
+    meant to land here: /skills/ is every team's catalog, and the backend's startup
+    backfill registers any new folder as an active governed skill with no creator. A
+    chat on aiengine-dev wrote ten such skills on 2026-10-12 by asking the agent to
+    convert a Word document. Skills change only through the Skill Creator draft flow,
+    which records the creator and the owning team and goes through review.
+
+    The async variants (awrite, aedit, aupload_files) delegate to these methods in
+    deepagents' BackendProtocol, so they are refused too.
+    """
+
+    _MESSAGE = (
+        "Cannot {operation} '{path}': /skills/ is the shared skill catalog and is read-only. "
+        "To create or change a skill, use the Skill Creator, which saves it as a private "
+        "draft for review. Do not write skill files anywhere else as a workaround."
+    )
+
+    @staticmethod
+    def _catalog_path(file_path: str) -> str:
+        normalized = "/" + str(file_path or "").strip().replace("\\", "/").lstrip("/")
+        return normalized if normalized.startswith("/skills/") else "/skills" + normalized
+
+    def _refusal(self, operation: str, file_path: str) -> str:
+        return self._MESSAGE.format(operation=operation, path=self._catalog_path(file_path))
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        return WriteResult(error=self._refusal("write", file_path))
+
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        return EditResult(error=self._refusal("edit", file_path))
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        return [FileUploadResponse(path=path, error=self._refusal("upload", path)) for path, _ in files]
+
+
 class SkillScopedFilesystemBackend(FilesystemBackend):
     """Keep structured source rows out of a Data Analytics model context."""
 
@@ -773,7 +817,7 @@ class AgentRegistry:
                 ),
             }
             if skills_root is not None:
-                routes["/skills/"] = FilesystemBackend(
+                routes["/skills/"] = ReadOnlySkillsBackend(
                     root_dir=str(skills_root),
                     virtual_mode=True,
                 )
