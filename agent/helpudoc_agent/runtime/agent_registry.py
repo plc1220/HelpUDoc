@@ -918,7 +918,10 @@ class AgentRegistry:
         system_prompt += build_bigquery_defaults_prompt()
         skills_root = self.settings.backend.skills_root
         if skills_root is not None:
-            skills_root.mkdir(parents=True, exist_ok=True)
+            # The agent container mounts the skills volume read-only; create the folder
+            # only on a fresh local checkout.
+            if not skills_root.exists():
+                skills_root.mkdir(parents=True, exist_ok=True)
             if self.settings.backend.sync_skills_to_workspace:
                 sync_skills_to_workspace(skills_root, workspace_state.root_path)
         skills = load_skills(skills_root) if skills_root is not None else []

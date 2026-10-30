@@ -780,19 +780,28 @@ spec:
                   name: helpudoc-config
                   key: SANDBOX_INLINE_MAX_GLOBAL_JOBS
                   optional: true
+          # The agent reads skills, plugins and runtime.yaml but never writes them; the
+          # backend container owns those writes (Skill Governance, settings, deploy sync).
+          # Read-only here stops a chat from changing the shared catalog even if a tool
+          # route regresses: on 2026-10-12 an agent write_file added ten skills.
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
             - name: skills-data
               mountPath: /app/skills
+              readOnly: true
             - name: skills-data
               mountPath: /skills
+              readOnly: true
             - name: plugins-data
               mountPath: /app/plugins
+              readOnly: true
             - name: plugins-data
               mountPath: /plugins
+              readOnly: true
             - name: agent-config-data
               mountPath: /agent/config
+              readOnly: true
             - name: vertex-sa-key
               mountPath: /var/secrets/vertex
               readOnly: true
