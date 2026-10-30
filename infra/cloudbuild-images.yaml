@@ -1,0 +1,129 @@
+# Build and push the three app images without deploying them anywhere.
+#
+# Why this exists next to cloudbuild.yaml:
+# - The client ARIA clusters (asia-southeast1-gke-{dev,prd}-aria-01) are deployed by
+#   infra/gke/scripts/deploy-aria.sh, which swaps image digests only. cloudbuild.yaml always
+#   applies infra/gke/k8s/ to a cluster, so using it just to get images also redeploys
+#   helpudoc-cluster.
+# - :latest is not moved here. Only cloudbuild.yaml releases move it, so this build cannot
+#   change what helpudoc-cluster resolves.
+#
+# The build steps below must stay in step with steps 1-3 of cloudbuild.yaml.
+steps:
+  # 1. Build backend/frontend/agent in parallel + reuse layers via BuildKit inline cache.
+  # Note: Docker layer caching only works across builds if we seed it from a previously-pushed image.
+  # We do this by pulling :latest and passing --cache-from, then tagging :latest via add-tag (no duplicate push).
+  - id: pull-backend-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-backend:latest || true']
+
+  - id: pull-frontend-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-frontend:latest || true']
+
+  - id: pull-agent-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-agent:latest || true']
+
+  - id: build-backend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-backend-cache']
+    env: ['DOCKER_BUILDKIT=1']
+    args:
+      [
+        'build',
+        '-f',
+        'backend/Dockerfile.gke',
+        '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-backend:latest',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID',
+        '.',
+      ]
+
+  - id: build-frontend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-frontend-cache']
+    env: ['DOCKER_BUILDKIT=1']
+    args:
+      [
+        'build',
+        '-f',
+        'frontend/Dockerfile.gke',
+        '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
+        '--build-arg',
+        'VITE_GOOGLE_CLIENT_ID=$_VITE_GOOGLE_CLIENT_ID',
+        '--build-arg',
+        'VITE_AUTH_MODE=oidc',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
+        '.',
+      ]
+
+  - id: build-agent
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-agent-cache']
+    env: ['DOCKER_BUILDKIT=1']
+    args:
+      [
+        'build',
+        '-f',
+        'agent/Dockerfile.gke',
+        '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-agent:latest',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID',
+        '.',
+      ]
+
+  - id: push-backend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-backend']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID']
+
+  - id: push-frontend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-frontend']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
+
+  - id: smoke-agent-officecli
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-agent']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        docker run --rm gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID officecli --version
+        docker run --rm gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID \
+          python /app/agent/scripts/smoke_officecli.py
+
+  - id: push-agent
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['smoke-agent-officecli']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
+
+
+images:
+  - 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID'
+
+substitutions:
+  _VITE_GOOGLE_CLIENT_ID: 226444861736-3505ntl2r4mer19skev2fb17hvg0l74v.apps.googleusercontent.com
+
+options:
+  logging: CLOUD_LOGGING_ONLY
