@@ -43,6 +43,7 @@ import { buildApiUrl } from '../../services/apiClient';
 import LumoMarkdown from '../markdown/LumoMarkdown';
 import { stripDeadFrontendSlidesUiReferences } from '../../utils/chatMarkdown';
 import WorkspaceHtmlPreviewFrame from '../WorkspaceHtmlPreviewFrame';
+import SkillProposalCards from './SkillProposalCards';
 import {
   getAttachmentFileIcon,
   getAttachmentTypeLabel,
@@ -628,6 +629,7 @@ function ChatMessageBubble({
   const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
   const progressEvents = useMemo(() => messageMetadata?.progressEvents || [], [messageMetadata?.progressEvents]);
   const workflowActions = useMemo(() => messageMetadata?.workflowActions || [], [messageMetadata?.workflowActions]);
+  const skillProposals = messageMetadata?.skillProposals;
   const effectiveProgressEvents = useMemo(() => {
     const lastIndex = progressEvents.length - 1;
     return progressEvents.map((event, index) => {
@@ -1988,6 +1990,11 @@ function ChatMessageBubble({
                   }}
                   workspaceId={workspaceId}
                 />
+              </div>
+            ) : null}
+            {skillProposals?.length ? (
+              <div className="mt-3">
+                <SkillProposalCards proposals={skillProposals} />
               </div>
             ) : null}
             {pendingInterrupt && !isClarificationInterrupt && !(interactionRequest) ? (

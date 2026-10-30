@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import YAML from 'yaml';
 import {
   BadgeCheck,
@@ -1237,7 +1238,7 @@ const SkillGovernancePage = () => {
     if (tab === 'team-skills' && selectedLeadTeamId) void loadTeamAccess(selectedLeadTeamId);
   }, [tab, loadTeamAccess, selectedLeadTeamId]);
 
-  const openDraft = async (draftId: string) => {
+  const openDraft = useCallback(async (draftId: string) => {
     setActionBusy(draftId);
     setError(null);
     try {
@@ -1247,7 +1248,21 @@ const SkillGovernancePage = () => {
     } finally {
       setActionBusy(null);
     }
-  };
+  }, []);
+
+  // ?draft=<id> opens that draft's editor. A skill proposal card in chat links here
+  // after saving, so the user can review the files and submit the draft.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedDraftId = searchParams.get('draft');
+  useEffect(() => {
+    if (!linkedDraftId) return;
+    void openDraft(linkedDraftId);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('draft');
+      return next;
+    }, { replace: true });
+  }, [linkedDraftId, openDraft, setSearchParams]);
 
   const createNew = async () => {
     setActionBusy('new');

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
 import { onSkillCatalogChanged } from '../../utils/skillCatalogEvents';
+import { appendSkillProposal } from '../../utils/skillProposalDrafts';
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
@@ -5380,6 +5381,22 @@ export default function WorkspacePage() {
 
     if (chunk.type === 'dashboard_artifact') {
       mergeDashboardArtifact(chunk.dashboardArtifact);
+      return;
+    }
+
+    if (chunk.type === 'skill_proposal') {
+      const proposal = {
+        proposalId: chunk.proposalId,
+        skillId: chunk.skillId,
+        name: chunk.name,
+        description: chunk.description,
+        files: chunk.files,
+        timestamp: chunk.timestamp,
+      };
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...markStreamingState(metadata),
+        skillProposals: appendSkillProposal(metadata.skillProposals, proposal),
+      }));
       return;
     }
 

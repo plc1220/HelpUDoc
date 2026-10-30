@@ -284,6 +284,10 @@ export function normalizeUserFacingSummary(raw: string, toolName?: string): stri
   if (/Cannot write\b/i.test(text) && /already exists/i.test(text)) {
     return 'File already exists, switching to edit mode.';
   }
+  if (normalizeToolKey(toolName) === 'propose_skill') {
+    const proposal = summarizeSkillProposal(text);
+    if (proposal) return proposal;
+  }
   if (looksLikeLineNumberDump(text)) {
     return humanizeSectionDraftMessage(toolName);
   }
@@ -291,6 +295,21 @@ export function normalizeUserFacingSummary(raw: string, toolName?: string): stri
     return humanizeSectionDraftMessage(toolName);
   }
   return text;
+}
+
+/**
+ * The live `propose_skill` output is the whole skill as JSON; the card shows it, so
+ * the activity log gets the same one line the backend saves.
+ */
+export function summarizeSkillProposal(text: string): string | undefined {
+  try {
+    const parsed = JSON.parse(text) as { type?: unknown; skillId?: unknown; files?: unknown };
+    if (parsed?.type !== 'helpudoc.skill_proposal/1' || typeof parsed.skillId !== 'string') return undefined;
+    const count = Array.isArray(parsed.files) ? parsed.files.length : 0;
+    return `Proposed skill ${parsed.skillId} (${count} ${count === 1 ? 'file' : 'files'})`;
+  } catch {
+    return undefined;
+  }
 }
 
 function humanizeSectionDraftMessage(toolName?: string): string {
