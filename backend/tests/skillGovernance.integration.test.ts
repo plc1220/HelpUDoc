@@ -1620,3 +1620,98 @@ test('the Skill Builder workspace is a real row, hidden from the user', { skip: 
     await db.destroy();
   }
 });
+
+test('a submitted draft keeps running for its author until the review closes it', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const authorId = uuidv4();
+  const reviewerId = uuidv4();
+  const teamId = uuidv4();
+  const workspaceId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const skillKey = `in-review-${suffix}`;
+  let draftId: string | null = null;
+  let requestId: string | null = null;
+
+  try {
+    await database.initialize();
+    const governance = new SkillGovernanceService(database);
+    await governance.initialize();
+    const users = new UserService(database);
+
+    await db('users').insert([
+      { id: authorId, externalId: `in-review-author-${suffix}`, email: `in-review-author-${suffix}@example.test`, displayName: 'In review author', isAdmin: false },
+      { id: reviewerId, externalId: `in-review-reviewer-${suffix}`, email: `in-review-reviewer-${suffix}@example.test`, displayName: 'In review reviewer', isAdmin: false },
+    ]);
+    await db('groups').insert({ id: teamId, name: `In review ${suffix}` });
+    await db('group_members').insert([{ groupId: teamId, userId: authorId }, { groupId: teamId, userId: reviewerId }]);
+    await db('team_role_bindings').insert([
+      { teamId, userId: authorId, role: 'member', assignedByUserId: null },
+      { teamId, userId: reviewerId, role: 'lead', assignedByUserId: null },
+    ]);
+    await db('workspaces').insert({
+      id: workspaceId, name: `Private ${suffix}`, slug: `private-${suffix}`, ownerId: authorId, visibility: 'private', workspaceType: 'private',
+    });
+
+    const created = await governance.createDraft(authorId, { proposalType: 'new' });
+    draftId = String(created.id);
+    const updated = await governance.updateDraft(authorId, draftId, Number(created.draftRevision), {
+      proposedSkillKey: skillKey,
+      proposedOwnerTeamId: teamId,
+      displayName: 'In review skill',
+      description: 'Keeps running while reviewed.',
+      files: [{ path: 'SKILL.md', content: `---\nname: ${skillKey}\ndescription: Keeps running while reviewed.\n---\n\n# ${skillKey}\n` }],
+    });
+    const keys = async () => (await users.getWorkspaceSkillDraftRuntimePins(workspaceId, authorId)).map((pin) => pin.skillKey);
+    assert.deepEqual(await keys(), [skillKey], 'a private draft runs in its author\'s private workspace');
+
+    const submitted = await governance.submitDraft(authorId, draftId, {
+      owningTeamId: teamId,
+      semanticVersion: '1.0.0',
+      expectedDraftRevision: Number(updated.draftRevision),
+      submissionNote: 'Keeps running while reviewed',
+    });
+    requestId = String(submitted.id);
+    assert.equal((await governance.getDraft(authorId, draftId)).status, 'submitted');
+    // The fix: submission used to drop it from the author's workspace until a reviewer acted.
+    assert.deepEqual(await keys(), [skillKey], 'a submitted draft keeps running for its author');
+    assert.deepEqual(await users.getWorkspaceSkillDraftRuntimePins(workspaceId, reviewerId), [], 'never for anyone else');
+
+    const review = await governance.getReview(reviewerId, requestId);
+    await governance.decideReview(reviewerId, requestId, {
+      decision: 'reject',
+      expectedRequestRevision: Number(review.requestRevision),
+      comment: 'Closes the review',
+    });
+    // A closed review archives the draft, and an archived draft is finished.
+    assert.deepEqual(await keys(), [], 'a draft stops once its review archives it');
+  } finally {
+    await db('workspaces').where({ id: workspaceId }).del().catch(() => undefined);
+    if (requestId) {
+      const candidateIds = db('skill_review_candidates').select('id').where({ requestId });
+      await db('skill_review_decisions').where({ requestId }).del().catch(() => undefined);
+      await db('skill_candidate_policy_results').whereIn('candidateId', candidateIds).del().catch(() => undefined);
+      await db('skill_review_candidate_files').whereIn('candidateId', candidateIds).del().catch(() => undefined);
+      await db('skill_review_candidates').where({ requestId }).del().catch(() => undefined);
+      await db('skill_review_requests').where({ id: requestId }).del().catch(() => undefined);
+    }
+    if (draftId) {
+      await db('private_workspace_skill_draft_exclusions').where({ draftId }).del().catch(() => undefined);
+      await db('private_workspace_skill_draft_pins').where({ draftId }).del().catch(() => undefined);
+      await db('skill_draft_revision_files')
+        .whereIn('draftRevisionId', db('skill_draft_revisions').select('id').where({ draftId }))
+        .del().catch(() => undefined);
+      await db('private_skill_drafts').where({ id: draftId }).update({ currentDraftRevisionId: null }).catch(() => undefined);
+      await db('skill_draft_revisions').where({ draftId }).del().catch(() => undefined);
+      await db('private_skill_drafts').where({ id: draftId }).del().catch(() => undefined);
+    }
+    await db('audit_events').whereIn('actorUserId', [authorId, reviewerId]).del().catch(() => undefined);
+    await db('notifications').whereIn('recipientUserId', [authorId, reviewerId]).del().catch(() => undefined);
+    await db('group_members').where({ groupId: teamId }).del().catch(() => undefined);
+    await db('team_role_bindings').where({ teamId }).del().catch(() => undefined);
+    await db('groups').where({ id: teamId }).del().catch(() => undefined);
+    await db('users').whereIn('id', [authorId, reviewerId]).del().catch(() => undefined);
+    await fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', skillKey), { recursive: true, force: true }).catch(() => undefined);
+    await db.destroy();
+  }
+});

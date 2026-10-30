@@ -1242,10 +1242,15 @@ export class UserService {
         'draft.displayName',
         'draft.description',
       )
-      // Only an editable draft runs: a submitted candidate belongs to its Team's review,
-      // and an archived one is finished. The owner check is what keeps another user's
-      // draft out, and the workspace check above keeps it out of shared workspaces.
-      .where({ 'draft.ownerUserId': userId, 'draft.status': 'private' })
+      // A draft runs for its author while it is editable and while it waits for review.
+      // Dropping it at submission made a skill that worked a minute earlier vanish from
+      // the author's own workspace until a reviewer acted, which read as a fault.
+      // Submission does not prune the package, so the revision is still on disk. An
+      // archived draft (approved, rejected or withdrawn) is finished: once approved,
+      // the published skill takes over. The owner check keeps another user's draft
+      // out, and the workspace check above keeps it out of shared workspaces.
+      .where({ 'draft.ownerUserId': userId })
+      .whereIn('draft.status', ['private', 'submitted'])
       .whereNull('excluded.draftId')
       .orderBy('draft.proposedSkillKey', 'asc');
     return rows
