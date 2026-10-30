@@ -31,6 +31,7 @@ import type {
   ToolOutputFile,
   InteractionPresentation,
   InteractionRequest,
+  SkillProposal,
   WorkflowActionEvent,
 } from '@helpudoc/contracts/types';
 import {
@@ -842,6 +843,7 @@ type ConversationRunSnapshot = {
   implicitInput?: { awaiting: boolean; prompt?: string };
   progressEvents?: RunProgressEvent[];
   workflowActions?: WorkflowActionEvent[];
+  skillProposals?: SkillProposal[];
 };
 
 const FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
@@ -2395,6 +2397,44 @@ export const normalizeWorkflowActionEvent = (value: unknown): WorkflowActionEven
   };
 };
 
+const SKILL_PROPOSAL_TYPE = 'helpudoc.skill_proposal/1';
+// One conversion run proposed ten skills; leave headroom without letting a looping
+// model fill the message metadata.
+const MAX_SKILL_PROPOSALS = 20;
+
+/**
+ * Read a `propose_skill` tool output. The agent has already checked it against the
+ * draft rules; the save request is checked again by the governance API, so this only
+ * keeps malformed output off the card. The `actions` the agent includes are dropped:
+ * the card rebuilds them from `files`, and storing both doubles the message size.
+ */
+export const normalizeSkillProposal = (value: unknown): SkillProposal | null => {
+  const record = parseJsonRecord(value);
+  if (!record || record.type !== SKILL_PROPOSAL_TYPE) return null;
+  const proposalId = coerceText(record.proposalId).trim();
+  const skillId = coerceText(record.skillId).trim();
+  const files = Array.isArray(record.files)
+    ? record.files
+      .map((file) => parseJsonRecord(file))
+      .filter((file): file is Record<string, unknown> => Boolean(file))
+      .map((file) => ({ path: coerceText(file.path).trim(), content: typeof file.content === 'string' ? file.content : '' }))
+      .filter((file) => file.path)
+    : [];
+  if (!proposalId || !skillId || !files.some((file) => file.path === 'SKILL.md')) return null;
+  return {
+    proposalId,
+    skillId,
+    name: coerceText(record.name).trim() || skillId,
+    description: coerceText(record.description).trim(),
+    files,
+    timestamp: new Date().toISOString(),
+  };
+};
+
+/** What the activity log shows instead of the proposal's full JSON. */
+export const skillProposalToolSummary = (proposal: SkillProposal): string =>
+  `Proposed skill ${proposal.skillId} (${proposal.files.length} ${proposal.files.length === 1 ? 'file' : 'files'})`;
+
 const buildTerminalConversationSummary = (status: AgentRunStatus, error?: string): string => {
   if (status === 'completed') {
     return 'Completed successfully.';
@@ -2454,6 +2494,9 @@ const persistRunConversationMessage = async (
   }
   if (snapshot.workflowActions?.length) {
     metadata.workflowActions = snapshot.workflowActions;
+  }
+  if (snapshot.skillProposals?.length) {
+    metadata.skillProposals = snapshot.skillProposals;
   }
   if (snapshot.pendingInterrupt) {
     metadata.pendingInterrupt = snapshot.pendingInterrupt as ConversationMessageMetadata['pendingInterrupt'];
@@ -3469,6 +3512,7 @@ async function runAgentRunWorker(
   const toolEvents: ToolEvent[] = [];
   const progressEvents: RunProgressEvent[] = [];
   const workflowActions: WorkflowActionEvent[] = [];
+  const skillProposals: SkillProposal[] = [];
   let artifactsCommitted = false;
   let artifactBaseline: WorkspaceArtifactBaseline | null = null;
   let agentStreamEstablished = false;
@@ -3541,6 +3585,7 @@ async function runAgentRunWorker(
     runPolicy: conversationRunPolicy,
     progressEvents: progressEvents.length ? [...progressEvents] : undefined,
     workflowActions: workflowActions.length ? [...workflowActions] : undefined,
+    skillProposals: skillProposals.length ? [...skillProposals] : undefined,
     ...overrides,
   });
 
@@ -3713,6 +3758,14 @@ async function runAgentRunWorker(
           if (workflowActions.length > MAX_WORKFLOW_ACTIONS) {
             workflowActions.splice(0, workflowActions.length - MAX_WORKFLOW_ACTIONS);
           }
+        }
+      }
+      if (parsed.name === 'propose_skill') {
+        const proposal = normalizeSkillProposal(parsed.content);
+        if (proposal) {
+          if (skillProposals.length < MAX_SKILL_PROPOSALS) skillProposals.push(proposal);
+          upsertToolEvent({ ...parsed, content: skillProposalToolSummary(proposal) }, 'completed');
+          return;
         }
       }
       upsertToolEvent(parsed, 'completed');
@@ -4313,6 +4366,12 @@ async function runAgentRunWorker(
       const workflowAction = normalizeWorkflowActionEvent(parsed.content);
       if (workflowAction) {
         await appendStreamEvent(runId, JSON.stringify({ type: 'workflow_action', ...workflowAction }));
+      }
+    }
+    if (parsed?.type === 'tool_end' && parsed.name === 'propose_skill') {
+      const proposal = normalizeSkillProposal(parsed.content);
+      if (proposal) {
+        await appendStreamEvent(runId, JSON.stringify({ type: 'skill_proposal', ...proposal }));
       }
     }
     const terminalEvent = terminalEventFromStreamPayload(parsed);

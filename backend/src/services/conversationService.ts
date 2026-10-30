@@ -107,7 +107,7 @@ export const mergeRunOwnedAgentMetadata = (
   };
   // Recovery snapshots may be intentionally sparse. Preserve durable activity
   // captured by the live worker unless recovery reconstructed a replacement.
-  for (const key of ['thinkingText', 'toolEvents', 'progressEvents', 'workflowActions', 'runPolicy']) {
+  for (const key of ['thinkingText', 'toolEvents', 'progressEvents', 'workflowActions', 'skillProposals', 'runPolicy']) {
     if (mergedMetadata[key] === undefined && existingMetadata?.[key] !== undefined) {
       mergedMetadata[key] = existingMetadata[key];
     }

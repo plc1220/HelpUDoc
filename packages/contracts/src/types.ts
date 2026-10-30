@@ -329,6 +329,22 @@ export interface WorkflowActionEvent {
   timestamp?: string;
 }
 
+/**
+ * One skill the agent proposed with `propose_skill`, shown in chat as a card.
+ *
+ * The agent cannot write to the shared catalog. The user saves a proposal as a
+ * private draft through the governance API, so the draft has an owner and goes
+ * through review before anyone else can run it.
+ */
+export interface SkillProposal {
+  proposalId: string;
+  skillId: string;
+  name: string;
+  description: string;
+  files: Array<{ path: string; content: string }>;
+  timestamp?: string;
+}
+
 export interface PendingInterrupt {
   kind?: 'approval' | 'clarification';
   interruptId?: string;
@@ -379,6 +395,7 @@ export interface ConversationMessageMetadata {
   implicitInputReason?: 'missing_interrupt';
   implicitInputPrompt?: string;
   workflowActions?: WorkflowActionEvent[];
+  skillProposals?: SkillProposal[];
   progressEvents?: Array<{
     phase: string;
     label: string;

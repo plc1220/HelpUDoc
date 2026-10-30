@@ -1,4 +1,4 @@
-import type { InteractionRequest, DashboardArtifactInfo } from './types';
+import type { InteractionRequest, DashboardArtifactInfo, SkillProposal } from './types';
 
 export type AgentStreamChunk =
   | {
@@ -54,6 +54,7 @@ export type AgentStreamChunk =
   | { type: 'tool_error'; content?: string; name?: string }
   | { type: 'workspace_files_changed'; workspaceId: string; paths: string[] }
   | { type: 'dashboard_artifact'; dashboardArtifact: DashboardArtifactInfo }
+  | ({ type: 'skill_proposal' } & SkillProposal)
   | {
       type: 'interrupt';
       interruptId?: string;
