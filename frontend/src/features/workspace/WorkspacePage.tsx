@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
+import { onSkillCatalogChanged } from '../../utils/skillCatalogEvents';
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
@@ -2503,6 +2504,11 @@ export default function WorkspacePage() {
       void loadSlashMetadata();
     };
     slashMetadataRefreshRef.current = refreshIfStale;
+    // A draft saved, submitted or approved -- here or in another tab -- changes what
+    // the next run allows. Reload at once rather than after the 30 s TTL or a reload.
+    const unsubscribeCatalog = onSkillCatalogChanged(() => {
+      void loadSlashMetadata();
+    });
     const onFocus = () => refreshIfStale();
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshIfStale();
@@ -2515,6 +2521,7 @@ export default function WorkspacePage() {
     return () => {
       cancelled = true;
       slashMetadataRefreshRef.current = null;
+      unsubscribeCatalog();
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };

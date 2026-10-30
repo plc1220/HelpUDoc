@@ -1,5 +1,6 @@
 import { API_URL, apiFetch } from './apiClient';
 import type { SkillBuilderAction } from './settingsApi';
+import { notifySkillCatalogChanged } from '../utils/skillCatalogEvents';
 
 export type GovernanceTeam = {
   id: string;
@@ -286,7 +287,13 @@ const apiError = async (response: Response, fallback: string): Promise<never> =>
 const jsonRequest = async <T>(url: string, init?: RequestInit, fallback = 'Governance request failed'): Promise<T> => {
   const response = await apiFetch(url, init);
   if (!response.ok) return apiError(response, fallback);
-  return response.json() as Promise<T>;
+  const body = await (response.json() as Promise<T>);
+  // Every governance write can change which skills a user runs: a draft saved or
+  // submitted, a review decided, a grant or pin changed. Open workspaces refresh
+  // their skill menu on this instead of waiting for a reload.
+  const method = String(init?.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') notifySkillCatalogChanged();
+  return body;
 };
 
 const idempotencyKey = () =>
