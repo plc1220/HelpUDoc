@@ -4,12 +4,13 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import logging
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Tuple
 
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from deepagents.backends.protocol import (
     EditResult,
+    FileDownloadResponse,
     FileUploadResponse,
     GlobResult,
     GrepResult,
@@ -32,8 +33,11 @@ from ..gemini_chat import create_chat_google_generative_ai
 from ..state import WorkspaceState, AgentRuntimeState
 from ..tools_and_schemas import ToolFactory
 from ..skills_registry import (
+    SkillMetadata,
     collect_tool_names,
+    find_skill_for_context,
     get_candidate_mcp_servers,
+    is_skill_allowed,
     load_skills,
     sync_skills_to_workspace,
 )
@@ -254,6 +258,185 @@ class ReadOnlySkillsBackend(FilesystemBackend):
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         return [FileUploadResponse(path=path, error=self._refusal("upload", path)) for path, _ in files]
+
+
+class ScopedSkillsBackend(ReadOnlySkillsBackend):
+    """/skills/ as this user's skills only: each one read from the package it loads.
+
+    The plain route exposed the whole catalog: every team's skills whatever their
+    grants, and .governed-versions/, which holds every governed version and other
+    users' private drafts. It also served a pinned version's or a draft's support
+    files from the mutable default folder, because load_skill names them
+    /skills/<id>/<file> while the package lives under .governed-versions.
+
+    A path resolves to a skill by its longest leading segment run that is a skill ID,
+    so /skills/data/analyze/x is the data/analyze skill, not a file of data. That skill
+    must pass is_skill_allowed, and its files come from find_skill_for_context: the
+    same package load_skill used, pin or draft included. Anything else, including any
+    dot-folder, reads as not found. Writes stay refused (ReadOnlySkillsBackend).
+    """
+
+    def __init__(self, *, workspace_state: WorkspaceState, root_dir: str, **kwargs: Any) -> None:
+        super().__init__(root_dir=root_dir, **kwargs)
+        self.workspace_state = workspace_state
+        self.skills_root = Path(root_dir)
+        self._resolved: dict[str, SkillMetadata | None] = {}
+        self._package_backends: dict[str, FilesystemBackend] = {}
+
+    # -- resolution -----------------------------------------------------------------
+    def _context(self) -> dict[str, Any] | None:
+        context = self.workspace_state.context
+        return context if isinstance(context, dict) else None
+
+    def _is_catalog_skill(self, skill_id: str) -> bool:
+        return (self.skills_root / skill_id / "SKILL.md").is_file()
+
+    def _allowed_skill(self, skill_id: str) -> SkillMetadata | None:
+        if skill_id not in self._resolved:
+            skill = None
+            if is_skill_allowed(skill_id, self._context()):
+                found = find_skill_for_context(self.skills_root, skill_id, self._context())
+                # find_skill_for_context also matches display names; a path must name the ID.
+                if found is not None and found.skill_id == skill_id:
+                    skill = found
+            self._resolved[skill_id] = skill
+        return self._resolved[skill_id]
+
+    def _allowed_skill_ids(self) -> list[str]:
+        context = self._context()
+        allowed = context.get("skill_allow_ids") if context else None
+        if isinstance(allowed, list):
+            candidates = [str(item).strip() for item in allowed if str(item).strip()]
+        else:
+            candidates = [skill.skill_id for skill in load_skills(self.skills_root)]
+        return sorted({skill_id for skill_id in candidates if self._allowed_skill(skill_id) is not None})
+
+    @staticmethod
+    def _segments(path: str | None) -> list[str]:
+        return [part for part in str(path or "").replace("\\", "/").split("/") if part]
+
+    def _resolve(self, path: str | None) -> tuple[SkillMetadata, str] | None:
+        """Map a route path to (skill, path inside its package), or None."""
+        segments = self._segments(path)
+        if not segments or any(part.startswith(".") or part == ".." for part in segments):
+            return None
+        for length in range(len(segments), 0, -1):
+            skill_id = "/".join(segments[:length])
+            skill = self._allowed_skill(skill_id)
+            if skill is not None:
+                return skill, "/" + "/".join(segments[length:])
+            if self._is_catalog_skill(skill_id):
+                return None  # the deepest skill on this path is not available to this user
+        return None
+
+    def _package_backend(self, skill: SkillMetadata) -> FilesystemBackend:
+        root = str(skill.path.parent.resolve())
+        if root not in self._package_backends:
+            self._package_backends[root] = FilesystemBackend(root_dir=root, virtual_mode=True)
+        return self._package_backends[root]
+
+    def _visible(self, skill: SkillMetadata, inner_path: str) -> bool:
+        """Hide dot-entries and nested skills this user may not open."""
+        segments = self._segments(inner_path)
+        if any(part.startswith(".") for part in segments):
+            return False
+        for length in range(1, len(segments) + 1):
+            nested = skill.skill_id + "/" + "/".join(segments[:length])
+            if self._is_catalog_skill(nested) and self._allowed_skill(nested) is None:
+                return False
+        return True
+
+    def _outer(self, skill: SkillMetadata, inner_path: str) -> str:
+        return f"/{skill.skill_id}/{inner_path.lstrip('/')}"
+
+    def _remap(self, skill: SkillMetadata, entries: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        mapped = []
+        for entry in entries or []:
+            inner = str(entry.get("path") or "")
+            if self._visible(skill, inner):
+                mapped.append({**entry, "path": self._outer(skill, inner)})
+        return mapped
+
+    def _scope_roots(self, path: str | None) -> list[tuple[SkillMetadata, str]] | None:
+        """Skills a search at *path* covers: one resolved skill, or every allowed one below a prefix."""
+        resolved = self._resolve(path)
+        if resolved is not None:
+            return [resolved]
+        prefix = self._segments(path)
+        roots = []
+        for skill_id in self._allowed_skill_ids():
+            if self._segments(skill_id)[: len(prefix)] == prefix:
+                skill = self._allowed_skill(skill_id)
+                if skill is not None:
+                    roots.append((skill, "/"))
+        return roots or None
+
+    @staticmethod
+    def _not_found(path: str | None) -> str:
+        return f"Path '/skills/{str(path or '').lstrip('/')}' not found"
+
+    # -- read side ------------------------------------------------------------------
+    def ls(self, path: str) -> LsResult:
+        resolved = self._resolve(path)
+        if resolved is not None:
+            skill, inner = resolved
+            result = self._package_backend(skill).ls(inner if inner.endswith("/") else inner + "/")
+            if result.error:
+                return LsResult(error=self._not_found(path))
+            return LsResult(entries=self._remap(skill, result.entries))
+        # A prefix of allowed IDs, such as "/" or "/data/" when only data/analyze is allowed.
+        prefix = self._segments(path)
+        children = sorted({
+            self._segments(skill_id)[len(prefix)]
+            for skill_id in self._allowed_skill_ids()
+            if len(self._segments(skill_id)) > len(prefix) and self._segments(skill_id)[: len(prefix)] == prefix
+        })
+        if not children:
+            return LsResult(error=self._not_found(path))
+        base = "/" + "/".join(prefix) + "/" if prefix else "/"
+        return LsResult(entries=[{"path": f"{base}{child}/", "is_dir": True} for child in children])
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        resolved = self._resolve(file_path)
+        if resolved is None or not self._visible(*resolved):
+            return ReadResult(error=f"File '/skills/{str(file_path or '').lstrip('/')}' not found")
+        skill, inner = resolved
+        return self._package_backend(skill).read(inner, offset, limit)
+
+    def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        roots = self._scope_roots(path)
+        if roots is None:
+            return GlobResult(error=self._not_found(path))
+        matches: list[dict[str, Any]] = []
+        for skill, inner in roots:
+            result = self._package_backend(skill).glob(pattern, inner)
+            if not result.error:
+                matches.extend(self._remap(skill, result.matches))
+        return GlobResult(matches=matches)
+
+    def grep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
+        roots = self._scope_roots(path or "/")
+        if roots is None:
+            return GrepResult(error=self._not_found(path))
+        matches: list[dict[str, Any]] = []
+        for skill, inner in roots:
+            result = self._package_backend(skill).grep(pattern, inner, glob)
+            if result.error:
+                return GrepResult(error=result.error)  # an invalid pattern, reported once
+            matches.extend(self._remap(skill, result.matches))
+        return GrepResult(matches=matches)
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        responses: list[FileDownloadResponse] = []
+        for path in paths:
+            resolved = self._resolve(path)
+            if resolved is None or not self._visible(*resolved):
+                responses.append(FileDownloadResponse(path=path, content=None, error="file_not_found"))
+                continue
+            skill, inner = resolved
+            response = self._package_backend(skill).download_files([inner])[0]
+            responses.append(FileDownloadResponse(path=path, content=response.content, error=response.error))
+        return responses
 
 
 class SkillScopedFilesystemBackend(FilesystemBackend):
@@ -817,7 +1000,8 @@ class AgentRegistry:
                 ),
             }
             if skills_root is not None:
-                routes["/skills/"] = ReadOnlySkillsBackend(
+                routes["/skills/"] = ScopedSkillsBackend(
+                    workspace_state=workspace_state,
                     root_dir=str(skills_root),
                     virtual_mode=True,
                 )
