@@ -18,6 +18,7 @@ from .builtins.human_interrupts import (
 )
 from .builtins.document_inspection import build_document_inspection_tools
 from .builtins.interaction import build_request_interaction_tool, build_workflow_action_tool
+from .builtins.skill_proposals import build_propose_skill_tool
 from .builtins.knowledge_navigation import (
     build_knowledge_navigation_tools,
     build_legacy_rag_query_tool,
@@ -75,6 +76,7 @@ class ToolFactory:
             "request_human_action": lambda ws: build_request_human_action_tool(ws),
             "request_interaction": lambda ws: build_request_interaction_tool(ws),
             "workflow_action": lambda ws: build_workflow_action_tool(ws),
+            "propose_skill": lambda ws: build_propose_skill_tool(ws),
             "run_skill_python_script": lambda ws: build_run_skill_python_script_tool(self.settings, ws),
         }
 

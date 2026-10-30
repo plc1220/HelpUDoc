@@ -127,6 +127,9 @@ tools:
     kind: builtin
     description: Emit one structured workflow action; use request_user_interaction
       for user-input gates
+  - name: propose_skill
+    kind: builtin
+    description: Propose one skill as a card the user saves as a private draft
   - name: run_skill_python_script
     kind: builtin
     description: Run an active skill's declared Python script in a Kubernetes sandbox

@@ -45,6 +45,7 @@ from ..bigquery_export_tools import load_bigquery_defaults
 from ..mcp_manager import MCPServerManager
 from ..tool_guard import GuardedTool
 from ..memory_store import UserScopedStoreBackend
+from ..tools.workspace.builtins.skill_proposals import workspace_skill_proposals_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ SKILL_BUILDER_DENIED_TOOLS = frozenset({
     "edit_file",
     "export_bigquery_query",
     "image_generation",
+    # The Skill Creator dialog reads its json action block; it renders no proposal cards.
+    "propose_skill",
     "run_skill_python_script",
     "upload_files",
     "write_file",
@@ -103,6 +106,18 @@ SKILL_BUILDER_SYSTEM_PROMPT = (
     "`tools` only where the skill genuinely needs them. An empty `tools: []` does not "
     "mean 'no tools' to this runtime, it means 'unrestricted', so omit the key instead "
     "of writing an empty list."
+)
+
+# Appended to the general prompt while ENABLE_WORKSPACE_SKILL_PROPOSALS is on. Asked how
+# to create skills, the agent used to say "add a folder under /skills/" and then did it.
+SKILL_PROPOSAL_PROMPT = (
+    "\n\nCreating skills: when the user asks to create, convert or package skills -- for "
+    "example from an attached document -- call propose_skill once per skill. Put every file in "
+    "it, SKILL.md first, opening with YAML frontmatter that has name and description. Never "
+    "write skill files with write_file or edit_file; /skills/ is read-only. Each proposal "
+    "appears to the user as a card. They save it as a private draft, which runs at once in "
+    "their own private workspaces, then submit it for review from Skill Governance, choosing "
+    "the owning Team. If they ask how to create skills here, describe that flow."
 )
 
 GENERAL_SYSTEM_PROMPT = (
@@ -194,6 +209,8 @@ ALWAYS_AVAILABLE_TOOL_GROUPS = (
     "knowledge_navigation",
     "request_interaction",
     "workflow_action",
+    # The only way an agent may help create a skill: /skills/ is read-only.
+    "propose_skill",
 )
 
 _STRUCTURED_DATA_SUFFIXES = frozenset({".csv", ".tsv", ".parquet", ".json"})
@@ -232,8 +249,8 @@ class ReadOnlySkillsBackend(FilesystemBackend):
 
     _MESSAGE = (
         "Cannot {operation} '{path}': /skills/ is the shared skill catalog and is read-only. "
-        "To create or change a skill, use the Skill Creator, which saves it as a private "
-        "draft for review. Do not write skill files anywhere else as a workaround."
+        "To create a skill, call propose_skill so the user can save it as a private draft for "
+        "review. Do not write skill files anywhere else as a workaround."
     )
 
     @staticmethod
@@ -718,6 +735,31 @@ def _include_always_available_tool_groups(
     return resolved
 
 
+def _runtime_tool_names(
+    skill_tool_names: list[str],
+    configured_tools: Dict[str, Any],
+    *,
+    persona: str,
+    proposals_enabled: bool,
+) -> list[str]:
+    """Tools bound for a run, before the sandbox and search switches.
+
+    Skills that declare tools narrow the set; when none do, every configured tool is
+    bound. The persona's denials come after both, because either step can add a tool
+    back: the all-tools fallback returned write_file to the Skill Creator, and the
+    always-available groups would return propose_skill.
+    """
+    if not skill_tool_names:
+        names = list(configured_tools.keys())
+    else:
+        names = _include_always_available_tool_groups(skill_tool_names, configured_tools)
+    if persona == SKILL_BUILDER_PERSONA:
+        names = [name for name in names if name not in SKILL_BUILDER_DENIED_TOOLS]
+    if not proposals_enabled:
+        names = [name for name in names if name != "propose_skill"]
+    return names
+
+
 def _clone_preservable_context(context: Dict[str, Any] | None) -> Dict[str, Any]:
     cloned: Dict[str, Any] = {}
     for key, value in (context or {}).items():
@@ -895,6 +937,8 @@ class AgentRegistry:
         system_prompt = (
             SKILL_BUILDER_SYSTEM_PROMPT if persona == SKILL_BUILDER_PERSONA else GENERAL_SYSTEM_PROMPT
         )
+        if persona != SKILL_BUILDER_PERSONA and workspace_skill_proposals_enabled():
+            system_prompt += SKILL_PROPOSAL_PROMPT
         if (
             workspace_state.context.get("workspace_mode") == "published_read_only"
             or workspace_state.context.get("can_write_workspace") is False
@@ -928,12 +972,12 @@ class AgentRegistry:
         tool_names = collect_tool_names(skills, plugins_root=self.settings.backend.plugins_root)
         if tool_names:
             tool_names = [name for name in tool_names if name in self.settings.tools]
-        if persona == SKILL_BUILDER_PERSONA:
-            tool_names = [name for name in tool_names if name not in SKILL_BUILDER_DENIED_TOOLS]
-        if not tool_names:
-            tool_names = list(self.settings.tools.keys())
-        else:
-            tool_names = _include_always_available_tool_groups(tool_names, self.settings.tools)
+        tool_names = _runtime_tool_names(
+            tool_names,
+            self.settings.tools,
+            persona=persona,
+            proposals_enabled=workspace_skill_proposals_enabled(),
+        )
         if not allow_skill_sandbox:
             tool_names = [name for name in tool_names if name != "run_skill_python_script"]
         if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:

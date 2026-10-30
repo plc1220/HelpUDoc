@@ -46,7 +46,7 @@ def test_writes_into_the_catalog_are_refused_and_change_nothing(tmp_path):
     uploaded = backend.upload_files([("/skills/tos-analysis/scripts/run.py", b"print(1)")])
 
     for error in (new_skill.error, edited.error, uploaded[0].error):
-        assert error and "read-only" in error and "Skill Creator" in error
+        assert error and "read-only" in error and "propose_skill" in error
     assert "/skills/rating-escalation/SKILL.md" in new_skill.error
     assert not (skills / "rating-escalation").exists()
     assert not (skills / "tos-analysis" / "scripts").exists()
