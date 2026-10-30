@@ -56,6 +56,7 @@ from helpudoc_agent.plan_gates import (
     requested_dashboard_title,
 )
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
+from helpudoc_agent.tools.workspace.builtins.skill_proposals import workspace_skill_proposals_enabled
 from helpudoc_agent.skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
@@ -390,9 +391,13 @@ def register_chat_routes(
         if not tool_names:
             tool_names = list(settings.tools.keys())
         else:
-            for extra in ("list_skills", "load_skill", "request_interaction", "workflow_action"):
+            for extra in ("list_skills", "load_skill", "request_interaction", "workflow_action", "propose_skill"):
                 if extra in settings.tools and extra not in tool_names:
                     tool_names.append(extra)
+        # Runs bind propose_skill only while it is switched on and runtime.yaml (on
+        # agent-config-pvc in GKE) lists it, so its presence here confirms both.
+        if not workspace_skill_proposals_enabled():
+            tool_names = [name for name in tool_names if name != "propose_skill"]
         return {
             "agents": [
                 {
