@@ -163,6 +163,54 @@ else
   echo "  All digests are allowlisted."
 fi
 
+# Admission is checked when a pod is created, so an image that drops off the allowlist
+# keeps running until its pod restarts, then cannot come back. On prd the backup CronJobs
+# ran the 22 Oct agent image; the 28 Oct allowlist update replaced that digest and every
+# nightly backup since failed silently. On aria-dev an app restart failed the same way.
+# This deploy replaces only the app, frontend and reflection images (and moves the backup
+# CronJobs to the new agent image), so every other image must already be admissible.
+log "Images this deploy does not replace must stay admissible"
+STALE="$(for ns in "${NS}" aria-ops; do
+    kubectl -n "${ns}" get deploy,statefulset,daemonset,cronjob -o json 2>/dev/null \
+      | python3 -c 'import json,sys; [print(sys.argv[1], i["kind"], i["metadata"]["name"], c["name"], c["image"], kind) for i in json.load(sys.stdin)["items"] for kind in ("init", "main") for c in (i["spec"].get("jobTemplate",{}).get("spec",{}) or i["spec"])["template"]["spec"].get("initContainers" if kind == "init" else "containers", [])]' "${ns}"
+  done | python3 -c '
+import sys
+policy = open(sys.argv[1]).read()
+replaced = {("helpudoc-app", "backend"), ("helpudoc-app", "knowledge-worker"), ("helpudoc-app", "agent"),
+            ("helpudoc-frontend", "frontend"), ("helpudoc-daily-reflection", "reflection-job")}
+for line in sys.stdin:
+    ns, kind, name, container, image, role = line.split()
+    if (name, container) in replaced:
+        continue
+    if ns == "aria-ops" and kind == "CronJob" and "agent@" in image:
+        continue  # moved to the deployed agent image below
+    if "@sha256:" not in image or ("namePattern: " + image) not in policy:
+        # GKE admission ignores init containers (verified on prd 2026-11-03 with a
+        # server-side dry run), so those are reported but do not stop a pod.
+        print(("info " if role == "init" else "stop ") + f"{ns}/{kind.lower()}/{name} {container} {image}")
+' "${WORK}/policy.yaml")"
+STOP="$(grep '^stop ' <<<"${STALE}" | cut -d' ' -f2- || true)"
+INFO="$(grep '^info ' <<<"${STALE}" | cut -d' ' -f2- || true)"
+if [[ -n "${STOP}" ]]; then
+  echo "  Not on the allowlist (a restart of these leaves the workload without a pod):"
+  echo "${STOP}" | sed 's/^/    /'
+  if [[ "${ENFORCEMENT}" == "ENFORCED_BLOCK_AND_AUDIT_LOG" ]]; then
+    echo "  WARNING: allowlist these digests again. This deploy does not touch them, but their next pod will be refused."
+  fi
+else
+  echo "  All other images are allowlisted."
+fi
+if [[ -n "${INFO}" ]]; then
+  echo "  Init containers not on the allowlist (admission does not check init containers today):"
+  echo "${INFO}" | sed 's/^/    /'
+fi
+BACKUP_CRONJOBS="$(kubectl -n aria-ops get cronjob -o json 2>/dev/null \
+  | python3 -c 'import json,sys; [print(i["metadata"]["name"], c["name"], c["image"]) for i in json.load(sys.stdin)["items"] for c in i["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"] if "agent@" in c["image"]]' || true)"
+if [[ -n "${BACKUP_CRONJOBS}" ]]; then
+  echo "  aria-ops CronJobs on the agent image (deploy moves them to $(ref agent)):"
+  echo "${BACKUP_CRONJOBS}" | awk '{print "    " $1 " " $2 " " $3}'
+fi
+
 if [[ "${TARGET}" == "prd" ]]; then
   log "runtime.yaml at ${COMMIT:0:8}, as rewritten for prd, must not name dev projects"
   runtime_yaml | diff <(git show "${COMMIT}:agent/config/runtime.yaml") - | grep '^>' | sed 's/^>/  /' || true
@@ -263,6 +311,7 @@ log "Backup to ${BACKUP_DIR}"
 mkdir -p "${BACKUP_DIR}"
 k get deploy helpudoc-app helpudoc-frontend -o yaml > "${BACKUP_DIR}/deployments.yaml"
 k get cronjob helpudoc-daily-reflection -o yaml > "${BACKUP_DIR}/cronjob.yaml"
+[[ -n "${BACKUP_CRONJOBS}" ]] && kubectl -n aria-ops get cronjob -o yaml > "${BACKUP_DIR}/aria-ops-cronjobs.yaml"
 POD="$(app_pod)"
 # The skills tar includes .governed-versions/: the only copy of governed skill bytes.
 k exec "${POD}" -c backend -- tar -C /app/skills -cf - . > "${BACKUP_DIR}/skills.tar"
@@ -285,6 +334,7 @@ rollback() {
   k rollout undo deploy/helpudoc-app || true
   k rollout undo deploy/helpudoc-frontend || true
   k apply -f "${BACKUP_DIR}/cronjob.yaml" || true
+  [[ -f "${BACKUP_DIR}/aria-ops-cronjobs.yaml" ]] && { kubectl -n aria-ops apply -f "${BACKUP_DIR}/aria-ops-cronjobs.yaml" || true; }
   echo "PVC contents are in ${BACKUP_DIR}/*.tar if they also need restoring (see the runbook)."
 }
 
@@ -299,6 +349,11 @@ log "Set images"
 k set image deploy/helpudoc-app backend="$(ref backend)" knowledge-worker="$(ref backend)" agent="$(ref agent)"
 k set image deploy/helpudoc-frontend frontend="$(ref frontend)"
 k set image cronjob/helpudoc-daily-reflection reflection-job="$(ref reflection)"
+# The aria-ops backup CronJobs run the agent image for its Python and Kubernetes client.
+# The allowlist keeps only the current release, so they follow the release or stop.
+while read -r job container _; do
+  [[ -n "${job}" ]] && kubectl -n aria-ops set image "cronjob/${job}" "${container}=$(ref agent)"
+done <<<"${BACKUP_CRONJOBS}"
 
 log "Wait for rollout (helpudoc-app uses Recreate: the old pod is already gone)"
 if ! k rollout status deploy/helpudoc-app --timeout=15m || ! k rollout status deploy/helpudoc-frontend --timeout=5m; then
