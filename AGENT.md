@@ -149,6 +149,8 @@ Note:
 
 ## 5) Deploy Procedure
 
+For aria-dev and aria-prd (deploy-aria.sh, Binary Authorization, maintenance mode, nightly backups and restoration), see `docs/aria-operations-runbook.md`.
+
 ### Local deploy (full stack on Docker)
 
 ```bash
