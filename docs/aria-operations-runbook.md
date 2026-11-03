@@ -382,7 +382,141 @@ on aiengine-dev, which remains the record of that history.
 
 ---
 
-## 8. Known gaps
+## 8. Model lifecycle (Gemini upgrades)
+
+The app calls Gemini on **Vertex AI**, location `global`, through each cluster's project
+(dev: `ccob-my-ai-engine-dev`, prd: `ccob-my-ai-engine-prd`). Google retires model
+versions on a fixed schedule, so plan an upgrade before each retirement date.
+
+### 8.1 Where each model is set
+
+| Model | Used for | Set in |
+|---|---|---|
+| `model.name`, `model.fast_name` | Default and Fast chat | `agent/config/runtime.yaml` |
+| `model.lite_name` | Lite chat **and knowledge ingestion** (extract, map, reduce) | `agent/config/runtime.yaml` |
+| `model.pro_name` | Pro chat (falls back to `name` when unset) | `agent/config/runtime.yaml` |
+| `model.image_name` | Image generation | `agent/config/runtime.yaml` |
+| `*_thinking_level`, `*_max_output_tokens` | Per mode | `agent/config/runtime.yaml` |
+| Embedding model | Knowledge-base vectors | env `KNOWLEDGE_EMBEDDING_MODEL` (and `KNOWLEDGE_EMBEDDING_DIMENSIONS`, default 768) on `helpudoc-app` |
+
+Nothing else names a model. All clusters use the same `runtime.yaml`; the prd deploy
+rewrites only the project IDs in it, never the model names.
+
+**Do not change models in the Settings page.** It has no model controls. Its "Tools &
+connections" tab rewrites the whole `runtime.yaml` on the volume, but the agent reads the
+file only at startup, and the next deploy replaces it with the git copy. A model change
+made there is lost. Change models in git (8.4).
+
+### 8.2 Models in use and their dates (checked 3 Nov 2026)
+
+| Model | Used for | Released | Earliest retirement |
+|---|---|---|---|
+| `gemini-3.1-flash-lite` | Lite chat, ingestion | 7 May 2026 | **7 May 2027** |
+| `gemini-3.5-flash` | Default, Fast, Pro chat | 19 May 2026 | **19 May 2027** |
+| `gemini-3.1-flash-image` | Image generation | 28 May 2026 | **28 May 2027** |
+| `gemini-embedding-2` | Knowledge vectors | 22 Apr 2026 | not announced |
+
+Known successors: `gemini-3.8-flash` (released 2 Sep 2026, retires 2 Sep 2027 or later)
+and `gemini-3.5-flash-lite` (21 Jul 2026, July 2027 or later). **Skip
+`gemini-3.6-flash`**: Vertex retires it on 19 Nov 2026.
+
+Google's policy for stable models: at least 12 months after release, and at least 45 days'
+notice once a retirement date is fixed. Listed dates can move later, never earlier.
+
+### 8.3 Watching for retirements
+
+- Vertex AI model versions page:
+  <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions>
+- Google Cloud deprecation emails go to the project owners of both projects. Keep a
+  current maintainer on that list.
+- Start testing a successor about two months before the earliest retirement date.
+- The Gemini API (AI Studio) deprecation page has its own dates; they do not apply here.
+
+### 8.4 Change a chat, lite or image model
+
+No code change, no image rebuild and no allowlist change. About 30 minutes per cluster
+including tests.
+
+**1. Check the model is served in `global` for the project.** Vertex validates the
+location at startup but not the model name, so a wrong name only fails on the first
+request. Probe from the agent container, which has Vertex access:
+
+```bash
+export KUBECONFIG=~/.kube/aria-dev     # then repeat on aria-prd with its project
+kubectl -n helpudoc exec -i deploy/helpudoc-app -c agent -- python - <<'EOF'
+from google import genai
+from google.genai import types
+c = genai.Client(vertexai=True, project="ccob-my-ai-engine-dev", location="global")
+for m in ["gemini-3.8-flash"]:                     # the candidate model(s)
+    try:
+        r = c.models.generate_content(model=m, contents="Reply with OK.",
+            config=types.GenerateContentConfig(thinking_config=types.ThinkingConfig(thinking_level="LOW")))
+        print("OK  ", m, r.text.strip()[:40])
+    except Exception as e:
+        print("FAIL", m, str(e)[:200])
+EOF
+```
+
+**2. Read the model's developer guide for breaking changes.** For example, Gemini 3.8 Flash
+does not accept `thinking_level: minimal`, ignores `temperature`/`top_p`/`top_k`, rejects
+`frequency_penalty`/`presence_penalty`, and is strict about function-call ids. The app
+sends `low` and `high` only, sets no penalties, and sends `temperature=0` in three places
+(OCR, web sources), which becomes a no-op. Check the quota for the new model, especially
+for the lite model, which ingestion uses heavily.
+
+**3. Edit `agent/config/runtime.yaml` on a branch and commit.** For example:
+
+```yaml
+model:
+  name: gemini-3.8-flash
+  fast_name: gemini-3.8-flash
+  # pro_name: <a Pro model served in global>   # unset means Pro runs on `name`
+```
+
+**4. Deploy to aria-dev with the current images.** `deploy-aria.sh` syncs `runtime.yaml`
+from `GIT_REF` and restarts the app, so reuse the build that is already running:
+
+```bash
+BUILD_ID=<build already on the cluster>          # see `deploy-aria.sh dev check` output
+infra/gke/scripts/deploy-aria.sh dev check  "$BUILD_ID" <new commit>
+infra/gke/scripts/deploy-aria.sh dev deploy "$BUILD_ID" <new commit>
+kubectl -n helpudoc exec deploy/helpudoc-app -c agent -- sh -c "grep -A4 '^model:' /agent/config/runtime.yaml"
+```
+
+On aiengine-dev, the same commit ships with `gcloud builds submit --config infra/cloudbuild.yaml`.
+
+**5. Test on aria-dev:** a chat in each mode (Fast, Lite, Pro); a research run with plan
+approval (a resume after a human decision); a clarification question; a frontend-slides
+run (interaction gates); a skill proposal; one knowledge ingestion (lite model); one image.
+
+**6. Deploy to aria-prd** the same way (`prd check`, then `prd deploy`, same `BUILD_ID`),
+then repeat the step 4 grep and a short smoke test.
+
+**Rollback:** revert the commit and deploy again the same way.
+
+### 8.5 Change the embedding model
+
+This one needs a plan. Each stored vector records the model that made it, and retrieval
+compares only vectors from the same model (`knowledgeService.ts`, filter on `model`).
+After a switch, every existing knowledge base silently loses vector search and falls back
+to keyword matching until its documents are re-ingested.
+
+1. Probe the model as in 8.4 step 1 (`client.models.embed_content`), and keep
+   `KNOWLEDGE_EMBEDDING_DIMENSIONS` at a size the new model supports (default 768).
+2. Set the env var on every `helpudoc-app` container that has it:
+   - aiengine-dev: `infra/gke/k8s/50-app.yaml`, then a Cloud Build deploy;
+   - ARIA clusters (hand-built Deployments, `deploy-aria.sh` does not change env vars):
+     ```bash
+     kubectl -n helpudoc get deploy helpudoc-app -o json | python3 -c "import json,sys; [print(c['name']) for c in json.load(sys.stdin)['spec']['template']['spec']['containers'] if any(e['name']=='KNOWLEDGE_EMBEDDING_MODEL' for e in c.get('env',[]))]"
+     kubectl -n helpudoc set env deploy/helpudoc-app -c <container> KNOWLEDGE_EMBEDDING_MODEL=<new model>
+     ```
+     The pod restarts; its images must still be allowlisted (section 2).
+3. Rebuild every knowledge base's documents from the knowledge-base page, then publish.
+4. Do it while few knowledge bases exist, or schedule the re-ingestion window with users.
+
+---
+
+## 9. Known gaps
 
 - The nightly backup has no alert. A log-based alert on `FailedCreate` in `aria-ops`, or
   on a newest backup older than 26 hours, would catch the 28 Oct failure on day one.
@@ -392,3 +526,6 @@ on aiengine-dev, which remains the record of that history.
 - The Backup for GKE restore in 7.4 has not been rehearsed.
 - `helpudoc-app` init containers on prd still run the 22 Oct agent digest. Admission
   ignores init containers today; move them to the release image if that changes.
+- Pro mode runs on `gemini-3.5-flash` because `model.pro_name` is unset, while `/agents`
+  describes it as Gemini Pro. Set `pro_name` or correct the description (section 8.4).
+- There is no model setting in the UI; model changes go through git and a deploy (8.4).
