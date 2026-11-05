@@ -1383,6 +1383,99 @@ test('a CD-managed skill republishes when its shipped content moves on', { skip:
   }
 });
 
+test('BASE_SKILL_OWNER_TEAM moves shipped skill ownership and republish to that Team', { skip: !enabled }, async () => {
+  const database = new DatabaseService();
+  const db = database.getDb();
+  const teamId = uuidv4();
+  const suffix = uuidv4().replace(/-/g, '').slice(0, 12);
+  const teamName = `Base owner ${suffix}`;
+  const missingName = `No such team ${suffix}`;
+  const baseKey = `baseowned-${suffix}`;
+  const legacyKey = `legacyowned-${suffix}`;
+  const authoredKey = `authored-${suffix}`;
+  const orphanKey = `orphan-${suffix}`;
+  const keys = [baseKey, legacyKey, authoredKey, orphanKey];
+  const previous = process.env.BASE_SKILL_OWNER_TEAM;
+  const body = (key: string, note: string) => `---\nname: ${key}\ndescription: ${note}\n---\n\n# ${key}\n\n${note}\n`;
+  const ship = async (key: string, note: string) => {
+    await fs.mkdir(path.join(skillsRoot, key), { recursive: true });
+    await fs.writeFile(path.join(skillsRoot, key, 'SKILL.md'), body(key, note), 'utf-8');
+  };
+  const restart = async () => new SkillGovernanceService(database).initialize();
+  const current = (key: string) => db('skills as s')
+    .join('groups as g', 'g.id', 's.ownerTeamId')
+    .join('skill_versions as v', 'v.id', 's.defaultVersionId')
+    .select('s.id', 'g.name as owner', 'v.semanticVersion')
+    .where('s.skillKey', key).first();
+
+  try {
+    await database.initialize();
+    await db('groups').insert({ id: teamId, name: teamName });
+
+    // Shipped while the default applies: Platform Migration owns it.
+    delete process.env.BASE_SKILL_OWNER_TEAM;
+    await ship(legacyKey, 'Legacy v1.');
+    await restart();
+    assert.equal((await current(legacyKey)).owner, 'Platform Migration');
+
+    process.env.BASE_SKILL_OWNER_TEAM = teamName;
+    await ship(baseKey, 'Base v1.');
+    await restart();
+    const base = await current(baseKey);
+    assert.equal(base.owner, teamName, 'a new shipped skill must go to the configured Team');
+    assert.equal(base.semanticVersion, '1.0.0');
+
+    // A skill the Team wrote itself: no `migrated` version, folder disagrees with it.
+    const authoredId = uuidv4();
+    const authoredVersionId = uuidv4();
+    await db('skills').insert({
+      id: authoredId, skillKey: authoredKey, displayName: 'Authored', ownerTeamId: teamId, status: 'active',
+    });
+    await db('skill_versions').insert({
+      id: authoredVersionId, skillId: authoredId, semanticVersion: '2.0.0', manifestHash: 'f'.repeat(64), status: 'active',
+    });
+    await db('skills').where({ id: authoredId }).update({ defaultVersionId: authoredVersionId });
+    await ship(authoredKey, 'Not the approved content.');
+
+    // A deploy changes every folder. Restart.
+    await ship(baseKey, 'Base v2.');
+    await ship(legacyKey, 'Legacy v2.');
+    await restart();
+    assert.equal((await current(baseKey)).semanticVersion, '1.0.1', 'the configured Team\'s shipped skill republishes');
+    assert.equal((await current(legacyKey)).semanticVersion, '1.0.0', 'a skill left with the old owner no longer republishes');
+    assert.equal((await current(authoredKey)).semanticVersion, '2.0.0', 'a Team-written skill never republishes from disk');
+
+    // A typo must not create a Team that owns every new skill.
+    process.env.BASE_SKILL_OWNER_TEAM = missingName;
+    await ship(orphanKey, 'Orphan.');
+    await restart();
+    assert.equal(await db('skills').where({ skillKey: orphanKey }).first(), undefined);
+    assert.equal(await db('groups').where({ name: missingName }).first(), undefined);
+  } finally {
+    if (previous === undefined) delete process.env.BASE_SKILL_OWNER_TEAM;
+    else process.env.BASE_SKILL_OWNER_TEAM = previous;
+    for (const key of keys) {
+      const s = await db('skills').where({ skillKey: key }).first().catch(() => null);
+      if (s) {
+        await db('skills').where({ id: s.id }).update({ defaultVersionId: null }).catch(() => undefined);
+        await db('skill_version_files')
+          .whereIn('skillVersionId', db('skill_versions').select('id').where({ skillId: s.id }))
+          .del().catch(() => undefined);
+        await db('team_skill_grants').where({ skillId: s.id }).del().catch(() => undefined);
+        await db('skill_versions').where({ skillId: s.id }).del().catch(() => undefined);
+        await db('skills').where({ id: s.id }).del().catch(() => undefined);
+      }
+      await fs.rm(path.join(skillsRoot, key), { recursive: true, force: true }).catch(() => undefined);
+      await fs.rm(path.join(skillsRoot, '.governed-versions', 'packages', key), {
+        recursive: true, force: true,
+      }).catch(() => undefined);
+    }
+    await db('audit_events').where({ actorRole: 'platform_migration' }).del().catch(() => undefined);
+    await db('groups').where({ id: teamId }).del().catch(() => undefined);
+    await db.destroy();
+  }
+});
+
 test('a Platform Admin may clear their own candidate only when the platform opts in', { skip: !enabled }, async () => {
   const database = new DatabaseService();
   const db = database.getDb();

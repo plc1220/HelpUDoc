@@ -48,6 +48,16 @@ const MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
 const MAX_FILES = 500;
 const DEFAULT_MIGRATION_TEAM = 'Platform Migration';
 
+/**
+ * The Team that owns skills shipped in the repo's skills/ folder: it is the owner of
+ * every newly registered folder, and its shipped skills republish when a deploy changes
+ * them. BASE_SKILL_OWNER_TEAM names it so a client Team can own the base skills while
+ * the migration Team steps back; empty keeps Platform Migration.
+ */
+function baseSkillOwnerTeamName(): string {
+  return String(process.env.BASE_SKILL_OWNER_TEAM || '').trim() || DEFAULT_MIGRATION_TEAM;
+}
+
 export class SkillGovernanceService {
   private readonly db: Knex;
   private readonly idempotency: GovernanceIdempotency;
@@ -2664,21 +2674,28 @@ export class SkillGovernanceService {
    * version pointed at content the platform no longer ships and, once its blobs were
    * collected, at content that no longer existed.
    *
-   * Scoped to skills the migration Team owns. For a Team-authored skill the blob store
-   * is the source of truth and the filesystem is a materialized copy, so republishing
-   * from disk would let a deploy silently overwrite a version a Team Lead approved.
+   * Scoped to shipped skills the base owner Team owns (`baseSkillOwnerTeamName`). For a
+   * Team-authored skill the blob store is the source of truth and the filesystem is a
+   * materialized copy, so republishing from disk would let a deploy silently overwrite
+   * a version a Team Lead approved.
    *
    * The previous version is left intact and a new one is published beside it: an
    * approved version is immutable, so correcting drift means a new semantic version,
    * not an edit to the old row.
    */
   private async republishDriftedRegistrySkills(): Promise<void> {
-    const migrationTeam = await this.db('groups').where({ name: DEFAULT_MIGRATION_TEAM }).first();
-    if (!migrationTeam) return;
+    const ownerTeam = await this.db('groups').where({ name: baseSkillOwnerTeamName() }).first();
+    if (!ownerTeam) return;
+    // Owner alone is not enough: the base owner can be a client Team that also writes
+    // its own skills, and those must never be republished from disk. Only a skill first
+    // registered from the shipped folder carries the `migrated` flag.
     const skills = await this.db('skills as s')
       .join('skill_versions as v', 'v.id', 's.defaultVersionId')
       .select('s.id', 's.skillKey', 's.status', 'v.manifestHash', 'v.semanticVersion')
-      .where({ 's.ownerTeamId': migrationTeam.id, 's.status': 'active' });
+      .where({ 's.ownerTeamId': ownerTeam.id, 's.status': 'active' })
+      .whereExists(this.db('skill_versions as shipped')
+        .whereRaw('shipped."skillId" = s.id')
+        .whereRaw(`shipped."validationSummary" ->> 'migrated' = 'true'`));
 
     const republished: string[] = [];
     for (const skill of skills as any[]) {
@@ -2885,13 +2902,21 @@ export class SkillGovernanceService {
 
   private async backfillLegacyRegistry(): Promise<void> {
     await fs.mkdir(skillsRoot, { recursive: true });
-    let migrationTeam = await this.db('groups').where({ name: DEFAULT_MIGRATION_TEAM }).first();
-    if (!migrationTeam) {
+    const ownerTeamName = baseSkillOwnerTeamName();
+    let ownerTeam = await this.db('groups').where({ name: ownerTeamName }).first();
+    if (!ownerTeam && ownerTeamName !== DEFAULT_MIGRATION_TEAM) {
+      // A typo must not create a Team that silently owns every new skill.
+      console.warn('BASE_SKILL_OWNER_TEAM names no Team; new shipped skills stay unregistered', {
+        team: ownerTeamName,
+      });
+      return;
+    }
+    if (!ownerTeam) {
       const [created] = await this.db('groups').insert({
         id: uuidv4(),
         name: DEFAULT_MIGRATION_TEAM,
       }).returning('*');
-      migrationTeam = created;
+      ownerTeam = created;
     }
     const skillKeys = await collectSkillIds(skillsRoot);
     for (const rawKey of skillKeys) {
@@ -2919,7 +2944,7 @@ export class SkillGovernanceService {
             skillKey,
             displayName: metadata.name || displayNameFromKey(skillKey),
             description: metadata.description || null,
-            ownerTeamId: migrationTeam.id,
+            ownerTeamId: ownerTeam.id,
             originalCreatorUserId: null,
             defaultVersionId: versionId,
             status: 'active',
@@ -2974,7 +2999,7 @@ export class SkillGovernanceService {
         resourceType: 'skill',
         resourceId: skillId,
         policyVersion: GOVERNANCE_POLICY_VERSION,
-        metadata: { skillKey, versionId, manifestHash, ownerTeamId: migrationTeam.id },
+        metadata: { skillKey, versionId, manifestHash, ownerTeamId: ownerTeam.id },
       });
     }
   }

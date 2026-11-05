@@ -326,6 +326,12 @@ spec:
                   name: helpudoc-config
                   key: ALLOW_SINGLE_LEAD_SKILL_SELF_APPROVAL
                   optional: true
+            - name: BASE_SKILL_OWNER_TEAM
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: BASE_SKILL_OWNER_TEAM
+                  optional: true
             # Published file artifacts. Without these the backend silently falls
             # back to the workspace store under a published/ prefix, so a release
             # test passes against the wrong bucket. Compose was fixed in 3eb6561;

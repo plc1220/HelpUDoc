@@ -98,7 +98,7 @@ gcloud builds submit --project ccob-my-ai-engine-dev --config infra/cloudbuild.y
 
 - Builds images, applies `infra/gke/k8s/`, and syncs `skills/`, `plugins/` and
   `runtime.yaml` **from the uploaded working tree**. Untracked folders under `skills/`
-  are shipped and registered as Platform Migration skills at startup. Clean the working
+  are shipped and registered as base owner Team skills at startup. Clean the working
   tree first.
 - Re-applies `70-caddy.yaml`, which ends maintenance mode (section 5).
 
@@ -177,12 +177,22 @@ A rollback recreates pods. Their digests must still be on the allowlist (section
   `team_skill_grants` (who may run it), `private_skill_drafts.ownerUserId` (draft owner).
 - **Restarts and deploys never change an existing skill's owner.** Startup only creates
   rows for unregistered folders, and only refreshes content of skills still owned by
-  Platform Migration.
+  the base owner Team (below).
+- **Base owner Team.** `BASE_SKILL_OWNER_TEAM` in `helpudoc-config` names the Team that
+  owns skills shipped in `skills/`. Empty means Platform Migration. Startup gives each
+  new folder to this Team, and records a new version when a deploy changes a skill
+  this Team owns that was first registered from git. A skill the Team wrote in the
+  app is never republished from disk. If the Team does not exist, startup logs a
+  warning and registers nothing; it never creates the Team.
+- **Changing the base owner** (Platform Migration to Digital on both ARIA clusters).
+  Set the value, transfer the existing shipped skills with `transferSkill`, then
+  restart. Do both: a shipped skill left with the old owner keeps running git's
+  content on each deploy, but no version records it.
 - Change the owning team with `transferSkill` (`POST /api/skills/:skillId/transfer`,
   platform admin, audited). There is no UI button.
 - A skill deleted from the database whose folder still exists comes back at the next
-  restart, owned by Platform Migration.
-- **A team-owned skill must not also live in git.** The deploy writes git's copy into
+  restart, owned by the base owner Team.
+- **A skill owned by any other Team must not also live in git.** The deploy writes git's copy into
   `/app/skills/<key>`, startup only rebuilds missing folders, so the agent would run git's
   copy instead of the team's approved version. Remove it from `skills/` in the same
   release that transfers it. (Applies to `tos-analysis`, which is in git.)
