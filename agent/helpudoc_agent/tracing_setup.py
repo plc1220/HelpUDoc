@@ -24,6 +24,14 @@ Two processors are installed:
 
 Because the log record carries ``logging.googleapis.com/trace``, an entry in
 Logs Explorer links to its span in Cloud Trace.
+
+The provider is installed even when GCP export is off, for one reason: its sampler.
+FastAPI 0.16x traces every request itself once a provider exists, so each Kubernetes
+probe (``/ready`` every 10 s, ``/health`` every 30 s) became a Langfuse trace -- about
+8,000 a day on aria-dev, burying the chat traces and filling MinIO with raw events.
+``ProbeFilterSampler`` drops those requests when their span starts; ``ParentBased``
+then drops their child spans too. ``TRACE_EXCLUDED_PATHS`` overrides the list
+(comma-separated); set it empty to trace every request again.
 """
 
 from __future__ import annotations
@@ -35,7 +43,14 @@ from opentelemetry import trace as otel_trace_api
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.sdk.trace.sampling import (
+    ALWAYS_ON,
+    Decision,
+    ParentBased,
+    Sampler,
+    SamplingResult,
+    TraceIdRatioBased,
+)
 
 from .config.env import env_trim
 
@@ -70,6 +85,9 @@ _METADATA_ATTRIBUTE_PREFIXES = (
 
 _MAX_ATTRIBUTE_CHARS = 4096
 
+# Kubernetes liveness and readiness probes. Not user or agent activity.
+_DEFAULT_EXCLUDED_PATHS = ("/health", "/ready")
+
 _configured = False
 _provider: Optional[TracerProvider] = None
 
@@ -95,6 +113,46 @@ def _sample_ratio() -> float:
     except ValueError:
         logger.warning("GCP_TRACE_SAMPLE_RATIO is not a number; sampling every span")
         return 1.0
+
+
+def _excluded_paths() -> frozenset[str]:
+    raw = env_trim("TRACE_EXCLUDED_PATHS")
+    if raw is None:
+        return frozenset(_DEFAULT_EXCLUDED_PATHS)
+    return frozenset(p.strip() for p in raw.split(",") if p.strip())
+
+
+class ProbeFilterSampler(Sampler):
+    """Drop root spans for health-check requests; defer everything else.
+
+    Matches the route from the span attributes when the instrumentation passes them
+    at start, otherwise from the span name (``"GET /ready"``). Used as the root
+    sampler of ``ParentBased``, so a dropped request takes its child spans with it
+    and a kept request keeps all of them.
+    """
+
+    def __init__(self, delegate: Sampler, excluded_paths: frozenset[str]) -> None:
+        self._delegate = delegate
+        self._excluded = excluded_paths
+
+    def _path(self, name: str, attributes) -> Optional[str]:
+        attrs = attributes or {}
+        for key in ("http.route", "url.path", "http.target"):
+            value = attrs.get(key)
+            if isinstance(value, str) and value:
+                return value.split("?", 1)[0]
+        method, _, rest = (name or "").partition(" ")
+        if rest.startswith("/") and method.isupper():
+            return rest.split("?", 1)[0]
+        return None
+
+    def should_sample(self, parent_context, trace_id, name, kind=None, attributes=None, links=None, trace_state=None):
+        if self._excluded and self._path(name, attributes) in self._excluded:
+            return SamplingResult(Decision.DROP)
+        return self._delegate.should_sample(parent_context, trace_id, name, kind, attributes, links, trace_state)
+
+    def get_description(self) -> str:
+        return f"ProbeFilterSampler({sorted(self._excluded)}, {self._delegate.get_description()})"
 
 
 def _keep_attribute(key: str, include_payloads: bool) -> bool:
@@ -181,29 +239,25 @@ def _build_cloud_trace_processor(project_id: Optional[str]) -> Optional[BatchSpa
 
 
 def configure_tracing(*, force: bool = False) -> Optional[TracerProvider]:
-    """Install the global TracerProvider that exports to GCP.
+    """Install the global TracerProvider: probe filtering always, GCP export when enabled.
 
     Must run before the first Langfuse client is built so Langfuse attaches to
-    this provider. Returns None when ``GCP_TRACE_ENABLED`` is unset, leaving
-    Langfuse to set up its own provider exactly as before.
+    this provider. With ``GCP_TRACE_ENABLED`` unset the provider has no processors
+    of its own; Langfuse adds its exporter to it, as it would to one it built itself.
     """
     global _configured, _provider
     if _configured and not force:
         return _provider
 
-    if not _tracing_enabled():
-        _configured = True
-        _provider = None
-        return None
-
-    project_id = _project_id()
-    if not project_id:
+    gcp_enabled = _tracing_enabled()
+    project_id = _project_id() if gcp_enabled else None
+    if gcp_enabled and not project_id:
         logger.warning(
             "GCP_TRACE_ENABLED is set but GOOGLE_CLOUD_PROJECT is not; "
             "spans will not carry a Cloud Trace correlation field"
         )
 
-    ratio = _sample_ratio()
+    ratio = _sample_ratio() if gcp_enabled else 1.0
     provider = TracerProvider(
         resource=Resource.create(
             {
@@ -217,23 +271,26 @@ def configure_tracing(*, force: bool = False) -> Optional[TracerProvider]:
         ),
         # ParentBased keeps a sampled trace whole: a child is not dropped
         # independently of the root it belongs to.
-        sampler=ParentBased(TraceIdRatioBased(ratio)) if ratio < 1.0 else None,
+        sampler=ParentBased(
+            ProbeFilterSampler(TraceIdRatioBased(ratio) if ratio < 1.0 else ALWAYS_ON, _excluded_paths())
+        ),
     )
 
-    provider.add_span_processor(
-        SpanLogProcessor(project_id, include_payloads=_flag("GCP_TRACE_INCLUDE_PAYLOADS"))
-    )
-    cloud_trace = _build_cloud_trace_processor(project_id)
-    if cloud_trace is not None:
-        provider.add_span_processor(cloud_trace)
+    if gcp_enabled:
+        provider.add_span_processor(
+            SpanLogProcessor(project_id, include_payloads=_flag("GCP_TRACE_INCLUDE_PAYLOADS"))
+        )
+        cloud_trace = _build_cloud_trace_processor(project_id)
+        if cloud_trace is not None:
+            provider.add_span_processor(cloud_trace)
 
     otel_trace_api.set_tracer_provider(provider)
     if otel_trace_api.get_tracer_provider() is not provider:
         # OTel refuses to replace an already-installed provider and only logs a
         # warning. Say so plainly, because the symptom otherwise is silence.
         logger.warning(
-            "A TracerProvider was already installed; GCP span export is inactive. "
-            "configure_tracing must run before any other OpenTelemetry setup."
+            "A TracerProvider was already installed; probe filtering and GCP span export "
+            "are inactive. configure_tracing must run before any other OpenTelemetry setup."
         )
 
     _provider = provider
