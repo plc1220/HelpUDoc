@@ -29,6 +29,8 @@ The provider is installed even when GCP export is off, for one reason: its sampl
 FastAPI 0.16x traces every request itself once a provider exists, so each Kubernetes
 probe (``/ready`` every 10 s, ``/health`` every 30 s) became a Langfuse trace -- about
 8,000 a day on aria-dev, burying the chat traces and filling MinIO with raw events.
+``/internal/memories`` is excluded for the same reason: the backend reads a user's
+memory file several times per run, and each read was a trace with no model call.
 ``ProbeFilterSampler`` drops those requests when their span starts; ``ParentBased``
 then drops their child spans too. ``TRACE_EXCLUDED_PATHS`` overrides the list
 (comma-separated); set it empty to trace every request again.
@@ -85,8 +87,9 @@ _METADATA_ATTRIBUTE_PREFIXES = (
 
 _MAX_ATTRIBUTE_CHARS = 4096
 
-# Kubernetes liveness and readiness probes. Not user or agent activity.
-_DEFAULT_EXCLUDED_PATHS = ("/health", "/ready")
+# Not user or agent activity: Kubernetes liveness and readiness probes, and the
+# backend reading or writing a user's memory file (plain file I/O, no model call).
+_DEFAULT_EXCLUDED_PATHS = ("/health", "/ready", "/internal/memories")
 
 _configured = False
 _provider: Optional[TracerProvider] = None

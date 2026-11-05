@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.sampling import ALWAYS_ON, Decision
 from helpudoc_agent import tracing_setup
 from helpudoc_agent.tracing_setup import ProbeFilterSampler
 
-PROBES = frozenset({"/health", "/ready"})
+PROBES = frozenset({"/health", "/ready", "/internal/memories"})
 
 
 def _decision(name, attributes=None, excluded=PROBES):
@@ -23,6 +23,9 @@ def _decision(name, attributes=None, excluded=PROBES):
 @pytest.mark.parametrize("name, attributes", [
     ("GET /ready", None),
     ("GET /health", None),
+    ("GET /internal/memories", None),
+    ("PUT /internal/memories", None),
+    ("DELETE /internal/memories", None),
     ("GET", {"url.path": "/ready"}),
     ("GET /x", {"http.route": "/health"}),
     ("GET /ready?probe=1", None),
@@ -34,6 +37,7 @@ def test_probe_requests_are_dropped(name, attributes):
 @pytest.mark.parametrize("name", [
     "POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream",
     "POST /knowledge/ingestion/map",
+    "POST /internal/analyze",           # runs a model: memory, reflection, skill evolution
     "GET /agents",
     "ChatGoogleGenerativeAI",          # LangChain/Langfuse spans, not HTTP requests
     "LangGraph",

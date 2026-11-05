@@ -329,6 +329,7 @@ export class UserMemoryService {
     const analysis = await runInternalAnalysis(
       {
         systemPrompt: MEMORY_ANALYSIS_SYSTEM_PROMPT,
+        purpose: 'user-memory',
         userPrompt: [
           `Workspace name: ${workspace?.name || input.workspaceId}`,
           'Candidate target paths:',

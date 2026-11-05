@@ -362,6 +362,8 @@ export async function runInternalAnalysis(
   payload: {
     systemPrompt: string;
     userPrompt: string;
+    /** Names the Langfuse trace, e.g. "user-memory". */
+    purpose?: 'user-memory' | 'daily-reflection' | 'skill-evolution';
   },
   options?: InternalAgentOptions,
 ): Promise<InternalAnalyzeResponse> {

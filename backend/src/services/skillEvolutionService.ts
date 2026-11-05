@@ -404,6 +404,7 @@ export class SkillEvolutionService {
     const analysis = await runInternalAnalysis(
       {
         systemPrompt: EVOLUTION_SYSTEM_PROMPT,
+        purpose: 'skill-evolution',
         userPrompt: [
           `Run ID: ${row.runId}`,
           `Conversation ID: ${conversationId}`,

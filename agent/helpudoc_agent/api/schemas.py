@@ -26,6 +26,8 @@ class ChatResponse(BaseModel):
 class InternalAnalyzeRequest(BaseModel):
     systemPrompt: str
     userPrompt: str
+    # What the backend is analysing, e.g. "user-memory". Names the Langfuse trace.
+    purpose: Optional[str] = None
 
 
 class InternalMemoryRequest(BaseModel):

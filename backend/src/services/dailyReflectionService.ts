@@ -655,6 +655,7 @@ export class DailyReflectionService {
       const analysis = await runInternalAnalysis(
         {
           systemPrompt: REFLECTION_ANALYSIS_SYSTEM_PROMPT,
+          purpose: 'daily-reflection',
           userPrompt: JSON.stringify(
             {
               reflectionDate: date,
