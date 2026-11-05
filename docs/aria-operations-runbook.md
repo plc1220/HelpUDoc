@@ -26,6 +26,7 @@ Last verified: 3 Nov 2026.
 | Binary Authorization | off | `ALWAYS_DENY` + digest allowlist | `ALWAYS_DENY` + digest allowlist |
 | Images | `gcr.io/ccob-my-ai-engine-dev/helpudoc-*` | same registry, by digest | `asia-southeast1-docker.pkg.dev/ccob-my-ai-engine-prd/aria-releases/*`, by digest |
 | Nightly backup | none | none | `aria-ops/aria-nightly-backup`, 03:00 MYT |
+| Status | **To be retired.** Kept read-only (maintenance mode) as the record of history not migrated | Development cluster for all updates; test here before prd | Production |
 
 Namespace for the app on every cluster: `helpudoc`. App pod: `deploy/helpudoc-app`
 (containers `backend`, `knowledge-worker`, `agent`, plus an MCP sidecar). It uses the
@@ -200,6 +201,80 @@ infra/gke/scripts/maintenance.sh <aiengine-dev|aria-dev|aria-prd> on|off|status
 - Uses its own kubeconfig; checks the Caddy image against the allowlist before restarting.
 - The backend keeps running, so `kubectl exec` work (migrations, backups) still works.
 - Ended by a `cloudbuild.yaml` deploy on aiengine-dev; `deploy-aria.sh` leaves it alone.
+
+---
+
+## 5a. Edge access: DNS and Cloud Armor (WAF)
+
+### Hostnames
+
+| Hostname | Must resolve to | Served by |
+|---|---|---|
+| `aria.skp.gov.my` | `136.68.184.254` | aria-prd Gateway `aria-gateway`, HTTPRoute `aria` → `helpudoc-caddy` |
+| `aiobs.skp.gov.my` | `136.68.184.254` | aria-prd Gateway, HTTPRoute `langfuse` → `langfuse-web` |
+| `aria-dev.skp.gov.my` | `8.232.172.194` | aria-dev Gateway, HTTPRoute `aria` |
+| `aiobs-dev.skp.gov.my` | **should be** `8.232.172.194` | aria-dev Gateway, HTTPRoute `langfuse`. On 4 Nov 2026 it still pointed at aiengine-dev's Ingress (`34.149.216.234`), so the aria-dev Langfuse had no public entry; the record change is with the `skp.gov.my` zone owner |
+| `aiengine-dev.skp.gov.my` | `34.149.216.234` | aiengine-dev Ingress (to be retired) |
+
+The `skp.gov.my` zone is Cloud DNS in a project outside `ccob-my-ai-engine-*`. Check with
+`dig +short <host>` and compare before debugging anything behind it: on 4 Nov a "missing
+traces" report was really a browser reaching the wrong cluster.
+
+The Gateway certificates already cover both hosts per cluster (certificate map
+`aria-gateway-certs`).
+
+### Cloud Armor policy `aria-global-policies` (aria-prd)
+
+Attached to both prd backends (`helpudoc-caddy` and `langfuse-web`). Order of evaluation:
+
+| Priority | Action | Purpose |
+|---|---|---|
+| 1000–1090 | deny 403 | Preconfigured attack signatures (RCE, SQLi/PHP/protocol/generic, Java/LFI/XSS, session fixation, scanners, RFI, CVE and JSON-SQLi canaries) for all hosts **except `aiobs.skp.gov.my`** |
+| 1200–1232 | deny 403 | The same signatures, tuned for `aria.skp.gov.my` request types that carry user text (chat runs, messages, file and draft saves, Skill Creator) |
+| 1500 | throttle (allow) | IP allowlist, 500 requests per minute per IP, above that 429 |
+| 1999 | deny 403 | Any origin outside Malaysia and Singapore |
+| 2000 | deny 403 | Everything else |
+
+**Why `aiobs` skips the signature rules (changed 4 Nov 2026).** Langfuse's web app sends its
+data queries as JSON in the URL (`GET /api/trpc/…?input={…}`) and keeps UI state in JSON
+cookies (`langfuse.project`, PostHog `ph_…_posthog`). SQL-injection signatures `942200`,
+`942180`, `942340` and `942101` matched normal use: 214 of 263 requests in ten minutes were
+denied, pages showed "Unexpected Response". Each of rules 1000, 1010, 1020, 1040, 1070,
+1080 and 1090 was wrapped as:
+
+```
+request.headers['host'] != 'aiobs.skp.gov.my' && ( <original expression> )
+```
+
+`aiobs` is still limited to the allowlisted IPs (1500), Malaysia and Singapore (1999) and
+deny-all (2000), so it is reachable only from a handful of known addresses. Nothing changed
+for `aria.skp.gov.my`: after the change, SQL injection on `/api/health` and XSS on `/` were
+still denied by rule 1010. **Do not remove the host condition**, or Langfuse breaks again.
+
+Cookie exclusions (`__Secure-next-auth*`, `*_posthog`, `langfuse.*`) were added to the same
+rules while diagnosing. They no longer have any effect for `aiobs` and can be removed with
+`gcloud compute security-policies rules remove-preconfig-waf-exclusion`.
+
+A backup of the policy before the change: `armor-backup-20261104-1704.json` (local, not in git).
+Restore with `gcloud compute security-policies import aria-global-policies --file-name=<file> --file-format=json`.
+
+### Diagnosing a 403
+
+1. Is the client's IP in rule 1500? `gcloud compute security-policies rules describe 1500 --security-policy=aria-global-policies --project=ccob-my-ai-engine-prd`
+2. Which rule denied it:
+   ```bash
+   gcloud logging read 'httpRequest.requestUrl:"https://aiobs.skp.gov.my" AND jsonPayload.enforcedSecurityPolicy.outcome="DENY"' \
+     --project ccob-my-ai-engine-prd --limit 5 \
+     --format="value(jsonPayload.enforcedSecurityPolicy.priority,jsonPayload.enforcedSecurityPolicy.preconfiguredExprIds)"
+   ```
+3. Which field matched: set `--log-level=VERBOSE` on the policy, reproduce, read
+   `matchedFieldType`, `matchedFieldName` and `matchedFieldValue` from the same log entries,
+   then set `--log-level=NORMAL` again.
+4. Policy changes take 3–10 minutes to reach every Google edge; mixed 200/403 answers in that
+   window are normal.
+
+The aria-dev policy has duplicate rule numbers and cannot be updated until that is fixed. It
+needs the same `aiobs-dev` scoping before `aiobs-dev.skp.gov.my` is pointed at aria-dev.
 
 ---
 
@@ -518,6 +593,10 @@ to keyword matching until its documents are re-ingested.
 
 ## 9. Known gaps
 
+- `aiobs-dev.skp.gov.my` resolves to aiengine-dev, not aria-dev (section 5a).
+- On aria-prd, `GET /` with a SQL-injection-like query was answered without a logged Cloud Armor
+  decision (`client_disconnected_before_any_response`), while the same pattern on `/api` is denied.
+  Unrelated to the `aiobs` change; not yet explained.
 - The nightly backup has no alert. A log-based alert on `FailedCreate` in `aria-ops`, or
   on a newest backup older than 26 hours, would catch the 28 Oct failure on day one.
 - Skill content has no plain copy in Cloud Storage; the database dump holds only hashes.
