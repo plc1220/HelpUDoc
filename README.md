@@ -98,7 +98,7 @@ cd backend
 npm install
 ENV_FILE=../env/local/dev.env npm run dev
 ```
- If you facing typechecks errors, this command will **SKIP** the type checks.
+If you facing typechecks errors, this command will **SKIP** the type checks.
 ```bash
 cd backend
 npm install
@@ -119,6 +119,10 @@ Local QA without Google login:
 # Backend: force local header auth instead of OIDC
 cd backend
 AUTH_MODE=headers ENV_FILE=../env/local/dev.env npm run dev
+
+# If you facing typechecks errors, this command will **SKIP** the type checks.
+cd backend
+TS_NODE_TRANSPILE_ONLY=true AUTH_MODE=headers ENV_FILE=../env/local/dev.env npm run dev
 
 # Frontend: show the local app instead of the Google sign-in screen
 cd frontend
