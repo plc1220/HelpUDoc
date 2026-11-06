@@ -75,6 +75,15 @@ and any hosted MCP URLs. Both files are ignored by git.
 ### 2. Start shared dependencies only
 
 ```bash
+cat >> env/local/stack.env <<'EOF'
+
+MINIO_IMAGE=cgr.dev/chainguard/minio:latest
+MINIO_MC_IMAGE=cgr.dev/chainguard/minio-client:latest-dev
+EOF
+```
+This overrides MINIO_IMAGE and MINIO_MC_IMAGE with chainguard publisher. The repo's default MinIO images can't be pulled (see more in line 16-17 in infra/docker-compose.dependencies.yml)
+
+```bash
 docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d
 ```
 
@@ -88,6 +97,12 @@ Backend:
 cd backend
 npm install
 ENV_FILE=../env/local/dev.env npm run dev
+```
+ If you facing typechecks errors, this command will **SKIP** the type checks.
+```bash
+cd backend
+npm install
+TS_NODE_TRANSPILE_ONLY=true ENV_FILE=../env/local/dev.env npm run dev
 ```
 
 Frontend:
