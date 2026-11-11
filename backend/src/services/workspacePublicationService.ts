@@ -2726,7 +2726,11 @@ export class WorkspacePublicationService {
     content: WorkspaceContent,
     userId: string,
     transaction?: Knex.Transaction,
-    afterDatabaseUpdate?: (transaction: Knex.Transaction, contentRevision: number) => Promise<void>,
+    afterDatabaseUpdate?: (
+      transaction: Knex.Transaction,
+      contentRevision: number,
+      appliedFileIds: number[],
+    ) => Promise<void>,
   ): Promise<number> {
     await this.ensureContentObjects(workspaceId, content);
     // Rows whose content this call actually rewrote, so a caller can act on

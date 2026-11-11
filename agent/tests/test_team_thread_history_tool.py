@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+from langchain_google_genai import ChatGoogleGenerativeAI
 from starlette.requests import Request
 
 from helpudoc_agent.api.auth_context import extract_agent_request_context
@@ -127,6 +129,64 @@ def test_tool_reports_when_scope_absent(tmp_path):
     tool = build_team_thread_history_tool(state)
     out = tool.func("{}")
     assert "no authenticated thread scope" in out
+
+
+def test_guarded_history_tool_binds_single_string_query_for_gemini(tmp_path):
+    state = WorkspaceState(workspace_id="ws-1", root_path=tmp_path, context={})
+    tool = build_team_thread_history_tool(state)
+    guarded = GuardedTool.from_tool(tool, workspace_state=state)
+    # Exercise the real binding/serialization path without constructing an HTTP
+    # client, depending on credentials, or making a live Gemini request.
+    with patch("langchain_google_genai.chat_models.Client"):
+        model = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash", api_key="test-key", vertexai=False
+        )
+        bound = model.bind_tools([guarded])
+    bound_tools = bound.kwargs["tools"]
+    assert len(bound_tools) == 1
+    declaration = bound_tools[0]["function"]
+    assert declaration["name"] == "team_thread_history"
+    parameters = declaration["parameters"]
+    assert set(parameters["properties"]) == {"query"}
+    assert parameters["properties"]["query"]["type"] == "string"
+    assert not parameters.get("required"), "the default query must allow empty input"
+
+
+@pytest.mark.parametrize("tool_input, expected_from_seq", [({"query": "1-7"}, 1), ({}, 0)])
+def test_guarded_history_tool_accepts_structured_and_empty_input(
+    tmp_path, tool_input, expected_from_seq
+):
+    token = _sign(_scope_payload())
+    ctx = extract_agent_request_context(_request_with(token), agent_jwt_secret=SECRET)
+    ctx.update(agent_auth_token=token, backend_base_url="http://backend:3000")
+    state = WorkspaceState(workspace_id="ws-1", root_path=tmp_path, context=ctx)
+    guarded = GuardedTool.from_tool(build_team_thread_history_tool(state), workspace_state=state)
+    response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "messages": [{"role": "user", "authorName": "A", "content": "structured-ok"}],
+            "hasMore": False,
+        },
+    )
+    with patch(
+        "helpudoc_agent.tools.workspace.builtins.team_thread_history.requests.get",
+        return_value=response,
+    ) as get_history:
+        result = guarded.invoke(tool_input)
+
+    assert "structured-ok" in result
+    get_history.assert_called_once_with(
+        "http://backend:3000/api/internal/agent/team-chat/thread-history",
+        params={
+            "workspaceId": "ws-1",
+            "threadId": "thread-1",
+            "fromSeq": expected_from_seq,
+            "toSeq": 7,
+            "limit": 100,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
+    )
 
 
 def test_guarded_tool_allows_history_reader_under_selected_skill(tmp_path):
