@@ -56,8 +56,8 @@ force_path_style = true
 type = s3
 provider = Other
 endpoint = http://helpudoc-rustfs:9000
-access_key_id = minioadmin
-secret_access_key = minioadmin
+access_key_id = rustfsadmin
+secret_access_key = rustfsadmin
 force_path_style = true
 EOF
 
