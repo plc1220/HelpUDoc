@@ -12,40 +12,38 @@ services:
     volumes:
       - ../.postgres-data:/var/lib/postgresql/data
 
-  minio:
-    # MinIO's Docker Hub repository is no longer publicly pullable ("pull access denied"),
-    # so default to their own registry. Override to pin a digest if needed.
-    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
-    container_name: helpudoc-minio
+  rustfs:
+    image: rustfs/rustfs:1.0.4
+    container_name: helpudoc-rustfs
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    command: server /data --console-address ":9001"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_ROOT_PASSWORD:-rustfsadmin}
+      RUSTFS_CONSOLE_ENABLE: "true"
     volumes:
-      - ../.minio-data:/data
+      - ../.rustfs-data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
-  minio-setup:
-    image: ${MINIO_MC_IMAGE:-quay.io/minio/mc:latest}
+      - "9000:9000" # S3 API
+      - "9001:9001" # Console UI
+  
+  # create buckets and set permissions for rustfs
+  rustfs-setup:
+    image: rustfs/rc:latest
     depends_on:
-      - minio
+      - rustfs
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-rustfsadmin}
     entrypoint: [ "/bin/sh", "-c" ]
-    # See infra/docker-compose.yml: a string `command:` is word-split by
-    # compose, so the script must be a single block-literal list item.
     command:
       - |
         set -eu
-        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+        until rc alias set local http://rustfs:9000 "$${RUSTFS_ROOT_USER}" "$${RUSTFS_ROOT_PASSWORD}"; do
           sleep 1
         done
-        mc mb -p local/helpudoc
-        mc mb -p local/langfuse
-        mc anonymous set none local/helpudoc
+        rc bucket create -p local/helpudoc
+        rc bucket create -p local/langfuse
+        rc bucket anonymous set private local/helpudoc
   redis:
     image: redis:7-alpine
     container_name: helpudoc-redis
