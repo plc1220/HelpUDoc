@@ -68,6 +68,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci --legacy-peer-deps
+      - run: npm run typecheck
       - run: npm run validate:env
       - run: npm test
 
@@ -120,6 +121,7 @@ jobs:
             tests/test_skill_sandbox.py \
             agent/tests/test_document_quick_edit.py \
             agent/tests/test_office_preview.py \
+            agent/tests/test_team_thread_history_tool.py \
             tests/office
 
   docker-backend:
