@@ -12,6 +12,41 @@ services:
     volumes:
       - ../.postgres-data:/var/lib/postgresql/data
 
+  minio:
+    # MinIO's Docker Hub repository is no longer publicly pullable ("pull access denied"),
+    # so default to their own registry. Override to pin a digest if needed.
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
+    container_name: helpudoc-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    volumes:
+      - ../.minio-data:/data
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Console UI
+  minio-setup:
+    image: ${MINIO_MC_IMAGE:-quay.io/minio/mc:latest}
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    entrypoint: [ "/bin/sh", "-c" ]
+    # See infra/docker-compose.yml: a string `command:` is word-split by
+    # compose, so the script must be a single block-literal list item.
+    command:
+      - |
+        set -eu
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+          sleep 1
+        done
+        mc mb -p local/helpudoc
+        mc mb -p local/langfuse
+        mc anonymous set none local/helpudoc
+        
   rustfs:
     image: rustfs/rustfs:1.0.4
     container_name: helpudoc-rustfs
@@ -23,8 +58,10 @@ services:
     volumes:
       - ../.rustfs-data:/data
     ports:
-      - "9000:9000" # S3 API
-      - "9001:9001" # Console UI
+      # Host ports 9100/9101 so RustFS can run beside MinIO (9000/9001) during the
+      # local copy. Containers on this network still use http://rustfs:9000.
+      - "9100:9000" # S3 API
+      - "9101:9001" # Console UI
   
   # create buckets and set permissions for rustfs
   rustfs-setup:
