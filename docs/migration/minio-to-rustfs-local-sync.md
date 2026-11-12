@@ -1,150 +1,90 @@
-## Update:
+# Local migration: MinIO to RustFS
 
-### Experiment results:
+This is a one-way copy of the local MinIO buckets (`helpudoc`, `langfuse`) into RustFS, run with `scripts/migrate_minio_to_rustfs.sh`. Both stores run from `infra/docker-compose.dependencies.yml` and stay up throughout. To run the same steps by hand, one command at a time, see [minio_rustfs_v1.md](minio_rustfs_v1.md).
 
-MinIO data in my local directory
-<img width="626" height="203" alt="image" src="https://github.com/user-attachments/assets/179ef501-3ca6-4a45-9769-c258a94d20ca" />
+| | MinIO (source) | RustFS (target) |
+|---|---|---|
+| Host ports (API, console) | 9000, 9001 | 9100, 9101 |
+| rclone address, on network `infra_default` | `http://helpudoc-minio:9000` | `http://helpudoc-rustfs:9000` |
+| Address for a host-run app | `http://localhost:9000` | `http://localhost:9100` |
+| Login (`env/local/stack.env`) | `MINIO_ROOT_*` (default `minioadmin`) | `RUSTFS_ROOT_*` (default `rustfsadmin`) |
 
-Transferred to RustFS, both files kept and identical
+The script only reads MinIO, so `.minio-data` stays as the rollback. It uses `rclone copy`, never `sync`, so rerunning it never deletes anything from RustFS. Every listing, copy and check excludes `/sandbox-runs/**` (the agent's per-run transfer archives) on both sides.
 
-<img width="625" height="280" alt="image" src="https://github.com/user-attachments/assets/ab367747-00a1-4be5-8c45-7ed390b523ef" />
-
-
-## Detailed steps to run the code:
-Run from the repo root in one terminal.
-
-**1. Start the dependencies and stop the app.** Stop the backend, agent and knowledge worker. The `lsof` command should print nothing.
+## 1. Start both stores
 
 ```sh
-docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d postgres redis rustfs rustfs-setup
-lsof -nP -iTCP:3000 -sTCP:LISTEN
+docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d rustfs rustfs-setup
+docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d
 ```
 
-**2. Start a temporary MinIO on a copy of the data.** `~/helpudoc-migrate/minio-copy` must not already exist.
+Start RustFS first. If an older RustFS container still holds port 9000, this moves it to 9100 so MinIO can take 9000.
+
+## 2. Copy
 
 ```sh
-# make new dir helpudoc-migrate, copy .minio-data into a new folder minio-copy under this new dir
-mkdir -p ~/helpudoc-migrate
-cp -R .minio-data ~/helpudoc-migrate/minio-copy
-
-  
-# run temporary minio container, with the new copies
-docker run -d --rm --name helpudoc-minio-migrate --network infra_default \
-  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-  -v ~/helpudoc-migrate/minio-copy:/data \
-  cgr.dev/chainguard/minio:latest server /data
-
-# verify status of container
-docker ps --filter name=helpudoc-minio-migrate
+scripts/migrate_minio_to_rustfs.sh copy
 ```
 
-**3. Configure rclone.**
+The script does a dry run, lists the writers, and asks for confirmation. After you answer `y`, it:
+
+1. Stops the backend (3000), agent (8001), Vite (5173), the knowledge worker, and any `langfuse` containers. Stop any other writer yourself.
+2. Copies `.minio-data` to `~/helpudoc-migrate/minio-backup-<time>`.
+3. Records the actual source counts in `~/helpudoc-migrate/<bucket>.source-count.txt`.
+4. Runs `rclone copy --metadata --checksum` for each bucket.
+
+Keep the writers stopped until step 4 passes.
+
+## 3. Verify
 
 ```sh
-# create rclone.conf config fil
-# source = minio, destination = rustfs
-cat > ~/helpudoc-migrate/rclone.conf <<'EOF'
-[minio]
-type = s3
-provider = Minio
-endpoint = http://helpudoc-minio-migrate:9000
-access_key_id = minioadmin
-secret_access_key = minioadmin
-force_path_style = true
-
-[rustfs]
-type = s3
-provider = Other
-endpoint = http://helpudoc-rustfs:9000
-access_key_id = rustfsadmin
-secret_access_key = rustfsadmin
-force_path_style = true
-EOF
-
-
-# create shortcut command rcl 
-# put rclone, helpudoc-minio-migrate, helpudoc-rustfs on the same docker netowrk (default)
-rcl() { docker run --rm --network infra_default -v "$HOME/helpudoc-migrate:/work" rclone/rclone:1.76.0 --config /work/rclone.conf "$@"; }
-
-# skip temp files to speed up
-FILTERS=(--exclude 'sandbox-runs/**')
+scripts/migrate_minio_to_rustfs.sh verify
 ```
 
-**4. Pre-Flight Validation, List both sides.** Expect 2 objects in MinIO and none in RustFS. The `grep` count must be above 0.
+For each bucket, `verify` checks that:
+
+- the number of objects identical in RustFS (same key, same bytes from `rclone check --download`) equals the source count;
+- every object has the same size, content type and metadata, including `helpudoc-sha256`. It ignores `btime`, `mtime` and `tier`, which change on any copy.
+
+It prints `PASS` or `FAIL`. Reports go to `~/helpudoc-migrate/`.
+
+To fix one object, re-upload it with its metadata, then run `verify` again:
 
 ```sh
-# display files in minio and rustfs (using the conf)
-rcl lsl minio:
-rcl lsl rustfs:
-
-# export detailed file metadata into a JSON report
-rcl lsjson -R --metadata minio:helpudoc > ~/helpudoc-migrate/minio.json
-
-# count specific files and hashes for MinIO (BEFORE)
-grep -c 'helpudoc-sha256' ~/helpudoc-migrate/minio.json
+scripts/migrate_minio_to_rustfs.sh rclone copyto minio:<bucket>/<key> rustfs:<bucket>/<key> --metadata --ignore-times
 ```
 
-**5. Dry run.** Expect 2 `Skipped copy` lines for `helpudoc` and nothing for `langfuse`. Stop if any delete appears.
+Objects listed as `only in RustFS` are never deleted. Find out where each came from first, for example by checking whether the app references it:
 
 ```sh
-rcl sync minio:helpudoc rustfs:helpudoc --metadata --checksum "${FILTERS[@]}" --dry-run
-rcl sync minio:langfuse rustfs:langfuse --metadata --checksum "${FILTERS[@]}" --dry-run
+docker exec helpudoc-postgres psql -U helpudoc -d helpudoc -c \
+  "select \"fileId\" from file_versions where \"objectKey\" = '<key>'"
 ```
 
-**6. Migration: Sync.**
+## 4. Point the app at RustFS and test
+
+In `env/local/dev.env`, set:
 
 ```sh
-rcl sync minio:helpudoc rustfs:helpudoc --metadata --checksum "${FILTERS[@]}" --progress
-rcl sync minio:langfuse rustfs:langfuse --metadata --checksum "${FILTERS[@]}" --progress
+S3_ENDPOINT=http://localhost:9100
+AWS_ACCESS_KEY_ID=rustfsadmin                      # RUSTFS_ROOT_USER
+AWS_SECRET_ACCESS_KEY=rustfsadmin                  # RUSTFS_ROOT_PASSWORD
+VITE_DEV_OBJECT_PROXY_TARGET=http://localhost:9100 # if unset, Vite proxies to 9000, which is MinIO
 ```
 
-**7. Post migration: Check contents.** Expect `0 differences found`.
+Reload the env (`set -a; source env/local/dev.env; set +a`) and start the app. Before you reopen normal writes, check by hand:
 
-```sh
-# check: compare source and destination buckets, look for missing files
-rcl check minio:helpudoc rustfs:helpudoc "${FILTERS[@]}" --download
-```
+1. An old file opens.
+2. A new upload works and lands in RustFS (`scripts/migrate_minio_to_rustfs.sh rclone lsl --max-age 1h rustfs:helpudoc`).
+3. Retrying a publication succeeds.
 
-**8. Prove every single migrated file is identical bit by bit. Compare SHA-256 lists.** Expect `IDENTICAL`.
+## Rollback
 
-```sh
-# download every files in both buckets, calculate their sha256, save the sorted list of hashes into minio.sha and rustfs.sha
-rcl hashsum sha256 --download "${FILTERS[@]}" minio:helpudoc | sort -k2 > ~/helpudoc-migrate/minio.sha
-rcl hashsum sha256 --download "${FILTERS[@]}" rustfs:helpudoc | sort -k2 > ~/helpudoc-migrate/rustfs.sha
+- **Nothing written to RustFS yet:** point `dev.env` back at `http://localhost:9000` with the MinIO login, then restart.
+- **The app has written to RustFS:** Postgres now references objects that only RustFS has, so reconcile before switching back. Stop the writers. Run `verify`, which lists the new objects as `only in RustFS`. Then copy them back, dry run first:
 
-# compare both lists using diff and print IDENTICAL
-diff ~/helpudoc-migrate/minio.sha ~/helpudoc-migrate/rustfs.sha && echo IDENTICAL
-```
+  ```sh
+  scripts/migrate_minio_to_rustfs.sh rclone copy rustfs:helpudoc minio:helpudoc --metadata --checksum --exclude '/sandbox-runs/**' --dry-run
+  ```
 
-**9. Compare metadata.** Expect `MATCH`, and a `grep` count equal to step 4.
-
-```sh
-# generate destination metadata report
-rcl lsjson -R --metadata "${FILTERS[@]}" rustfs:helpudoc > ~/helpudoc-migrate/rustfs.json
-
-# keep path, size, content type and helpudoc-* metadata, then compare both sides
-meta() { jq -S '[.[] | select(.IsDir | not) | {Path, Size, MimeType, meta: (.Metadata | with_entries(select(.key | startswith("helpudoc-"))))}] | sort_by(.Path)' "$HOME/helpudoc-migrate/$1.json"; }
-diff <(meta minio) <(meta rustfs) && echo MATCH
-
-# confirm the hashes are really there
-grep -c 'helpudoc-sha256' ~/helpudoc-migrate/rustfs.json
-```
-
-**10. Stop the temporary MinIO and test anonymous access.** The `curl` must print `403`.
-
-```sh
-docker stop helpudoc-minio-migrate
-curl -s -o /dev/null -w '%{http_code}\n' 'http://localhost:9000/helpudoc/?list-type=2'
-```
-
-## Takeaways:
-In **step 5 & 6**, I used sync instead of copy with the assumption that RustFS is empty when created. 
-
-Here's the difference:
-**sync**: 
-* delete a file in destination if the file is not in source, source and destination identical. 
-
-**copy**: 
-* destination can have new files that source doesn't, the files in soucre get copied into destination.
-
-In our case, sync is our assumed scenario.
+- If **`.minio-data` itself is damaged:** restore it from `~/helpudoc-migrate/minio-backup-*`.
