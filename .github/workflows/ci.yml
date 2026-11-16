@@ -101,6 +101,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+        env:
+          # Match the successful frontend image build's heap budget.
+          NODE_OPTIONS: --max-old-space-size=6144
 
   python-agent:
     name: Python agent smoke and core tests
