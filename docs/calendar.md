@@ -1,6 +1,6 @@
 # Smart Calendar v0.3 implementation
 
-Local implementation and acceptance work for `Lumo_Smart_Calendar_Technical_Design_v0.3.html`. The live release gates below remain open. The document's explicitly labelled Phase 2+ features remain future work: meeting-relative triggers, proactive briefings, IM enrichment, Outlook, resource booking, confidence-rated extraction and Google Tasks.
+Local implementation and acceptance work for `Lumo_Smart_Calendar_Technical_Design_v0.3.html`. The live release gates below remain open. Issue #111 adds one opt-in meeting-relative rule: a pending-review follow-up to one Team Chat thread for one timed Google meeting occurrence. See [the rule and acceptance notes](calendar-review-follow-up.md). Broader meeting-relative triggers, proactive briefings, IM enrichment, Outlook, resource booking, confidence-rated extraction and Google Tasks remain future work.
 
 ## Experience
 
@@ -14,7 +14,7 @@ All new UI uses Astryx components and the existing theme's typography, spacing a
 
 ## Connections and authorization
 
-Calendar consent uses the existing Google authorization-code/PKCE flow with a dedicated `calendar=true` mode. It requests `openid`, `email`, calendar-list read and event-write scopes; Drive linking adds `drive.file` incrementally. Calendar grants are stored separately from the general agent Google grant, encrypted by the existing AES-256-GCM vault. Multiple Google accounts can be linked to the same authenticated Lumo user without replacing that user's login identity.
+Calendar consent uses the existing Google authorization-code/PKCE flow with a dedicated `calendar=true` mode. It requests `openid`, `email`, calendar-list read and event-read scopes by default. **Enable event editing** explicitly upgrades to event-write permission; Drive linking adds `drive.file`. Review follow-up rules use only reads and an internal Team Chat append, with no Calendar writes, external messaging or model/tool calls. Calendar grants are stored separately from the general agent Google grant, encrypted by the existing AES-256-GCM vault. Multiple Google accounts can be linked to the same authenticated Lumo user without replacing that user's login identity.
 
 Calendar consent excludes previously granted unrelated scopes. For Calendar-only testing, `/api/auth/google/start?identityOnly=true&returnTo=%2F%3Fcalendar%3Dopen` signs in with basic identity scopes without replacing or storing a general Google service grant. This mode requires its original server session through the callback.
 

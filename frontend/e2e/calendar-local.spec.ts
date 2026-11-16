@@ -17,6 +17,7 @@ async function setup(page: Page, baseURL: string, mobile = false, secondMeeting 
     let result: unknown = {};
     if (path === '/calendar/connections') result = { connected: true, configured: true, can_edit: true, drive_enabled: true, accounts: [{ id: 'calendar:fixture', principal: 'fixture@example.com', can_edit: true, drive_enabled: true }] };
     else if (path === '/drive/picker') result = { access_token: 'test-access-token', developer_key: 'test-browser-key', app_id: 'test-project' };
+    else if (path === '/calendar/review-follow-ups') result = [];
     else if (path === '/calendar/sources') result = [{ id: 'primary', summary: 'Personal', accessRole: 'owner', visible: true, can_edit: true, timeZone: 'Asia/Kuala_Lumpur', sync_state: 'HEALTHY' }];
     else if (path === '/calendar/timeline') result = { items: [event, ...(secondMeeting ? [otherEvent] : []), { id: 'automation:1', kind: 'AUTOMATION', title: 'Prepare weekly report', start: '2026-11-05T01:00:00Z', time_zone: 'Asia/Kuala_Lumpur', status: 'active', workspace_name: 'Client work', capabilities: { can_edit: false, can_delete: false } }], partial_sources: [] };
     else if (path === '/context/links') result = { confirmed: [{ file_ref: 'file-1', link_id: 'link-1', title: 'Revised proposal', url: 'https://drive.google.com/file/d/1/view' }], suggested: [] };
@@ -156,7 +157,7 @@ test('Drive Picker can open from a mobile detail sheet without a native modal bl
   test.skip(!baseURL?.startsWith('http://127.0.0.1:'), 'Local Vite required');
   await page.addInitScript(() => {
     class PickerBuilder {
-      callback = (_response: unknown) => {};
+      callback: (response: unknown) => void = () => {};
       setDeveloperKey() { return this; } setAppId() { return this; } setOAuthToken() { return this; } setOrigin() { return this; } addView() { return this; }
       setCallback(callback: (response: unknown) => void) { this.callback = callback; return this; }
       build() { return { setVisible: () => { (window as unknown as { pickerBlocked: boolean }).pickerBlocked = document.querySelectorAll('dialog[open]').length > 0; this.callback({ action: 'picked', docs: [{ id: 'picked-file' }] }); } }; }

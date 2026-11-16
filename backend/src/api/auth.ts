@@ -131,7 +131,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       const calendarOnly = req.query.calendar === 'true';
       const identityOnly = req.query.identityOnly === 'true';
       if (identityOnly && (calendarOnly || requestedExtras.length)) return res.status(400).json({ error: 'Identity sign-in cannot request service permissions' });
-      const extraScopes = [...new Set(calendarOnly && !requestedExtras.length ? ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events'] : requestedExtras)];
+      const extraScopes = [...new Set(calendarOnly && !requestedExtras.length ? ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly'] : requestedExtras)];
       if (!calendarOnly && extraScopes.some(scope => scope.includes('/auth/calendar.'))) return res.status(400).json({ error: 'Calendar permissions require a dedicated Calendar connection' });
       if (calendarOnly && !req.userContext?.userId) return res.status(401).json({ error: 'Sign in before connecting Calendar' });
       if (extraScopes.some((scope) => !['drive.file', 'calendar.calendarlist.readonly', 'calendar.events', 'calendar.events.readonly'].some(suffix => scope === `https://www.googleapis.com/auth/${suffix}`))) {

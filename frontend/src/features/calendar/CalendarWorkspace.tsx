@@ -17,6 +17,7 @@ import { addDays, addMonths, dayKey, intersectsDay, localTime, timeLabel, viewDa
 import RelatedFiles from './RelatedFiles';
 import GmailBriefSources from './GmailBriefSources';
 import CalendarWeek from './CalendarWeek';
+import CalendarReviewFollowUps from './CalendarReviewFollowUps';
 import './calendar.css';
 import { calendarActivity } from './calendarActivity';
 
@@ -119,6 +120,7 @@ export default function CalendarWorkspace({ open, compact, canvasTarget, onClose
   };
   const run = async (fn: () => Promise<void>) => { setBusy(true); setError(''); try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : 'Calendar action failed'); if (e instanceof CalendarRequestError && e.code === 'CALENDAR_CONFLICT') { setConflict(true); if (draft) conflictedDraft.current = true; } } finally { setBusy(false); } };
   const connect = () => void run(async () => { await calendarApi('/calendar/connect', 'POST', {}); window.location.href = googleConnectUrl(); });
+  const enableEditing = () => void run(async () => { await calendarApi('/calendar/connect', 'POST', {}); window.location.href = googleConnectUrl(false, true); });
   const select = async (item: CalendarItem) => {
     const request = ++detailGeneration.current; setSelected(item); setBrief(undefined); resetBriefSources(); setError(''); setDetailLoading(false);
     if (item.kind !== 'MEETING') return;
@@ -207,6 +209,7 @@ Use only approved sources, disclose gaps and cite evidence. Do not change events
         </>}
         {selected.kind === 'AUTOMATION' && <><p className="calendar-muted">Lumo-native schedule · {selected.status}. This job is never added to Google Calendar.</p><Button label="Manage automation" variant="secondary" size="sm" onClick={() => onEditAutomation(selected)} /></>}
         {selected.kind === 'COMMITMENT' && <><p className="calendar-muted">{selected.status === 'SUGGESTED' ? 'Suggestion · does not block your calendar' : 'Confirmed commitment · no Google calendar block'}</p>{selected.status === 'SUGGESTED' && <Button label="Confirm commitment" size="sm" onClick={() => void run(async () => { await calendarApi(`/calendar/commitments/${selected.id.slice(11)}`, 'PATCH', { title: selected.title, start: selected.start, confirmed: true, ...(selected.workspace_id ? { workspace_id: selected.workspace_id } : {}) }); calendarActivity('ui_commitment_confirmed'); setSelected(undefined); await refresh(true); })} />}</>}
+        {selected.kind === 'MEETING' && <CalendarReviewFollowUps key={`review:${selected.id}:${workspaceId || ''}`} eventRef={selected.id} workspaceId={workspaceId} timedOccurrence={!selected.all_day && !selected.recurrence?.length} disabled={detailLoading || selected.sync_state === 'STALE'} />}
         <RelatedFiles key={selected.id} subjectRef={selected.id} driveEnabled={Boolean(connection?.drive_enabled)} accounts={connection?.accounts} workspaceId={workspaceId} onPickerOpenChange={setPickerOpen} onPickerError={setError} />
       </aside> : null;
   const body = <div className={`calendar-workspace${compact ? ' calendar-compact' : ''}`} aria-label="My Calendar" aria-busy={loading}>
@@ -230,8 +233,8 @@ Use only approved sources, disclose gaps and cite evidence. Do not change events
     </section>}
     {error && <div role="alert" className="calendar-notice">{error}<Button label="Retry" variant="ghost" size="sm" onClick={() => void refresh()} /></div>}
     {partial.map((source, index) => <p key={index} className="calendar-notice" role="status">{source.reason}</p>)}
-    {connection && !connection.connected && <section className="calendar-connect"><CalendarDays size={28} /><div><h2>Bring your meetings into Lumo</h2><p>Connect Google Calendar to view and edit meetings here. Your automations keep running as usual.</p></div><Button label="Connect Google Calendar" variant="primary" isDisabled={busy || !connection.configured} onClick={connect} />{!connection.configured && <p className="calendar-muted">Google connection is not configured on this server.</p>}</section>}
-    {connection?.connected && !connection.can_edit && <div className="calendar-notice">Your Google calendar is read-only.<Button label="Enable editing" variant="secondary" size="sm" onClick={connect} /></div>}
+    {connection && !connection.connected && <section className="calendar-connect"><CalendarDays size={28} /><div><h2>Bring your meetings into Lumo</h2><p>Connect Google Calendar to view meetings and set up review follow-ups. Your automations keep running as usual.</p></div><Button label="Connect Google Calendar" variant="primary" isDisabled={busy || !connection.configured} onClick={connect} />{!connection.configured && <p className="calendar-muted">Google connection is not configured on this server.</p>}</section>}
+    {connection?.connected && !connection.can_edit && <div className="calendar-notice">Your Google calendar is read-only.<Button label="Enable event editing" variant="secondary" size="sm" onClick={enableEditing} /></div>}
     {loading && !items.length && <p className="calendar-loading" role="status">Loading your calendar…</p>}
     <div className="calendar-content">
       <div className="calendar-main" ref={mainScroll}>

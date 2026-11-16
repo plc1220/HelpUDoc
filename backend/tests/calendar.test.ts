@@ -90,7 +90,7 @@ const transport: typeof fetch = async (url, init) => {
 before(async () => {
   if (!integration) return;
   config({ path: '../env/local/dev.env', quiet: true });
-  const connection = { host: '127.0.0.1', port: 5432, database: process.env.POSTGRES_DB || 'helpudoc', user: process.env.POSTGRES_USER || 'helpudoc', password: process.env.POSTGRES_PASSWORD || 'helpudoc' };
+  const connection = process.env.DATABASE_URL || { host: '127.0.0.1', port: 5432, database: process.env.POSTGRES_DB || 'helpudoc', user: process.env.POSTGRES_USER || 'helpudoc', password: process.env.POSTGRES_PASSWORD || 'helpudoc' };
   admin = knex({ client: 'pg', connection }); await admin.raw(`CREATE SCHEMA ${schema}`);
   db = knex({ client: 'pg', connection, searchPath: [schema], pool: { min: 0, max: 10 } });
   await db.schema.createTable('users', t => t.uuid('id').primary()); await db('users').insert([{ id: user }, { id: other }]);

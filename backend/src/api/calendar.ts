@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { CalendarService } from '../services/calendarService';
 import { CalendarError, eventInput } from '../services/calendarModel';
 import { calendarTelemetry } from '../services/calendarTelemetry';
+import type { CalendarReviewFollowUpService } from '../services/calendarReviewFollowUpService';
 
-export default function calendarRoutes(service: CalendarService) {
+export default function calendarRoutes(service: CalendarService, followUps?: CalendarReviewFollowUpService) {
   const router = Router();
   router.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); res.set('Referrer-Policy', 'no-referrer'); next(); });
   router.post('/calendar/watch', async (req, res) => {
@@ -38,6 +39,17 @@ export default function calendarRoutes(service: CalendarService) {
   };
   const uid = (req: import('express').Request) => req.userContext!.userId;
   const param = (req: import('express').Request, key: string) => String(req.params[key]);
+  if (followUps) {
+    const ruleInput = z.object({
+      event_ref: z.string().min(1).max(4096), workspace_id: z.uuid(),
+      file_path: z.string().trim().min(1).max(1024), thread_id: z.uuid(),
+      lead_minutes: z.number().int().min(1).max(10080),
+    }).strict();
+    router.get('/calendar/review-follow-ups', handle(req => followUps.list(uid(req), z.string().max(4096).optional().parse(req.query.event_ref))));
+    router.post('/calendar/review-follow-ups', handle(req => followUps.create(uid(req), ruleInput.parse(req.body)), 201));
+    router.delete('/calendar/review-follow-ups/:id', handle(req => followUps.disable(uid(req), z.uuid().parse(param(req, 'id')))));
+    router.get('/calendar/review-follow-ups/:id/audit', handle(req => followUps.audit(uid(req), z.uuid().parse(param(req, 'id')))));
+  }
   router.get('/calendar/connections', handle(req => service.connection(uid(req))));
   router.post('/calendar/connect', handle(req => service.connect(uid(req))));
   router.delete('/calendar/connections/google', handle(req => service.disconnect(uid(req))));

@@ -1,0 +1,53 @@
+name: Calendar review follow-up acceptance
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 19 * * *'
+
+jobs:
+  acceptance:
+    name: Durable calendar review rule
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: calendar_review
+          POSTGRES_USER: calendar_review
+          POSTGRES_PASSWORD: synthetic-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U calendar_review -d calendar_review"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      RUN_CALENDAR_REVIEW_TESTS: '1'
+      CALENDAR_REVIEW_DATABASE_URL: postgres://calendar_review:synthetic-test-only@127.0.0.1:5432/calendar_review
+      DATABASE_SSL: 'false'
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --legacy-peer-deps
+        working-directory: backend
+      - name: Required provider-boundary and durable restart checks
+        working-directory: backend
+        run: node -r ts-node/register/transpile-only -r tsconfig-paths/register --test tests/calendarReviewFollowUp.test.ts
+      - name: Build backend image for scheduled and release acceptance
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: docker build -f backend/Dockerfile.gke -t helpudoc-calendar-review:acceptance .
+      - name: Repeat synthetic restart and redelivery checks in built backend
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: >-
+          docker run --rm --network host
+          -e NODE_ENV -e RUN_CALENDAR_REVIEW_TESTS -e CALENDAR_REVIEW_DATABASE_URL -e DATABASE_SSL
+          -v "$GITHUB_WORKSPACE/backend/tests:/app/tests:ro"
+          helpudoc-calendar-review:acceptance
+          node -r ts-node/register/transpile-only -r tsconfig-paths/register --test tests/calendarReviewFollowUp.test.ts

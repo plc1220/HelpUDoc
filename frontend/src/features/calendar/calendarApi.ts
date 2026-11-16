@@ -19,10 +19,10 @@ export async function calendarApi<T>(path: string, method = 'GET', body?: unknow
   if (!response.ok) throw new CalendarRequestError(data.error || 'Calendar request failed', data.code || 'REQUEST_FAILED');
   return data as T;
 }
-export function googleConnectUrl(drive = false) {
+export function googleConnectUrl(drive = false, edit = false) {
   const url = buildApiUrl('/auth/google/start');
   url.searchParams.set('returnTo', `${window.location.pathname}?calendar=open`);
   url.searchParams.set('calendar', 'true');
-  url.searchParams.set('extraScopes', ['calendar.calendarlist.readonly', 'calendar.events', ...(drive ? ['drive.file'] : [])].map(s => `https://www.googleapis.com/auth/${s}`).join(' '));
+  url.searchParams.set('extraScopes', ['calendar.calendarlist.readonly', edit ? 'calendar.events' : 'calendar.events.readonly', ...(drive ? ['drive.file'] : [])].map(s => `https://www.googleapis.com/auth/${s}`).join(' '));
   return url.toString();
 }

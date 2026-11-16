@@ -1,5 +1,6 @@
 import knex, { Knex } from 'knex';
 import { ensureCalendarSchema } from './calendarSchema';
+import { ensureCalendarReviewFollowUpSchema } from './calendarReviewFollowUpService';
 import { backfillFileAuditEvents } from './fileAuditBackfill';
 import { getBackendEnv } from '../config/env';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '../types/knowledge';
@@ -69,6 +70,7 @@ export class DatabaseService {
     await this.createWorkspaceSchedulesTable();
     await this.createWorkspaceScheduleRunsTable();
     await ensureCalendarSchema(this.db);
+    await ensureCalendarReviewFollowUpSchema(this.db);
     await this.createAgentRunSummariesTable();
     await this.createAgentRunToolEventsTable();
     await this.createAgentRunProvenanceTable();

@@ -7,7 +7,7 @@ import { ensureCalendarSchema } from '../src/services/calendarSchema';
 
 test('existing Calendar tables gain usable compound indexes without casting provider dates', { skip: process.env.CALENDAR_INTEGRATION !== '1' }, async () => {
   config({ path: '../env/local/dev.env', quiet: true });
-  const connection = { host: '127.0.0.1', port: 5432, database: process.env.POSTGRES_DB || 'helpudoc', user: process.env.POSTGRES_USER || 'helpudoc', password: process.env.POSTGRES_PASSWORD || 'helpudoc' };
+  const connection = process.env.DATABASE_URL || { host: '127.0.0.1', port: 5432, database: process.env.POSTGRES_DB || 'helpudoc', user: process.env.POSTGRES_USER || 'helpudoc', password: process.env.POSTGRES_PASSWORD || 'helpudoc' };
   const schema = `calendar_index_test_${randomUUID().replaceAll('-', '')}`;
   const admin = knex({ client: 'pg', connection });
   await admin.raw('CREATE SCHEMA ??', [schema]);

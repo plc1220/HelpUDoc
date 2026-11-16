@@ -15,6 +15,7 @@ import calendarTelemetryRoutes from './calendarTelemetry';
 import calendarActivityRoutes from './calendarActivity';
 import { CalendarProposalService } from '../services/calendarProposalService';
 import { CalendarService } from '../services/calendarService';
+import { CalendarReviewFollowUpService } from '../services/calendarReviewFollowUpService';
 import settingsRoutes from './settings';
 import knowledgeRoutes from './knowledge';
 import knowledgeCatalogRoutes from './knowledgeCatalog';
@@ -88,11 +89,13 @@ export default function(
   router.use('/auth', authRoutes(userService, googleOAuthService));
   const calendarService = new CalendarService(dbService.getDb(), googleOAuthService, fetch, fileService, workspaceCollaborationService);
   const calendarProposals = new CalendarProposalService(dbService.getDb(), calendarService, workspaceService);
+  const calendarFollowUps = new CalendarReviewFollowUpService(dbService.getDb(), calendarService, workspaceService, workspaceCollaborationService);
   configureAgentRunServices({ onRunCompleted: ({ userId, runId }) => calendarService.linkRunOutputs(userId, runId) });
-  router.use('/v1', calendarRoutes(calendarService));
+  router.use('/v1', calendarRoutes(calendarService, calendarFollowUps));
   router.use('/v1', calendarProposalRoutes(calendarProposals));
   router.use('/v1', calendarActivityRoutes());
   calendarService.start();
+  calendarFollowUps.start();
   router.use('/', governanceRoutes(skillGovernanceService));
   registerSkillBuilderRoutes(router, workspaceService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService });
   router.use('/agent', agentRoutes(

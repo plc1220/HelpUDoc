@@ -67,6 +67,7 @@ test('Calendar callback binds secondary Google accounts to the existing user wit
   try {
     const start = await fetch(`${base}/auth/google/start?calendar=true&returnTo=%2F%3Fcalendar%3Dopen`, { redirect: 'manual' });
     assert.equal(start.status, 302); assert.equal(starts[0].calendarOnly, true);
+    assert.deepEqual(starts[0].extraScopes, ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly']);
     const cookies = start.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
     const result = await fetch(`${base}/auth/google/callback?state=state&code=one-use-code`, { headers: { Cookie: cookies }, redirect: 'manual' });
     assert.equal(result.status, 302); assert.equal(result.headers.get('Location'), 'http://frontend.local/?calendar=open');
