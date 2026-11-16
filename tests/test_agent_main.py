@@ -81,7 +81,7 @@ class DummyRuntime:
     def __init__(self, workspace_id: str, agent):
         self.agent = agent
         self.agent_name = "test-agent"
-        self.workspace_state = SimpleNamespace(workspace_id=workspace_id, context={})
+        self.workspace_state = SimpleNamespace(workspace_id=workspace_id, root_path=AGENT_MAIN_TEST_WORKSPACE / workspace_id, context={})
 
 
 class StreamingAgent:
@@ -368,6 +368,10 @@ class ResumeCheckpointAgent:
             "name": "request_plan_approval",
             "run_id": "approval-resume-tool-run",
             "data": {"output": "PLAN_APPROVAL_RECORDED\nPlan decision has been applied."},
+        }
+        yield {
+            "event": "on_chat_model_stream", "name": "stub-model", "run_id": "approval-resume-response",
+            "data": {"chunk": {"role": "assistant", "content": "Plan approval recorded. Ready for the next step."}},
         }
 
 

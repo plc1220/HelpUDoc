@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Check, Clock3, X } from 'lucide-react';
+import { Button } from '@astryxdesign/core/Button';
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { TextArea } from '@astryxdesign/core/TextArea';
+import { Selector } from '@astryxdesign/core/Selector';
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
+import { TimeInput, type TimeInputProps } from '@astryxdesign/core/TimeInput';
+import '../../features/calendar/calendar.css';
 import type {
   SkillDefinition,
   WorkspaceSchedule,
@@ -83,7 +90,6 @@ const inferTimeValue = (cronExpression?: string) => {
 
 export default function ScheduleDialog({
   open,
-  colorMode,
   workspaceName,
   initialDraft,
   existingSchedule,
@@ -92,7 +98,6 @@ export default function ScheduleDialog({
   onClose,
   onSubmit,
 }: ScheduleDialogProps) {
-  const isDarkMode = colorMode === 'dark';
   const [name, setName] = useState('');
   const [cadence, setCadence] = useState<WorkspaceScheduleCadence>('daily');
   const [timeValue, setTimeValue] = useState('09:00');
@@ -137,23 +142,13 @@ export default function ScheduleDialog({
   );
 
   const skillOptions = useMemo(
-    () => availableSkills.filter((skill) => skill.valid !== false).slice(0, 12),
+    () => availableSkills.filter((skill) => skill.valid !== false),
     [availableSkills],
   );
 
   if (!open || !initialDraft) {
     return null;
   }
-
-  const inputClassName = `w-full rounded-lg border px-3 py-2 text-sm outline-none transition ${
-    isDarkMode
-      ? 'border-slate-700 bg-slate-950 text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
-      : 'border-slate-200 bg-white text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
-  }`;
-  const labelClassName = `text-xs font-semibold uppercase tracking-wide ${
-    isDarkMode ? 'text-slate-400' : 'text-slate-500'
-  }`;
-  const sectionClassName = `border-t pt-4 ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`;
 
   const toggleSkill = (skillId: string) => {
     setSelectedSkills((prev) =>
@@ -171,7 +166,7 @@ export default function ScheduleDialog({
       return;
     }
     setError('');
-    await onSubmit({
+    try { await onSubmit({
       ...initialDraft,
       name: name.trim(),
       cadence,
@@ -184,262 +179,26 @@ export default function ScheduleDialog({
       taggedFiles,
       outputMode,
       notificationMode,
-    });
+    }); } catch (failure) { setError(failure instanceof Error ? failure.message : 'Unable to save automation'); }
   };
 
-  return (
-    <div
-      className="fixed inset-0 z-[1700] flex items-center justify-center bg-slate-950/55 p-4"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <div className={`flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border shadow-2xl ${
-        isDarkMode ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-900'
-      }`}>
-        <div className={`flex items-center justify-between border-b px-5 py-4 ${
-          isDarkMode ? 'border-slate-800' : 'border-slate-200'
-        }`}>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <CalendarClock size={18} className={isDarkMode ? 'text-sky-300' : 'text-blue-600'} />
-              <h2 className="text-base font-semibold">
-                {existingSchedule ? 'Edit schedule' : 'Schedule this'}
-              </h2>
-            </div>
-            <p className={`mt-1 truncate text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              Runs in {workspaceName || 'this workspace'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className={`rounded-lg p-1.5 transition ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}
-            aria-label="Close schedule dialog"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
-          <div className="grid gap-4 md:grid-cols-[1fr_11rem]">
-            <label className="space-y-1.5">
-              <span className={labelClassName}>Name</span>
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className={inputClassName}
-                placeholder="Weekly competitor scan"
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className={labelClassName}>Mode</span>
-              <select value={persona} onChange={(event) => setPersona(event.target.value)} className={inputClassName}>
-                <option value="fast">Fast</option>
-                <option value="lite">Lite</option>
-                <option value="pro">Pro</option>
-              </select>
-            </label>
-          </div>
-
-          <div className={sectionClassName}>
-            <div className="grid gap-4 md:grid-cols-[10rem_1fr_12rem]">
-              <label className="space-y-1.5">
-                <span className={labelClassName}>Cadence</span>
-                <select
-                  value={cadence}
-                  onChange={(event) => setCadence(event.target.value as WorkspaceScheduleCadence)}
-                  className={inputClassName}
-                >
-                  <option value="hourly">Hourly</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="custom">Custom cron</option>
-                </select>
-              </label>
-              {cadence === 'custom' ? (
-                <label className="space-y-1.5">
-                  <span className={labelClassName}>Cron</span>
-                  <input
-                    value={customCron}
-                    onChange={(event) => setCustomCron(event.target.value)}
-                    className={inputClassName}
-                    placeholder="0 9 * * 1"
-                  />
-                </label>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="space-y-1.5">
-                    <span className={labelClassName}>Time</span>
-                    <input
-                      type="time"
-                      value={timeValue}
-                      onChange={(event) => setTimeValue(event.target.value)}
-                      className={inputClassName}
-                      disabled={cadence === 'hourly'}
-                    />
-                  </label>
-                  {cadence === 'weekly' ? (
-                    <label className="space-y-1.5">
-                      <span className={labelClassName}>Day</span>
-                      <select value={weeklyDay} onChange={(event) => setWeeklyDay(event.target.value)} className={inputClassName}>
-                        {DAY_OPTIONS.map((day) => (
-                          <option key={day.value} value={day.value}>{day.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : cadence === 'monthly' ? (
-                    <label className="space-y-1.5">
-                      <span className={labelClassName}>Day</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={31}
-                        value={monthlyDay}
-                        onChange={(event) => setMonthlyDay(Number(event.target.value) || 1)}
-                        className={inputClassName}
-                      />
-                    </label>
-                  ) : (
-                    <div className="space-y-1.5">
-                      <span className={labelClassName}>Cron</span>
-                      <div className={`flex h-10 items-center rounded-lg border px-3 text-sm ${
-                        isDarkMode ? 'border-slate-800 bg-slate-900 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-500'
-                      }`}>
-                        {cronExpression}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-              <label className="space-y-1.5">
-                <span className={labelClassName}>Timezone</span>
-                <input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={inputClassName} />
-              </label>
-            </div>
-          </div>
-
-          <div className={sectionClassName}>
-            <label className="space-y-1.5">
-              <span className={labelClassName}>Task instruction</span>
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                className={`${inputClassName} min-h-36 resize-y leading-6`}
-              />
-            </label>
-          </div>
-
-          <div className={sectionClassName}>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <span className={labelClassName}>Included skills</span>
-                <div className={`max-h-40 overflow-y-auto rounded-lg border p-2 ${
-                  isDarkMode ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'
-                }`}>
-                  {skillOptions.length ? skillOptions.map((skill) => {
-                    const checked = selectedSkills.includes(skill.id);
-                    return (
-                      <button
-                        key={skill.id}
-                        type="button"
-                        onClick={() => toggleSkill(skill.id)}
-                        className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${
-                          checked
-                            ? isDarkMode ? 'bg-sky-500/15 text-sky-100' : 'bg-blue-50 text-blue-700'
-                            : isDarkMode ? 'hover:bg-slate-900' : 'hover:bg-white'
-                        }`}
-                      >
-                        <span className="truncate">{skill.name || skill.id}</span>
-                        {checked ? <Check size={14} className="shrink-0" /> : null}
-                      </button>
-                    );
-                  }) : (
-                    <div className={`px-2 py-3 text-sm ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                      No skills available
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="space-y-3">
-                <label className="space-y-1.5">
-                  <span className={labelClassName}>Output</span>
-                  <select
-                    value={outputMode}
-                    onChange={(event) => setOutputMode(event.target.value as WorkspaceScheduleOutputMode)}
-                    className={inputClassName}
-                  >
-                    <option value="append_to_conversation">Append to scheduled-runs chat</option>
-                    <option value="new_conversation_per_run">New chat for every run</option>
-                  </select>
-                </label>
-                <label className="space-y-1.5">
-                  <span className={labelClassName}>Notify</span>
-                  <select
-                    value={notificationMode}
-                    onChange={(event) => setNotificationMode(event.target.value as WorkspaceScheduleNotificationMode)}
-                    className={inputClassName}
-                  >
-                    <option value="none">Do not notify</option>
-                    <option value="failure">Failures only</option>
-                    <option value="all">Every run</option>
-                  </select>
-                </label>
-                <div className={`rounded-lg border px-3 py-2 text-xs ${
-                  isDarkMode ? 'border-slate-800 bg-slate-900 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-500'
-                }`}>
-                  <div className="mb-1 flex items-center gap-1.5 font-semibold">
-                    <Clock3 size={13} />
-                    <span>{cronExpression}</span>
-                  </div>
-                  <div className="line-clamp-3">
-                    {contextRefs.length || taggedFiles.length
-                      ? [...contextRefs, ...taggedFiles].join(', ')
-                      : 'No extra workspace context selected'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {error ? (
-            <div className={`rounded-lg border px-3 py-2 text-sm ${
-              isDarkMode ? 'border-red-500/40 bg-red-950/30 text-red-200' : 'border-red-200 bg-red-50 text-red-700'
-            }`}>
-              {error}
-            </div>
-          ) : null}
-        </div>
-
-        <div className={`flex items-center justify-end gap-2 border-t px-5 py-4 ${
-          isDarkMode ? 'border-slate-800' : 'border-slate-200'
-        }`}>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className={`rounded-lg px-3 py-2 text-sm font-semibold transition disabled:opacity-60 ${
-              isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={saving}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-wait disabled:opacity-70 ${
-              isDarkMode ? 'bg-sky-400 text-slate-950 hover:bg-sky-300' : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
-          >
-            {saving ? 'Saving…' : existingSchedule ? 'Save changes' : 'Save schedule'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  return <Dialog isOpen={open} onOpenChange={value => { if (!value && !saving) onClose(); }} purpose="form" width={620} maxHeight="90dvh" aria-label={existingSchedule ? 'Edit automation' : 'New automation'}>
+    <DialogHeader title={existingSchedule ? 'Edit automation' : 'New automation'} />
+    <form className="calendar-editor" onSubmit={event => { event.preventDefault(); void handleSubmit(); }}>
+      <p className="calendar-muted">{workspaceName || 'Workspace'} · Lumo automation. This schedule is never added to Google Calendar.</p>
+      <TextInput label="Name" isRequired value={name} onChange={setName} />
+      <div className="calendar-editor-row"><Selector label="Agent" value={persona} options={['fast', 'lite', 'pro']} onChange={setPersona} /><Selector label="Cadence" value={cadence} options={['hourly', 'daily', 'weekly', 'monthly', 'custom']} onChange={value => setCadence(value as WorkspaceScheduleCadence)} /></div>
+      <div className="calendar-editor-row">{cadence === 'custom' ? <TextInput label="Cron expression" value={customCron} onChange={setCustomCron} description="Five fields: minute, hour, day, month, weekday" /> : <TimeInput label={cadence === 'hourly' ? 'Minute within each hour' : 'Time'} value={timeValue as TimeInputProps['value']} onChange={value => value && setTimeValue(value)} />}
+      <Selector label="Timezone" value={timezone} options={[...new Set([timezone, 'UTC', ...Intl.supportedValuesOf('timeZone')])]} hasSearch onChange={setTimezone} /></div>
+      {cadence === 'weekly' && <Selector label="Weekday" value={weeklyDay} options={DAY_OPTIONS} onChange={setWeeklyDay} />}
+      {cadence === 'monthly' && <Selector label="Day of month" value={String(monthlyDay)} options={Array.from({ length: 31 }, (_, index) => String(index + 1))} onChange={value => setMonthlyDay(Number(value))} description="Months without the selected day are skipped." />}
+      <TextArea label="Task instruction" value={prompt} onChange={setPrompt} isRequired />
+      <section className="calendar-schedule-skills" aria-label="Included skills"><h3>Included skills</h3>{skillOptions.map(skill => <CheckboxInput key={skill.id} label={skill.name || skill.id} value={selectedSkills.includes(skill.id)} onChange={() => toggleSkill(skill.id)} />)}{!skillOptions.length && <p className="calendar-muted">No skills available.</p>}</section>
+      <Selector label="Output" value={outputMode} options={[{ value: 'append_to_conversation', label: 'Append to scheduled-runs chat' }, { value: 'new_conversation_per_run', label: 'New chat for each run' }]} onChange={value => setOutputMode(value as WorkspaceScheduleOutputMode)} />
+      <Selector label="Notifications" value={notificationMode} options={[{ value: 'none', label: 'Do not notify' }, { value: 'failure', label: 'Failures only' }, { value: 'all', label: 'Every run' }]} onChange={value => setNotificationMode(value as WorkspaceScheduleNotificationMode)} />
+      <p className="calendar-muted">{cronExpression} · {timezone}<br />{[...new Set([...contextRefs, ...taggedFiles])].join(', ') || 'No extra workspace context selected'}</p>
+      {error && <p className="calendar-notice" role="alert">{error}</p>}
+      <div className="calendar-editor-actions"><Button label="Cancel" variant="secondary" isDisabled={saving} onClick={onClose} /><Button label={saving ? 'Saving…' : 'Save automation'} variant="primary" type="submit" isDisabled={saving || !name.trim() || !prompt.trim()} /></div>
+    </form>
+  </Dialog>;
 }

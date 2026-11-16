@@ -162,6 +162,7 @@ export type KnowledgeMapResponse = {
 };
 
 type InternalAgentOptions = {
+  timeoutMs?: number;
   authToken?: string;
 };
 
@@ -341,7 +342,7 @@ export async function runInternalAnalysis(
   if (options?.authToken) {
     headers.Authorization = `Bearer ${options.authToken}`;
   }
-  const res = await client.post('/internal/analyze', payload, { headers });
+  const res = await client.post('/internal/analyze', payload, { headers, timeout: options?.timeoutMs || 60000 });
   return res.data;
 }
 

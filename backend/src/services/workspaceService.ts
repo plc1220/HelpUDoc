@@ -741,6 +741,23 @@ export class WorkspaceService {
       .orderBy('g.name', 'asc');
   }
 
+  /** Persistent private storage for Skill Creator, excluded from ordinary navigation. */
+  async ensureSkillBuilderWorkspace(user: Pick<UserContext, 'userId' | 'displayName'>): Promise<string> {
+    const slug = `system-skill-builder-${user.userId}`;
+    const workspaceId = await this.db.transaction(async tx => {
+      await tx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', [slug]);
+      const existing = await tx<WorkspaceRecord>('workspaces').where({ slug, ownerId: user.userId, isSystem: true }).first();
+      const id = existing?.id || uuidv4();
+      if (!existing) {
+        await tx('workspaces').insert({ id, slug, name: 'Skill Creator', ownerId: user.userId, lastModifiedBy: user.userId, isSystem: true, visibility: 'private', workspaceType: 'private', editingPolicy: null, contentRevision: 0 });
+      }
+      await tx('workspace_members').insert({ workspaceId: id, userId: user.userId, role: 'owner', canEdit: true }).onConflict(['workspaceId', 'userId']).merge({ role: 'owner', canEdit: true });
+      return id;
+    });
+    await this.createWorkspaceDirectory(workspaceId);
+    return workspaceId;
+  }
+
   async createWorkspace(user: UserContext, name?: string): Promise<WorkspaceRecord> {
     const workspaceId = uuidv4();
     const resolvedName = await this.resolveWorkspaceNameForCreate(user.userId, name);
@@ -1022,6 +1039,40 @@ export class WorkspaceService {
     }
 
     await this.performWorkspaceDeletion(workspace.id);
+  }
+
+  /** Permanently removes an owner-managed Shared workspace from the trash. */
+  async permanentlyDeleteWorkspace(workspaceId: string, actingUserId: string): Promise<void> {
+    const publishedVersions = await this.db.transaction(async (tx) => {
+      const workspace = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspaceId })
+        .forUpdate()
+        .first();
+      if (!workspace) throw new NotFoundError('Workspace not found');
+      if ((workspace as WorkspaceRecord & { isSystem?: boolean }).isSystem) {
+        throw new AccessDeniedError('System workspaces cannot be deleted');
+      }
+      if (workspace.ownerId !== actingUserId) {
+        throw new AccessDeniedError('Only workspace owners can permanently delete a workspace');
+      }
+      if (!isSharedWorkspaceRecord(workspace) || workspace.status !== 'trashed') {
+        throw new ConflictError('Only trashed Shared workspaces can be permanently deleted');
+      }
+
+      const versions = await tx('workspace_published_versions')
+        .select('id')
+        .where({ teamWorkspaceId: workspaceId }) as Array<{ id: string }>;
+      await tx('workspaces').where({ id: workspaceId }).del();
+      return versions;
+    });
+
+    await this.performWorkspaceCleanup(workspaceId);
+    await Promise.all(publishedVersions.map((version) =>
+      fs.rm(path.join(WORKSPACE_DIR, '.published-versions', String(version.id)), {
+        recursive: true,
+        force: true,
+      }),
+    ));
   }
 
   async unshareWorkspace(workspaceId: string, actingUserId: string): Promise<void> {

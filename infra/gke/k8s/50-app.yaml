@@ -246,6 +246,36 @@ spec:
                   name: helpudoc-config
                   key: SESSION_COOKIE_DOMAIN
                   optional: true
+            - name: CALENDAR_WEBHOOK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_WEBHOOK_URL
+                  optional: true
+            - name: CALENDAR_CACHE_MAX_EVENTS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_CACHE_MAX_EVENTS
+                  optional: true
+            - name: CALENDAR_CACHE_TOMBSTONE_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_CACHE_TOMBSTONE_DAYS
+                  optional: true
+            - name: GOOGLE_PICKER_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_PICKER_API_KEY
+                  optional: true
+            - name: GOOGLE_PICKER_APP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_PICKER_APP_ID
+                  optional: true
             - name: GOOGLE_OAUTH_CLIENT_ID
               valueFrom:
                 configMapKeyRef:
@@ -562,6 +592,36 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: AUTH_MODE
+            - name: CALENDAR_WEBHOOK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_WEBHOOK_URL
+                  optional: true
+            - name: CALENDAR_CACHE_MAX_EVENTS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_CACHE_MAX_EVENTS
+                  optional: true
+            - name: CALENDAR_CACHE_TOMBSTONE_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_CACHE_TOMBSTONE_DAYS
+                  optional: true
+            - name: GOOGLE_PICKER_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_PICKER_API_KEY
+                  optional: true
+            - name: GOOGLE_PICKER_APP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_PICKER_APP_ID
+                  optional: true
             - name: GOOGLE_OAUTH_CLIENT_ID
               valueFrom:
                 configMapKeyRef:
@@ -739,6 +799,36 @@ spec:
               cpu: "250m"
               memory: "256Mi"
           env:
+            - name: CALENDAR_WEBHOOK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_WEBHOOK_URL
+                  optional: true
+            - name: CALENDAR_CACHE_MAX_EVENTS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_CACHE_MAX_EVENTS
+                  optional: true
+            - name: CALENDAR_CACHE_TOMBSTONE_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: CALENDAR_CACHE_TOMBSTONE_DAYS
+                  optional: true
+            - name: GOOGLE_PICKER_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_PICKER_API_KEY
+                  optional: true
+            - name: GOOGLE_PICKER_APP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_PICKER_APP_ID
+                  optional: true
             - name: GOOGLE_OAUTH_CLIENT_ID
               valueFrom:
                 configMapKeyRef:

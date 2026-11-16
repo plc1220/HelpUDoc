@@ -423,9 +423,15 @@ class AgentRegistry:
         max_output_tokens = self.settings.model.resolve_max_output_tokens(mode)
         resolved_name = f"{self._default_agent_name}:{mode}"
         context_payload = initial_context or {}
+        calendar_event_refs = context_payload.get("calendar_event_refs") or []
+        calendar_source_ids = context_payload.get("calendar_source_ids") or []
         builder_mode = context_payload.get("skill_builder") is True
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
+        calendar_scope_key = json.dumps({
+            "event": bool(calendar_event_refs),
+            "source": bool(calendar_source_ids),
+        }, sort_keys=True)
         internet_search_key = "search:on" if context_payload.get("internet_search_enabled") else "search:off"
         skill_sandbox_key = (
             "sandbox:on"
@@ -444,7 +450,7 @@ class AgentRegistry:
         key = (
             resolved_name,
             workspace_id,
-            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}:{skill_sandbox_key}:{skill_versions_key}",
+            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}:{skill_sandbox_key}:{skill_versions_key}:{calendar_scope_key}",
         )
         preserved_context: Dict[str, Any] = {}
         if key in self._cache:
@@ -464,6 +470,8 @@ class AgentRegistry:
             if desired_candidates == bound_candidates:
                 if context_payload:
                     runtime.workspace_state.context.update(context_payload)
+                runtime.workspace_state.context["calendar_event_refs"] = calendar_event_refs
+                runtime.workspace_state.context["calendar_source_ids"] = calendar_source_ids
                 return runtime
             preserved_context = prospective_context
             self._cache.pop(key, None)
@@ -492,6 +500,10 @@ class AgentRegistry:
             workspace_state.context.update(preserved_context)
         if context_payload:
             workspace_state.context.update(context_payload)
+        # These capabilities belong to this signed request. Never carry them
+        # over as preserved conversational context when the grant is absent.
+        workspace_state.context["calendar_event_refs"] = calendar_event_refs
+        workspace_state.context["calendar_source_ids"] = calendar_source_ids
         allow_skill_sandbox = bool(
             context_payload.get("allow_skill_sandbox")
             or context_payload.get("allowSkillSandbox")
@@ -541,6 +553,18 @@ class AgentRegistry:
             and "team_thread_history" not in tool_names
         ):
             tool_names.append("team_thread_history")
+        event_calendar_tools = ('calendar_read', 'calendar_create_event', 'calendar_update_event', 'calendar_delete_event')
+        if workspace_state.context.get("calendar_event_refs"):
+            for name in event_calendar_tools:
+                if name in self.settings.tools and name not in tool_names:
+                    tool_names.append(name)
+        else:
+            tool_names = [name for name in tool_names if name not in event_calendar_tools]
+        if workspace_state.context.get("calendar_source_ids"):
+            if 'calendar_list_events' in self.settings.tools and 'calendar_list_events' not in tool_names:
+                tool_names.append('calendar_list_events')
+        else:
+            tool_names = [name for name in tool_names if name != 'calendar_list_events']
         if not allow_skill_sandbox:
             tool_names = [name for name in tool_names if name != "run_skill_python_script"]
         if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:

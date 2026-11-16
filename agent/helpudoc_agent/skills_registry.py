@@ -935,6 +935,11 @@ ALWAYS_ALLOWED_TOOLS: frozenset[str] = frozenset(
         # remain usable for selected-skill invocations. Allowing it here widens
         # neither data access nor any unrelated tool.
         "team_thread_history",
+        "calendar_read",
+        "calendar_list_events",
+        "calendar_create_event",
+        "calendar_update_event",
+        "calendar_delete_event",
     }
 )
 

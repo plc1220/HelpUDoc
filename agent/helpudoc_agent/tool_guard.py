@@ -17,6 +17,7 @@ from .document_tool_guard import (
 from .skill_builder import SKILL_BUILDER_TOOL_NAMES
 from .skills_registry import is_tool_allowed, is_skill_allowed
 from .slide_style_preview import preview_tool_error
+from .calendar_policy import calendar_mcp_write_error
 from .state import WorkspaceState
 
 _PREFERRED_MCP_ONLY_BUILTINS = {
@@ -301,7 +302,7 @@ class GuardedTool(BaseTool):
         error = self._workspace_write_guard() or self._guard()
         if error:
             return self._blocked_result(input, error)
-        memory_error = self._memory_guard(input)
+        memory_error = calendar_mcp_write_error(self.name, self.tool_mcp_server, self._unwrap_runtime_input(input)) or self._memory_guard(input)
         if memory_error:
             return self._blocked_result(input, memory_error)
         wrapped_input = self._unwrap_runtime_input(input)
@@ -319,7 +320,7 @@ class GuardedTool(BaseTool):
         error = self._workspace_write_guard() or self._guard()
         if error:
             return self._blocked_result(input, error)
-        memory_error = self._memory_guard(input)
+        memory_error = calendar_mcp_write_error(self.name, self.tool_mcp_server, self._unwrap_runtime_input(input)) or self._memory_guard(input)
         if memory_error:
             return self._blocked_result(input, memory_error)
         wrapped_input = self._unwrap_runtime_input(input)
@@ -349,7 +350,7 @@ class GuardedTool(BaseTool):
             payload = list(args)
         else:
             payload = {}
-        memory_error = self._memory_guard(payload)
+        memory_error = calendar_mcp_write_error(self.name, self.tool_mcp_server, payload) or self._memory_guard(payload)
         if memory_error:
             return self._blocked_result(payload, memory_error)
         short_circuit = self._document_tool_short_circuit(payload)
@@ -375,7 +376,7 @@ class GuardedTool(BaseTool):
             payload = list(args)
         else:
             payload = {}
-        memory_error = self._memory_guard(payload)
+        memory_error = calendar_mcp_write_error(self.name, self.tool_mcp_server, payload) or self._memory_guard(payload)
         if memory_error:
             return self._blocked_result(payload, memory_error)
         short_circuit = self._document_tool_short_circuit(payload)

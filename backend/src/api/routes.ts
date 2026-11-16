@@ -9,6 +9,12 @@ import internalAgentRoutes from './internalAgent';
 import fileRoutes from './files';
 import conversationRoutes from './conversations';
 import scheduleRoutes from './schedules';
+import calendarRoutes from './calendar';
+import calendarProposalRoutes from './calendarProposals';
+import calendarTelemetryRoutes from './calendarTelemetry';
+import calendarActivityRoutes from './calendarActivity';
+import { CalendarProposalService } from '../services/calendarProposalService';
+import { CalendarService } from '../services/calendarService';
 import settingsRoutes from './settings';
 import knowledgeRoutes from './knowledge';
 import knowledgeCatalogRoutes from './knowledgeCatalog';
@@ -80,6 +86,13 @@ export default function(
     googleOAuthService,
   );
   router.use('/auth', authRoutes(userService, googleOAuthService));
+  const calendarService = new CalendarService(dbService.getDb(), googleOAuthService, fetch, fileService, workspaceCollaborationService);
+  const calendarProposals = new CalendarProposalService(dbService.getDb(), calendarService, workspaceService);
+  configureAgentRunServices({ onRunCompleted: ({ userId, runId }) => calendarService.linkRunOutputs(userId, runId) });
+  router.use('/v1', calendarRoutes(calendarService));
+  router.use('/v1', calendarProposalRoutes(calendarProposals));
+  router.use('/v1', calendarActivityRoutes());
+  calendarService.start();
   router.use('/', governanceRoutes(skillGovernanceService));
   registerSkillBuilderRoutes(router, workspaceService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService });
   router.use('/agent', agentRoutes(
@@ -89,7 +102,9 @@ export default function(
     userService,
     conversationService,
     knowledgeService,
+    calendarService,
   ));
+  router.use('/settings/calendar', calendarTelemetryRoutes(userService));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService, { userService, knowledgeService, knowledgeBaseService, skillGovernanceService }));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
@@ -112,7 +127,7 @@ export default function(
   // Agent-JWT-authenticated internal callbacks (spec F3.4). Not gated by the
   // browser userContext middleware; each route verifies the signed agent token
   // and its bound scope itself.
-  router.use('/internal/agent', internalAgentRoutes(workspaceCollaborationService));
+  router.use('/internal/agent', internalAgentRoutes(workspaceCollaborationService, calendarService, userService, workspaceService, calendarProposals));
   router.use('/workspaces/:workspaceId/files', fileRoutes(
     fileService, workspaceService, googleOAuthService, undefined, fileStatusService, filePublicationService,
   ));

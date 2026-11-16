@@ -23,6 +23,10 @@ def extract_agent_request_context(request: Request, *, agent_jwt_secret: str) ->
     if not payload:
         return {}
     context: Dict[str, Any] = {}
+    refs = payload.get("calendarEventRefs")
+    context["calendar_event_refs"] = [ref for ref in refs[:1] if isinstance(ref, str) and ref.startswith("meeting:") and len(ref) <= 4096] if isinstance(refs, list) else []
+    sources = payload.get("calendarSourceIds")
+    context["calendar_source_ids"] = [source for source in sources[:1] if isinstance(source, str) and 0 < len(source) <= 2048] if isinstance(sources, list) else []
     context["skill_builder"] = payload.get("skillBuilder") is True
     user_id = payload.get("userId") or payload.get("sub")
     if isinstance(user_id, str) and user_id.strip():

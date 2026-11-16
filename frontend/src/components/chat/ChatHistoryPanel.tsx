@@ -91,8 +91,8 @@ export default function ChatHistoryPanel({
             <div className="flex h-full flex-col items-center justify-center text-center">
               <div className={`rounded-3xl border px-5 py-5 ${
                 isDarkMode
-                  ? 'border-slate-700/70 bg-slate-900/85 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.98)]'
-                  : 'border-slate-200/80 bg-white/90 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.18)]'
+                  ? 'border-slate-700/70 bg-slate-900/85 shadow-[0_24px_60px_-36px_var(--color-overlay)]'
+                  : 'border-slate-200/80 bg-white/90 shadow-[0_24px_60px_-40px_var(--color-overlay)]'
               }`}>
                 <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>No conversations yet</p>
                 <p className={`mt-1 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Start a new chat to build your history.</p>
@@ -128,8 +128,8 @@ export default function ChatHistoryPanel({
                     className={`w-full rounded-2xl border p-2.5 pr-9 text-left transition-all duration-200 ${
                       isActive
                         ? isDarkMode
-                          ? 'border-sky-500/45 bg-sky-500/10 shadow-[0_16px_40px_-28px_rgba(14,165,233,0.55)]'
-                          : 'border-sky-300/80 bg-sky-50/90 shadow-[0_16px_40px_-28px_rgba(14,165,233,0.18)]'
+                          ? 'border-sky-500/45 bg-sky-500/10 shadow-[0_16px_40px_-28px_var(--color-overlay)]'
+                          : 'border-sky-300/80 bg-sky-50/90 shadow-[0_16px_40px_-28px_var(--color-overlay)]'
                         : isDarkMode
                           ? 'border-slate-800 bg-slate-900/70 hover:border-slate-700 hover:bg-slate-900'
                           : 'border-slate-200 bg-white/92 hover:border-slate-300 hover:bg-slate-50'

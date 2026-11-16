@@ -254,6 +254,11 @@ services:
       GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${GOOGLE_OAUTH_POST_LOGIN_REDIRECT:-http://localhost:5173/login}
       GOOGLE_OAUTH_SCOPES: ${GOOGLE_OAUTH_SCOPES:-openid email profile https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/devprofiles.full_control https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly}
       OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:-}
+      CALENDAR_WEBHOOK_URL: ${CALENDAR_WEBHOOK_URL:-}
+      CALENDAR_CACHE_MAX_EVENTS: ${CALENDAR_CACHE_MAX_EVENTS:-5000}
+      CALENDAR_CACHE_TOMBSTONE_DAYS: ${CALENDAR_CACHE_TOMBSTONE_DAYS:-90}
+      GOOGLE_PICKER_API_KEY: ${GOOGLE_PICKER_API_KEY:-}
+      GOOGLE_PICKER_APP_ID: ${GOOGLE_PICKER_APP_ID:-}
       KNOWLEDGE_DEDICATED_WORKER: "true"
       KNOWLEDGE_RETRIEVAL_MODE: ${KNOWLEDGE_RETRIEVAL_MODE:-lexical-graph}
       KNOWLEDGE_VECTOR_ENABLED: ${KNOWLEDGE_VECTOR_ENABLED:-false}

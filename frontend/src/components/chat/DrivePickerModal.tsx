@@ -363,7 +363,7 @@ export default function DrivePickerModal({
                 disabled={!selectedItems.length}
                 className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold text-white transition ${
                   selectedItems.length
-                    ? 'bg-[linear-gradient(135deg,rgba(66,133,244,0.95),rgba(15,157,88,0.92))] shadow-[0_12px_30px_-18px_rgba(66,133,244,0.85)]'
+                    ? 'bg-[linear-gradient(135deg,var(--color-overlay),var(--color-overlay))] shadow-[0_12px_30px_-18px_var(--color-overlay)]'
                     : 'cursor-not-allowed bg-slate-300 text-slate-100 shadow-none'
                 }`}
               >

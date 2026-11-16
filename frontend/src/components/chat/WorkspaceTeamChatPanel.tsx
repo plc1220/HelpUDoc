@@ -89,7 +89,7 @@ export default function WorkspaceTeamChatPanel(props: PanelProps) {
 
   if (!readinessResolved) {
     return (
-      <div className={`grid min-h-0 flex-1 place-items-center text-sm ${isDarkMode ? 'bg-[#0d1524] text-slate-500' : 'bg-slate-50 text-slate-400'}`}>
+      <div className={`grid min-h-0 flex-1 place-items-center text-sm ${isDarkMode ? 'bg-[var(--owl-espresso)] text-slate-500' : 'bg-slate-50 text-slate-400'}`}>
         Loading Workspace Chat…
       </div>
     );
@@ -100,7 +100,7 @@ export default function WorkspaceTeamChatPanel(props: PanelProps) {
       <div
         role="alert"
         data-testid="team-chat-access-lost"
-        className={`grid min-h-0 flex-1 place-items-center px-8 text-center text-sm ${isDarkMode ? 'bg-[#0d1524] text-slate-400' : 'bg-slate-50 text-slate-500'}`}
+        className={`grid min-h-0 flex-1 place-items-center px-8 text-center text-sm ${isDarkMode ? 'bg-[var(--owl-espresso)] text-slate-400' : 'bg-slate-50 text-slate-500'}`}
       >
         <div>
           <p className="font-semibold">You no longer have access to this workspace’s chat.</p>
@@ -406,7 +406,7 @@ function ThreadsPanel({
         />
         <p className="mt-2 text-xs opacity-70">Your first message starts the thread. An empty message won’t create one.</p>
       </div>
-      <div className={`border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
+      <div className={`border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'}`}>
         {getThreadDraft(userId, workspace.id, NEW_THREAD_DRAFT_ID)?.failed ? (
           <div role="alert" data-testid="new-thread-failed" className={`mb-2 rounded-xl px-3 py-2 text-xs ${isDarkMode ? 'bg-amber-400/10 text-amber-200' : 'bg-amber-50 text-amber-700'}`}>
             The thread wasn’t created. Your draft is kept — press Send to retry.
@@ -479,7 +479,7 @@ function ThreadsPanel({
     // Explicit inaccessible state. list/detail/composers are NOT rendered, so
     // their polling and cached data are gone (lifecycle review #4/#5).
     return (
-      <div ref={rootRef} className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden ${isDarkMode ? 'bg-[#0d1524]' : 'bg-slate-50'}`} data-testid="team-chat-threads-panel">
+      <div ref={rootRef} className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden ${isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-50'}`} data-testid="team-chat-threads-panel">
         {header}
         <div role="alert" data-testid="team-chat-access-lost" className={`grid h-full place-items-center px-8 text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
           <div>
@@ -492,7 +492,7 @@ function ThreadsPanel({
   }
 
   return (
-    <div ref={rootRef} className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden ${isDarkMode ? 'bg-[#0d1524]' : 'bg-slate-50'}`} data-testid="team-chat-threads-panel">
+    <div ref={rootRef} className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden ${isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-50'}`} data-testid="team-chat-threads-panel">
       {header}
       {error ? (
         <div role="alert" className={`mx-3 mt-3 rounded-xl border px-3 py-2 text-xs ${isDarkMode ? 'border-rose-400/30 bg-rose-400/10 text-rose-200' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>

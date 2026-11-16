@@ -7,6 +7,8 @@ declare module 'express-session' {
     codeVerifier: string;
     returnTo?: string;
     extraScopes?: string[];
+  calendarOnly?: boolean;
+  identityOnly?: boolean;
     expectedUserId?: string;
     createdAt: number;
   }

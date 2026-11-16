@@ -29,6 +29,7 @@ from .builtins.skills import (
     build_run_skill_python_script_tool,
 )
 from .builtins.team_thread_history import build_team_thread_history_tool
+from .builtins.calendar import build_calendar_read_tool, build_calendar_action_tool
 from .builtins.workspace_files import (
     build_append_to_report_tool,
     build_create_pdf_from_images_tool,
@@ -78,6 +79,8 @@ class ToolFactory:
             "workflow_action": lambda ws: build_workflow_action_tool(ws),
             "run_skill_python_script": lambda ws: build_run_skill_python_script_tool(self.settings, ws),
             "team_thread_history": lambda ws: build_team_thread_history_tool(ws),
+            "calendar_read": lambda ws: build_calendar_read_tool(ws),
+            **{name: (lambda ws, tool_name=name: build_calendar_action_tool(ws, tool_name)) for name in ('calendar_list_events', 'calendar_create_event', 'calendar_update_event', 'calendar_delete_event')},
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:

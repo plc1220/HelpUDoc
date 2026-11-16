@@ -422,20 +422,24 @@ const WorkspaceCollaborationDialog = ({
                   {canModerate
                     && selected.type === 'change_proposal'
                     && !readSourceThreadId(selected)
-                    && Boolean(selected.linkedPrivateWorkspaceId)
                     && (selected.status === 'proposed' || selected.status === 'discussing') ? (
                       <>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          disabled={actionBusy}
-                          onClick={() => setReviewCopy({
-                            id: selected.linkedPrivateWorkspaceId!,
-                            name: selected.title || 'Submitted changes',
-                          })}
-                        >
-                          Review changes
-                        </Button>
+                        {selected.linkedPrivateWorkspaceId ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={actionBusy}
+                            onClick={() => setReviewCopy({
+                              id: selected.linkedPrivateWorkspaceId!,
+                              name: selected.title || 'Submitted changes',
+                            })}
+                          >
+                            Review changes
+                          </Button>
+                        ) : null}
+                        {/* The API intentionally redacts the linked private workspace ID.
+                            Applying is authorized by proposal ID on the server, so do not
+                            make the Approve and apply action depend on that redacted ID. */}
                         <Button size="small" variant="contained" disabled={actionBusy} onClick={() => void handleApplyProposal()}>
                           Approve and apply
                         </Button>

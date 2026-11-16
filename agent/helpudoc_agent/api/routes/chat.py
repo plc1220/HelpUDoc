@@ -566,10 +566,10 @@ def register_chat_routes(
     def _extract_request_context(request: Request) -> Dict[str, Any]:
         context = extract_agent_request_context(request, agent_jwt_secret=agent_jwt_secret)
         # Retain the raw signed token and backend base URL ONLY when a
-        # thread-history scope is present, so the team_thread_history tool can
+        # signed thread-history or Calendar scope is present, so the team_thread_history tool can
         # authenticate its callback with the exact same signed context. The token
         # is never exposed to the model; it lives in workspace_state.context.
-        if isinstance(context, dict) and context.get("thread_history_scope"):
+        if isinstance(context, dict) and (context.get("thread_history_scope") or context.get("calendar_event_refs")):
             raw_auth = request.headers.get("authorization") or ""
             if raw_auth.lower().startswith("bearer "):
                 context["agent_auth_token"] = raw_auth.split(" ", 1)[1].strip()

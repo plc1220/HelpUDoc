@@ -1,0 +1,15 @@
+# Opt-in development fallback. Pass after infra/docker-compose.yml.
+# Builds official source locally; does not fetch replacement object-store images.
+services:
+  minio:
+    image: helpudoc/minio-source-dev:7aac2a2c5b7c
+    pull_policy: build
+    build:
+      context: ./minio-source
+      dockerfile: Dockerfile.minio
+  minio-setup:
+    image: helpudoc/mc-source-dev:77f82e18b540
+    pull_policy: build
+    build:
+      context: ./minio-source
+      dockerfile: Dockerfile.mc

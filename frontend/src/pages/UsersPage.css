@@ -31,7 +31,7 @@
 .users-team-delete:hover,
 .users-team-delete:focus-visible {
   color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  background: var(--danger-soft);
 }
 .users-team-delete:disabled,
 .users-team-select:disabled {

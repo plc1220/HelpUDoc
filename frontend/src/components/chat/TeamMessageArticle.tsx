@@ -66,7 +66,7 @@ export default function TeamMessageArticle({
   return (
     <article
       id={domId}
-      style={highlighted ? { outline: '2px solid #8b5cf6', outlineOffset: 2 } : undefined}
+      style={highlighted ? { outline: '2px solid var(--owl-taupe)', outlineOffset: 2 } : undefined}
       className={`group rounded-2xl border px-3 py-2.5 ${
         message.isMentioned
           ? isDarkMode

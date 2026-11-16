@@ -1,6 +1,7 @@
 import crypto from 'crypto';
+import type { Knex } from 'knex';
 import { getBackendEnv } from '../config/env';
-import { StoredOAuthToken, UserOAuthTokenService } from './userOAuthTokenService';
+import { StoredOAuthToken, UserOAuthTokenService, type OAuthProvider } from './userOAuthTokenService';
 
 const GOOGLE_AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
 /** OIDC issuer recorded against a claimed identity, alongside the `sub`. */
@@ -125,6 +126,13 @@ function ensureRequiredScopes(grantedScope?: string, additionalScopes: string[] 
 export class GoogleOAuthService {
   constructor(private readonly tokenStore: UserOAuthTokenService) {}
 
+  async getGrantedScopes(userId: string, provider: OAuthProvider = 'google'): Promise<string[]> {
+    return [...splitScopes((await this.tokenStore.getToken(userId, provider))?.scope)];
+  }
+
+  listCalendarAccounts(userId: string, executor?: Knex) { return this.tokenStore.listCalendarAccounts(userId, executor); }
+  async disconnectCalendarAccount(userId: string, provider: OAuthProvider, executor?: Knex) { await this.tokenStore.deleteToken(userId, provider, executor); }
+
   isConfigured(): boolean {
     const o = oauthConfig();
     return Boolean(
@@ -146,16 +154,16 @@ export class GoogleOAuthService {
     return crypto.randomBytes(24).toString('base64url');
   }
 
-  getAuthStartUrl(params: { state: string; codeChallenge: string; extraScopes?: string[] }): string {
+  getAuthStartUrl(params: { state: string; codeChallenge: string; extraScopes?: string[]; calendarOnly?: boolean; identityOnly?: boolean }): string {
     const clientId = requireOAuth(oauthConfig().clientId, 'GOOGLE_OAUTH_CLIENT_ID');
     const redirectUri = requireOAuth(oauthConfig().redirectUri, 'GOOGLE_OAUTH_REDIRECT_URI');
     const url = new URL(GOOGLE_AUTH_BASE);
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', [...new Set([...getScopes(), ...(params.extraScopes || [])])].join(' '));
+    url.searchParams.set('scope', [...new Set([...(params.calendarOnly ? ['openid', 'email'] : params.identityOnly ? ['openid', 'email', 'profile'] : getScopes()), ...(params.extraScopes || [])])].join(' '));
     url.searchParams.set('access_type', 'offline');
-    url.searchParams.set('include_granted_scopes', 'true');
+    url.searchParams.set('include_granted_scopes', params.calendarOnly || params.identityOnly ? 'false' : 'true');
     url.searchParams.set('prompt', 'consent');
     url.searchParams.set('state', params.state);
     url.searchParams.set('code_challenge', params.codeChallenge);
@@ -274,9 +282,11 @@ export class GoogleOAuthService {
       expiresIn?: number;
       scope?: string;
       tokenType?: string;
+      principal?: string;
     },
+    provider: OAuthProvider = 'google',
   ): Promise<void> {
-    const existing = await this.tokenStore.getToken(userId, 'google');
+    const existing = await this.tokenStore.getToken(userId, provider);
     const refreshToken = input.refreshToken || existing?.refreshToken;
     if (!refreshToken) {
       throw new Error('Google OAuth did not provide a refresh token; re-consent is required');
@@ -288,18 +298,21 @@ export class GoogleOAuthService {
       expiryDate: computeExpiryEpoch(input.expiresIn),
       scope: input.scope || existing?.scope,
       tokenType: input.tokenType || existing?.tokenType,
+      principal: input.principal || existing?.principal,
     };
 
-    await this.tokenStore.upsertToken(userId, 'google', token);
+    await this.tokenStore.upsertToken(userId, provider, token);
   }
 
-  async getDelegatedAccessToken(userId: string, additionalScopes: string[] = []): Promise<DelegatedAccessToken> {
-    const existing = await this.tokenStore.getToken(userId, 'google');
+  async getDelegatedAccessToken(userId: string, additionalScopes: string[] = [], onlyRequestedScopes = false, provider: OAuthProvider = 'google', executor?: Knex): Promise<DelegatedAccessToken> {
+    const existing = await this.tokenStore.getToken(userId, provider, executor);
     if (!existing || !existing.refreshToken) {
       throw new GoogleOAuthTokenMissingError('Google account is not connected for this user');
     }
 
-    ensureRequiredScopes(existing.scope, additionalScopes);
+    if (onlyRequestedScopes) {
+      if (additionalScopes.some(scope => !hasRequiredScope(splitScopes(existing.scope), scope))) throw new GoogleOAuthTokenMissingError('Google permission needs to be enabled');
+    } else ensureRequiredScopes(existing.scope, additionalScopes);
 
     const now = Math.floor(Date.now() / 1000);
     if (existing.accessToken && existing.expiryDate && existing.expiryDate > now + 60) {
@@ -344,15 +357,18 @@ export class GoogleOAuthService {
     const expiresIn = toNumber(data.expires_in);
     const expiryDate = computeExpiryEpoch(expiresIn);
     const grantedScope = typeof data.scope === 'string' ? data.scope : existing.scope;
-    ensureRequiredScopes(grantedScope, additionalScopes);
+    if (onlyRequestedScopes) {
+      if (additionalScopes.some(scope => !hasRequiredScope(splitScopes(grantedScope), scope))) throw new GoogleOAuthTokenMissingError('Google permission needs to be enabled');
+    } else ensureRequiredScopes(grantedScope, additionalScopes);
 
-    await this.tokenStore.upsertToken(userId, 'google', {
+    await this.tokenStore.upsertToken(userId, provider, {
       refreshToken: existing.refreshToken,
       accessToken,
       expiryDate,
       scope: grantedScope,
       tokenType: typeof data.token_type === 'string' ? data.token_type : existing.tokenType,
-    });
+      principal: existing.principal,
+    }, executor);
 
     return {
       accessToken,

@@ -48,6 +48,21 @@ backend:
     read_file: false
     edit_file: false
 tools:
+  - name: calendar_list_events
+    kind: builtin
+    description: List the selected calendar through the scoped Calendar domain
+  - name: calendar_create_event
+    kind: builtin
+    description: Propose a new event for explicit human review and Save
+  - name: calendar_update_event
+    kind: builtin
+    description: Propose an event edit for explicit human review and Save
+  - name: calendar_delete_event
+    kind: builtin
+    description: Propose a cancellation for explicit human review and Delete
+  - name: calendar_read
+    kind: builtin
+    description: Read permitted meeting context through the Calendar domain
   - name: google_search
     kind: builtin
     description: Gemini-native Google search tool

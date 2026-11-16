@@ -21,7 +21,7 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History } from 'lucide-react';
+import { CalendarDays, BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { safeMarkdownUrlTransform } from '../../utils/markdownUrls';
 import { remarkEditorHtml } from '../../utils/remarkEditorHtml';
@@ -158,6 +158,7 @@ import {
 } from '../../utils/agentProgress';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
+import CalendarWorkspace from '../calendar/CalendarWorkspace';
 import type { UIBlock } from '../../components/UIBlockRenderer';
 import ExpandableSidebar from '../../components/ExpandableSidebar';
 import PaneResizeHandle from '../../components/PaneResizeHandle';
@@ -921,6 +922,11 @@ export default function WorkspacePage() {
   const [schedulesLoading, setSchedulesLoading] = useState(false);
   const [schedulesError, setSchedulesError] = useState('');
   const [isSchedulesPanelOpen, setIsSchedulesPanelOpen] = useState(false);
+  const [isCalendarDrawerOpen, setIsCalendarDrawerOpen] = useState(() => new URLSearchParams(window.location.search).get('calendar') === 'open');
+  const [isCalendarCanvas, setIsCalendarCanvas] = useState(false);
+  const calendarAgentRef = useRef<string | undefined>(undefined);
+  const calendarAgentSourceRef = useRef<string | undefined>(undefined);
+  const [calendarCanvasTarget, setCalendarCanvasTarget] = useState<HTMLDivElement | null>(null);
   const [scheduleDialogState, setScheduleDialogState] = useState<ScheduleDialogState | null>(null);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [busyScheduleId, setBusyScheduleId] = useState<string | null>(null);
@@ -1970,7 +1976,7 @@ export default function WorkspacePage() {
       return;
     }
 
-    const wrapInDocument = (body: string) => `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${activeFile.name}</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;line-height:1.6;color:#0f172a;}pre{background:#0f172a;color:#f8fafc;padding:12px 16px;border-radius:12px;overflow-x:auto;}code{font-family:'SFMono-Regular',Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:0.9em;}img{max-width:100%;height:auto;border-radius:8px;}h1,h2,h3,h4,h5,h6{margin-top:1.5em;}</style></head><body>${body}</body></html>`;
+    const wrapInDocument = (body: string) => `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${activeFile.name}</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;line-height:1.6;color:var(--owl-espresso);}pre{background:var(--owl-espresso);color:var(--owl-cream);padding:12px 16px;border-radius:12px;overflow-x:auto;}code{font-family:'SFMono-Regular',Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:0.9em;}img{max-width:100%;height:auto;border-radius:8px;}h1,h2,h3,h4,h5,h6{margin-top:1.5em;}</style></head><body>${body}</body></html>`;
 
     const hasHtmlShell = /<html[\s>]/i.test(fileContent);
     const printableContent = isHtmlFile
@@ -3265,6 +3271,7 @@ export default function WorkspacePage() {
     } catch (error) {
       console.error('Failed to save schedule', error);
       addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to save schedule.');
+      throw error;
     } finally {
       setScheduleSaving(false);
     }
@@ -3485,6 +3492,9 @@ export default function WorkspacePage() {
   }, [selectedWorkspace]);
 
   const handleSelectWorkspace = useCallback((workspace: Workspace) => {
+    if (calendarAgentRef.current) setChatMessage('');
+    calendarAgentRef.current = undefined;
+    calendarAgentSourceRef.current = undefined;
     explicitWorkspaceOpenSequenceRef.current += 1;
     setExplicitWorkspaceOpen({
       workspaceId: workspace.id,
@@ -3588,6 +3598,20 @@ export default function WorkspacePage() {
       setMobileSurface('canvas');
     }
   }, [notificationLocation.key, notificationLocation.search, selectedWorkspace?.id, files]);
+
+  const contextLinkOpened = useRef('');
+  useEffect(() => {
+    const query = new URLSearchParams(notificationLocation.search);
+    const workspaceId = query.get('workspaceId'), fileId = query.get('fileId');
+    if (!workspaceId || !fileId || contextLinkOpened.current === notificationLocation.key) return;
+    const workspace = workspaces.find(item => item.id === workspaceId);
+    if (!workspace) return;
+    if (selectedWorkspace?.id !== workspaceId) { handleSelectWorkspace(workspace); return; }
+    const file = files.find(item => String(item.id) === fileId);
+    if (!file) return;
+    contextLinkOpened.current = notificationLocation.key;
+    setSelectedFile(file); setIsCalendarCanvas(false); setIsEditMode(false); setIsLandingPageVisible(false); setMobileSurface('canvas');
+  }, [notificationLocation.key, notificationLocation.search, workspaces, selectedWorkspace?.id, files, handleSelectWorkspace]);
 
   /**
    * Sync the Shared Working version into `My draft`. When overlapping changes exist the backend
@@ -4012,6 +4036,8 @@ export default function WorkspacePage() {
   };
 
   const handleSelectConversationFromHistory = async (conversationId: string) => {
+    calendarAgentRef.current = undefined;
+    calendarAgentSourceRef.current = undefined;
     setActiveConversationId(conversationId);
     await loadConversationMessages(conversationId);
     setChatMessage('');
@@ -5588,6 +5614,8 @@ export default function WorkspacePage() {
     knowledgeRefs?: Array<{ id: number }>;
     knowledgeBaseIds?: string[];
     internetSearchEnabled?: boolean;
+    calendarEventRef?: string;
+    calendarSourceId?: string;
   }) => {
     const {
       workspaceId,
@@ -5602,6 +5630,8 @@ export default function WorkspacePage() {
       knowledgeRefs,
       knowledgeBaseIds,
       internetSearchEnabled,
+      calendarEventRef,
+      calendarSourceId,
     } = params;
     if (!isUsableWorkspaceId(workspaceId)) {
       throw new Error('Cannot start agent run without a valid workspace id.');
@@ -5621,6 +5651,8 @@ export default function WorkspacePage() {
         knowledgeBaseIds,
         currentTurnFileIds,
         internetSearchEnabled,
+        calendarEventRef,
+        calendarSourceId,
       },
     );
     if (STREAM_DEBUG_ENABLED) {
@@ -6975,6 +7007,8 @@ export default function WorkspacePage() {
           knowledgeRefs: mentionedKnowledge.map((item) => ({ id: item.id })),
           knowledgeBaseIds: mentionedKnowledgeBases.map((kb) => kb.id),
           internetSearchEnabled: useInternetSearch,
+          calendarEventRef: calendarAgentRef.current,
+          calendarSourceId: calendarAgentSourceRef.current,
         });
       } catch (error) {
         console.error('Failed to start agent run', error);
@@ -7097,6 +7131,8 @@ export default function WorkspacePage() {
   };
 
   const handleNewChat = async () => {
+    calendarAgentRef.current = undefined;
+    calendarAgentSourceRef.current = undefined;
     cancelStreamForConversation(activeConversationId);
     if (!selectedWorkspace) {
       addLocalSystemMessage('Please select a workspace before starting a conversation.');
@@ -7960,7 +7996,8 @@ export default function WorkspacePage() {
 
   const handleMobileSelectFile = (file: WorkspaceFile) => {
     setSelectedDashboardPath(null);
-    setSelectedFile(file);
+    setIsCalendarCanvas(false);
+                          setSelectedFile(file);
     setSelectedFileDetails(null);
     setFileContent('');
     setIsEditMode(shouldForceEditMode(file.name));
@@ -7983,10 +8020,10 @@ export default function WorkspacePage() {
     void handleSendMessage();
   };
 
-  const mobileCanvasView = (
-    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0e1728]' : 'bg-slate-50'}`}>
+  const mobileCanvasView = isCalendarCanvas ? <div className="calendar-canvas-slot" ref={setCalendarCanvasTarget} /> : (
+    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-50'}`}>
       <div className={`flex shrink-0 items-center justify-between border-b px-4 py-3 ${
-        isDarkMode ? 'border-slate-800 bg-[#08111f]' : 'border-slate-200 bg-white'
+        isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'
       }`}>
         <div className="min-w-0">
           <p className={`text-[10px] font-semibold uppercase tracking-normal ${
@@ -8093,7 +8130,7 @@ export default function WorkspacePage() {
           </div>
         ) : (
           <div className={`flex h-full flex-col items-center justify-center px-6 text-center ${
-            isDarkMode ? 'bg-[#0e1728] text-slate-400' : 'bg-slate-50 text-slate-500'
+            isDarkMode ? 'bg-[var(--owl-espresso)] text-slate-400' : 'bg-slate-50 text-slate-500'
           }`}>
             <MobileLumoAvatar size={52} notify={hasPendingInterruptMessage} busy={isStreaming} />
             <p className={`mt-4 text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
@@ -8106,7 +8143,7 @@ export default function WorkspacePage() {
         )}
         </CanvasAnnotations></OfficeDocumentContext.Provider>
       </div>
-      <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
+      <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'}`}>
         <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
           isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-slate-50'
         }`}>
@@ -8137,10 +8174,10 @@ export default function WorkspacePage() {
 
   const mobileWorkspaceShell = (
     <div className={`flex h-[100dvh] w-screen flex-col overflow-hidden font-sans ${
-      isDarkMode ? 'bg-[#020817]' : 'bg-slate-100'
+      isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-100'
     }`}>
       <header className={`shrink-0 border-b px-4 py-3 ${
-        isDarkMode ? 'border-slate-800 bg-[#08111f]' : 'border-slate-200 bg-white'
+        isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'
       }`}>
         <div className="flex items-center justify-between gap-3">
           <button
@@ -8159,6 +8196,7 @@ export default function WorkspacePage() {
             </span>
           </button>
           <div className="flex shrink-0 items-center gap-2">
+            <IconButton label="Open calendar" icon={<CalendarDays size={18} />} variant="ghost" onClick={() => setIsCalendarDrawerOpen(true)} />
             <NotificationCenter placement="below" />
             <button
               type="button"
@@ -8252,7 +8290,7 @@ export default function WorkspacePage() {
       </header>
 
       {mobileSurface === 'chat' ? (
-        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0d1524]' : 'bg-white'}`}>
+        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-white'}`}>
           {selectedWorkspace?.visibility === 'team' ? (
             <div className={`border-b px-4 py-2 text-xs ${
               isDarkMode
@@ -8516,6 +8554,7 @@ export default function WorkspacePage() {
           handleDrawerToggle={handleDrawerToggle}
           isDrawerOpen={drawerOpen}
           onOpenSettings={handleOpenAgentSettings}
+          onOpenCalendar={() => setIsCalendarDrawerOpen(true)}
         />
         <CollapsibleDrawer
           open={drawerOpen}
@@ -8540,7 +8579,7 @@ export default function WorkspacePage() {
           onCreateWorkspace={() => {
             void handleCreateWorkspace();
           }}
-          onOpenSchedules={() => setIsSchedulesPanelOpen(true)}
+          onOpenSchedules={() => setIsCalendarDrawerOpen(true)}
           scheduleCount={workspaceSchedules.length}
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
@@ -8577,13 +8616,13 @@ export default function WorkspacePage() {
         >
           <div
             className={`flex font-sans h-full min-h-0 overflow-hidden ${
-              isDarkMode ? 'bg-[#020817]' : 'bg-gray-100'
+              isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-gray-100'
             }`}
             style={{ height: layoutHeight }}
           >
             {isLandingPageVisible ? (
               <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
-                isDarkMode ? 'bg-[#020817]' : 'bg-slate-50'
+                isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-50'
               }`}>
                 <div className="flex flex-1 items-center justify-center px-6 py-8">
                   <div className="w-full max-w-4xl">
@@ -8592,7 +8631,7 @@ export default function WorkspacePage() {
                     }`}>
                       {landingUserName ? `Hi ${landingUserName}, What are we documenting today?` : 'What are we documenting today?'}
                     </h1>
-                    <div className={`relative rounded-[2rem] border shadow-[0_28px_70px_-48px_rgba(15,23,42,0.7)] ${
+                    <div className={`relative rounded-[2rem] border shadow-[0_28px_70px_-48px_var(--color-overlay)] ${
                       isDarkMode ? 'border-slate-700/80 bg-slate-950/80' : 'border-slate-200 bg-white'
                     }`}>
                       <textarea
@@ -8936,7 +8975,7 @@ export default function WorkspacePage() {
             >
               {/* Workspace Header */}
               <div className={`px-4 py-3 flex items-center gap-3 ${
-                isDarkMode ? 'border-b border-[#223047] bg-[#08111f]' : 'border-b border-gray-200'
+                isDarkMode ? 'border-b border-[var(--owl-cocoa)] bg-[var(--owl-espresso)]' : 'border-b border-gray-200'
               }`}>
                 <button
                   type="button"
@@ -9049,7 +9088,7 @@ export default function WorkspacePage() {
                   role="status"
                   className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs ${
                     isDarkMode
-                      ? 'border-b border-[#223047] bg-slate-900/70 text-slate-300'
+                      ? 'border-b border-[var(--owl-cocoa)] bg-slate-900/70 text-slate-300'
                       : 'border-b border-gray-200 bg-slate-50 text-slate-600'
                   }`}
                 >
@@ -9075,13 +9114,13 @@ export default function WorkspacePage() {
                 {/* File Explorer */}
                 <div
                   className={`flex flex-col overflow-hidden min-h-0 ${
-                    isDarkMode ? 'bg-[#08111f] border-r border-[#223047]' : 'bg-white border-r border-gray-200'
+                    isDarkMode ? 'bg-[var(--owl-espresso)] border-r border-[var(--owl-cocoa)]' : 'bg-white border-r border-gray-200'
                   }`}
                   style={filePaneStyles}
                 >
                   <div
                     className={`px-3 py-3 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
-                      } ${isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
+                      } ${isDarkMode ? 'border-b border-[var(--owl-cocoa)]' : 'border-b border-gray-200'
                       }`}
                   >
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
@@ -9280,6 +9319,7 @@ export default function WorkspacePage() {
                         readOnly={!canMutateContent}
                         isDraftWorkspaceFile={isDraftWorkspaceFile}
                         onSelectFile={(file) => {
+                          setIsCalendarCanvas(false);
                           setSelectedFile(file);
                           setSelectedFileDetails(null);
                           setFileContent('');
@@ -9308,10 +9348,11 @@ export default function WorkspacePage() {
 
                 {/* Content Editor */}
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
-                  isDarkMode ? 'bg-[#0e1728]' : 'bg-gray-50'
+                  isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-gray-50'
                 }`}>
+                  {isCalendarCanvas ? <div className="calendar-canvas-slot" ref={setCalendarCanvasTarget} /> : <>
                   <div className={`px-4 py-3 flex flex-wrap gap-2 justify-between items-center ${
-                    isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
+                    isDarkMode ? 'border-b border-[var(--owl-cocoa)]' : 'border-b border-gray-200'
                   }`}>
                     <div className="flex min-w-0 flex-wrap items-center gap-3">
                       <h3 title={canvasTitle} className={`truncate text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
@@ -9502,6 +9543,7 @@ export default function WorkspacePage() {
                     )}
                     </CanvasAnnotations></OfficeDocumentContext.Provider>
                   </div>
+                  </>}
                 </div>
               </div>
             </div>
@@ -9624,6 +9666,31 @@ export default function WorkspacePage() {
           </>
         )}
       </Box>
+      <CalendarWorkspace
+        open={isCalendarDrawerOpen || isCalendarCanvas}
+        compact={!isCalendarCanvas}
+        canvasTarget={calendarCanvasTarget}
+        isMobile={isMobileViewport}
+        workspaceId={selectedWorkspace?.id}
+        workspaces={workspaces.filter(workspace => workspace.visibility !== 'team' && workspace.status !== 'trashed' && workspace.role !== 'viewer').map(workspace => ({ id: workspace.id, name: workspace.name }))}
+        onCreateAutomation={workspaceId => {
+          const workspace = workspaces.find(candidate => candidate.id === workspaceId);
+          if (!workspace) return;
+          if (selectedWorkspace?.id !== workspaceId) handleSelectWorkspace(workspace);
+          setScheduleDialogState({ draft: { name: '', prompt: '', cadence: 'daily', cronExpression: '0 9 * * *', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, persona: DEFAULT_PERSONA_NAME, selectedSkills: [], contextRefs: [], taggedFiles: [], outputMode: 'new_conversation_per_run', notificationMode: 'failure' } });
+        }}
+        onClose={() => { setIsCalendarDrawerOpen(false); setIsCalendarCanvas(false); }}
+        onOpenCalendar={() => { setIsCalendarDrawerOpen(false); setIsCalendarCanvas(true); setIsLandingPageVisible(false); setIsAgentPaneFullScreen(false); setMobileSurface('canvas'); }}
+        onOpenAutomations={() => { setIsSchedulesPanelOpen(true); }}
+        onEditAutomation={item => { const schedule = workspaceSchedules.find(s => s.id === item.schedule_id); if (schedule) openScheduleEditor(schedule); else { const workspace = workspaces.find(w => w.id === item.workspace_id); if (workspace) handleSelectWorkspace(workspace); setIsSchedulesPanelOpen(true); } }}
+        onAgentContext={async (context, eventRef, sourceId) => {
+          if (!selectedWorkspace || selectedWorkspace.visibility === 'team') {
+            const personal = await handleCreateWorkspace({ name: 'Meeting preparation', stayOnLanding: false });
+            if (!personal) throw new Error('A private workspace could not be opened for meeting preparation.');
+          }
+          calendarAgentRef.current = eventRef; calendarAgentSourceRef.current = sourceId; setChatMessage(context); setIsAgentPaneVisible(true); setIsAgentPaneFullScreen(false); setIsCalendarDrawerOpen(false); setMobileSurface('chat');
+        }}
+      />
       <WorkspaceSchedulesPanel
         open={isSchedulesPanelOpen}
         colorMode={colorMode}
