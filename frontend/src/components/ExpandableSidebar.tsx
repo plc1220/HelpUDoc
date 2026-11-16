@@ -1,14 +1,15 @@
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Menu, Settings } from 'lucide-react';
+import { Menu, Settings, CalendarDays } from 'lucide-react';
 import NotificationCenter from './NotificationCenter';
 
 interface SidebarProps {
   handleDrawerToggle: () => void;
   isDrawerOpen: boolean;
   onOpenSettings: () => void;
+  onOpenCalendar?: () => void;
 }
 
-export default function ExpandableSidebar({ handleDrawerToggle, isDrawerOpen, onOpenSettings }: SidebarProps) {
+export default function ExpandableSidebar({ handleDrawerToggle, isDrawerOpen, onOpenSettings, onOpenCalendar }: SidebarProps) {
   return <aside aria-label="Workspace controls" style={{
     width: isDrawerOpen ? 0 : 60,
     flexShrink: 0,
@@ -25,6 +26,7 @@ export default function ExpandableSidebar({ handleDrawerToggle, isDrawerOpen, on
     {!isDrawerOpen && <>
       <IconButton label="Open workspace menu" icon={<Menu size={21} />} variant="ghost" onClick={handleDrawerToggle} />
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+        {onOpenCalendar && <IconButton label="Open calendar" icon={<CalendarDays size={20} />} variant="ghost" onClick={onOpenCalendar} />}
         <NotificationCenter placement="end" />
         <IconButton label="Settings" tooltip="Settings" icon={<Settings size={20} strokeWidth={1.7} />} variant="ghost" onClick={onOpenSettings} />
       </div>

@@ -1,8 +1,11 @@
 """Internal analysis and persistent memory HTTP routes."""
 from __future__ import annotations
 
+import json
+from typing import Literal
 from fastapi import FastAPI, HTTPException, Request
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from helpudoc_agent.configuration import Settings
 from helpudoc_agent.memory_store import MemoryStoreManager
@@ -11,6 +14,14 @@ from helpudoc_agent.runtime.agent_registry import AgentRegistry
 from ..auth_context import require_internal_user_context
 from ..message_utils import _message_to_text
 from ..schemas import InternalAnalyzeRequest, InternalMemoryRequest, InternalMemoryWriteRequest
+from ...calendar_document_text import MAX_BASE64_LENGTH, MAX_REQUEST_BYTES, DocumentTextError, decode_content, extract_document_text
+
+
+class CalendarDocumentTextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filename: str = Field(min_length=1, max_length=200, pattern=r"^[^/\\:\x00-\x1f]+$")
+    mime_type: Literal["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+    content: str = Field(min_length=1, max_length=MAX_BASE64_LENGTH)
 
 
 def register_internal_routes(
@@ -40,6 +51,24 @@ def register_internal_routes(
             raise HTTPException(status_code=400, detail="systemPrompt and userPrompt are required")
         text = await _run_internal_analysis(req.systemPrompt, req.userPrompt)
         return {"text": text}
+
+    @app.post("/internal/calendar/document-text")
+    async def calendar_document_text(request: Request):
+        # Authenticate before buffering a potentially large body. This route has
+        # no file-path, URL, model, OAuth credential, or tool arguments.
+        require_internal_user_context(request, agent_jwt_secret=agent_jwt_secret)
+        payload = bytearray()
+        async for chunk in request.stream():
+            if len(payload) + len(chunk) > MAX_REQUEST_BYTES:
+                raise HTTPException(status_code=413, detail={"code": "DOCUMENT_TEXT_LIMIT"})
+            payload.extend(chunk)
+        try:
+            req = CalendarDocumentTextRequest.model_validate(json.loads(payload))
+            return await extract_document_text(decode_content(req.content), req.mime_type)
+        except (ValidationError, ValueError, UnicodeError):
+            raise HTTPException(status_code=422, detail={"code": "DOCUMENT_TEXT_UNREADABLE"})
+        except DocumentTextError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code}) from None
 
     @app.get("/internal/memories")
     async def get_internal_memory(path: str, request: Request):

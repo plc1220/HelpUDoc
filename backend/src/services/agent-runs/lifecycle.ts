@@ -73,6 +73,8 @@ type StartRunParams = {
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  calendarEventRef?: string;
+  calendarSourceId?: string;
   knowledgeRefs?: AgentKnowledgeRef[];
   /** The prompt as the user typed it, before knowledge/file guidance is appended. */
   userPrompt?: string;
@@ -121,6 +123,8 @@ type RunPendingInterrupt = {
 };
 
 type RunMeta = {
+  calendarEventRef?: string;
+  calendarSourceId?: string;
   sharedTeamChannel?: boolean;
   workspaceId: string;
   userId?: string;
@@ -159,6 +163,8 @@ type PersistedRunContext = {
   turnId?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  calendarEventRef?: string;
+  calendarSourceId?: string;
   knowledgeRefs?: AgentKnowledgeRef[];
 };
 
@@ -394,6 +400,7 @@ let skillEvolutionService: SkillEvolutionService | null = null;
 let conversationService: ConversationService | null = null;
 let fileService: FileService | null = null;
 let notificationService: NotificationService | null = null;
+let onRunCompleted: ((input: { runId: string; userId: string; workspaceId: string }) => Promise<unknown>) | null = null;
 let agentStreamClient = {
   runAgentStream,
   resumeAgentStream,
@@ -403,6 +410,7 @@ let agentStreamClient = {
 
 export function configureAgentRunServices(services: {
   notificationService?: NotificationService | null;
+  onRunCompleted?: ((input: { runId: string; userId: string; workspaceId: string }) => Promise<unknown>) | null;
   telemetryService?: RunTelemetryService | null;
   runProvenanceService?: AgentRunProvenanceService | null;
   userMemoryService?: UserMemoryService | null;
@@ -412,6 +420,7 @@ export function configureAgentRunServices(services: {
   agentStreamClient?: Partial<typeof agentStreamClient> | null;
 }) {
   if ('notificationService' in services) notificationService = services.notificationService || null;
+  if ('onRunCompleted' in services) onRunCompleted = services.onRunCompleted || null;
   if ('telemetryService' in services) {
     runTelemetryService = services.telemetryService || null;
   }
@@ -2927,6 +2936,8 @@ const serializeRunContext = (params: StartRunParams): string =>
     turnId: params.turnId,
     messageContent: params.messageContent,
     internetSearchEnabled: params.internetSearchEnabled,
+    calendarEventRef: params.calendarEventRef,
+    calendarSourceId: params.calendarSourceId,
     knowledgeRefs: params.knowledgeRefs,
   } satisfies PersistedRunContext);
 
@@ -2959,6 +2970,8 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
         forceReset: typeof parsed.forceReset === 'boolean' ? parsed.forceReset : undefined,
         turnId: typeof parsed.turnId === 'string' ? parsed.turnId : undefined,
         messageContent: Array.isArray(parsed.messageContent) ? parsed.messageContent as AgentMessageContentBlock[] : undefined,
+        calendarEventRef: typeof parsed.calendarEventRef === 'string' ? parsed.calendarEventRef : undefined,
+        calendarSourceId: typeof parsed.calendarSourceId === 'string' ? parsed.calendarSourceId : undefined,
         internetSearchEnabled: typeof parsed.internetSearchEnabled === 'boolean' ? parsed.internetSearchEnabled : undefined,
         knowledgeRefs: Array.isArray(parsed.knowledgeRefs) ? parsed.knowledgeRefs as AgentKnowledgeRef[] : undefined,
       },
@@ -4250,6 +4263,14 @@ async function runAgentRunWorker(
       });
     }
     await recordProvenanceFinish(effectiveStatus);
+    if (effectiveStatus === 'completed' && params.userId && onRunCompleted) {
+      try { await onRunCompleted({ runId, userId: params.userId, workspaceId: params.workspaceId }); }
+      catch (linkError) {
+        // Output links can be reconstructed from durable file/run provenance on
+        // read. A context-index outage must not fail a successful artifact run.
+        console.error('Failed to reconcile completed run output links', { runId, error: safeErrorForLog(linkError) });
+      }
+    }
     if (effectiveStatus === 'completed' && userMemoryService) {
       void userMemoryService
         .suggestForCompletedRun({
@@ -5136,6 +5157,8 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   await reconcileActiveRunMetaFromStream(runId, meta, interactionGateState);
   return {
     workspaceId: meta.workspaceId,
+    calendarEventRef: parseRunContext(meta.runContext)?.params.calendarEventRef,
+    calendarSourceId: parseRunContext(meta.runContext)?.params.calendarSourceId,
     sharedTeamChannel: meta.sharedTeamChannel === 'true',
     userId: meta.userId,
     persona: meta.persona,

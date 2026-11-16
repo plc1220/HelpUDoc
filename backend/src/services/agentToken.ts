@@ -26,6 +26,8 @@ export type AgentContextTokenPayload = {
   sub?: string;
   userId?: string;
   workspaceId?: string;
+  calendarEventRefs?: string[];
+  calendarSourceIds?: string[];
   skillAllowIds?: string[];
   skillVersionPins?: Record<string, {
     skillId: string;

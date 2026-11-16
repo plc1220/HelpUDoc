@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { Knex } from 'knex';
 import { DatabaseService } from './databaseService';
 
-export type OAuthProvider = 'google';
+export type OAuthProvider = 'google' | `calendar:${string}`;
 
 export type StoredOAuthToken = {
   refreshToken: string;
@@ -10,6 +10,7 @@ export type StoredOAuthToken = {
   expiryDate?: number; // Unix epoch seconds
   scope?: string;
   tokenType?: string;
+  principal?: string;
 };
 
 type EncryptedRecord = {
@@ -112,6 +113,7 @@ function toStoredToken(raw: Record<string, unknown>): StoredOAuthToken {
     expiryDate: Number.isFinite(raw.expiryDate) ? Number(raw.expiryDate) : undefined,
     scope: typeof raw.scope === 'string' ? raw.scope : undefined,
     tokenType: typeof raw.tokenType === 'string' ? raw.tokenType : undefined,
+    principal: typeof raw.principal === 'string' ? raw.principal : undefined,
   };
 }
 
@@ -122,10 +124,10 @@ export class UserOAuthTokenService {
     this.db = databaseService.getDb();
   }
 
-  async upsertToken(userId: string, provider: OAuthProvider, token: StoredOAuthToken): Promise<void> {
+  async upsertToken(userId: string, provider: OAuthProvider, token: StoredOAuthToken, executor: Knex = this.db): Promise<void> {
     const encryptedJson = encryptJson(token as unknown as Record<string, unknown>);
 
-    await this.db(TOKEN_TABLE)
+    await executor(TOKEN_TABLE)
       .insert({
         userId,
         provider,
@@ -134,12 +136,12 @@ export class UserOAuthTokenService {
       .onConflict(['userId', 'provider'])
       .merge({
         encryptedJson,
-        updatedAt: this.db.fn.now(),
+        updatedAt: executor.fn.now(),
       });
   }
 
-  async getToken(userId: string, provider: OAuthProvider): Promise<StoredOAuthToken | null> {
-    const row = await this.db(TOKEN_TABLE)
+  async getToken(userId: string, provider: OAuthProvider, executor: Knex = this.db): Promise<StoredOAuthToken | null> {
+    const row = await executor(TOKEN_TABLE)
       .select('encryptedJson')
       .where({ userId, provider })
       .first();
@@ -155,12 +157,22 @@ export class UserOAuthTokenService {
       if (!isDecryptAuthError(error)) {
         throw error;
       }
-      await this.deleteToken(userId, provider);
+      await this.deleteToken(userId, provider, executor);
       return null;
     }
   }
 
-  async deleteToken(userId: string, provider: OAuthProvider): Promise<void> {
-    await this.db(TOKEN_TABLE).where({ userId, provider }).del();
+  async listCalendarAccounts(userId: string, executor: Knex = this.db) {
+    const rows = await executor(TOKEN_TABLE).where({ userId }).where('provider', 'like', 'calendar:%').select('provider');
+    const accounts = [];
+    for (const row of rows) {
+      const token = await this.getToken(userId, row.provider, executor);
+      if (token) accounts.push({ id: row.provider as OAuthProvider, principal: token.principal || 'Google account', scopes: (token.scope || '').split(/\s+/).filter(Boolean) });
+    }
+    return accounts;
+  }
+
+  async deleteToken(userId: string, provider: OAuthProvider, executor: Knex = this.db): Promise<void> {
+    await executor(TOKEN_TABLE).where({ userId, provider }).del();
   }
 }

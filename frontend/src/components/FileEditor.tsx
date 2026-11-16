@@ -1,3 +1,4 @@
+import { PALETTE } from '../palette';
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import type { File as WorkspaceFile } from '../types';
@@ -164,15 +165,15 @@ const WorkspaceFileEditor: React.FC<FileEditorProps> = ({
             { token: 'attribute.value', foreground: 'a3be8c' },
           ],
           colors: {
-            'editor.background': '#2e3440',
-            'editor.foreground': '#d8dee9',
-            'editorLineNumber.foreground': '#4c566a',
-            'editorLineNumber.activeForeground': '#eceff4',
-            'editorCursor.foreground': '#d8dee9',
-            'editor.selectionBackground': '#434c5e',
-            'editor.inactiveSelectionBackground': '#3b4252',
-            'editorIndentGuide.background': '#3b4252',
-            'editorIndentGuide.activeBackground': '#4c566a',
+            'editor.background': PALETTE.cocoa,
+            'editor.foreground': PALETTE.cream,
+            'editorLineNumber.foreground': PALETTE.cocoa,
+            'editorLineNumber.activeForeground': PALETTE.cream,
+            'editorCursor.foreground': PALETTE.cream,
+            'editor.selectionBackground': PALETTE.cocoa,
+            'editor.inactiveSelectionBackground': PALETTE.cocoa,
+            'editorIndentGuide.background': PALETTE.cocoa,
+            'editorIndentGuide.activeBackground': PALETTE.cocoa,
           },
         });
         editor.setTheme('helpudoc-nord');

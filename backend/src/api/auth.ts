@@ -1,4 +1,5 @@
 import { Request, Router } from 'express';
+import { createHash } from 'crypto';
 import { UserService, isUserDeactivated } from '../services/userService';
 import { GoogleOAuthService, GoogleOAuthConfigError, GOOGLE_OIDC_ISSUER } from '../services/googleOAuthService';
 
@@ -19,6 +20,8 @@ type StartState = {
   codeVerifier: string;
   returnTo?: string;
   extraScopes?: string[];
+  calendarOnly?: boolean;
+  identityOnly?: boolean;
   expectedUserId?: string;
   createdAt: number;
 };
@@ -26,6 +29,7 @@ type StartState = {
 const OAUTH_STATE_COOKIE = 'helpudoc.oauth.state';
 const OAUTH_VERIFIER_COOKIE = 'helpudoc.oauth.verifier';
 const OAUTH_RETURN_TO_COOKIE = 'helpudoc.oauth.return_to';
+const OAUTH_PURPOSE_COOKIE = 'helpudoc.oauth.purpose';
 const OAUTH_COOKIE_MAX_AGE_MS = 10 * 60 * 1000;
 const SESSION_COOKIE_NAME = process.env.SESSION_NAME || 'helpudoc.sid';
 
@@ -124,12 +128,17 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       const requestedExtras = typeof req.query.extraScopes === 'string'
         ? req.query.extraScopes.split(/[\s,]+/).filter(Boolean)
         : [];
-      const extraScopes = [...new Set(requestedExtras)];
-      if (extraScopes.some((scope) => scope !== 'https://www.googleapis.com/auth/drive.file')) {
+      const calendarOnly = req.query.calendar === 'true';
+      const identityOnly = req.query.identityOnly === 'true';
+      if (identityOnly && (calendarOnly || requestedExtras.length)) return res.status(400).json({ error: 'Identity sign-in cannot request service permissions' });
+      const extraScopes = [...new Set(calendarOnly && !requestedExtras.length ? ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly'] : requestedExtras)];
+      if (!calendarOnly && extraScopes.some(scope => scope.includes('/auth/calendar.'))) return res.status(400).json({ error: 'Calendar permissions require a dedicated Calendar connection' });
+      if (calendarOnly && !req.userContext?.userId) return res.status(401).json({ error: 'Sign in before connecting Calendar' });
+      if (extraScopes.some((scope) => !['drive.file', 'calendar.calendarlist.readonly', 'calendar.events', 'calendar.events.readonly'].some(suffix => scope === `https://www.googleapis.com/auth/${suffix}`))) {
         return res.status(400).json({ error: 'Unsupported additional Google OAuth scope' });
       }
       if (extraScopes.length && !req.userContext?.userId) {
-        return res.status(401).json({ error: 'Sign in before connecting Google Drive publishing' });
+        return res.status(401).json({ error: 'Sign in before connecting Google services' });
       }
 
       const statePayload: StartState = {
@@ -137,7 +146,9 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         codeVerifier,
         returnTo,
         extraScopes,
-        expectedUserId: extraScopes.length ? req.userContext?.userId : undefined,
+        calendarOnly,
+        identityOnly,
+        expectedUserId: calendarOnly || extraScopes.length ? req.userContext?.userId : undefined,
         createdAt: Date.now(),
       };
 
@@ -148,6 +159,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       req.session.googleOAuth = statePayload;
       await saveSession(req);
       const secure = cookieSecure();
+      res.cookie(OAUTH_PURPOSE_COOKIE, calendarOnly ? 'calendar' : identityOnly ? 'identity' : 'login', { httpOnly: true, sameSite: 'lax', secure, maxAge: OAUTH_COOKIE_MAX_AGE_MS });
       res.cookie(OAUTH_STATE_COOKIE, state, {
         httpOnly: true,
         sameSite: 'lax',
@@ -174,7 +186,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
           secure,
         });
       }
-      const redirectUrl = googleOAuthService.getAuthStartUrl({ state, codeChallenge, extraScopes });
+      const redirectUrl = googleOAuthService.getAuthStartUrl({ state, codeChallenge, extraScopes, calendarOnly, identityOnly });
       return res.redirect(302, redirectUrl);
     } catch (error) {
       if (error instanceof GoogleOAuthConfigError) {
@@ -205,6 +217,8 @@ export default function authRoutes(userService: UserService, googleOAuthService:
 
       const cookies = parseCookieHeader(req.headers.cookie);
       const sessionState = req.session?.googleOAuth;
+      if (cookies[OAUTH_PURPOSE_COOKIE] === 'calendar' && !sessionState?.calendarOnly) return redirectWithError('calendar_session_expired');
+      if (cookies[OAUTH_PURPOSE_COOKIE] === 'identity' && !sessionState?.identityOnly) return redirectWithError('identity_session_expired');
       const oauthState = sessionState || (
         cookies[OAUTH_STATE_COOKIE] && cookies[OAUTH_VERIFIER_COOKIE]
           ? {
@@ -215,7 +229,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
             }
           : undefined
       );
-      if (!oauthState || oauthState.state !== state) {
+      if (!oauthState || oauthState.state !== state || Date.now() - oauthState.createdAt > OAUTH_COOKIE_MAX_AGE_MS) {
         return redirectWithError('state_mismatch');
       }
 
@@ -224,6 +238,22 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         await googleOAuthService.verifyIdToken(tokenResponse.idToken);
       }
       const profile = await googleOAuthService.fetchProfile(tokenResponse.accessToken);
+
+      if (sessionState?.calendarOnly) {
+        // A Calendar grant belongs to the already-authenticated Lumo user. It never
+        // replaces their login identity or the general-purpose agent Google grant.
+        if (!sessionState.expectedUserId || sessionState.expectedUserId !== req.userContext?.userId || Date.now() - sessionState.createdAt > OAUTH_COOKIE_MAX_AGE_MS) return redirectWithError('calendar_session_expired');
+        const provider = `calendar:${createHash('sha256').update(profile.sub).digest('hex').slice(0, 32)}` as const;
+        await googleOAuthService.upsertUserGoogleToken(sessionState.expectedUserId, { ...tokenResponse, principal: profile.email || 'Google account' }, provider);
+        req.session!.googleOAuth = undefined;
+        await saveSession(req);
+        const secure = cookieSecure();
+        for (const name of [OAUTH_STATE_COOKIE, OAUTH_VERIFIER_COOKIE, OAUTH_RETURN_TO_COOKIE, OAUTH_PURPOSE_COOKIE]) res.clearCookie(name, { httpOnly: true, sameSite: 'lax', secure });
+        const target = new URL(googleOAuthService.getPostLoginRedirectUrl());
+        const returnPath = new URL(sanitizeReturnPath(sessionState.returnTo) || '/?calendar=open', target.origin);
+        target.pathname = returnPath.pathname; target.search = returnPath.search;
+        return res.redirect(302, target.toString());
+      }
 
       // Under invite-only, a Google identity that matches neither an existing
       // account nor a pre-registered address is refused before any row is
@@ -260,7 +290,8 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         return redirectWithError('google_account_mismatch');
       }
 
-      await googleOAuthService.upsertUserGoogleToken(user.id, tokenResponse);
+      // A basic sign-in must not replace an existing Google service grant.
+      if (!sessionState?.identityOnly) await googleOAuthService.upsertUserGoogleToken(user.id, tokenResponse);
 
       if (req.session) {
         req.session.userContext = {
@@ -277,6 +308,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       res.clearCookie(OAUTH_STATE_COOKIE, { httpOnly: true, sameSite: 'lax', secure });
       res.clearCookie(OAUTH_VERIFIER_COOKIE, { httpOnly: true, sameSite: 'lax', secure });
       res.clearCookie(OAUTH_RETURN_TO_COOKIE, { httpOnly: true, sameSite: 'lax', secure });
+      res.clearCookie(OAUTH_PURPOSE_COOKIE, { httpOnly: true, sameSite: 'lax', secure });
 
       const base = googleOAuthService.getPostLoginRedirectUrl();
       const url = new URL(base);

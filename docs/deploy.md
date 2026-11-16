@@ -76,7 +76,7 @@ The primary full-stack deploy path is the manual **Deploy Full Stack to GKE** wo
 
 **Runtime assets (skills + agent config on PVCs):** the `helpudoc-app` pod includes **init containers** (`seed-skills`, `seed-agent-config`) that copy from image paths **`/app/skills-source`** and **`/app/agent-config-source/runtime.yaml`** into the PVC mounts **only when the target paths are empty**, so normal pod restarts do not wipe admin edits. Each image carries `.HELPUDOC_SOURCE_REVISION` (build tag / commit) beside the bundled tree; after a successful seed, the same filename may appear under the PVC for operators to diff **image revision** versus **live PVC** content (`kubectl exec` into the backend container and `cat /app/skills/.HELPUDOC_IMAGE_SOURCE_REVISION` or `/agent/config/.HELPUDOC_IMAGE_SOURCE_REVISION`).
 
-**Legacy PVC sync:** if you temporarily need the old `kubectl exec` tar/rsync behaviour, set **`sync_runtime_assets`** true. It is destructive for `/app/skills` when enabled; prefer init seeding for new clusters.
+**Runtime config sync:** every deployment with **`build_agent`** true copies the repository's `agent/config/runtime.yaml` to the agent-config PVC and restarts the app after the copy, so MCP server definitions do not remain stale. Set **`sync_runtime_assets`** true only when you also need to sync skills; that legacy skills sync is destructive for `/app/skills` and should be used sparingly.
 
 Required GitHub secrets:
 - `GCP_PROJECT_ID`
@@ -174,8 +174,10 @@ cp env/prod/config.env.example env/prod/config.env
 # - GOOGLE_OAUTH_CLIENT_ID
 # - GOOGLE_OAUTH_REDIRECT_URI=https://lc-demo.com/api/auth/google/callback
 # - GOOGLE_OAUTH_POST_LOGIN_REDIRECT=https://lc-demo.com/login
-# - GOOGLE_OAUTH_SCOPES must include https://www.googleapis.com/auth/cloud-platform for google-developer-knowledge
+# - GOOGLE_OAUTH_SCOPES must include https://www.googleapis.com/auth/cloud-platform and https://www.googleapis.com/auth/devprofiles.full_control for Google Cloud Billing and Developer Knowledge MCPs
+# - GOOGLE_WORKSPACE_MCP_URL=http://127.0.0.1:8000/mcp when using the in-pod Google Workspace sidecar
 # - GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID=my-rd-coe-demo-gen-ai
+# - GOOGLE_CLOUD_PRICING_PROJECT_ID=my-rd-coe-demo-gen-ai
 # - GCP_COST_SERVICE_ACCOUNT_JSON_B64 (recommended if gcp-cost cannot use node ADC)
 # - GOOGLE_OAUTH_CLIENT_SECRET (in secrets.env)
 # - OAUTH_TOKEN_ENCRYPTION_KEY (in secrets.env)

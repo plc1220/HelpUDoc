@@ -74,11 +74,11 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   };
 
   return <div style={{ width: drawerWidth, flexShrink: 0 }}>
-    <aside className="workspace-pane" aria-label="Workspaces" inert={!open} style={{ transform: open ? 'none' : 'translateX(-100%)' }}>
+    <aside className="workspace-pane" aria-label="Workspaces" aria-hidden={!open} inert={!open} style={{ transform: open ? 'none' : 'translateX(-100%)' }}>
       <header className="workspace-pane-toolbar">
         <div className="workspace-pane-actions">
           <IconButton label="Create workspace" tooltip="New workspace" icon={<Plus size={19} />} variant="ghost" onClick={() => void onCreateWorkspace()} />
-          {onOpenSchedules && <IconButton label={scheduleCount ? `Open schedules, ${scheduleCount} scheduled jobs` : 'Open schedules'} tooltip={scheduleCount ? `Schedules (${scheduleCount})` : 'Schedules'} icon={<CalendarDays size={18} />} variant="ghost" isDisabled={!selectedWorkspace || selectedWorkspace.visibility === 'team'} onClick={onOpenSchedules} />}
+          {onOpenSchedules && <IconButton label={scheduleCount ? `Open calendar, ${scheduleCount} scheduled jobs` : 'Open calendar'} tooltip="My Calendar" icon={<CalendarDays size={18} />} variant="ghost" onClick={onOpenSchedules} />}
         </div>
         <IconButton label="Close workspace menu" icon={<ChevronLeft size={19} />} variant="ghost" onClick={handleDrawerClose} />
       </header>

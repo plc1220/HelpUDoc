@@ -286,7 +286,7 @@ export function InteractionSurfaceRenderer({
                   overflow: 'hidden',
                   border: `2px solid ${isSelected ? 'var(--color-border-blue)' : 'var(--color-border)'}`,
                   borderRadius: 12,
-                  background: 'white',
+                  background: 'var(--surface)',
                 }}
               >
                 <WorkspaceHtmlPreviewFrame

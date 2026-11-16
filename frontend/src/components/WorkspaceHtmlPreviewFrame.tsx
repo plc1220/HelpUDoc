@@ -1,3 +1,4 @@
+import { PALETTE } from '../palette';
 import { useEffect, useState, useRef } from 'react';
 import { useCanvasAnnotations } from './CanvasAnnotationContext';
 import { annotationPreviewBridge } from '../utils/annotationPreviewBridge';
@@ -37,7 +38,7 @@ export default function WorkspaceHtmlPreviewFrame({
       };
       frameRef.current?.contentWindow?.postMessage({
         type: 'canvas-annotation-state', active: annotation.active, annotations: annotation.annotations,
-        theme: { accent: token('--color-accent', '#262626'), surface: token('--color-background-surface', '#ffffff'), text: token('--color-on-accent', '#ffffff'), focus: token('--color-border-blue', '#2563eb') },
+        theme: { accent: token('--color-accent', PALETTE.cocoa), surface: token('--color-background-surface', PALETTE.cream), text: token('--color-on-accent', PALETTE.cream), focus: token('--color-border-blue', PALETTE.gold) },
       }, '*');
       probe.remove();
     };

@@ -161,7 +161,7 @@ Required backend env vars:
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI`
 - `GOOGLE_OAUTH_POST_LOGIN_REDIRECT`
-- `GOOGLE_OAUTH_SCOPES` (must include BigQuery plus the Gmail, Calendar, Drive, and Sheets scopes used by delegated Google Workspace MCP access)
+- `GOOGLE_OAUTH_SCOPES` (must include Cloud Platform and `devprofiles.full_control` for Google Cloud MCPs, plus BigQuery and the Gmail, Calendar, Drive, and Sheets scopes used by delegated Google Workspace MCP access)
 - `GOOGLE_WORKSPACE_MCP_URL` (HTTP endpoint for the hosted Google Workspace MCP server)
 - `OAUTH_TOKEN_ENCRYPTION_KEY` (32-byte base64url key)
 

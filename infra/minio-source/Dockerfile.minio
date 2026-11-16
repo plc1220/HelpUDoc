@@ -1,0 +1,26 @@
+# Development-only build of the official MinIO source. Build inputs are pinned;
+# the default application Compose file and production images are unchanged.
+FROM --platform=$BUILDPLATFORM golang:1.24.9-alpine@sha256:8f8959f38530d159bf71d0b3eb0c547dc61e7959d8225d1599cf762477384923 AS build
+ARG TARGETARCH
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOMAXPROCS=2 GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org
+WORKDIR /src
+ADD --checksum=sha256:71794c2df26aad0cc99e8421c58b7aa2dd55969f979b0e7d1e931042e9fabcd6 https://codeload.github.com/minio/minio/tar.gz/7aac2a2c5b7c882e68c1ce017d8256be2feea27f /tmp/source.tar.gz
+RUN tar -xzf /tmp/source.tar.gz --strip-components=1 -C /src && rm /tmp/source.tar.gz
+RUN --mount=type=cache,id=helpudoc-minio-go-mod,target=/go/pkg/mod \
+    --mount=type=cache,id=helpudoc-minio-go-build,target=/root/.cache/go-build \
+    mkdir -p /out && go mod download && \
+    GOOS=linux GOARCH="${TARGETARCH}" go build -p 2 -mod=readonly -trimpath -buildvcs=false \
+      -ldflags="-s -w -X github.com/minio/minio/cmd.Version=2026-02-12T20:18:48Z -X github.com/minio/minio/cmd.ReleaseTag=DEVELOPMENT.2026-02-12T20-18-48Z -X github.com/minio/minio/cmd.CommitID=7aac2a2c5b7c882e68c1ce017d8256be2feea27f -X github.com/minio/minio/cmd.ShortCommitID=7aac2a2c5b7c -X github.com/minio/minio/cmd.CopyrightYear=2026" \
+      -o /out/minio . && \
+    if [ "$(go env GOARCH)" = "${TARGETARCH}" ]; then /out/minio --version; fi
+
+FROM alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
+LABEL org.opencontainers.image.source="https://github.com/minio/minio" \
+      org.opencontainers.image.revision="7aac2a2c5b7c882e68c1ce017d8256be2feea27f" \
+      org.opencontainers.image.title="HelpUDoc development MinIO source build"
+COPY --from=build /out/minio /usr/local/bin/minio
+COPY --from=build /src/LICENSE /src/CREDITS /licenses/
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+EXPOSE 9000 9001
+ENTRYPOINT ["/usr/local/bin/minio"]
+CMD ["server", "/data", "--console-address", ":9001"]

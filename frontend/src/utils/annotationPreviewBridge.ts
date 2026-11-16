@@ -1,6 +1,7 @@
+import { PALETTE } from '../palette';
 // Runs inside the sandboxed preview. The host validates event.source before accepting anchors.
 export const annotationPreviewBridge = String.raw`<script>(function(){
-let active=false, annotations=[], layer, theme={accent:'#262626',surface:'#ffffff',text:'#ffffff',focus:'#2563eb'};
+let active=false, annotations=[], layer, theme={accent:'${PALETTE.cocoa}',surface:'${PALETTE.cream}',text:'${PALETTE.cream}',focus:'${PALETTE.amber}'};
 const send=(data)=>parent.postMessage({type:'canvas-annotation',...data},'*');
 const selector=(el)=>{ const parts=[]; while(el && el!==document.body){
  const tag=el.tagName.toLowerCase();
@@ -8,7 +9,7 @@ const selector=(el)=>{ const parts=[]; while(el && el!==document.body){
  let n=1,s=el; while((s=s.previousElementSibling))if(s.tagName===el.tagName)n++;
  parts.unshift(tag+':nth-of-type('+n+')');el=el.parentElement;
 }return parts.join(' > ')||'body';};
-const style=document.createElement('style');style.textContent='[data-annotation-hover]{outline:2px solid var(--annotation-focus,#2563eb)!important;cursor:crosshair!important}';document.head.appendChild(style);
+const style=document.createElement('style');style.textContent='[data-annotation-hover]{outline:2px solid var(--annotation-focus,${PALETTE.amber})!important;cursor:crosshair!important}';document.head.appendChild(style);
 const clearHover=()=>document.querySelectorAll('[data-annotation-hover]').forEach(el=>el.removeAttribute('data-annotation-hover'));
 document.addEventListener('pointerover',e=>{if(!active||e.target.closest('[data-annotation-layer]'))return;clearHover();e.target.setAttribute('data-annotation-hover','');},true);
 document.addEventListener('click',e=>{
@@ -29,7 +30,7 @@ function paint(){
  let pos={x:0.5,y:0.5};try{const p=JSON.parse(a.anchorFingerprint);if(Number.isFinite(p.x)&&Number.isFinite(p.y))pos=p;}catch{}
  const r=el.getBoundingClientRect();if(!r.width||!r.height)return;
  const pin=document.createElement('button');pin.type='button';pin.textContent=String(i+1);pin.setAttribute('aria-label','Open annotation '+(i+1));
- pin.style.cssText='position:absolute;width:24px;height:24px;border:2px solid white;border-radius:50%;background:#2563eb;color:white;font:600 12px sans-serif;pointer-events:auto;box-shadow:0 1px 5px #0005;transform:translate(-50%,-50%)';
+ pin.style.cssText='position:absolute;width:24px;height:24px;border:2px solid ${PALETTE.cream};border-radius:50%;background:${PALETTE.amber};color:${PALETTE.espresso};font:600 12px sans-serif;pointer-events:auto;box-shadow:0 1px 5px ${PALETTE.espresso};transform:translate(-50%,-50%)';
  pin.style.background=theme.accent;pin.style.color=theme.text;pin.style.borderColor=theme.surface;
  pin.style.left=(r.left+r.width*Math.max(0,Math.min(1,pos.x)))+'px';pin.style.top=(r.top+r.height*Math.max(0,Math.min(1,pos.y)))+'px';
  pin.onclick=e=>{e.preventDefault();e.stopPropagation();send({id:a.id})};layer.appendChild(pin);

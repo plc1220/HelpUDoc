@@ -32,6 +32,7 @@ jobs:
               - 'infra/env/**'
               - 'env/**'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/calendar-review-follow-up.yml'
             frontend:
               - 'frontend/**'
               - 'packages/shared/**'
@@ -72,6 +73,14 @@ jobs:
       - run: npm run validate:env
       - run: npm test
 
+  calendar-review-tests:
+    name: Calendar review follow-up acceptance
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.backend == 'true'
+    uses: ./.github/workflows/calendar-review-follow-up.yml
+
   frontend:
     name: Frontend lint and build
     needs: [changes]
@@ -92,6 +101,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+        env:
+          # Match the successful frontend image build's heap budget.
+          NODE_OPTIONS: --max-old-space-size=6144
 
   python-agent:
     name: Python agent smoke and core tests
@@ -202,6 +214,7 @@ jobs:
     needs:
       - changes
       - backend-test
+      - calendar-review-tests
       - frontend
       - python-agent
       - docker-backend
@@ -216,6 +229,7 @@ jobs:
           fail=0
           for name_result in \
             "backend-test:${{ needs.backend-test.result }}" \
+            "calendar-review-tests:${{ needs.calendar-review-tests.result }}" \
             "frontend:${{ needs.frontend.result }}" \
             "python-agent:${{ needs.python-agent.result }}" \
             "docker-backend:${{ needs.docker-backend.result }}" \

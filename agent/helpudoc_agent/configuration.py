@@ -241,6 +241,8 @@ class MCPServerConfig(BaseModel):
     headers_from_env: Dict[str, str] = Field(default_factory=dict)
     bearer_token_env_var: Optional[str] = None
     delegated_auth_provider: Optional[str] = None
+    # None exposes all discovered tools; an explicit list limits the catalog.
+    allowed_tools: Optional[List[str]] = None
 
     # RBAC metadata
     default_access: str = Field(default="allow")  # "allow" | "deny"

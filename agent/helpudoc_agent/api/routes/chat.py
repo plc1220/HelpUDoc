@@ -566,10 +566,10 @@ def register_chat_routes(
     def _extract_request_context(request: Request) -> Dict[str, Any]:
         context = extract_agent_request_context(request, agent_jwt_secret=agent_jwt_secret)
         # Retain the raw signed token and backend base URL ONLY when a
-        # thread-history scope is present, so the team_thread_history tool can
+        # signed thread-history or Calendar scope is present, so the team_thread_history tool can
         # authenticate its callback with the exact same signed context. The token
         # is never exposed to the model; it lives in workspace_state.context.
-        if isinstance(context, dict) and context.get("thread_history_scope"):
+        if isinstance(context, dict) and (context.get("thread_history_scope") or context.get("calendar_event_refs")):
             raw_auth = request.headers.get("authorization") or ""
             if raw_auth.lower().startswith("bearer "):
                 context["agent_auth_token"] = raw_auth.split(" ", 1)[1].strip()
@@ -1868,14 +1868,12 @@ def register_chat_routes(
         context = runtime.workspace_state.context or {}
         policy = context.get("active_skill_policy") or {}
         if not isinstance(policy, dict):
-            return []
-        if not bool(policy.get("requires_workspace_artifacts", False)):
-            return []
+            policy = {}
         root = runtime.workspace_state.root_path
         required = policy.get("required_artifacts") or []
         required_items = [str(item).strip() for item in required if str(item).strip()]
-        if not required_items:
-            return []
+        if not bool(policy.get("requires_workspace_artifacts", False)):
+            required_items = []
         missing: List[str] = []
         for item in required_items:
             if item.startswith("pattern:"):
@@ -1894,7 +1892,31 @@ def register_chat_routes(
             rel = item.lstrip("/")
             if not (root / rel).exists():
                 missing.append(item)
+
+        if _requested_docx_artifact_missing(runtime):
+            missing.append("a new or updated .docx file")
         return missing
+
+    def _requested_docx_artifact_missing(runtime: AgentRuntimeState) -> bool:
+        context = runtime.workspace_state.context or {}
+        requested = context.get("requested_artifact_contract")
+        if not isinstance(requested, dict) or requested.get("extension") != ".docx":
+            return False
+        baseline = requested.get("baseline")
+        baseline = baseline if isinstance(baseline, dict) else {}
+        root = runtime.workspace_state.root_path
+        try:
+            for child in root.rglob("*.docx"):
+                if not child.is_file():
+                    continue
+                rel = child.relative_to(root).as_posix()
+                stat = child.stat()
+                current = {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
+                if baseline.get(rel) != current:
+                    return False
+        except OSError:
+            return True
+        return True
 
     def _skill_activation_contract_error(runtime: AgentRuntimeState) -> tuple[str, str]:
         """Return (message, errorCode) when an explicitly selected skill failed to activate.
@@ -1968,6 +1990,17 @@ def register_chat_routes(
 
         missing = _missing_required_artifacts(runtime)
         if missing:
+            requested = (runtime.workspace_state.context or {}).get("requested_artifact_contract")
+            if isinstance(requested, dict) and requested.get("extension") == ".docx":
+                return ContractFailure(
+                    progress_label="DOCX artifact was not created",
+                    error_message=(
+                        "The request asked for a Word document, but this run did not create or update "
+                        "a .docx file. The source file was read, but no document was produced."
+                    ),
+                    missing=missing,
+                    context_flag="artifact_contract_failed",
+                )
             return ContractFailure(
                 progress_label="Artifact contract not satisfied",
                 error_message="Artifact contract not satisfied.",
@@ -1997,6 +2030,7 @@ def register_chat_routes(
         context.pop("active_skill", None)
         context.pop("active_skill_scope", None)
         context.pop("active_skill_policy", None)
+        context.pop("requested_artifact_contract", None)
         context.pop("last_plan_feedback", None)
         context.pop("last_plan_file_path", None)
         context.pop("preferred_mcp_server", None)
@@ -2074,6 +2108,27 @@ def register_chat_routes(
             # workflow guards. This is a fallback for transports that omit or
             # lose optional trace hints such as frontendSlidesEditExisting.
             runtime.workspace_state.context["current_user_prompt"] = prompt_for_tagged_files
+            prompt_lower = prompt_for_tagged_files.lower()
+            requests_docx = (
+                re.search(r"\b(create|make|produce|generate|write|export|convert|save|build)\b", prompt_lower)
+                and re.search(r"\b(docx|word document|doc file|document file)\b", prompt_lower)
+            )
+            if requests_docx:
+                baseline: Dict[str, Dict[str, int]] = {}
+                try:
+                    for path in runtime.workspace_state.root_path.rglob("*.docx"):
+                        if path.is_file():
+                            stat = path.stat()
+                            baseline[path.relative_to(runtime.workspace_state.root_path).as_posix()] = {
+                                "mtime_ns": stat.st_mtime_ns,
+                                "size": stat.st_size,
+                            }
+                except OSError:
+                    baseline = {}
+                runtime.workspace_state.context["requested_artifact_contract"] = {
+                    "extension": ".docx",
+                    "baseline": baseline,
+                }
             runtime.workspace_state.context["frontend_slides_conversation_history"] = [
                 {"role": item.get("role"), "content": _extract_text_from_content(item.get("content"))}
                 for item in (message.history or []) if isinstance(item, dict)
@@ -2801,6 +2856,64 @@ def register_chat_routes(
                         }
                     )
 
+                requested_artifact = runtime.workspace_state.context.get(
+                    "requested_artifact_contract"
+                )
+                if (
+                    not is_resume_stream
+                    and not saw_interrupt
+                    and isinstance(requested_artifact, dict)
+                    and requested_artifact.get("extension") == ".docx"
+                    and _requested_docx_artifact_missing(runtime)
+                ):
+                    original_request = str(
+                        runtime.workspace_state.context.get("current_user_prompt")
+                        or message.message
+                        or ""
+                    ).strip()
+                    await _emit_progress(
+                        handler,
+                        "executing",
+                        "Creating the requested Word document",
+                        status="running",
+                    )
+                    logger.warning(
+                        "DOCX request finished without an artifact; dispatching one recovery turn "
+                        "(workspace=%s)",
+                        runtime.workspace_state.workspace_id,
+                    )
+                    recovery_prompt = (
+                        "The requested Word document has not been created yet. Continue the user's task "
+                        "now, using the already loaded docx skill and its existing tool flow. Read the "
+                        "requested source file, create and style the .docx in the workspace, and verify "
+                        "the saved file. Call the declared apply_template_styles sandbox script with "
+                        "--markdown <staged source basename> --out <requested filename>.docx and input_paths; do not "
+                        "create a new script and do not finish with an explanation in place of the "
+                        "artifact.\n\n"
+                        f"Original request:\n{original_request}"
+                    )
+                    recovery_input = _validated_fresh_stream_input(
+                        [{"role": "user", "content": recovery_prompt}],
+                        recovery_prompt,
+                    )
+                    recovery_config = {
+                        **stream_config,
+                        "configurable": {
+                            **stream_config.get("configurable", {}),
+                            "thread_id": (
+                                f"{stream_config.get('configurable', {}).get('thread_id') or uuid4()}"
+                                f":docx-recovery:{uuid4()}"
+                            ),
+                        },
+                    }
+                    final_result, interrupted = await _consume_event_stream(
+                        recovery_input,
+                        include_message_fallback=False,
+                        config_override=recovery_config,
+                    )
+                    if interrupted:
+                        return
+
                 await _emit_progress(
                     handler,
                     "finalizing",
@@ -2994,12 +3107,32 @@ def register_chat_routes(
                 else:
                     yield _json_line({
                         "type": "progress",
-                        "phase": "completed",
-                        "label": "Completed response generation",
-                        "status": "completed",
+                        "phase": "failed" if not handler.has_assistant_text else "completed",
+                        "label": (
+                            "Agent response was empty"
+                            if not handler.has_assistant_text
+                            else "Completed response generation"
+                        ),
+                        "detail": (
+                            "The agent returned no user-facing message. Retry the request; if this repeats, "
+                            "inspect the model response and tool results."
+                            if not handler.has_assistant_text
+                            else None
+                        ),
+                        "status": "error" if not handler.has_assistant_text else "completed",
                         "timestamp": datetime.utcnow().isoformat() + "Z",
                     })
-                    yield _json_line({"type": "done", "status": "completed"})
+                    if not handler.has_assistant_text:
+                        yield _json_line({
+                            "type": "contract_error",
+                            "message": (
+                                "The agent returned no user-facing response. The run was marked failed "
+                                "instead of reporting success. Retry the request."
+                            ),
+                        })
+                        yield _json_line({"type": "done", "status": "failed"})
+                    else:
+                        yield _json_line({"type": "done", "status": "completed"})
         finally:
             try:
                 await task

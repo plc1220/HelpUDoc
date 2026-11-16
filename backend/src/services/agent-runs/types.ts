@@ -32,6 +32,8 @@ export type StartRunParams = {
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  calendarEventRef?: string;
+  calendarSourceId?: string;
   knowledgeRefs?: AgentKnowledgeRef[];
   /** The prompt as the user typed it, before knowledge/file guidance is appended. */
   userPrompt?: string;
@@ -80,6 +82,8 @@ export type RunPendingInterrupt = {
 };
 
 export type RunMeta = {
+  calendarEventRef?: string;
+  calendarSourceId?: string;
   sharedTeamChannel?: boolean;
   workspaceId: string;
   userId?: string;
@@ -113,6 +117,8 @@ export type PersistedRunContext = {
   turnId?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  calendarEventRef?: string;
+  calendarSourceId?: string;
   knowledgeRefs?: AgentKnowledgeRef[];
 };
 

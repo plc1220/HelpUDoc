@@ -230,6 +230,8 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     workspaceId: string;
     policy: EffectiveAgentPolicy;
     skipPlanApprovals: boolean;
+    calendarEventRefs?: string[];
+    calendarSourceIds?: string[];
   }): Promise<string | null> => {
     const workspacePins = typeof (userService as any).getWorkspaceSkillRuntimePins === 'function'
       ? await userService.getWorkspaceSkillRuntimePins(input.workspaceId)
@@ -254,6 +256,8 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
       userId: input.userId,
       workspaceId: input.workspaceId,
       skipPlanApprovals: input.skipPlanApprovals,
+      calendarEventRefs: input.calendarEventRefs,
+      calendarSourceIds: input.calendarSourceIds,
       ...input.policy,
       // Team workspaces execute only the exact, signed version pins that were
       // frozen into the published workspace version. Private workspaces retain
@@ -277,6 +281,15 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
       let delegatedServerIds: string[] = [];
       try {
         delegatedServerIds = await getAllowedDelegatedGoogleServerIds(input.policy);
+        if (input.calendarEventRefs?.length) {
+          // Calendar context is source-bound. Its native domain readers and
+          // explicitly selected briefing sources must not silently inherit a
+          // general Google MCP grant with account-wide mail/file access.
+          const unavailable = new Set(delegatedServerIds);
+          payload.mcpServerAllowIds = input.policy.mcpServerAllowIds.filter(id => !unavailable.has(id));
+          payload.mcpServerDenyIds = [...new Set([...input.policy.mcpServerDenyIds, ...delegatedServerIds])];
+          return signAgentContextToken(payload);
+        }
         if (!delegatedServerIds.length) {
           return signAgentContextToken(payload);
         }

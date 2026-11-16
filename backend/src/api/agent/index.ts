@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { CalendarService } from '../../services/calendarService';
 import type { WorkspaceService } from '../../services/workspaceService';
 import type { FileService } from '../../services/fileService';
 import { GoogleOAuthService } from '../../services/googleOAuthService';
@@ -15,6 +16,7 @@ export default function(
   userService: UserService,
   conversationService: ConversationService,
   knowledgeService: KnowledgeService,
+  calendarService?: CalendarService,
 ) {
   const router = Router();
 
@@ -27,6 +29,7 @@ export default function(
     userService,
     conversationService,
     knowledgeService,
+    calendarService,
   );
 
   return router;

@@ -1,11 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
 
-export const loggingMiddleware = (req: Request, res: Response, next: NextFunction) => {
+/** Credentials and private source text must never enter request logs. */
+export const loggingMiddleware = (req: Request, _res: Response, next: NextFunction) => {
   console.log({
     timestamp: new Date().toISOString(),
     method: req.method,
-    url: req.originalUrl,
-    body: req.body,
+    path: req.originalUrl.split('?')[0],
   });
   next();
 };

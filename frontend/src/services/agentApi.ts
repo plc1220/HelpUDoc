@@ -62,6 +62,8 @@ export const startAgentRun = async (
     internetSearchEnabled?: boolean;
     knowledgeRefs?: Array<{ id: number }>;
     knowledgeBaseIds?: string[];
+    calendarEventRef?: string;
+    calendarSourceId?: string;
   },
 ): Promise<AgentRunStartResponse> => {
   const response = await apiFetch(`${API_URL}/agent/runs`, {
@@ -83,6 +85,8 @@ export const startAgentRun = async (
       internetSearchEnabled: options?.internetSearchEnabled,
       knowledgeRefs: options?.knowledgeRefs,
       knowledgeBaseIds: options?.knowledgeBaseIds,
+      calendarEventRef: options?.calendarEventRef,
+      calendarSourceId: options?.calendarSourceId,
     }),
   });
   if (!response.ok) {

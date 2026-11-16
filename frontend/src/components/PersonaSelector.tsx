@@ -20,10 +20,10 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
   const menuProps = {
     PaperProps: {
       sx: {
-        bgcolor: isDarkMode ? '#1e1e1e' : '#ffffff',
-        color: isDarkMode ? '#e5e7eb' : '#111827',
-        border: isDarkMode ? '1px solid #2a2a2a' : '1px solid #e5e7eb',
-        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.25)',
+        bgcolor: isDarkMode ? 'var(--owl-espresso)' : 'var(--owl-cream)',
+        color: isDarkMode ? 'var(--owl-cream)' : 'var(--owl-espresso)',
+        border: isDarkMode ? '1px solid var(--owl-cocoa)' : '1px solid var(--owl-cream)',
+        boxShadow: '0 16px 40px var(--color-overlay)',
       },
     },
     MenuListProps: {
@@ -32,12 +32,12 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
         '& .MuiMenuItem-root': {
           fontSize: '0.8rem',
           '&:hover': {
-            bgcolor: isDarkMode ? '#333333' : '#f3f4f6',
+            bgcolor: isDarkMode ? 'var(--owl-cocoa)' : 'var(--owl-cream)',
           },
           '&.Mui-selected': {
-            bgcolor: isDarkMode ? '#2a2a2a' : '#e5e7eb',
+            bgcolor: isDarkMode ? 'var(--owl-cocoa)' : 'var(--owl-cream)',
             '&:hover': {
-              bgcolor: isDarkMode ? '#333333' : '#e0e7ff',
+              bgcolor: isDarkMode ? 'var(--owl-cocoa)' : 'var(--owl-cream)',
             },
           },
         },
@@ -54,8 +54,8 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
         sx={{
           borderRadius: '9999px',
           border: '1px solid',
-          borderColor: isDarkMode ? '#2a2a2a' : '#e5e7eb',
-          bgcolor: isDarkMode ? '#111827' : '#f9fafb',
+          borderColor: isDarkMode ? 'var(--owl-cocoa)' : 'var(--owl-cream)',
+          bgcolor: isDarkMode ? 'var(--owl-espresso)' : 'var(--owl-cream)',
           paddingLeft: 1,
           paddingRight: 1,
           paddingY: 0.25,
@@ -68,7 +68,7 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
             fontSize: '0.65rem',
             textTransform: 'uppercase',
             letterSpacing: '0.08em',
-            color: isDarkMode ? '#9ca3af' : '#6b7280',
+            color: isDarkMode ? 'var(--owl-taupe)' : 'var(--owl-gold)',
             position: 'static',
             transform: 'none',
             marginRight: 1,
@@ -85,7 +85,7 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
           sx={{
             fontSize: '0.8rem',
             fontWeight: 600,
-            color: isDarkMode ? '#e5e7eb' : '#374151',
+            color: isDarkMode ? 'var(--owl-cream)' : 'var(--owl-cocoa)',
             '& .MuiSelect-select': {
               paddingY: 0,
               paddingX: 0.5,
