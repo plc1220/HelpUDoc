@@ -26,14 +26,14 @@ Start RustFS first. If an older RustFS container still holds port 9000, this mov
 scripts/migrate_minio_to_rustfs.sh copy
 ```
 
-The script does a dry run, lists the writers, and asks for confirmation. After you answer `y`, it:
+Before running `copy`, stop the host backend (3000), agent (8001), Vite (5173), knowledge worker, and any other writer. Do not restart them until after verification. Run `copy` from an account that can see those processes and query Docker. The script does a dry run, reports any remaining host writer PIDs instead of killing them, lists the local Langfuse containers, and asks for confirmation. After you answer `y`, it:
 
-1. Stops the backend (3000), agent (8001), Vite (5173), the knowledge worker, and any `langfuse` containers. Stop any other writer yourself.
-2. Copies `.minio-data` to `~/helpudoc-migrate/minio-backup-<time>`.
+1. Stops the local HelpUDoc Langfuse web and worker containers, then checks host and Docker inventories again. It aborts if any known writer is still active, a stop fails, or an inventory cannot be read. Stop any separately deployed or differently named writers yourself.
+2. Copies `.minio-data` to a unique `~/helpudoc-migrate/minio-backup-<time>-<suffix>` directory.
 3. Records the actual source counts in `~/helpudoc-migrate/<bucket>.source-count.txt`.
 4. Runs `rclone copy --metadata --checksum` for each bucket.
 
-Keep the writers stopped until step 4 passes.
+Keep the writers stopped through verification and before switching the app's storage endpoint.
 
 ## 3. Verify
 
@@ -43,10 +43,10 @@ scripts/migrate_minio_to_rustfs.sh verify
 
 For each bucket, `verify` checks that:
 
-- the number of objects identical in RustFS (same key, same bytes from `rclone check --download`) equals the source count;
+- the one-way `rclone check --one-way --download` completes successfully, and the number of matching source objects equals the source count;
 - every object has the same size, content type and metadata, including `helpudoc-sha256`. It ignores `btime`, `mtime` and `tier`, which change on any copy.
 
-It prints `PASS` or `FAIL`. Reports go to `~/helpudoc-migrate/`.
+It exits nonzero if either bucket cannot be verified, including when rclone exits with an error even if its object report looks clean. It prints `PASS` only after both buckets pass and writer checks confirm the stores stayed quiescent at the start and end of verification. Reports go to `~/helpudoc-migrate/`.
 
 To fix one object, re-upload it with its metadata, then run `verify` again:
 

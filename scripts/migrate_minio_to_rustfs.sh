@@ -10,7 +10,6 @@
 
 # Safety switches: stop at the first failing command (-e), treat an unset variable as an
 # error (-u), and count a pipe (a | b) as failed if any part of it fails (pipefail).
-# Where a failure is expected and harmless, such as grep finding nothing, the line ends in `|| true`.
 set -euo pipefail
 
 # ---- Settings ---------------------------------------------------------------
@@ -63,92 +62,146 @@ rcl() { docker run --rm --network infra_default $(compgen -e | grep '^RCLONE_CON
 
 # ---- Writers ------------------------------------------------------------------
 
-# Print the process ID of everything that writes to storage: backend 3000, agent 8001,
-# Vite 5173 (forwards browser uploads when S3_PUBLIC_ENDPOINT points at it) and the knowledge
-# worker. lsof finds whatever listens on a port; pgrep finds a process by its command line.
-# 2>/dev/null hides error messages, and `|| true` means "nothing running" isn't a failure.
-writers() { { lsof -t -sTCP:LISTEN -iTCP:3000 -iTCP:8001 -iTCP:5173; pgrep -f 'node.*knowledgeWorker'; } 2>/dev/null || true; }
+# These probes use exit 1 (with no output) when there are no matches. Diagnostics
+# or any other failure mean we cannot prove that it is safe to continue.
+find_host_writers() {
+  local result rc
+  if result="$("$@" 2>&1)"; then
+    if [[ ! "$result" =~ ^[0-9]+($'\n'[0-9]+)*$ ]]; then
+      printf 'Unexpected writer inventory from %s: %s\n' "$1" "$result" >&2
+      return 1
+    fi
+    printf '%s\n' "$result"
+  else
+    rc=$?
+    if [ "$rc" -ne 1 ] || [ -n "$result" ]; then
+      printf 'Writer inventory failed (%s exited %s): %s\n' "$1" "$rc" "$result" >&2
+      return 1
+    fi
+  fi
+}
+
+host_writers() {
+  find_host_writers lsof -nP -a -t +w -sTCP:LISTEN -iTCP:3000 -iTCP:8001 -iTCP:5173 || return 1
+  find_host_writers pgrep -f 'node.*[k]nowledgeWorker' || return 1
+}
+
+local_langfuse() {
+  docker ps -q --filter 'name=^/helpudoc-langfuse-(web|worker)$'
+}
+
+compose_writers() {
+  local svc
+  for svc in backend agent frontend knowledge-worker langfuse-web langfuse-worker; do
+    docker ps -q --filter network=infra_default --filter "label=com.docker.compose.service=$svc" || return 1
+  done
+}
+
+require_quiescent() {
+  local host langfuse containers
+  host="$(host_writers)" || return 1
+  langfuse="$(local_langfuse)" || return 1
+  containers="$(compose_writers)" || return 1
+  if [ -n "$host" ] || [ -n "$langfuse" ] || [ -n "$containers" ]; then
+    printf 'Writers are still running. Stop them before continuing.\nHost PIDs: %s\nDocker IDs: %s\n%s\n' \
+      "$host" "$langfuse" "$containers" >&2
+    return 1
+  fi
+}
 
 # ---- copy ---------------------------------------------------------------------
 
 copy() {
-  local b pid g ok # local: these variables exist only inside this function
+  local b host langfuse id ok backup
+  [ -d "$ROOT/.minio-data" ] || { echo "Missing source .minio-data directory" >&2; return 1; }
 
-  # 1. Dry run: show what would be copied. Nothing changes.
   for b in "${BUCKETS[@]}"; do rcl copy "minio:$b" "rustfs:$b" --metadata --checksum "${EXCL[@]}" --dry-run; done
 
-  # 2. Show what will be stopped, then ask. Anything but y exits with nothing changed.
-  echo "Writers to stop:"
-  lsof -nP -sTCP:LISTEN -iTCP:3000 -iTCP:8001 -iTCP:5173 || true
-  pgrep -fl 'node.*knowledgeWorker' || true
-  docker ps --filter name=langfuse --format '{{.Names}}'
+  # Never kill arbitrary host processes by port. If a known local port or command
+  # is still active, the operator must stop it and retry.
+  host="$(host_writers)"
+  if [ -n "$host" ]; then
+    printf 'Stop the local writers and retry (PIDs):\n%s\n' "$host" >&2
+    return 1
+  fi
+  langfuse="$(local_langfuse)"
+  printf 'Local Langfuse containers to stop: %s\n' "${langfuse:-none}"
   read -r -p "Stop them and copy ${BUCKETS[*]} into RustFS? [y/N] " ok
-  [ "$ok" = y ] || exit 1
+  [ "$ok" = y ] || return 1
 
-  # 3. Stop each writer's whole process group: everything one terminal command started
-  #    (npm -> nodemon -> ts-node, or the uvicorn reloader and its worker). Groups led by a
-  #    shell (zsh, bash) are skipped, so your terminals stay open. kill -TERM is a polite
-  #    "please stop", like Ctrl-C, and the minus in "-$g" means the whole group.
-  for pid in $(writers); do
-    g="$(ps -o pgid= -p "$pid" | tr -d ' ')" || continue
-    case "$(ps -o comm= -p "$g")" in *sh) continue ;; esac
-    kill -TERM -- "-$g" 2>/dev/null || true
-  done
-  # Langfuse writes to the langfuse bucket. xargs turns the container IDs into arguments for docker stop.
-  docker ps -q --filter name=langfuse | xargs docker stop >/dev/null 2>&1 || true
-  # Give them 3 seconds to exit, and refuse to copy while anything is still running.
-  sleep 3
-  if [ -n "$(writers)" ]; then echo "Still running, stop these yourself: $(writers | xargs)"; exit 1; fi
+  if [ -n "$langfuse" ]; then
+    while IFS= read -r id; do
+      docker stop "$id" || { echo "Could not stop Langfuse container $id; no copy performed." >&2; return 1; }
+    done <<< "$langfuse"
+  fi
+  require_quiescent
 
-  # 4. Rollback copy of MinIO's data, named with the date and time. The migration only reads MinIO.
-  cp -R "$ROOT/.minio-data" "$DIR/minio-backup-$(date +%Y%m%d-%H%M%S)"
+  backup="$(mktemp -d "$DIR/minio-backup-$(date +%Y%m%d-%H%M%S)-XXXXXX")"
+  cp -R "$ROOT/.minio-data/." "$backup/"
 
-  # 5. For each bucket, record the real object count (tee shows it and saves it), then copy.
-  #    --metadata keeps the content type and helpudoc-sha256. --checksum skips files whose
-  #    content already matches, so a rerun is safe. `copy` never deletes anything from RustFS.
   for b in "${BUCKETS[@]}"; do
+    require_quiescent
     rcl size "${EXCL[@]}" "minio:$b" | tee "$DIR/$b.source-count.txt"
     rcl copy "minio:$b" "rustfs:$b" --metadata --checksum "${EXCL[@]}" -v
   done
+  require_quiescent
   echo "Done. Keep writers stopped. Next: $0 verify"
 }
 
 # ---- verify -------------------------------------------------------------------
 
 verify() {
-  local b side src matched fail=0
+  local b side src matched rc fail=0
+  require_quiescent
   for b in "${BUCKETS[@]}"; do
     echo "== $b"
-    # List every file and its metadata on both sides, saved as JSON.
-    for side in minio rustfs; do rcl lsjson -R --files-only --metadata "${EXCL[@]}" "$side:$b" >"$DIR/$b.$side.json"; done
+    for side in minio rustfs; do
+      rcl lsjson -R --files-only --metadata "${EXCL[@]}" "$side:$b" >"$DIR/$b.$side.json"
+      jq -e 'type == "array" and
+        all(.[]; (.Path | type) == "string" and (.Size | type) == "number" and
+          (.MimeType | type) == "string" and ((.Metadata // {}) | type) == "object") and
+        (map(.Path) | length == (unique | length))' "$DIR/$b.$side.json" >/dev/null
+    done
 
-    # Download both copies of every file and compare them byte by byte. --combined - prints
-    # one line per file, starting with a symbol:
-    #   "=" same key and bytes, "+" missing in RustFS, "*" bytes differ, "!" error, "-" only in RustFS
-    # check exits with an error whenever anything differs; `|| true` lets us read the report ourselves.
-    rcl check "minio:$b" "rustfs:$b" --download --combined - "${EXCL[@]}" >"$DIR/$b.check.txt" 2>/dev/null || true
+    # --one-way deliberately allows destination-only keys. Any nonzero exit
+    # now means the source was not fully verified, even if output looks normal.
+    if rcl check "minio:$b" "rustfs:$b" --one-way --download --combined - "${EXCL[@]}" >"$DIR/$b.check.txt"; then
+      :
+    else
+      rc=$?
+      echo "$b: rclone check failed (exit $rc)" >&2
+      fail=1
+    fi
 
-    # Real source count, and the number of files identical in RustFS (grep -c counts lines starting with "=").
     src="$(jq length "$DIR/$b.minio.json")"
-    matched="$(grep -c '^=' "$DIR/$b.check.txt" || true)"
+    matched="$(awk '/^= / { n++ } END { print n+0 }' "$DIR/$b.check.txt")"
     echo "source objects: $src, identical in RustFS: $matched"
 
-    # jq reads JSON. For each file, compare size, content type and metadata (helpudoc-sha256
-    # included), ignoring btime, mtime and tier, which change on any copy.
+    # Compare the inventories independently. Paths and metadata remain JSON
+    # data rather than being parsed from rclone's line-oriented report.
     jq -rn --slurpfile s "$DIR/$b.minio.json" --slurpfile d "$DIR/$b.rustfs.json" '
       def v: map({key: .Path, value: [.Size, .MimeType, (.Metadata // {} | del(.btime, .mtime, .tier))]}) | from_entries;
       ($s[0] | v) as $s | ($d[0] | v) as $d
-      | $s | keys[] | select($d[.] != null and $s[.] != $d[.]) | "metadata differs: \(.)"' >"$DIR/$b.problems.txt"
-    # Add the missing, differing and error lines in plain words. >> appends to the file.
-    grep '^[+*!]' "$DIR/$b.check.txt" | sed 's/^+ /missing in RustFS: /; s/^\* /bytes differ: /; s/^! /error: /' \
-      >>"$DIR/$b.problems.txt" || true
+      | $s | keys[] as $k
+      | if ($d | has($k) | not) then "missing in RustFS: \($k | @json)"
+        elif $s[$k] != $d[$k] then "size, content type or metadata differs: \($k | @json)"
+        else empty end' >"$DIR/$b.problems.txt"
+    awk '/^[+*!] / { print }' "$DIR/$b.check.txt" >>"$DIR/$b.problems.txt"
+    if [ "$matched" != "$src" ] || [ -s "$DIR/$b.problems.txt" ]; then
+      fail=1
+      cat "$DIR/$b.problems.txt"
+    fi
 
-    # The bucket fails if the counts differ or the problems file isn't empty (-s).
-    if [ "$matched" != "$src" ] || [ -s "$DIR/$b.problems.txt" ]; then fail=1; cat "$DIR/$b.problems.txt"; fi
-    # Files only RustFS has: listed for you to investigate, never deleted.
-    grep '^- ' "$DIR/$b.check.txt" | sed 's/^- /only in RustFS, investigate (not deleted): /' || true
+    jq -rn --slurpfile s "$DIR/$b.minio.json" --slurpfile d "$DIR/$b.rustfs.json" '
+      (($d[0] | map(.Path)) - ($s[0] | map(.Path)))[] | "only in RustFS, investigate (not deleted): \(. | @json)"'
   done
-  if [ "$fail" = 0 ]; then echo PASS; else echo "FAIL (fix one object: $0 rclone copyto minio:<b>/<key> rustfs:<b>/<key> --metadata --ignore-times)"; exit 1; fi
+  require_quiescent
+  if [ "$fail" -eq 0 ]; then
+    echo PASS
+  else
+    echo "FAIL (inspect $DIR before retrying)" >&2
+    return 1
+  fi
 }
 
 # ---- Pick the command -----------------------------------------------------------
