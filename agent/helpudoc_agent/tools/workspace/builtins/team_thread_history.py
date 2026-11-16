@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, Dict, Optional
+from pydantic import BaseModel, Field
 
 import requests
 from langchain_core.tools import Tool
@@ -44,6 +45,17 @@ def _scope(workspace_state: WorkspaceState) -> Optional[Dict[str, Any]]:
         return None
     return scope
 
+class TeamThreadHistoryInput(BaseModel):
+    # Explicit schema: without it, GuardedTool falls back to inferring one from
+    # its own ``_run(*args, **kwargs)``, producing an ``args`` array with empty
+    # ``items`` that Gemini rejects (400 INVALID_ARGUMENT).
+    query: str = Field(
+        default="",
+        description=(
+            "JSON object {\"fromSeq\": <int>, \"toSeq\": <int>, \"limit\": <int>} "
+            "or a plain \"from-to\" range."
+        ),
+    )
 
 def build_team_thread_history_tool(workspace_state: WorkspaceState) -> Tool:
     def _read_history(query: str = "") -> str:
@@ -146,4 +158,5 @@ def build_team_thread_history_tool(workspace_state: WorkspaceState) -> Tool:
             "instead of guessing omitted content."
         ),
         func=_read_history,
+        args_schema=TeamThreadHistoryInput
     )
