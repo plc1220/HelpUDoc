@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Verify CI gate semantics
+        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_gate.py' -v
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -44,7 +46,15 @@ jobs:
             agent:
               - 'agent/**'
               - 'skills/**'
+              - 'plugins/**'
+              - '.dockerignore'
+              - '.github/scripts/**'
+              - '.github/workflows/deploy-agent-gke.yml'
+              - '.github/workflows/deploy-gke.yml'
+              - 'infra/cloudbuild.yaml'
               - 'tests/test_agent_*.py'
+              - 'tests/test_mcp_binding.py'
+              - 'tests/test_tool_factory.py'
               - 'tests/test_skill_sandbox.py'
               - 'tests/office/**'
               - 'infra/env/**'
@@ -118,9 +128,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: agent/requirements.txt
-      - name: Install agent dependencies
-        run: pip install -r agent/requirements.txt pytest pytest-asyncio
+          cache-dependency-path: agent/requirements-runtime.lock
+      - name: Verify resolved dependencies on both Linux architectures
+        run: |
+          pip install uv==0.11.2
+          python agent/scripts/update_runtime_lock.py --check
+      - name: Install resolved agent dependencies
+        # pytest and pytest-asyncio are included in the resolved dependency set.
+        run: pip install --require-hashes --only-binary=:all: -r agent/requirements-runtime.lock
       - name: Run agent tests
         env:
           PYTHONPATH: agent
@@ -180,10 +195,21 @@ jobs:
   docker-agent:
     name: Docker build validation (agent)
     needs: [changes]
-    # Heavy image: validate on default-branch pushes only (avoids pip + full Docker agent
-    # install on every PR that touches agent/). PRs still get python-agent when agent paths change.
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # Image-input PRs must build and run both supported architectures.
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.agent == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
@@ -192,21 +218,24 @@ jobs:
         with:
           context: .
           file: agent/Dockerfile.gke
+          platforms: ${{ matrix.platform }}
           push: false
           load: true
           tags: helpudoc-agent:ci-smoke
           build-args: |
             GIT_COMMIT=${{ github.sha }}
-          cache-from: type=gha,scope=agent
-          cache-to: type=gha,scope=agent,mode=max
-      - name: Smoke import inside loaded image
+          cache-from: type=gha,scope=agent-${{ matrix.arch }}
+          cache-to: type=gha,scope=agent-${{ matrix.arch }},mode=max
+      - name: Smoke imports, OfficeCLI and startup inside loaded image
         run: |
           (cd agent/licenses/officecli && sha256sum -c SHA256SUMS)
-          docker run --rm helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_import.py
-          docker run --rm helpudoc-agent:ci-smoke officecli --version
-          docker run --rm helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_officecli.py
-          docker run --rm helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_office_preview.py
-          docker run --rm helpudoc-agent:ci-smoke sh -c \
+          docker run --rm --network none helpudoc-agent:ci-smoke python -m pip check
+          docker run --rm --network none helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_import.py
+          docker run --rm --network none helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_image.py
+          docker run --rm --network none helpudoc-agent:ci-smoke officecli --version
+          docker run --rm --network none helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_officecli.py
+          docker run --rm --network none helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_office_preview.py
+          docker run --rm --network none helpudoc-agent:ci-smoke sh -c \
             'cd /app/agent/licenses/officecli && sha256sum -c SHA256SUMS'
 
   ci-gate:
@@ -223,29 +252,8 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if any executed job failed
-        run: |
-          set -euo pipefail
-          fail=0
-          for name_result in \
-            "backend-test:${{ needs.backend-test.result }}" \
-            "calendar-review-tests:${{ needs.calendar-review-tests.result }}" \
-            "frontend:${{ needs.frontend.result }}" \
-            "python-agent:${{ needs.python-agent.result }}" \
-            "docker-backend:${{ needs.docker-backend.result }}" \
-            "docker-frontend:${{ needs.docker-frontend.result }}" \
-            "docker-agent:${{ needs.docker-agent.result }}"; do
-            name="${name_result%%:*}"
-            result="${name_result#*:}"
-            case "$result" in
-              failure|cancelled)
-                echo "::error::Job $name ended with $result"
-                fail=1
-                ;;
-              success|skipped) ;;
-              *)
-                echo "::warning::Job $name unexpected result: $result"
-                ;;
-            esac
-          done
-          exit "$fail"
+      - uses: actions/checkout@v5
+      - name: Require successful detection and every applicable job
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/ci_gate.py

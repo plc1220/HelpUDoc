@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.metadata as metadata
+import io
 import sys
 from pathlib import Path
 
@@ -26,6 +27,19 @@ def main() -> None:
     import deepagents  # noqa: F401
     from deepagents.backends import FilesystemBackend  # noqa: F401
     from helpudoc_agent.api.app import create_app  # noqa: F401
+    # Verify the reporting wheels that previously fell back to an incompatible
+    # matplotlib source build, including their native NumPy integration.
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import pyplot
+    figure, axes = pyplot.subplots()
+    try:
+        axes.plot([0, 1], [0, 1])
+        image = io.BytesIO()
+        figure.savefig(image, format="png")
+        assert image.getvalue().startswith(b"\x89PNG\r\n\x1a\n")
+    finally:
+        pyplot.close(figure)
 
     versions = {
         "deepagents": _version("deepagents"),
@@ -35,6 +49,8 @@ def main() -> None:
         "langchain-google-genai": _version("langchain-google-genai"),
         "google-genai": _version("google-genai"),
         "langchain-google-vertexai": _version("langchain-google-vertexai"),
+        "matplotlib": _version("matplotlib"),
+        "numpy": _version("numpy"),
     }
     print("AGENT_IMPORT_SMOKE_OK", versions)
 
