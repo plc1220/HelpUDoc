@@ -4,7 +4,8 @@ metadata:
   name: helpudoc-minio
   namespace: helpudoc
 spec:
-  replicas: 1
+  # Retained with its own PVC for rollback after the RustFS cutover.
+  replicas: 0
   strategy:
     type: Recreate
   selector:
@@ -26,8 +27,8 @@ spec:
               cpu: "200m"
               memory: "512Mi"
             limits:
-              cpu: "1000m"
-              memory: "1Gi"
+              cpu: "2000m"
+              memory: "4Gi"
           env:
             - name: MINIO_ROOT_USER
               valueFrom:
@@ -57,7 +58,8 @@ metadata:
   namespace: helpudoc
 spec:
   selector:
-    app: helpudoc-minio
+    # Preserve the existing signed-URL hostname and all application endpoints.
+    app: helpudoc-rustfs
   ports:
     - name: s3
       port: 9000

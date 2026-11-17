@@ -16,8 +16,6 @@ spec:
         app: helpudoc-app
     spec:
       serviceAccountName: helpudoc-agent
-      nodeSelector:
-        iam.gke.io/gke-metadata-server-enabled: "true"
       initContainers:
         # Copy image-bundled skills/config into PVCs only when the mount is empty,
         # so admin edits on the PVC are preserved across restarts.
@@ -209,7 +207,7 @@ spec:
             - name: S3_ENDPOINT
               value: http://minio:9000
             - name: S3_PUBLIC_ENDPOINT
-              value: https://www.lc-demo.com
+              value: https://lumo-studio.cloudmile-coe.com
             - name: S3_FORCE_PATH_STYLE
               valueFrom:
                 configMapKeyRef:

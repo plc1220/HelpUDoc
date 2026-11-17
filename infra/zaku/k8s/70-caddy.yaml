@@ -21,8 +21,6 @@ data:
           # SigV4 signs the public hostname; preserve it through the proxy.
           header_up Host {http.request.host}
         }
-        @apex host lc-demo.com
-        redir @apex https://www.lc-demo.com{uri} permanent
         reverse_proxy helpudoc-frontend:80
       }
     }
@@ -76,11 +74,6 @@ kind: Service
 metadata:
   name: helpudoc-caddy
   namespace: helpudoc
-  annotations:
-    cloud.google.com/backend-config: '{"default":"helpudoc-caddy-backendconfig"}'
-    # The GCE Ingress reaches this Service through a container-native NEG.
-    # Do not expose a second public L4 load balancer for Caddy.
-    cloud.google.com/neg: '{"ingress":true}'
 spec:
   type: ClusterIP
   selector:

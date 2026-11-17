@@ -1,47 +1,30 @@
-apiVersion: networking.gke.io/v1
-kind: ManagedCertificate
-metadata:
-  name: helpudoc-managed-cert-main
-  namespace: helpudoc
-spec:
-  # Replace with your real domain and point its DNS A record at the Ingress IP.
-  domains:
-    - lc-demo.com
-    - www.lc-demo.com
----
-apiVersion: networking.gke.io/v1
-kind: ManagedCertificate
-metadata:
-  name: helpudoc-managed-cert-langfuse
-  namespace: helpudoc
-spec:
-  domains:
-    - langfuse.lc-demo.com
----
-apiVersion: networking.gke.io/v1beta1
-kind: FrontendConfig
-metadata:
-  name: helpudoc-frontendconfig
-  namespace: helpudoc
-spec:
-  redirectToHttps:
-    enabled: true
----
+# Zaku: ZStack's nginx ingress controller (IngressClass zstack-ingress, IP 10.3.100.103).
+# ZStack's own zstack-gateway Ingress takes host "*", so every rule here needs a host.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: helpudoc-ingress
   namespace: helpudoc
   annotations:
-    kubernetes.io/ingress.class: "gce"
-    networking.gke.io/managed-certificates: "helpudoc-managed-cert-main,helpudoc-managed-cert-langfuse"
-    networking.gke.io/v1beta1.FrontendConfig: "helpudoc-frontendconfig"
-    # Optional: reserve a static IP and attach it for a stable DNS target.
-    # kubernetes.io/ingress.global-static-ip-name: "helpudoc-ip"
+    # Replace GKE BackendConfig timeoutSec: 3600 for long agent streams
+    # (/api/agent/runs/:id/stream).
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Stream responses as they arrive instead of buffering them.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # nginx caps request bodies at 1m by default. The GKE load balancer has no
+    # cap, and uploads go through Caddy to the backend and MinIO.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
 spec:
-  ingressClassName: gce
+  ingressClassName: zstack-ingress
+  # TODO(U5b): enable once ZStack says where the certificate comes from.
+  # tls:
+  #   - hosts:
+  #       - lumo-studio.cloudmile-coe.com
+  #       - langfuse.lumo-studio.cloudmile-coe.com
+  #     secretName: helpudoc-tls
   rules:
-    - host: lc-demo.com
+    - host: lumo-studio.cloudmile-coe.com
       http:
         paths:
           - path: /
@@ -51,17 +34,7 @@ spec:
                 name: helpudoc-caddy
                 port:
                   number: 80
-    - host: www.lc-demo.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: helpudoc-caddy
-                port:
-                  number: 80
-    - host: langfuse.lc-demo.com
+    - host: langfuse.lumo-studio.cloudmile-coe.com
       http:
         paths:
           - path: /

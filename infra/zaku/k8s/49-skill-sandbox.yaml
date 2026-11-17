@@ -3,9 +3,9 @@ kind: ServiceAccount
 metadata:
   name: helpudoc-agent
   namespace: helpudoc
-  annotations:
-    iam.gke.io/gcp-service-account: helpudoc-gemini@my-rd-coe-demo-gen-ai.iam.gserviceaccount.com
 automountServiceAccountToken: true
+imagePullSecrets:
+  - name: zaku-registry-pull
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -43,6 +43,9 @@ metadata:
   name: helpudoc-sandbox-runner
   namespace: helpudoc-sandbox
 automountServiceAccountToken: false
+# Sandbox Jobs set no pull secret of their own; they inherit this one.
+imagePullSecrets:
+  - name: zaku-registry-pull
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -115,8 +118,11 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: helpudoc
           podSelector:
-            matchLabels:
-              app: helpudoc-minio
+            matchExpressions:
+              - key: app
+                operator: In
+                # Keep the source available for a controlled rollback.
+                values: [helpudoc-minio, helpudoc-rustfs]
       ports:
         - protocol: TCP
           port: 9000

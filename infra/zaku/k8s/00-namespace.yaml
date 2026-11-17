@@ -2,3 +2,13 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: helpudoc
+---
+# Zaku pulls app images from Artifact Registry with this secret (created in
+# step 5c). Pods without their own serviceAccountName use "default".
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: default
+  namespace: helpudoc
+imagePullSecrets:
+  - name: zaku-registry-pull
