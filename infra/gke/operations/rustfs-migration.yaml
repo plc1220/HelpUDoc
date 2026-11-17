@@ -1,0 +1,116 @@
+# One-off migration tools. Apply explicitly, not as part of routine app deploys.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rustfs-migration-reports-pvc
+  namespace: helpudoc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: helpudoc-rustfs-migration
+  namespace: helpudoc
+  labels:
+    app: helpudoc-rustfs-migration
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  containers:
+    - name: rclone
+      image: docker.io/rclone/rclone:1.76.0
+      command:
+        - /bin/sh
+        - -c
+        - sleep 86400
+      env:
+        - name: RCLONE_CONFIG_MINIO_TYPE
+          value: s3
+        - name: RCLONE_CONFIG_MINIO_PROVIDER
+          value: Minio
+        - name: RCLONE_CONFIG_MINIO_ENDPOINT
+          value: http://minio-rollback:9000
+        - name: RCLONE_CONFIG_MINIO_REGION
+          value: us-east-1
+        - name: RCLONE_CONFIG_MINIO_FORCE_PATH_STYLE
+          value: "true"
+        - name: RCLONE_CONFIG_MINIO_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: helpudoc-secrets
+              key: MINIO_ROOT_USER
+        - name: RCLONE_CONFIG_MINIO_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: helpudoc-secrets
+              key: MINIO_ROOT_PASSWORD
+        - name: RCLONE_CONFIG_RUSTFS_TYPE
+          value: s3
+        - name: RCLONE_CONFIG_RUSTFS_PROVIDER
+          value: Other
+        - name: RCLONE_CONFIG_RUSTFS_ENDPOINT
+          value: http://rustfs:9000
+        - name: RCLONE_CONFIG_RUSTFS_REGION
+          value: us-east-1
+        - name: RCLONE_CONFIG_RUSTFS_FORCE_PATH_STYLE
+          value: "true"
+        - name: RCLONE_CONFIG_RUSTFS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: helpudoc-secrets
+              key: MINIO_ROOT_USER
+        - name: RCLONE_CONFIG_RUSTFS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: helpudoc-secrets
+              key: MINIO_ROOT_PASSWORD
+      resources:
+        requests:
+          cpu: 500m
+          memory: 512Mi
+        limits:
+          cpu: 2000m
+          memory: 2Gi
+      volumeMounts:
+        - name: reports
+          mountPath: /reports
+    - name: verifier
+      image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:c3f916cfc37faa2c34511e050588296c9c2cea41
+      command:
+        - /bin/sh
+        - -c
+        - sleep 86400
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 2000m
+          memory: 4Gi
+      volumeMounts:
+        - name: reports
+          mountPath: /reports
+      env:
+        - name: AWS_REGION
+          value: us-east-1
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: helpudoc-secrets
+              key: MINIO_ROOT_USER
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: helpudoc-secrets
+              key: MINIO_ROOT_PASSWORD
+  volumes:
+    - name: reports
+      persistentVolumeClaim:
+        claimName: rustfs-migration-reports-pvc
