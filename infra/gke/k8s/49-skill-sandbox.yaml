@@ -115,8 +115,11 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: helpudoc
           podSelector:
-            matchLabels:
-              app: helpudoc-minio
+            matchExpressions:
+              - key: app
+                operator: In
+                # Keep the source available for a controlled rollback.
+                values: [helpudoc-minio, helpudoc-rustfs]
       ports:
         - protocol: TCP
           port: 9000
