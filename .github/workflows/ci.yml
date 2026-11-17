@@ -135,7 +135,8 @@ jobs:
           python agent/scripts/update_runtime_lock.py --check
       - name: Install resolved agent dependencies
         # pytest and pytest-asyncio are included in the resolved dependency set.
-        run: pip install --require-hashes --only-binary=:all: -r agent/requirements-runtime.lock
+        run: >-
+          pip install --require-hashes --only-binary=:all: -r agent/requirements-runtime.lock
       - name: Run agent tests
         env:
           PYTHONPATH: agent
