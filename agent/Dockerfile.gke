@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.12-slim-bookworm
+FROM python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
 
 WORKDIR /app/agent
 
@@ -45,13 +45,24 @@ RUN set -eux; \
 
 # Copy dependency manifests first so `pip install` layer caches across code/skills changes.
 COPY agent/requirements*.txt /app/agent/
+COPY agent/requirements-runtime.lock /app/agent/
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-  pip install -r /app/agent/requirements-runtime.txt
+  pip install --require-hashes --only-binary=:all: -r /app/agent/requirements-runtime.lock \
+  && pip check
 
 ARG GCP_COST_MCP_VERSION=v0.8.0
-RUN curl -fsSL -o /usr/local/bin/gcp-cost-mcp-server \
-    "https://github.com/nozomi-koborinai/gcp-cost-mcp-server/releases/download/${GCP_COST_MCP_VERSION}/gcp-cost-mcp-server-linux-amd64" \
+ARG GCP_COST_MCP_SHA256_AMD64=6ef44fd4f067b1f2ffe8de427c750c6e7eb81f4b190c26d4b428664d2bd51a43
+ARG GCP_COST_MCP_SHA256_ARM64=a95b7eb0f27640d5ff58bd01947da7733ddc95efc4df71afd8610241206881c5
+RUN set -eux; \
+  case "${TARGETARCH}" in \
+    amd64) EXPECTED_SHA="${GCP_COST_MCP_SHA256_AMD64}" ;; \
+    arm64) EXPECTED_SHA="${GCP_COST_MCP_SHA256_ARM64}" ;; \
+    *) echo "Unsupported architecture: ${TARGETARCH}"; exit 1 ;; \
+  esac; \
+  curl -fsSL -o /usr/local/bin/gcp-cost-mcp-server \
+    "https://github.com/nozomi-koborinai/gcp-cost-mcp-server/releases/download/${GCP_COST_MCP_VERSION}/gcp-cost-mcp-server-linux-${TARGETARCH}" \
+  && echo "${EXPECTED_SHA}  /usr/local/bin/gcp-cost-mcp-server" | sha256sum -c - \
   && chmod +x /usr/local/bin/gcp-cost-mcp-server
 
 COPY agent/scripts/gcp-cost-mcp-wrapper.sh /usr/local/bin/gcp-cost-mcp-wrapper
