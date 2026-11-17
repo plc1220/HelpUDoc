@@ -54,7 +54,7 @@ async function verifyBucket(bucket, reportDir, prefix = '') {
   const pending = new Set();
   const problems = [];
   let checked = 0, bytes = 0, targetCount = 0;
-  const progress = () => console.log(JSON.stringify({ bucket, checked, listed: keys.size, bytes, errors: problems.length }));
+  const progress = () => console.log(JSON.stringify({ bucket, checked, listed: keys.size, targetListed: targetCount, bytes, errors: problems.length }));
   const timer = setInterval(progress, 30000);
   let summary;
   try {
