@@ -39,7 +39,7 @@ Working plan for deploying the full HelpUDoc stack to zaku, a single-node ZStack
 | 2 | Branch `chore/adapt-zaku`, copy to `infra/zaku/k8s` | Done, not committed |
 | 3a | Connectivity checks: storage, PyPI, AWS | Done 2026-11-17, all pass |
 | 3b | Connectivity check: private image pull | Ready. Create the SA key, then test |
-| 4 | Edit `infra/zaku/k8s` (see list below) | Done 2026-11-17 except `minio/mc` image (U10) and TLS section (U5b) |
+| 4 | Edit `infra/zaku/k8s` (see list below) | Done 2026-11-17 except TLS section (U5b) |
 | 5a | Generate internal secrets into `env/prod/secrets.env` | Ready |
 | 5b | Copy external secrets from GKE `helpudoc-secrets` | Ready. Gemini key already in |
 | 5c | Create namespaces, Secret, ConfigMap, pull secret `zaku-registry-pull` (in both `helpudoc` and `helpudoc-sandbox`) | After 3b |
@@ -58,7 +58,7 @@ Working plan for deploying the full HelpUDoc stack to zaku, a single-node ZStack
 - Done: `70-caddy.yaml` drops the `cloud.google.com/*` annotations and the `lc-demo.com` apex redirect.
 - Done: local `env/prod/config.env` uses the zaku hostname for the cookie domain, OAuth redirect, post-login redirect and Langfuse URL, and sets `HELPUDOC_SANDBOX_RUNTIME_CLASS=gvisor`.
 - Done: ported master's RustFS cutover (PR #114, rebased onto `23d1f7df`). New `47-rustfs.yaml` with `rustfs-pvc` on `edge-lvm`. `42-minio.yaml` scales MinIO to 0 and points the `minio` Service at RustFS, so the app keeps using `http://minio:9000`. `30-storage.yaml` raises `minio-pvc` to 100Gi; with MinIO at 0 replicas, `edge-lvm` never creates that disk. `49-skill-sandbox.yaml` lets sandbox Jobs reach both.
-- Open (U10): `43-minio-setup.yaml`, `46-minio-private-object-policy.yaml` still use `minio/mc:latest`, which no longer pulls.
+- Done (U10): `43-minio-setup.yaml` and `46-minio-private-object-policy.yaml` use `docker.io/rustfs/rc:v0.1.37` (pinned by digest) instead of `minio/mc:latest`, matching `rustfs-setup` in `infra/docker-compose.dependencies.yml`. Pull and commands tested on zaku 2026-11-17. GKE's copies still use `minio/mc`.
 
 ### Step 6 deploy order
 
@@ -83,7 +83,7 @@ Check each stage with `kubectl -n helpudoc get pods,pvc,jobs` before moving on.
 | U6 | Splitting zaku into smaller worker VMs, and whether they share one physical host | Nothing | ZStack | On hold |
 | U7 | Add `https://lumo-studio.cloudmile-coe.com/api/auth/google/callback` as a redirect URI and `https://lumo-studio.cloudmile-coe.com` as a JavaScript origin on the OAuth client `16646144790-fvdv...apps.googleusercontent.com`. It lives in project number 16646144790, which your account can't see | Google login | Senior or client owner | To ask after U5 |
 | U8 | Install gVisor on the zaku node and create RuntimeClass `gvisor` | Agent features that run code | ZStack | To ask |
-| U10 | `minio/mc` image for the setup Jobs. Docker Hub now refuses `minio/mc` and `minio/minio` (HTTP 401 on 2026-11-17), and MinIO publishes no images (see `docs/minio-source-dev.md`). The server is now RustFS (public image `docker.io/rustfs/rustfs`, pinned by digest), but GKE's `43` and `46` still run `mc` to create buckets in it. Options: mirror an `mc` build into the `helpudoc` repo, or switch the Jobs to another S3 client image. Also ask whether zaku, a fresh install, needs the MinIO rollback Deployment and `minio-pvc` at all | Step 6 stage 2 (`43`, `46`) | You, senior | Open |
+| U10 | Bucket Jobs `43`/`46` could not pull `minio/mc`. Switched to `rustfs/rc`. Still to ask: does zaku, a fresh install, need the MinIO rollback Deployment and `minio-pvc`? Also tell senior GKE's `43`/`46` have the same broken image | Nothing | You, senior | Fixed on zaku |
 | U11 | Langfuse hostname `langfuse.lumo-studio.cloudmile-coe.com` needs its own DNS record and certificate. Add it to the ZStack ask, or drop it from the Ingress | Langfuse UI in a browser | You, ZStack | Open |
 | U9 | Where to keep the new internal secrets. Senior suggested the working group; Secret Manager or a password manager is safer than chat | Sharing 5a values | You, senior | Open |
 
