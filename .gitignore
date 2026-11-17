@@ -52,3 +52,6 @@ mcp.json
 .codex/
 graphify-out/
 AGENTS.md
+
+# Private production recovery backups and verification manifests
+/outputs/recovery/
