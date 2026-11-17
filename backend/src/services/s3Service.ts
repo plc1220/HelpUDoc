@@ -305,7 +305,15 @@ export class S3Service implements ObjectStore {
           Metadata: sha256 ? { [HELPUDOC_SHA256_METADATA_KEY]: sha256 } : undefined,
           IfNoneMatch: options.ifAbsent ? '*' : undefined,
         }),
-        { expiresIn: options.expiresInSeconds },
+        {
+          expiresIn: options.expiresInSeconds,
+          // Clients send this metadata as a header. Keep it in SignedHeaders
+          // rather than hoisting it into the query, which RustFS rejects when
+          // the same unsigned x-amz-* header is also present on the request.
+          unhoistableHeaders: sha256
+            ? new Set([`x-amz-meta-${HELPUDOC_SHA256_METADATA_KEY}`])
+            : undefined,
+        },
       );
       return {
         url,
