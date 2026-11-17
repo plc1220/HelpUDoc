@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_openai_function
 from langgraph.errors import GraphBubbleUp
 from pydantic import ConfigDict, Field
 
@@ -104,10 +105,16 @@ class GuardedTool(BaseTool):
         workspace_state: WorkspaceState,
         tool_mcp_server: Optional[str] = None,
     ) -> "GuardedTool":
+        args_schema = getattr(tool, "args_schema", None)
+        if args_schema is None:
+            # Preserve the original tool's public contract (including legacy
+            # single-string Tools). Inferring from this wrapper's variadic _run
+            # exposes args: array/items: {}, which Gemini rejects at request time.
+            args_schema = convert_to_openai_function(tool)["parameters"]
         return cls(
             name=tool.name,
             description=tool.description,
-            args_schema=getattr(tool, "args_schema", None),
+            args_schema=args_schema,
             return_direct=bool(getattr(tool, "return_direct", False)),
             response_format=str(getattr(tool, "response_format", "content") or "content"),
             wrapped_tool=tool,
