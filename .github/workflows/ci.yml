@@ -18,8 +18,6 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       agent: ${{ steps.filter.outputs.agent }}
     steps:
-      - name: Intentional failure for issue 104 merge-protection proof
-        run: exit 1
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
