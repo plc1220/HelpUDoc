@@ -1,0 +1,10 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: helpudoc-caddy-backendconfig
+  namespace: helpudoc
+spec:
+  # Long-lived streaming endpoints (/api/agent/runs/:id/stream) need a higher
+  # backend timeout than the default external HTTP(S) LB setting.
+  timeoutSec: 3600
+
