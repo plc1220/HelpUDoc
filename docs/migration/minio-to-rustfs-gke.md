@@ -23,6 +23,11 @@ migrate GKE.
   points at the retained MinIO deployment. After verification, Service `minio`
   is switched to RustFS, preserving existing backend, agent, Langfuse, sandbox
   and public signed-URL endpoints.
+- Before cutover, apply the updated `allow-inline-sandbox-transfer` NetworkPolicy
+  in `infra/gke/k8s/49-skill-sandbox.yaml`. Its destination selector must include
+  both `helpudoc-minio` and `helpudoc-rustfs` in namespace `helpudoc`, on TCP 9000
+  only. Preserving the Service hostname does not preserve pod-based egress
+  permission. The MinIO destination remains allowed for rollback.
 - Signed upload metadata must remain in `X-Amz-SignedHeaders`. The backend
   compatibility fix uses `unhoistableHeaders`; without it RustFS rejects uploads
   carrying the SHA-256 metadata header as unsigned. Deploy this fix before
@@ -131,7 +136,9 @@ Verify backend and agent health, retrieval of old and recovered file versions,
 fresh upload/download, signed uploads with metadata, server-side copy,
 immutable publication retry and overwrite rejection. Anonymous listing and
 downloads must still return 403. Confirm new Langfuse events reach RustFS and
-check pod readiness/restarts. This procedure changes storage and the small
+check pod readiness/restarts. Run an isolated gVisor sandbox through input
+download, execution and result upload; confirm backend port 3000 remains
+unreachable from that sandbox. This procedure changes storage and the small
 backend upload compatibility fix, not unrelated application features.
 
 ## Rollback
@@ -172,3 +179,9 @@ is stored in `asia-southeast1`. The app, both Langfuse deployments and the daily
 reflection schedule were restored. Temporary migration pods and their reports
 PVC were removed after the reports were archived privately. Recovery backups
 and verification reports under `outputs/recovery/` are excluded from Git.
+
+The inline-sandbox egress policy was also verified after extending its S3
+destination selector to RustFS. A real gVisor Job in `helpudoc-sandbox`
+downloaded its input, executed, uploaded its result and read it back through
+the trusted runner. Its attempt to reach backend TCP 3000 was denied. The
+probe Job and its temporary transfer objects were cleaned up.
