@@ -35,7 +35,9 @@ images, replica counts, Service selector and CronJob suspension state before
 changing them. Check for active agent runs and sandbox jobs before maintenance.
 Block public mutation requests, including previously signed PUT uploads, at
 Caddy before draining the app. Preserve the exact live Caddy configuration and
-restore it after the new backend passes its internal checks.
+restore it after the new backend passes its internal checks and the old MinIO
+pod has stopped. Stopping MinIO also closes any proxy keep-alive connections
+that still target the source.
 
 ```sh
 kubectl apply -f infra/gke/k8s/47-rustfs.yaml
@@ -119,7 +121,10 @@ case passed.
 
 Only after frozen-source verification succeeds, apply the compatibility Service
 selector and retained MinIO replica count from `42-minio.yaml`. Restore the
-writers' original replica counts and CronJob state. Existing clients continue
+writers' original replica counts and CronJob state. Archive the reports and remove
+the temporary migration pods before restarting the app on a capacity-constrained
+cluster. Start the app first, then Langfuse, to avoid resource fragmentation.
+Existing clients continue
 using `http://minio:9000`, now served by RustFS.
 
 Verify backend and agent health, retrieval of old and recovered file versions,
@@ -145,3 +150,25 @@ application and database state.
 
 Restore original app, Langfuse and CronJob states only after the rollback checks
 pass. No source objects, PVCs or snapshots are deleted by this migration.
+
+## Verified production cutover: 17 November 2026
+
+The live migration verified all 354,964 objects: 2,077 in `helpudoc` and
+352,887 in `langfuse`, totalling 17,422,904,070 bytes. Every object matched
+its source bytes, SHA-256, size, content type and custom metadata; neither
+bucket had missing or additional destination keys. The first live inventory
+preceded the tracing freeze, so its earlier tracing count was slightly lower.
+
+The deployed backend image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:bc92a8e7-rustfs`
+at digest `sha256:ae21404d8846378d057e5e86c360ab01509a26dbdfc16e430e8fddd7dd4265a4`.
+It contains the signed-upload fix on production base `c3f916cf`. Live backend
+and agent readiness, public signed upload/download, immutable retry/conflict,
+server copy and anonymous access denial passed. A synthetic tracing export
+was read back through Langfuse and its new event object was read from RustFS.
+
+The original MinIO deployment is stopped; its 100 GiB PVC and READY snapshot
+`helpudoc-minio-pre-rustfs-20261117` remain available for rollback. The snapshot
+is stored in `asia-southeast1`. The app, both Langfuse deployments and the daily
+reflection schedule were restored. Temporary migration pods and their reports
+PVC were removed after the reports were archived privately. Recovery backups
+and verification reports under `outputs/recovery/` are excluded from Git.
