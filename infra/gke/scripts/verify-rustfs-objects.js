@@ -128,7 +128,21 @@ async function verifyBucket(bucket, reportDir, prefix = '') {
 
 module.exports = { verifyBucket };
 if (require.main === module) {
-  verifyBucket(process.argv[2], process.argv[3] || '/reports', process.argv[4] || '')
-    .then(result => { if (!result.passed) process.exitCode = 1; })
-    .catch(error => { console.error(error); process.exitCode = 1; });
+  const bucket = process.argv[2];
+  const reportDir = process.argv[3] || '/reports';
+  fs.mkdirSync(reportDir, { recursive: true });
+  const exitFile = path.join(reportDir, bucket + '.verification.exit');
+  // A retry must never leave an earlier success marker behind.
+  fs.rmSync(exitFile, { force: true });
+  fs.rmSync(path.join(reportDir, bucket + '.verification.json'), { force: true });
+  verifyBucket(bucket, reportDir, process.argv[4] || '')
+    .then(result => {
+      process.exitCode = result.passed ? 0 : 1;
+      fs.writeFileSync(exitFile, String(process.exitCode) + '\n');
+    })
+    .catch(error => {
+      console.error(error);
+      process.exitCode = 1;
+      fs.writeFileSync(exitFile, '1\n');
+    });
 }

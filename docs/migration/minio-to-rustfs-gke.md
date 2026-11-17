@@ -33,6 +33,9 @@ migrate GKE.
 Use the intended Kubernetes context explicitly. Save the existing deployment
 images, replica counts, Service selector and CronJob suspension state before
 changing them. Check for active agent runs and sandbox jobs before maintenance.
+Block public mutation requests, including previously signed PUT uploads, at
+Caddy before draining the app. Preserve the exact live Caddy configuration and
+restore it after the new backend passes its internal checks.
 
 ```sh
 kubectl apply -f infra/gke/k8s/47-rustfs.yaml
@@ -90,13 +93,21 @@ bodies in memory or repeatedly listing the deeply nested tracing archive.
 kubectl -n helpudoc exec -i helpudoc-rustfs-migration -c verifier -- \
   sh -c 'cat > /reports/verify-rustfs-objects.js' \
   < infra/gke/scripts/verify-rustfs-objects.js
-for bucket in helpudoc langfuse; do
-  kubectl -n helpudoc exec helpudoc-rustfs-migration -c verifier -- \
-    env NODE_PATH=/app/node_modules node /reports/verify-rustfs-objects.js "$bucket" /reports
-done
+# Launch a check after this bucket's writers are frozen. Repeat with helpudoc
+# after pausing the app and copying its final delta.
+bucket=langfuse
+kubectl -n helpudoc exec helpudoc-rustfs-migration -c verifier -- \
+  sh -c 'nohup env NODE_PATH=/app/node_modules node /reports/verify-rustfs-objects.js "$1" /reports </dev/null >"/reports/$1.verification.log" 2>&1 &' sh "$bucket"
+kubectl -n helpudoc exec helpudoc-rustfs-migration -c verifier -- \
+  tail -n 2 /reports/langfuse.verification.log
+# Written only when the check finishes: require 0 and passed:true in the summary.
+kubectl -n helpudoc exec helpudoc-rustfs-migration -c verifier -- \
+  cat /reports/langfuse.verification.exit /reports/langfuse.verification.json
 ```
 
-Every command must succeed. The verifier rejects missing or additional keys,
+Run long checks detached inside the pod so a Kubernetes connection timeout
+cannot terminate verification. Do not treat a successful launch as a successful
+check. Every completed check must exit 0. The verifier rejects missing or additional keys,
 duplicate keys and mismatched content type, size or custom metadata, including
 `helpudoc-sha256`. It ignores only rclone's transfer timestamps and storage tier.
 Save its per-object JSONL manifests, JSON summaries and copy logs before removing
