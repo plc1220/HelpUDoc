@@ -1302,7 +1302,7 @@ export default function ChatMessageBubble({
                     onClick={() => setStructuredAnswer(question.id, option.value)}
                     className={`w-full rounded-lg border px-3 py-2.5 text-left transition-all duration-200 ${
                       isSelected
-                        ? 'border-sky-300 bg-sky-50 text-sky-900 shadow-[0_0_0_1px_var(--color-overlay)]'
+                        ? 'border-sky-300 bg-sky-50 text-sky-900 shadow-[0_0_0_1px_rgba(14,165,233,0.14)]'
                         : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                     } ${interruptControlsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
                   >
@@ -1476,7 +1476,7 @@ export default function ChatMessageBubble({
     return (
       <div className="mt-3 space-y-4">
         {activeStylePreviewChoice ? (
-          <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-slate-950 shadow-[0_18px_48px_-32px_var(--color-overlay)]">
+          <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-slate-950 shadow-[0_18px_48px_-32px_rgba(15,23,42,0.32)]">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-slate-900 px-4 py-3">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-white">{activeStylePreviewChoice.label}</p>
@@ -1552,7 +1552,7 @@ export default function ChatMessageBubble({
                   interruptControlsDisabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
                 } ${
                   isSelectedChoice || isActiveChoice
-                    ? 'border-sky-300 shadow-[0_0_0_1px_var(--color-overlay)]'
+                    ? 'border-sky-300 shadow-[0_0_0_1px_rgba(14,165,233,0.18)]'
                     : 'border-slate-200/90 hover:border-slate-300'
                 }`}
               >
@@ -1646,8 +1646,8 @@ export default function ChatMessageBubble({
           );
           const standardChoiceSelectionClass = !numberedChoice && isSelectedChoice
             ? tone === 'dark'
-              ? 'ring-2 ring-[var(--owl-taupe)]/65 ring-offset-0'
-              : 'border-[var(--owl-taupe)] bg-blue-50 text-blue-800 shadow-[0_0_0_1px_var(--color-overlay)]'
+              ? 'ring-2 ring-[#94c5f8]/65 ring-offset-0'
+              : 'border-[#94c5f8] bg-blue-50 text-blue-800 shadow-[0_0_0_1px_rgba(148,197,248,0.35)]'
             : '';
 
           return (
@@ -1672,9 +1672,9 @@ export default function ChatMessageBubble({
                     numberedChoice
                       ? `flex w-full items-start justify-between rounded-[1.35rem] border px-5 py-4 text-left transition-all duration-200 ${
                           isSelectedChoice
-                            ? 'border-[var(--owl-taupe)] bg-[var(--owl-taupe)]/18 text-white shadow-[0_0_0_1px_var(--color-overlay)]'
+                            ? 'border-[#94c5f8] bg-[#94c5f8]/18 text-white shadow-[0_0_0_1px_rgba(148,197,248,0.35)]'
                             : action.style === 'primary'
-                              ? 'border-[var(--owl-taupe)]/55 bg-[var(--owl-taupe)]/10 text-white hover:bg-[var(--owl-taupe)]/15'
+                              ? 'border-[#94c5f8]/55 bg-[#94c5f8]/10 text-white hover:bg-[#94c5f8]/15'
                               : action.style === 'danger'
                                 ? 'border-rose-400/25 bg-rose-500/10 text-rose-100 hover:bg-rose-500/15'
                                 : 'border-white/10 bg-white/[0.03] text-white/92 hover:border-white/25 hover:bg-white/[0.07]'
@@ -1801,7 +1801,7 @@ export default function ChatMessageBubble({
 
   const agentContainerClassName = 'lumo-assistant-content';
   const toolPanelClassName = isDarkMode
-    ? 'mt-3 border-t border-[var(--owl-cocoa)] pt-3'
+    ? 'mt-3 border-t border-[#26354d] pt-3'
     : 'mt-3 border-t border-slate-200/80 pt-3';
   const toolButtonClassName = isDarkMode
     ? 'text-xs font-medium text-slate-400 transition-all duration-200 hover:text-slate-200'
@@ -1975,7 +1975,7 @@ export default function ChatMessageBubble({
             ) : null}
             {pendingInterrupt && !isClarificationInterrupt && !(interactionRequest) ? (
               <div className="mt-3">
-                <div className="rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_var(--color-overlay)]">
+                <div className="rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-800">
@@ -2127,7 +2127,7 @@ export default function ChatMessageBubble({
             ) : null}
             {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed
               && (!interactionRequest || useSpecializedStylePreviewChooser) ? (
-              <div className="mt-3 rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_var(--color-overlay)]">
+              <div className="mt-3 rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-800">

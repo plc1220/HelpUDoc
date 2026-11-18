@@ -383,9 +383,9 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                 <div className="flex justify-between items-center mb-6">
                                     <div>
                                         <h3 className="text-xl font-semibold text-white">Connect to a custom MCP</h3>
-                                        <p className="text-[var(--owl-gold)] text-sm flex items-center gap-1 hover:text-white cursor-pointer transition-colors">Docs <ExternalLink size={12} /></p>
+                                        <p className="text-[#8E8E93] text-sm flex items-center gap-1 hover:text-white cursor-pointer transition-colors">Docs <ExternalLink size={12} /></p>
                                     </div>
-                                    <button onClick={() => setIsEditingMcp(false)} className="text-[var(--owl-gold)] hover:text-white transition-colors">
+                                    <button onClick={() => setIsEditingMcp(false)} className="text-[#8E8E93] hover:text-white transition-colors">
                                         <X size={20} />
                                     </button>
                                 </div>
@@ -398,20 +398,20 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                             value={mcpForm.name}
                                             onChange={(e) => setMcpForm(prev => ({ ...prev, name: e.target.value }))}
                                             placeholder="MCP server name"
-                                            className="w-full px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm"
+                                            className="w-full px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm"
                                         />
                                     </div>
 
-                                    <div className="grid grid-cols-2 bg-[var(--owl-cocoa)] p-1 rounded-lg">
+                                    <div className="grid grid-cols-2 bg-[#2C2C2E] p-1 rounded-lg">
                                         <button
                                             onClick={() => setMcpForm(prev => ({ ...prev, transport: 'stdio' }))}
-                                            className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.transport === 'stdio' ? 'bg-[var(--owl-cocoa)] text-white shadow-sm' : 'text-[var(--owl-gold)] hover:text-white'}`}
+                                            className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.transport === 'stdio' ? 'bg-[#636366] text-white shadow-sm' : 'text-[#8E8E93] hover:text-white'}`}
                                         >
                                             STDIO
                                         </button>
                                         <button
                                             onClick={() => setMcpForm(prev => ({ ...prev, transport: 'http' }))}
-                                            className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.transport === 'http' ? 'bg-[var(--owl-cocoa)] text-white shadow-sm' : 'text-[var(--owl-gold)] hover:text-white'}`}
+                                            className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.transport === 'http' ? 'bg-[#636366] text-white shadow-sm' : 'text-[#8E8E93] hover:text-white'}`}
                                         >
                                             Streamable HTTP
                                         </button>
@@ -419,21 +419,21 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
 
                                     <div className="space-y-1.5">
                                         <label className="block text-sm font-medium text-white">Default access</label>
-                                        <div className="grid grid-cols-2 bg-[var(--owl-cocoa)] p-1 rounded-lg">
+                                        <div className="grid grid-cols-2 bg-[#2C2C2E] p-1 rounded-lg">
                                             <button
                                                 onClick={() => setMcpForm(prev => ({ ...prev, defaultAccess: 'allow' }))}
-                                                className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.defaultAccess === 'allow' ? 'bg-[var(--owl-cocoa)] text-white shadow-sm' : 'text-[var(--owl-gold)] hover:text-white'}`}
+                                                className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.defaultAccess === 'allow' ? 'bg-[#636366] text-white shadow-sm' : 'text-[#8E8E93] hover:text-white'}`}
                                             >
                                                 Allow
                                             </button>
                                             <button
                                                 onClick={() => setMcpForm(prev => ({ ...prev, defaultAccess: 'deny' }))}
-                                                className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.defaultAccess === 'deny' ? 'bg-[var(--owl-cocoa)] text-white shadow-sm' : 'text-[var(--owl-gold)] hover:text-white'}`}
+                                                className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.defaultAccess === 'deny' ? 'bg-[#636366] text-white shadow-sm' : 'text-[#8E8E93] hover:text-white'}`}
                                             >
                                                 Deny
                                             </button>
                                         </div>
-                                        <p className="text-xs text-[var(--owl-gold)]">
+                                        <p className="text-xs text-[#8E8E93]">
                                             For non-admins, servers default to <span className="font-mono">deny</span> require explicit allow.
                                         </p>
                                     </div>
@@ -447,7 +447,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                     value={mcpForm.command}
                                                     onChange={(e) => setMcpForm(prev => ({ ...prev, command: e.target.value }))}
                                                     placeholder="openai-dev-mcp serve-sqlite"
-                                                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                    className="w-full px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                 />
                                             </div>
 
@@ -460,14 +460,14 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                                 type="text"
                                                                 value={arg.value}
                                                                 onChange={(e) => updateArg(arg.id, e.target.value)}
-                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                             />
-                                                            <button onClick={() => removeArg(arg.id)} className="p-2 text-[var(--owl-gold)] hover:text-rose-500 transition-colors">
+                                                            <button onClick={() => removeArg(arg.id)} className="p-2 text-[#8E8E93] hover:text-rose-500 transition-colors">
                                                                 <Trash2 size={16} />
                                                             </button>
                                                         </div>
                                                     ))}
-                                                    <button onClick={addArg} className="w-full py-2 rounded-lg bg-[var(--owl-cocoa)] text-white hover:bg-[var(--owl-cocoa)] text-xs font-medium transition-colors border border-[var(--owl-cocoa)] flex items-center justify-center gap-2">
+                                                    <button onClick={addArg} className="w-full py-2 rounded-lg bg-[#2C2C2E] text-white hover:bg-[#3A3A3C] text-xs font-medium transition-colors border border-[#3A3A3C] flex items-center justify-center gap-2">
                                                         <Plus size={14} /> Add argument
                                                     </button>
                                                 </div>
@@ -483,21 +483,21 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                                 placeholder="Key"
                                                                 value={env.key}
                                                                 onChange={(e) => updateEnv(env.id, 'key', e.target.value)}
-                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                             />
                                                             <input
                                                                 type="text"
                                                                 placeholder="Value"
                                                                 value={env.value}
                                                                 onChange={(e) => updateEnv(env.id, 'value', e.target.value)}
-                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                             />
-                                                            <button onClick={() => removeEnv(env.id)} className="p-2 text-[var(--owl-gold)] hover:text-rose-500 transition-colors">
+                                                            <button onClick={() => removeEnv(env.id)} className="p-2 text-[#8E8E93] hover:text-rose-500 transition-colors">
                                                                 <Trash2 size={16} />
                                                             </button>
                                                         </div>
                                                     ))}
-                                                    <button onClick={addEnv} className="w-full py-2 rounded-lg bg-[var(--owl-cocoa)] text-white hover:bg-[var(--owl-cocoa)] text-xs font-medium transition-colors border border-[var(--owl-cocoa)] flex items-center justify-center gap-2">
+                                                    <button onClick={addEnv} className="w-full py-2 rounded-lg bg-[#2C2C2E] text-white hover:bg-[#3A3A3C] text-xs font-medium transition-colors border border-[#3A3A3C] flex items-center justify-center gap-2">
                                                         <Plus size={14} /> Add environment variable
                                                     </button>
                                                 </div>
@@ -512,14 +512,14 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                                 type="text"
                                                                 value={env.value}
                                                                 onChange={(e) => updateEnvPassthrough(env.id, e.target.value)}
-                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                             />
-                                                            <button onClick={() => removeEnvPassthrough(env.id)} className="p-2 text-[var(--owl-gold)] hover:text-rose-500 transition-colors">
+                                                            <button onClick={() => removeEnvPassthrough(env.id)} className="p-2 text-[#8E8E93] hover:text-rose-500 transition-colors">
                                                                 <Trash2 size={16} />
                                                             </button>
                                                         </div>
                                                     ))}
-                                                    <button onClick={addEnvPassthrough} className="w-full py-2 rounded-lg bg-[var(--owl-cocoa)] text-white hover:bg-[var(--owl-cocoa)] text-xs font-medium transition-colors border border-[var(--owl-cocoa)] flex items-center justify-center gap-2">
+                                                    <button onClick={addEnvPassthrough} className="w-full py-2 rounded-lg bg-[#2C2C2E] text-white hover:bg-[#3A3A3C] text-xs font-medium transition-colors border border-[#3A3A3C] flex items-center justify-center gap-2">
                                                         <Plus size={14} /> Add variable
                                                     </button>
                                                 </div>
@@ -532,7 +532,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                     value={mcpForm.cwd}
                                                     onChange={(e) => setMcpForm(prev => ({ ...prev, cwd: e.target.value }))}
                                                     placeholder="~/code"
-                                                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                    className="w-full px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                 />
                                             </div>
                                         </>
@@ -545,7 +545,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                     value={mcpForm.url}
                                                     onChange={(e) => setMcpForm(prev => ({ ...prev, url: e.target.value }))}
                                                     placeholder="https://mcp.example.com/mcp"
-                                                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                    className="w-full px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                 />
                                             </div>
 
@@ -556,7 +556,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                     value={mcpForm.bearerTokenEnvVar}
                                                     onChange={(e) => setMcpForm(prev => ({ ...prev, bearerTokenEnvVar: e.target.value }))}
                                                     placeholder="MCP_BEARER_TOKEN"
-                                                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                    className="w-full px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                 />
                                             </div>
 
@@ -565,12 +565,12 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                 <select
                                                     value={mcpForm.delegatedAuthProvider}
                                                     onChange={(e) => setMcpForm(prev => ({ ...prev, delegatedAuthProvider: e.target.value as '' | 'google' }))}
-                                                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm"
+                                                    className="w-full px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm"
                                                 >
                                                     <option value="">None</option>
                                                     <option value="google">Google</option>
                                                 </select>
-                                                <p className="text-xs text-[var(--owl-gold)]">
+                                                <p className="text-xs text-[#8E8E93]">
                                                     Use delegated auth to forward the signed-in user&apos;s OAuth token to this MCP server.
                                                 </p>
                                             </div>
@@ -585,21 +585,21 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                                 placeholder="Key"
                                                                 value={env.key}
                                                                 onChange={(e) => updateHeader(env.id, 'key', e.target.value)}
-                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                             />
                                                             <input
                                                                 type="text"
                                                                 placeholder="Value"
                                                                 value={env.value}
                                                                 onChange={(e) => updateHeader(env.id, 'value', e.target.value)}
-                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                             />
-                                                            <button onClick={() => removeHeader(env.id)} className="p-2 text-[var(--owl-gold)] hover:text-rose-500 transition-colors">
+                                                            <button onClick={() => removeHeader(env.id)} className="p-2 text-[#8E8E93] hover:text-rose-500 transition-colors">
                                                                 <Trash2 size={16} />
                                                             </button>
                                                         </div>
                                                     ))}
-                                                    <button onClick={addHeader} className="w-full py-2 rounded-lg bg-[var(--owl-cocoa)] text-white hover:bg-[var(--owl-cocoa)] text-xs font-medium transition-colors border border-[var(--owl-cocoa)] flex items-center justify-center gap-2">
+                                                    <button onClick={addHeader} className="w-full py-2 rounded-lg bg-[#2C2C2E] text-white hover:bg-[#3A3A3C] text-xs font-medium transition-colors border border-[#3A3A3C] flex items-center justify-center gap-2">
                                                         <Plus size={14} /> Add header
                                                     </button>
                                                 </div>
@@ -615,21 +615,21 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                                 placeholder="Key"
                                                                 value={env.key}
                                                                 onChange={(e) => updateHeaderFromEnv(env.id, 'key', e.target.value)}
-                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                             />
                                                             <input
                                                                 type="text"
                                                                 placeholder="Value"
                                                                 value={env.value}
                                                                 onChange={(e) => updateHeaderFromEnv(env.id, 'value', e.target.value)}
-                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--owl-cocoa)] bg-[var(--owl-cocoa)] text-white placeholder-[var(--owl-gold)] focus:border-[var(--owl-gold)] focus:ring-1 focus:ring-[var(--owl-gold)] outline-none transition-all text-sm font-mono"
+                                                                className="flex-1 px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                             />
-                                                            <button onClick={() => removeHeaderFromEnv(env.id)} className="p-2 text-[var(--owl-gold)] hover:text-rose-500 transition-colors">
+                                                            <button onClick={() => removeHeaderFromEnv(env.id)} className="p-2 text-[#8E8E93] hover:text-rose-500 transition-colors">
                                                                 <Trash2 size={16} />
                                                             </button>
                                                         </div>
                                                     ))}
-                                                    <button onClick={addHeaderFromEnv} className="w-full py-2 rounded-lg bg-[var(--owl-cocoa)] text-white hover:bg-[var(--owl-cocoa)] text-xs font-medium transition-colors border border-[var(--owl-cocoa)] flex items-center justify-center gap-2">
+                                                    <button onClick={addHeaderFromEnv} className="w-full py-2 rounded-lg bg-[#2C2C2E] text-white hover:bg-[#3A3A3C] text-xs font-medium transition-colors border border-[#3A3A3C] flex items-center justify-center gap-2">
                                                         <Plus size={14} /> Add variable
                                                     </button>
                                                 </div>

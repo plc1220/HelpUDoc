@@ -1106,7 +1106,7 @@ export default function TeamThreadDetail({
         ) : null}
       </div>
 
-      <div className={`border-t p-3 ${activeTab === 'conversation' ? '' : 'hidden'} ${isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'}`}>
+      <div className={`border-t p-3 ${activeTab === 'conversation' ? '' : 'hidden'} ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
         {draft.status === 'failed' || draft.failed ? (
           <div role="alert" data-testid="thread-failed-draft" className={`mb-2 rounded-xl px-3 py-2 text-xs ${isDarkMode ? 'bg-amber-400/10 text-amber-200' : 'bg-amber-50 text-amber-700'}`}>
             Your message wasn’t sent. The draft{draft.replyToMessageId ? ' and its reply target' : ''} are kept — press Send to retry.

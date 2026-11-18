@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import { TextArea } from '@astryxdesign/core/TextArea';
 import { Text } from '@astryxdesign/core/Text';
 import { Card } from '@astryxdesign/core/Card';
@@ -24,6 +24,8 @@ type Props = {
   filePath?: string;
   onAgentChat: (prompt: string) => void;
   children: ReactNode;
+  /** Mount the file actions in the workspace's main toolbar. */
+  toolbarTarget?: HTMLElement | null;
   /**
    * Release B (F8): when set, a NEWLY created workspace-audience annotation on
    * this surface is explicitly linked to this thread (so it appears in the
@@ -67,7 +69,7 @@ export default function CanvasAnnotations(props: Props) {
   return <AnnotationSurface key={`${props.workspace.id}:${props.filePath}`} {...props} workspace={props.workspace} filePath={props.filePath} />;
 }
 
-function AnnotationSurface({ workspace, filePath, onAgentChat, children, sourceThreadId, fileId, anchorVersionId, canvasDirty, releaseBReady }: Props & { workspace: Workspace; filePath: string }) {
+function AnnotationSurface({ workspace, filePath, onAgentChat, children, toolbarTarget, sourceThreadId, fileId, anchorVersionId, canvasDirty, releaseBReady }: Props & { workspace: Workspace; filePath: string }) {
   const openedNotificationRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const agentChatRef = useRef(onAgentChat);
@@ -283,19 +285,39 @@ function AnnotationSurface({ workspace, filePath, onAgentChat, children, sourceT
     finally { setBusy(false); }
   };
 
+  const controls = <div className="canvas-annotations-controls" role="group" aria-label="File comments">
+    {canComment && <IconButton
+      label="Annotate"
+      tooltip={active ? 'Stop annotating' : 'Annotate — select text or click a page, slide, or HTML element'}
+      icon={<MessageSquarePlus size={16} />}
+      variant={active ? 'secondary' : 'ghost'}
+      size="sm"
+      aria-pressed={active}
+      onClick={() => setActive(value => !value)}
+    />}
+    <span className="canvas-annotations-comments-action">
+      <IconButton
+        label={`Comments (${annotations.length})`}
+        tooltip={`Comments (${annotations.length})`}
+        icon={<MessageSquare size={16} />}
+        variant={panel ? 'secondary' : 'ghost'}
+        size="sm"
+        aria-expanded={panel}
+        onClick={() => setPanel(value => !value)}
+      />
+      {annotations.length > 0 && <span className="canvas-annotations-count" aria-hidden="true">{annotations.length > 99 ? '99+' : annotations.length}</span>}
+    </span>
+  </div>;
+
   return <CanvasAnnotationContext.Provider value={context}>
     <div className="canvas-annotations" data-testid="annotation-canvas">
-      <div className="canvas-annotations-toolbar">
-        {canComment && <ToggleButton label="Annotate" icon={<MessageSquarePlus size={14} />} size="sm" isPressed={active} onPressedChange={setActive} />}
-        <Button label={`Comments (${annotations.length})`} icon={<MessageSquare size={14} />} variant="ghost" size="sm" onClick={() => setPanel(!panel)} />
-        {active && <Text type="supporting" maxLines={1}>Select text or click a page, slide, or HTML element</Text>}
-        {sourceThreadId ? (
-          <span data-testid="editor-thread-association" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <Text type="supporting" maxLines={1}>Your edits here attribute to a thread.</Text>
-            <Button label="Clear" variant="ghost" size="sm" onClick={() => clearThreadAssociation()} />
-          </span>
-        ) : null}
-      </div>
+      {toolbarTarget ? createPortal(controls, toolbarTarget) : <div className="canvas-annotations-toolbar">{controls}</div>}
+      {sourceThreadId && <div className="canvas-annotations-toolbar">
+        <span data-testid="editor-thread-association" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Text type="supporting" maxLines={1}>Your edits here attribute to a thread.</Text>
+          <Button label="Clear" variant="ghost" size="sm" onClick={() => clearThreadAssociation()} />
+        </span>
+      </div>}
       <div className="canvas-annotations-body">
         <div className="canvas-annotations-content">
           <div ref={contentRef} className="h-full" onMouseUp={(event) => {

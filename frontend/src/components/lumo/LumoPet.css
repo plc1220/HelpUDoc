@@ -37,8 +37,8 @@ body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
   justify-content: center;
   border: 1px solid var(--border-color);
   border-radius: 999px;
-  background: var(--surface);
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--owl-espresso) 18%, transparent);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18);
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
@@ -79,7 +79,7 @@ body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
   background: transparent;
   cursor: grab;
   touch-action: none;
-  filter: drop-shadow(0 14px 22px color-mix(in srgb, var(--owl-espresso) 20%, transparent));
+  filter: drop-shadow(0 14px 22px rgba(15, 23, 42, 0.2));
   isolation: isolate;
   padding: 0;
   transition: transform 160ms ease, filter 160ms ease;
@@ -87,7 +87,7 @@ body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
 
 .lumo-pet-button:hover {
   transform: translateY(-2px) scale(1.03);
-  filter: drop-shadow(0 18px 26px color-mix(in srgb, var(--owl-espresso) 26%, transparent));
+  filter: drop-shadow(0 18px 26px rgba(15, 23, 42, 0.26));
 }
 
 .lumo-pet-button:active {
@@ -102,7 +102,7 @@ body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
   bottom: 8%;
   height: 9%;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--owl-espresso) 20%, transparent);
+  background: rgba(15, 23, 42, 0.2);
   filter: blur(6px);
   transform-origin: center;
   z-index: -1;
@@ -150,10 +150,10 @@ body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
   z-index: 2;
   width: 0.78rem;
   height: 0.78rem;
-  border: 2px solid var(--owl-cream);
+  border: 2px solid #ffffff;
   border-radius: 999px;
-  background: var(--owl-amber);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--owl-amber) 18%, transparent);
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
 }
 
 .lumo-bubble {
@@ -165,8 +165,8 @@ body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
   gap: 0.35rem;
   border: 1px solid var(--border-color);
   border-radius: 0.75rem;
-  background: var(--surface);
-  box-shadow: 0 14px 28px color-mix(in srgb, var(--owl-espresso) 18%, transparent);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
@@ -185,8 +185,8 @@ body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
   flex-direction: column;
   border: 1px solid var(--border-color);
   border-radius: 1rem;
-  background: var(--surface);
-  box-shadow: 0 24px 60px color-mix(in srgb, var(--owl-espresso) 24%, transparent);
+  background: color-mix(in srgb, var(--surface) 98%, transparent);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
   color: var(--text-primary);
 }
 
@@ -315,7 +315,7 @@ body:has(.lumo-composer-input) .lumo-root:not(.lumo-root--placed) {
   border: 1px solid var(--accent);
   border-radius: 0.75rem;
   background: var(--accent);
-  color: var(--color-on-accent);
+  color: white;
 }
 
 @keyframes lumo-breathe {

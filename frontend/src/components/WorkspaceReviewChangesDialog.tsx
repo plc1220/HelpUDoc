@@ -231,7 +231,7 @@ export default function WorkspaceReviewChangesDialog({
                 overflowY: 'auto',
                 borderRight: 1,
                 borderColor: 'divider',
-                bgcolor: isDarkMode ? 'var(--owl-espresso)' : 'var(--owl-cream)',
+                bgcolor: isDarkMode ? '#111827' : '#f8fafc',
               }}
             >
               <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
