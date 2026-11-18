@@ -187,9 +187,13 @@ class ChartTests(unittest.TestCase):
         config = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "helpudoc-frontend")
         self.assertNotIn("proxy_pass", config["data"]["nginx.conf"])
         self.assertIn("application/javascript mjs", config["data"]["nginx.conf"])
+        self.assertIn("pid /tmp/nginx.pid", config["data"]["main.conf"])
+        self.assertIn("client_body_temp_path /tmp/client_temp", config["data"]["main.conf"])
         frontend = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-frontend")
         pod = frontend["spec"]["template"]["spec"]
         self.assertIn({"name": "frontend-config", "mountPath": "/etc/nginx/conf.d/default.conf", "subPath": "nginx.conf"},
+            pod["containers"][0]["volumeMounts"])
+        self.assertIn({"name": "frontend-config", "mountPath": "/etc/nginx/nginx.conf", "subPath": "main.conf"},
             pod["containers"][0]["volumeMounts"])
         self.assertIn({"name": "frontend-config", "configMap": {"name": "helpudoc-frontend"}}, pod["volumes"])
         gateway = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-gateway")

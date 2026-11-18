@@ -36,7 +36,7 @@ spec:
             - |
               for asset in skills plugins; do
                 if [ ! -e /seed/$asset/.helpudoc-seeded ]; then
-                  cp -an /app/$asset-source/. /seed/$asset/
+                  cp -Rn --no-preserve=mode,ownership /app/$asset-source/. /seed/$asset/
                   touch /seed/$asset/.helpudoc-seeded
                 fi
               done
