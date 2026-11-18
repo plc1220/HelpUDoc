@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "helpudoc.fullname" . }}-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    server {
+      listen 80;
+      server_name _;
+      root /usr/share/nginx/html;
+      index index.html;
+      include /etc/nginx/mime.types;
+      types { application/javascript mjs; }
+      location /assets/ {
+        try_files $uri =404;
+        access_log off;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+      }
+      location / { try_files $uri $uri/ /index.html; }
+    }

@@ -18,6 +18,8 @@ storage classes, Google identity annotations, domains and image locations.
 - Separate frontend and Caddy gateway deployments. The gateway routes `/api`,
   the configured private S3 bucket path, and the frontend. It flushes streamed
   API responses immediately and preserves the public Host for S3 signatures.
+  The frontend mounts a static-only Nginx configuration; all API/object proxying
+  belongs to Caddy, so startup does not depend on Compose service DNS names.
 - Optional single-instance PostgreSQL 16, Redis 7 and RustFS (the digest already
   used by the repository). These are convenience services without HA guarantees.
   Each can be replaced with an existing site service.
@@ -247,7 +249,7 @@ python -m unittest discover -s infra/helm/tests -v
 helm package infra/helm/helpudoc --destination /tmp/helpudoc-packages
 ```
 
-In **Tools & Frameworks → Import Framework**, upload `helpudoc-0.3.0.tgz`, set the
+In **Tools & Frameworks → Import Framework**, upload `helpudoc-0.3.1.tgz`, set the
 namespace and release name used above, and paste the private site override values.
 Keep `ezua.autoHelm=false`: this is a multi-service manual-integration chart.
 Some PCAI screens call the compressed chart a `tar.gz`; Helm's `.tgz` is the same

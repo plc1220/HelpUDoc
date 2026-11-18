@@ -179,6 +179,22 @@ class ChartTests(unittest.TestCase):
         self.assertTrue(any(o["kind"] == "VirtualService" for o in objects))
         self.assertFalse(any(o["kind"] == "AuthorizationPolicy" for o in objects))
 
+    def test_frontend_mounts_static_config_without_compose_upstream_dependencies(self):
+        objects = render()
+        config = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "helpudoc-frontend")
+        self.assertNotIn("proxy_pass", config["data"]["nginx.conf"])
+        self.assertIn("application/javascript mjs", config["data"]["nginx.conf"])
+        frontend = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-frontend")
+        pod = frontend["spec"]["template"]["spec"]
+        self.assertIn({"name": "frontend-config", "mountPath": "/etc/nginx/conf.d/default.conf", "subPath": "nginx.conf"},
+            pod["containers"][0]["volumeMounts"])
+        self.assertIn({"name": "frontend-config", "configMap": {"name": "helpudoc-frontend"}}, pod["volumes"])
+        gateway = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-gateway")
+        other = render({"auth": {"provider": "google"}})
+        changed = next(o for o in other if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-gateway")
+        self.assertNotEqual(gateway["spec"]["template"]["metadata"]["annotations"]["checksum/gateway"],
+            changed["spec"]["template"]["metadata"]["annotations"]["checksum/gateway"])
+
 
 if __name__ == "__main__":
     unittest.main()

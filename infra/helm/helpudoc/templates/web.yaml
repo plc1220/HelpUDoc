@@ -56,7 +56,11 @@ spec:
       labels:
         {{- include "helpudoc.podLabels" (dict "root" $ "component" $component) | nindent 8 }}
       annotations:
-        checksum/gateway: {{ toJson $.Values.objectStore | sha256sum }}
+        {{- if eq $component "gateway" }}
+        checksum/gateway: {{ dict "objectStore" $.Values.objectStore "authProvider" $.Values.auth.provider | toJson | sha256sum }}
+        {{- else }}
+        checksum/frontend: {{ include (print $.Template.BasePath "/frontend-config.yaml") $ | sha256sum }}
+        {{- end }}
         {{- with $.Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -85,6 +89,9 @@ spec:
             - {name: caddyfile, mountPath: /etc/caddy/Caddyfile, subPath: Caddyfile}
             - {name: data, mountPath: /data}
             - {name: config, mountPath: /config}
+          {{- else }}
+          volumeMounts:
+            - {name: frontend-config, mountPath: /etc/nginx/conf.d/default.conf, subPath: nginx.conf}
           {{- end }}
       {{- if eq $component "gateway" }}
       volumes:
@@ -92,6 +99,10 @@ spec:
           configMap: {name: {{ include "helpudoc.fullname" $ }}-gateway}
         - {name: data, emptyDir: {}}
         - {name: config, emptyDir: {}}
+      {{- else }}
+      volumes:
+        - name: frontend-config
+          configMap: {name: {{ include "helpudoc.fullname" $ }}-frontend}
       {{- end }}
 ---
 apiVersion: v1
