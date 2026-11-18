@@ -1,8 +1,26 @@
 {{- if and .Values.ezua.enabled .Values.ingress.enabled }}
 {{- fail "Enable either ezua or ingress, not both" }}
 {{- end }}
-{{- if not (has .Values.auth.provider (list "oidc" "google")) }}
-{{- fail "auth.provider must be oidc or google" }}
+{{- if not (has .Values.auth.provider (list "oidc" "google" "pcai-proxy")) }}
+{{- fail "auth.provider must be pcai-proxy, oidc or google" }}
+{{- end }}
+{{- if eq .Values.auth.provider "pcai-proxy" }}
+{{- if or (not .Values.ezua.enabled) (and (not .Values.ezua.authorizationPolicy.enabled) (empty .Values.ezua.authorizationPolicy.existingPolicy)) (ne .Values.config.AUTH_MODE "oidc") }}
+{{- fail "pcai-proxy requires ezua routing, its SSO AuthorizationPolicy and AUTH_MODE=oidc" }}
+{{- end }}
+{{- range $name := list "issuerUrl" "jwksUrl" "portalUrl" }}
+{{- if not (regexMatch "^https://[^/?#@]+(/[^?#]*)?$" (index $.Values.auth.pcaiProxy $name)) }}
+{{- fail (printf "auth.pcaiProxy.%s must use HTTPS without credentials, query or fragment" $name) }}
+{{- end }}
+{{- end }}
+{{- if or (not (kindIs "slice" .Values.auth.pcaiProxy.audiences)) (empty .Values.auth.pcaiProxy.audiences) (empty (.Values.auth.pcaiProxy.authorizedParty | trim)) }}
+{{- fail "pcai-proxy requires nonempty audiences and authorizedParty matching the platform JWT" }}
+{{- end }}
+{{- range .Values.auth.pcaiProxy.audiences }}
+{{- if or (not (kindIs "string" .)) (empty (. | trim)) (contains "," .) }}
+{{- fail "auth.pcaiProxy.audiences must contain nonempty audience strings without commas" }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if eq .Values.auth.provider "oidc" }}
 {{- if not (regexMatch "^https://[^/?#@]+(/[^?#]*)?$" .Values.auth.oidc.issuerUrl) }}
@@ -16,7 +34,7 @@
 {{- if not (kindIs "string" $value) }}
 {{- fail (printf "config.%s must be a quoted string" $key) }}
 {{- end }}
-{{- if or (eq $key "AUTH_PROVIDER") (hasPrefix "OIDC_" $key) }}
+{{- if or (eq $key "AUTH_PROVIDER") (hasPrefix "OIDC_" $key) (hasPrefix "PCAI_SSO_" $key) }}
 {{- fail (printf "config.%s is generated; use auth settings" $key) }}
 {{- end }}
 {{- if has $key (list "FRONTEND_URL" "GOOGLE_OAUTH_POST_LOGIN_REDIRECT" "GOOGLE_OAUTH_REDIRECT_URI" "POSTGRES_HOST" "POSTGRES_PORT" "POSTGRES_DB" "POSTGRES_USER" "REDIS_URL" "BACKEND_INTERNAL_URL" "S3_ENDPOINT" "MINIO_ENDPOINT" "S3_PUBLIC_ENDPOINT" "S3_BUCKET_NAME" "S3_FORCE_PATH_STYLE" "OBJECT_STORE_PROVIDER" "AWS_REGION" "KNOWLEDGE_OCR_MODE" "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "NODE_EXTRA_CA_CERTS") }}

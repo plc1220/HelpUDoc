@@ -112,7 +112,15 @@ const backendEnvSchema = z.object({
       }),
     }),
   }),
-  authProvider: z.enum(['google', 'oidc']),
+  authProvider: z.enum(['google', 'oidc', 'pcai-proxy']),
+  pcaiSso: z.object({
+    issuerUrl: z.string().optional(),
+    jwksUrl: z.string().optional(),
+    audiences: z.array(z.string()),
+    authorizedParty: z.string().optional(),
+    displayName: z.string(),
+    portalUrl: z.string().optional(),
+  }),
   oidc: z.object({
     issuerUrl: z.string().optional(),
     clientId: z.string().optional(),
@@ -224,6 +232,14 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
       })(),
     },
     authProvider: backendEnvSchema.shape.authProvider.parse(trimEnv(e, 'AUTH_PROVIDER') || 'google'),
+    pcaiSso: {
+      issuerUrl: trimEnv(e, 'PCAI_SSO_ISSUER_URL'),
+      jwksUrl: trimEnv(e, 'PCAI_SSO_JWKS_URL'),
+      audiences: (trimEnv(e, 'PCAI_SSO_AUDIENCES') || '').split(',').map(value => value.trim()).filter(Boolean),
+      authorizedParty: trimEnv(e, 'PCAI_SSO_AUTHORIZED_PARTY'),
+      displayName: trimEnv(e, 'PCAI_SSO_DISPLAY_NAME') || 'PCAI',
+      portalUrl: trimEnv(e, 'PCAI_SSO_PORTAL_URL'),
+    },
     oidc: {
       issuerUrl: trimEnv(e, 'OIDC_ISSUER_URL'),
       clientId: trimEnv(e, 'OIDC_CLIENT_ID'),

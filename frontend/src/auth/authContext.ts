@@ -6,7 +6,7 @@ export interface AuthContextValue {
   loading: boolean;
   googleReady: boolean;
   googleError: string | null;
-  authProvider: 'google' | 'oidc';
+  authProvider: 'google' | 'oidc' | 'pcai-proxy';
   loginLabel: string;
   loginReady: boolean;
   loginError: string | null;

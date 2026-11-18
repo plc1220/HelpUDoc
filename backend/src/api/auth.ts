@@ -4,6 +4,7 @@ import { UserService, isUserDeactivated } from '../services/userService';
 import { GoogleOAuthService, GoogleOAuthConfigError, GOOGLE_OIDC_ISSUER } from '../services/googleOAuthService';
 import { OidcService, loginProvider } from '../services/oidcService';
 import oidcAuthRoutes from './oidcAuth';
+import { getBackendEnv } from '../config/env';
 
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
 
@@ -124,16 +125,13 @@ export default function authRoutes(userService: UserService, googleOAuthService:
     }
 
     try {
-      const codeVerifier = googleOAuthService.createPkceVerifier();
-      const codeChallenge = googleOAuthService.createPkceChallenge(codeVerifier);
-      const state = googleOAuthService.createStateToken();
       const returnTo = sanitizeReturnPath(typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined);
       const requestedExtras = typeof req.query.extraScopes === 'string'
         ? req.query.extraScopes.split(/[\s,]+/).filter(Boolean)
         : [];
       const calendarOnly = req.query.calendar === 'true';
       const identityOnly = req.query.identityOnly === 'true';
-      if (loginProvider() === 'oidc' && !calendarOnly && !requestedExtras.length) {
+      if (loginProvider() !== 'google' && !calendarOnly && !requestedExtras.length) {
         return res.status(400).json({ error: 'Use the configured single sign-on provider' });
       }
       if (identityOnly && (calendarOnly || requestedExtras.length)) return res.status(400).json({ error: 'Identity sign-in cannot request service permissions' });
@@ -146,6 +144,10 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       if (extraScopes.length && !req.userContext?.userId) {
         return res.status(401).json({ error: 'Sign in before connecting Google services' });
       }
+
+      const codeVerifier = googleOAuthService.createPkceVerifier();
+      const codeChallenge = googleOAuthService.createPkceChallenge(codeVerifier);
+      const state = googleOAuthService.createStateToken();
 
       const statePayload: StartState = {
         state,
@@ -261,7 +263,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         return res.redirect(302, target.toString());
       }
 
-      if (loginProvider() === 'oidc') {
+      if (loginProvider() !== 'google') {
         // Google service consent belongs to the already authenticated Keycloak
         // user; it must never replace the application login identity.
         if (!sessionState?.expectedUserId || sessionState.expectedUserId !== req.userContext?.userId
@@ -354,14 +356,27 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       authenticated: Boolean(user),
       authMode: authMode(),
       authProvider: loginProvider(),
-      loginConfigured: loginProvider() === 'oidc' ? oidcService.isConfigured() : googleOAuthService.isConfigured(),
-      loginLabel: loginProvider() === 'oidc' ? oidcService.displayName : 'Google',
+      loginConfigured: loginProvider() === 'pcai-proxy' || (loginProvider() === 'oidc' ? oidcService.isConfigured() : googleOAuthService.isConfigured()),
+      loginLabel: loginProvider() === 'pcai-proxy' ? getBackendEnv().pcaiSso.displayName : loginProvider() === 'oidc' ? oidcService.displayName : 'Google',
+      ...(res.locals.pcaiAuthError ? { loginError: res.locals.pcaiAuthError.message, loginErrorCode: res.locals.pcaiAuthError.code } : {}),
       googleConfigured: googleOAuthService.isConfigured(),
       user,
     });
   });
 
   router.post('/logout', async (req, res) => {
+    if (loginProvider() === 'pcai-proxy') {
+      // PCAI owns the SSO session. Leaving Lumo returns to the portal rather
+      // than promising a local logout while the proxy still authenticates requests.
+      const redirectUrl = getBackendEnv().pcaiSso.portalUrl;
+      if (!redirectUrl) return res.sendStatus(503);
+      if (req.headers.origin && req.headers.origin !== new URL(getBackendEnv().frontendUrl!).origin) return res.sendStatus(403);
+      if (req.session) {
+        await new Promise<void>((resolve, reject) => req.session.destroy(error => error ? reject(error) : resolve()));
+      }
+      res.clearCookie(sessionCookieName(), sessionCookieOptions);
+      return res.json({ success: true, redirectUrl });
+    }
     if (authMode() === 'headers') {
       res.clearCookie(sessionCookieName(), sessionCookieOptions);
       return res.status(200).json({ success: true });

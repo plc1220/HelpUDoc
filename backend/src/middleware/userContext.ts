@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserService, isUserDeactivated } from '../services/userService';
 import { UserContext } from '../types/user';
+import { pcaiProxyAuth } from './pcaiProxyAuth';
 
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
 
@@ -13,6 +14,10 @@ function resolveAuthMode(raw?: string): AuthMode {
 }
 
 export function userContextMiddleware(userService: UserService) {
+  if (process.env.AUTH_PROVIDER === 'pcai-proxy') {
+    if (process.env.AUTH_MODE !== 'oidc') throw new Error('PCAI proxy authentication requires AUTH_MODE=oidc');
+    return pcaiProxyAuth(userService);
+  }
   // This factory runs after the entrypoint loads ENV_FILE. Reading these values
   // at module evaluation time observes the pre-dotenv environment because ESM/
   // TypeScript imports are evaluated before the entrypoint body.

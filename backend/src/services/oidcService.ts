@@ -33,7 +33,8 @@ export function oidcExternalId(issuer: string, subject: string): string {
   return `oidc-${createHash('sha256').update(JSON.stringify([issuer, subject])).digest('hex')}`;
 }
 
-export const loginProvider = (): 'google' | 'oidc' => process.env.AUTH_PROVIDER === 'oidc' ? 'oidc' : 'google';
+export const loginProvider = (): 'google' | 'oidc' | 'pcai-proxy' =>
+  process.env.AUTH_PROVIDER === 'pcai-proxy' ? 'pcai-proxy' : process.env.AUTH_PROVIDER === 'oidc' ? 'oidc' : 'google';
 
 export class OidcService {
   private configuration?: Promise<oidc.Configuration>;

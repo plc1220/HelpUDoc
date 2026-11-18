@@ -80,63 +80,99 @@ the non-secret tracing URL/flag through `config` and add its keys to the existin
 Secret. Cloud research MCPs, Google Workspace MCP and Google OAuth/calendar
 integrations require explicit configuration and allowed connectivity.
 
-## Application login with PCAI Keycloak
+## Open Lumo with the existing PCAI sign-in
 
-Chart 0.2.0 defaults to `auth.provider: oidc` and a confidential OIDC client for
-PCAI's existing Keycloak realm. The application discovers the realm endpoints,
-uses Authorization Code + PKCE (S256), validates signed RS256 identity tokens,
-issuer, audience, expiry, state and nonce, then creates its normal server-side
-session. Opening HelpUDoc can reuse the user's existing Keycloak SSO session.
-PCAI's gateway policy remains an outer access-control layer.
+Chart 0.3.0 defaults to `auth.provider: pcai-proxy`, with PCAI's Istio route and
+CUSTOM AuthorizationPolicy enabled. A user opens Lumo from Tools & Frameworks;
+the platform's `oauth2-proxy` reuses the PCAI session (or prompts for platform
+sign-in), then forwards a signed JWT in the `Authorization: Bearer ...` header.
+Lumo's initial `/api/auth/me` request verifies it and opens the user's workspace
+without an application login prompt. No new Keycloak client, callback URI,
+client secret or Keycloak administrator login is needed for this mode.
 
-Ask the PCAI administrator to register a confidential client for HelpUDoc in the
-existing realm. Enable Standard Flow and PKCE S256, use client-secret
-authentication (`client_secret_post`), and register these exact URLs:
+This reuses the **local PCAI session**. A public GreenLake cloud portal session
+alone only provides SSO if the installation's identity federation connects it to
+the local PCAI realm.
 
-- Valid redirect URI: `https://<application-host>/api/auth/oidc/callback`
-- Valid post-logout redirect URI: `https://<application-host>/login`
+Set these `auth.pcaiProxy` values using the installed proxy's configuration:
 
-Obtain the exact **issuer** from the realm discovery document
-`<realm-issuer>/.well-known/openid-configuration`; do not infer its hostname or
-realm from the PCAI homepage. Set `auth.oidc.issuerUrl` and `auth.oidc.clientId`.
-The default scopes are only `openid email profile`. Include the standard name,
-email and `email_verified` claims in the ID token. Group/realm roles do not
-automatically grant HelpUDoc administrator permissions.
+| Value | Required setting |
+| --- | --- |
+| `issuerUrl` | Exact HTTPS `iss` of the forwarded token, including case-sensitive realm |
+| `jwksUrl` | HTTPS public signing-key URL for that realm; normally `<issuer>/protocol/openid-connect/certs` |
+| `audiences` | Nonempty list of accepted `aud` values for the token actually forwarded by this proxy |
+| `authorizedParty` | Exact `azp`, normally the existing browser client |
+| `portalUrl` | HTTPS PCAI home URL used by **Return to PCAI** |
+| `displayName` | User-facing name; defaults to PCAI |
 
-Provision `auth.oidc.existingSecret` (default `helpudoc-oidc`) with the key named
-by `auth.oidc.clientSecretKey` (default `client-secret`) in the selected application
-namespace. Only the backend login container reads that secret reference. Never
-put the client secret in values, the chart package, the frontend build or a
-ConfigMap. If using a private CA, provide `trust.configMap`; the backend's
-`NODE_EXTRA_CA_CERTS` trusts it without disabling TLS verification. Both the
-browser and backend must reach and trust the realm's advertised endpoints.
+The example realm `UA`, audience `ua`, authorized party `ua` and gateway/provider
+names are starting values, **not verified settings for the user's 1.12.1
+installation**. A proxy forwarding an access token may use a different `aud`
+from a proxy forwarding an ID token. Confirm the expected claims from platform
+configuration or an administrator's controlled inspection; never paste a token
+into chart values, chat, a public JWT decoder or logs. If issuer/audience/azp do
+not match, Lumo refuses access; do not disable the checks to make login succeed.
+Confirm the realm's discovery document and JWKS with the trusted site CA.
+Both endpoints are public metadata and require no client credential.
 
-Identity is keyed by the exact issuer plus case-sensitive subject. Existing
-HelpUDoc permissions remain attached to the corresponding user record; an email
-match does not automatically merge an existing Google account. Account migration
-needs an explicit administrator-controlled identity-linking process. A verified
-email can claim an existing pending invitation. Unverified emails cannot claim
-invitations or match `ADMIN_EMAILS`. `SIGNUP_MODE=invite_only` can restrict account
-admission; `ADMIN_EMAILS` remains the existing verified-email bootstrap mechanism.
+The backend verifies the RSA signature (RS256), exact issuer, audience,
+authorized party, required subject, expiry, not-before and issued-at time on
+**every browser API request**. JWKS retrieval has bounded timeouts and key
+caching. Missing, expired or invalid tokens cannot fall back to a Lumo session,
+Google login, `X-User-*` or `X-Auth-Request-*` headers. Browser Origin checks and
+CORS restrict requests to the configured Lumo origin, preventing another app from
+using the shared PCAI cookie to access Lumo. Tokens are not returned to
+the frontend or stored in Lumo sessions. Proxy JWTs are browser credentials;
+separately scoped agent callbacks keep their existing signed agent-token checks.
+The gateway preserves Authorization for `/api`; for bundled object storage it
+removes the injected Bearer header so RustFS can validate presigned S3 queries.
 
-`auth.oidc.logoutFromProvider: true` clears HelpUDoc's session and redirects to
-Keycloak logout, which can also end the user's shared PCAI SSO session. Set it to
-`false` for application-only sign-out. The provider must advertise an
-`end_session_endpoint` for SSO logout. A provider outage still permits local
-session destruction; server-side logout errors never expose token responses.
-Provider-initiated/back-channel logout and automatic realm-role synchronization
-are not implemented. Logging out in another PCAI tool does not immediately revoke
-an existing HelpUDoc session. Set `SESSION_TTL_SECONDS` for the site's session
-policy; HelpUDoc account deactivation still revokes application access.
+The backend uses the same exact issuer plus case-sensitive subject identity as
+direct OIDC, preserving permissions when switching modes for the same identity.
+A verified email can claim a pending invitation or match `ADMIN_EMAILS`;
+unverified emails cannot. `SIGNUP_MODE=invite_only` and Lumo account deactivation
+still apply. Existing Google accounts are not merged by matching email. PCAI
+realm groups do not automatically grant Lumo administrator roles.
 
-The frontend learns the provider and button label from `/api/auth/me`; Keycloak
-settings need no frontend build secrets. Backend CommonJS loading uses Node's
-native ESM support: Node 20.19+, 22.12+, or a later supported release is required.
+The gateway SSO policy remains responsible for the live PCAI session and cluster
+access revocation. Lumo requires a valid forwarded token on every request, but
+signature validation alone cannot detect a provider revocation before a token
+expires. Test revocation through the actual gateway. Keep the backend service
+private and apply the site's namespace/mesh network restrictions; do not expose
+an alternate route that bypasses the policy.
 
-To retain Google login, set `auth.provider: google`, supply the existing Google
-OAuth credentials, and register `/api/auth/google/callback`. Google service
-connections remain separately configured; Keycloak login requires no Google
-credentials. Do not enable `AUTH_MODE=headers` for this deployment.
+**Return to PCAI** clears Lumo's local session and returns to the configured home
+page. It deliberately keeps the shared PCAI sign-in active; opening Lumo again
+signs the user in automatically. Use PCAI's own sign-out to end that shared
+session. Lumo does not create a separate refresh-token or logout integration in
+proxy mode.
+
+The chart rejects proxy mode without a gateway SSO policy. If an administrator
+manages that policy outside this release, set
+`ezua.authorizationPolicy.enabled=false` and
+`ezua.authorizationPolicy.existingPolicy=<actual-policy-name>`. Verify that the
+named policy protects this exact hostname and delegates to the installed
+provider. Naming a policy is an operator assertion, not proof that it exists.
+Do not treat a successful Helm render as verification of gateway enforcement.
+
+### Optional standalone login modes
+
+`auth.provider: oidc` retains the previous confidential-client flow for a
+standalone deployment: Authorization Code + PKCE, signed RS256 ID token checks,
+state and nonce. Set the `auth.oidc` issuer/client fields, provision its separate
+backend-only Secret and register `/api/auth/oidc/callback` and `/login` as the
+post-logout URI. `auth.oidc.logoutFromProvider=true` can end the shared Keycloak
+session; provider back-channel logout and realm-role synchronization are not
+implemented in this mode. Google login remains available with
+`auth.provider: google` and its existing OAuth credentials.
+
+For generic Kubernetes routing, select one of those standalone providers and set
+`ezua.enabled=false`, `ezua.authorizationPolicy.enabled=false`, and
+`ingress.enabled=true`. Proxy mode requires PCAI routing. `AUTH_MODE=headers` is
+not supported by this chart. The frontend learns the provider from `/api/auth/me`
+with no build-time identity secrets. Google service consent remains separate
+from the user's primary identity. Backend Node 20.19+, 22.12+ or later is needed
+for native ESM library loading.
 
 ## Build and mirror images
 
@@ -147,13 +183,13 @@ confirm with the administrator).
 
 ```sh
 docker build --platform linux/amd64 -f backend/Dockerfile.gke \
-  -t <registry>/<project>/backend:pcai-oidc-v1 .
+  -t <registry>/<project>/backend:pcai-sso-v1 .
 docker build --platform linux/amd64 -f agent/Dockerfile.gke \
   --build-arg GIT_COMMIT="$(git rev-parse HEAD)" \
-  -t <registry>/<project>/agent:pcai-oidc-v1 .
+  -t <registry>/<project>/agent:pcai-sso-v1 .
 docker build --platform linux/amd64 -f frontend/Dockerfile.gke \
   --build-arg VITE_API_URL=/api --build-arg VITE_AUTH_MODE=oidc \
-  -t <registry>/<project>/frontend:pcai-oidc-v1 .
+  -t <registry>/<project>/frontend:pcai-sso-v1 .
 ```
 
 Push those images to the site registry. For restricted egress, mirror Caddy,
@@ -182,8 +218,9 @@ by `existingSecret` through the site's approved secret mechanism. Required keys:
 | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Required only when `auth.provider: google` |
 | `REDIS_URL` | Required when `redis.enabled=false`; include credentials/TLS as appropriate |
 
-Separately provision the OIDC Secret/key above when `auth.provider: oidc`.
-The Helm package never creates credentials or registers the Keycloak client.
+No OIDC client Secret is needed in the default `pcai-proxy` mode. Separately
+provision an OIDC Secret only when selecting standalone `auth.provider: oidc`.
+The Helm package never creates identity credentials or registers a client.
 
 With release `helpudoc`, bundled database connection:
 `postgresql://helpudoc:<URL-encoded-password>@helpudoc-postgres:5432/helpudoc`.
@@ -210,7 +247,7 @@ python -m unittest discover -s infra/helm/tests -v
 helm package infra/helm/helpudoc --destination /tmp/helpudoc-packages
 ```
 
-In **Tools & Frameworks → Import Framework**, upload `helpudoc-0.2.0.tgz`, set the
+In **Tools & Frameworks → Import Framework**, upload `helpudoc-0.3.0.tgz`, set the
 namespace and release name used above, and paste the private site override values.
 Keep `ezua.autoHelm=false`: this is a multi-service manual-integration chart.
 Some PCAI screens call the compressed chart a `tar.gz`; Helm's `.tgz` is the same
@@ -218,7 +255,8 @@ archive format. Rename only the extension if the upload picker requires it.
 
 If the installer cannot create an AuthorizationPolicy in `istio-system`, have
 the platform administrator apply that rendered resource separately, then set
-`ezua.authorizationPolicy.enabled=false` for the application installation. The
+`ezua.authorizationPolicy.enabled=false` and name it in
+`ezua.authorizationPolicy.existingPolicy` for the application installation. The
 gateway policy must be in place and tested before enabling user access.
 
 Alternatively, with an administrator-approved kubeconfig:
@@ -229,6 +267,12 @@ helm upgrade --install helpudoc infra/helm/helpudoc --namespace helpudoc \
 kubectl -n helpudoc get pods,pvc
 kubectl -n helpudoc logs deployment/helpudoc-app -c agent
 ```
+
+Before user access, verify that an existing PCAI session opens Lumo directly,
+that a fresh signed-out browser is sent to PCAI sign-in, that missing/forged/expired
+tokens cannot use the API, and that account switching and revocation work through
+the gateway. Confirm invite-only and deactivated users are blocked. Verify that
+Return to PCAI keeps the shared platform session active. Do not log raw JWTs.
 
 Validate TLS, PCAI gateway access, application login, one tool-using streamed
 conversation, native-text upload/download, Knowledge publication and persistence

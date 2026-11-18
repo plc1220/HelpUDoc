@@ -55,7 +55,7 @@ async function startServer() {
 
   app.use(helmet());
   app.use(cors({
-    origin: true,
+    origin: backendEnv.authProvider === 'pcai-proxy' ? new URL(backendEnv.frontendUrl!).origin : true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: [

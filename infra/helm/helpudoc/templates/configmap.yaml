@@ -11,6 +11,14 @@ data:
   {{- end }}
   FRONTEND_URL: {{ .Values.publicUrl | quote }}
   AUTH_PROVIDER: {{ .Values.auth.provider | quote }}
+  {{- if eq .Values.auth.provider "pcai-proxy" }}
+  PCAI_SSO_ISSUER_URL: {{ .Values.auth.pcaiProxy.issuerUrl | quote }}
+  PCAI_SSO_JWKS_URL: {{ .Values.auth.pcaiProxy.jwksUrl | quote }}
+  PCAI_SSO_AUDIENCES: {{ join "," .Values.auth.pcaiProxy.audiences | quote }}
+  PCAI_SSO_AUTHORIZED_PARTY: {{ .Values.auth.pcaiProxy.authorizedParty | quote }}
+  PCAI_SSO_DISPLAY_NAME: {{ .Values.auth.pcaiProxy.displayName | quote }}
+  PCAI_SSO_PORTAL_URL: {{ .Values.auth.pcaiProxy.portalUrl | quote }}
+  {{- end }}
   {{- if eq .Values.auth.provider "oidc" }}
   OIDC_ISSUER_URL: {{ .Values.auth.oidc.issuerUrl | quote }}
   OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId | quote }}

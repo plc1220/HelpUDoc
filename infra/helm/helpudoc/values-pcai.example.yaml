@@ -3,15 +3,16 @@
 publicUrl: https://helpudoc.pcai.example.com
 existingSecret: helpudoc-secrets
 auth:
-  provider: oidc
-  oidc:
-    # Obtain the exact realm issuer from the PCAI administrator/discovery document.
-    issuerUrl: https://keycloak.pcai.example.com/realms/site-realm
-    clientId: helpudoc
-    displayName: PCAI SSO
-    existingSecret: helpudoc-oidc
-    clientSecretKey: client-secret
-    logoutFromProvider: true
+  provider: pcai-proxy
+  pcaiProxy:
+    # Confirm issuer, aud and azp of the JWT forwarded by the installed proxy.
+    # 'ua' is a starting example for the browser client, not a verified site aud.
+    issuerUrl: https://keycloak.pcai.example.com/realms/UA
+    jwksUrl: https://keycloak.pcai.example.com/realms/UA/protocol/openid-connect/certs
+    audiences: [ua]
+    authorizedParty: ua
+    displayName: PCAI
+    portalUrl: https://home.pcai.example.com/home
 runtimeConfigMap: ""
 imagePullSecrets:
   - name: harbor-pull
@@ -31,10 +32,10 @@ persistence:
   storageClass: pcai-storage-class
 app:
   images:
-    backend: {repository: harbor.pcai.example.com/helpudoc/backend, tag: pcai-oidc-v1}
-    agent: {repository: harbor.pcai.example.com/helpudoc/agent, tag: pcai-oidc-v1}
+    backend: {repository: harbor.pcai.example.com/helpudoc/backend, tag: pcai-sso-v1}
+    agent: {repository: harbor.pcai.example.com/helpudoc/agent, tag: pcai-sso-v1}
 frontend:
-  image: {repository: harbor.pcai.example.com/helpudoc/frontend, tag: pcai-oidc-v1}
+  image: {repository: harbor.pcai.example.com/helpudoc/frontend, tag: pcai-sso-v1}
 model:
   base_url: https://nim.pcai.example.com/v1
   name: deployed-model-id

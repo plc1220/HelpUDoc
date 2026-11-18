@@ -6,7 +6,16 @@ existingSecret: helpudoc-secrets
 publicUrl: https://helpudoc.example.com
 
 auth:
-  provider: oidc  # oidc for PCAI Keycloak; google retains the existing login
+  provider: pcai-proxy  # PCAI-managed SSO; oidc/google retain standalone login
+  pcaiProxy:
+    issuerUrl: https://keycloak.pcai.example.com/realms/UA
+    jwksUrl: https://keycloak.pcai.example.com/realms/UA/protocol/openid-connect/certs
+    # Match the JWT forwarded in Authorization by this site's proxy. Never skip
+    # audience checking; some sites forward an access token with a different aud.
+    audiences: [ua]
+    authorizedParty: ua
+    displayName: PCAI
+    portalUrl: https://home.pcai.example.com/home
   oidc:
     issuerUrl: https://keycloak.pcai.example.com/realms/site-realm
     clientId: helpudoc
@@ -18,14 +27,17 @@ auth:
     logoutFromProvider: true
 
 ezua:
-  enabled: false
+  enabled: true
   autoHelm: false
   appName: helpudoc
   virtualService:
     endpoint: helpudoc.example.com
     istioGateway: istio-system/ezaf-gateway
   authorizationPolicy:
-    enabled: false
+    enabled: true
+    # When an administrator has already applied this host's SSO policy, set
+    # enabled=false and name that existing policy. It must still protect the host.
+    existingPolicy: ""
     namespace: istio-system
     providerName: oauth2-proxy
     matchLabels:
@@ -49,8 +61,8 @@ podLabels: {}
 # Recreate avoids simultaneous writers and RWO multi-attach on upgrades.
 app:
   images:
-    backend: {repository: helpudoc/backend, tag: pcai-oidc-v1, pullPolicy: IfNotPresent}
-    agent: {repository: helpudoc/agent, tag: pcai-oidc-v1, pullPolicy: IfNotPresent}
+    backend: {repository: helpudoc/backend, tag: pcai-sso-v1, pullPolicy: IfNotPresent}
+    agent: {repository: helpudoc/agent, tag: pcai-sso-v1, pullPolicy: IfNotPresent}
   resources:
     backend:
       requests: {cpu: 200m, memory: 384Mi}
@@ -67,7 +79,7 @@ app:
   agentEnv: []
 
 frontend:
-  image: {repository: helpudoc/frontend, tag: pcai-oidc-v1, pullPolicy: IfNotPresent}
+  image: {repository: helpudoc/frontend, tag: pcai-sso-v1, pullPolicy: IfNotPresent}
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}

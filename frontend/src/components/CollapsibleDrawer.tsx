@@ -36,6 +36,7 @@ interface CollapsibleDrawerProps {
   colorMode: PaletteMode;
   onToggleColorMode: () => void;
   onSignOut?: () => void;
+  signOutLabel?: string;
 }
 
 const drawerWidth = 280;
@@ -67,6 +68,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   colorMode,
   onToggleColorMode,
   onSignOut,
+  signOutLabel = 'Logout',
 }) => {
   const handleOpenSettingsClick = () => {
     handleDrawerClose();
@@ -94,7 +96,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
         <IconButton label={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} icon={colorMode === 'dark' ? <Sun size={18} /> : <Moon size={18} />} variant="ghost" onClick={onToggleColorMode} />
         {open && <NotificationCenter />}
         <IconButton label="Agent settings" icon={<Settings size={18} />} variant="ghost" onClick={handleOpenSettingsClick} />
-        {onSignOut && <IconButton label="Logout" icon={<LogOut size={18} />} variant="ghost" onClick={onSignOut} />}
+        {onSignOut && <IconButton label={signOutLabel} icon={<LogOut size={18} />} variant="ghost" onClick={onSignOut} />}
       </footer>
     </aside>
   </div>;

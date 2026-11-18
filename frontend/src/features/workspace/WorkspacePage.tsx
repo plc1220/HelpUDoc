@@ -935,7 +935,7 @@ export default function WorkspacePage() {
   const navigate = useNavigate();
   const notificationLocation = useLocation();
   const handledNotification = useRef<string | null>(null);
-  const { signOut, user: authUser } = useAuth();
+  const { signOut, authProvider, user: authUser } = useAuth();
   const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
@@ -2584,8 +2584,8 @@ export default function WorkspacePage() {
   const handleSignOut = useCallback(async () => {
     setDrawerOpen(false);
     await signOut();
-    navigate('/login', { replace: true });
-  }, [navigate, signOut]);
+    if (authProvider !== 'pcai-proxy') navigate('/login', { replace: true });
+  }, [authProvider, navigate, signOut]);
 
   const closeMention = useCallback(() => {
     setIsMentionOpen(false);
@@ -8648,6 +8648,7 @@ export default function WorkspacePage() {
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
           onSignOut={handleSignOut}
+          signOutLabel={authProvider === 'pcai-proxy' ? 'Return to PCAI' : 'Logout'}
         />
         <Box
           component="main"

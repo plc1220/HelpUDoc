@@ -83,7 +83,8 @@ class ChartTests(unittest.TestCase):
 
     def test_site_runtime_ca_and_static_storage(self):
         objects = render({"runtimeConfigMap": "site-runtime", "trust": {"configMap": "site-ca"},
-            "persistence": {"storageClass": "-"}, "ingress": {"enabled": True}})
+            "persistence": {"storageClass": "-"}, "ingress": {"enabled": True},
+            "auth": {"provider": "google"}, "ezua": {"enabled": False, "authorizationPolicy": {"enabled": False}}})
         self.assertTrue(any(o["kind"] == "Ingress" for o in objects))
         for obj in objects:
             if obj["kind"] == "PersistentVolumeClaim":
@@ -99,15 +100,15 @@ class ChartTests(unittest.TestCase):
             {"config": {"AUTH_MODE": "headers"}}, {"publicUrl": "http://helpudoc.example.com"},
             {"config": {"SANDBOX_INLINE_ENABLED": "true"}},
             {"auth": {"provider": "headers"}},
-            {"auth": {"oidc": {"issuerUrl": "http://keycloak.internal/realm"}}},
-            {"auth": {"oidc": {"existingSecret": ""}}},
+            {"auth": {"provider": "oidc", "oidc": {"issuerUrl": "http://keycloak.internal/realm"}}},
+            {"auth": {"provider": "oidc", "oidc": {"existingSecret": ""}}},
             {"config": {"OIDC_CLIENT_SECRET": "must-not-be-a-value"}},
             {"ezua": {"enabled": True, "virtualService": {"endpoint": "wrong.example.com"}}}]:
             with self.subTest(values=values):
                 self.assertNotEqual(render(values, fail=True).returncode, 0)
 
     def test_oidc_metadata_callbacks_and_backend_only_secret(self):
-        objects = render({"auth": {"oidc": {"issuerUrl": "https://sso.internal/realms/site",
+        objects = render({"auth": {"provider": "oidc", "oidc": {"issuerUrl": "https://sso.internal/realms/site",
             "clientId": "lumo", "existingSecret": "site-client", "clientSecretKey": "secret-key",
             "logoutFromProvider": False}}})
         env = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "helpudoc-env")["data"]
@@ -133,6 +134,50 @@ class ChartTests(unittest.TestCase):
         self.assertFalse(any(key.startswith("OIDC_") for key in env))
         app = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-app")
         self.assertFalse(any(e["name"] == "OIDC_CLIENT_SECRET" for c in app["spec"]["template"]["spec"]["containers"] for e in c["env"]))
+
+    def test_pcai_proxy_metadata_policy_and_presigned_uploads_need_no_client_secret(self):
+        objects = render({"auth": {"pcaiProxy": {"audiences": ["browser-app", "other-aud"],
+            "authorizedParty": "ua"}, "oidc": {"existingSecret": ""}}})
+        env = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "helpudoc-env")["data"]
+        self.assertEqual(env["AUTH_PROVIDER"], "pcai-proxy")
+        self.assertEqual(env["AUTH_MODE"], "oidc")
+        self.assertEqual(env["PCAI_SSO_AUDIENCES"], "browser-app,other-aud")
+        self.assertEqual(env["PCAI_SSO_AUTHORIZED_PARTY"], "ua")
+        self.assertEqual(env["PCAI_SSO_JWKS_URL"], "https://keycloak.pcai.example.com/realms/UA/protocol/openid-connect/certs")
+        self.assertFalse(any(key.startswith("OIDC_") for key in env))
+        app = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-app")
+        self.assertFalse(any(e["name"] == "OIDC_CLIENT_SECRET" for c in app["spec"]["template"]["spec"]["containers"] for e in c["env"]))
+        gateway = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "helpudoc-gateway")["data"]["Caddyfile"]
+        api_route, object_route = gateway.split("@objects", 1)
+        self.assertNotIn("header_up -Authorization", api_route)
+        self.assertIn("header_up -Authorization", object_route)
+        self.assertIn("header_up -X-User-Id", api_route)
+        policy = next(o for o in objects if o["kind"] == "AuthorizationPolicy")
+        self.assertEqual(policy["spec"]["provider"]["name"], "oauth2-proxy")
+        hosts = policy["spec"]["rules"][0]["to"][0]["operation"]["hosts"]
+        self.assertEqual(hosts, ["helpudoc.example.com", "helpudoc.example.com:*"])
+
+    def test_proxy_fails_without_policy_or_token_validation_settings(self):
+        for values in [
+            {"ezua": {"enabled": False}},
+            {"ezua": {"authorizationPolicy": {"enabled": False}}},
+            {"config": {"AUTH_MODE": "hybrid"}},
+            {"auth": {"pcaiProxy": {"audiences": []}}},
+            {"auth": {"pcaiProxy": {"audiences": [""]}}},
+            {"auth": {"pcaiProxy": {"audiences": ["ua,another"]}}},
+            {"auth": {"pcaiProxy": {"authorizedParty": ""}}},
+            {"auth": {"pcaiProxy": {"issuerUrl": "http://keycloak/realms/UA"}}},
+            {"auth": {"pcaiProxy": {"jwksUrl": "https://user:pass@keycloak/certs"}}},
+            {"auth": {"pcaiProxy": {"portalUrl": "https://home.example.com/?redirect=evil"}}},
+            {"config": {"PCAI_SSO_AUDIENCES": "bypass"}},
+        ]:
+            with self.subTest(values=values):
+                self.assertNotEqual(render(values, fail=True).returncode, 0)
+
+    def test_externally_applied_proxy_policy_is_an_explicit_dependency(self):
+        objects = render({"ezua": {"authorizationPolicy": {"enabled": False, "existingPolicy": "site-lumo-sso"}}})
+        self.assertTrue(any(o["kind"] == "VirtualService" for o in objects))
+        self.assertFalse(any(o["kind"] == "AuthorizationPolicy" for o in objects))
 
 
 if __name__ == "__main__":

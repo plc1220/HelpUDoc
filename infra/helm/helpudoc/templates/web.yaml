@@ -17,12 +17,20 @@ data:
         @api path /api /api/*
         reverse_proxy @api {{ include "helpudoc.fullname" . }}-app:3000 {
           header_up X-Forwarded-Proto https
+          header_up -X-User-Id
+          header_up -X-User-Name
+          header_up -X-User-Email
           flush_interval -1
         }
         {{- if .Values.objectStore.enabled }}
         @objects path /{{ .Values.objectStore.bucket }} /{{ .Values.objectStore.bucket }}/*
         reverse_proxy @objects {{ include "helpudoc.fullname" . }}-objects:9000 {
           header_up Host {http.request.host}
+          {{- if eq .Values.auth.provider "pcai-proxy" }}
+          # RustFS validates the presigned query; the proxy's Bearer token is
+          # not an S3 credential and conflicts with query authentication.
+          header_up -Authorization
+          {{- end }}
         }
         {{- end }}
         reverse_proxy {{ include "helpudoc.fullname" . }}-frontend:80

@@ -2,6 +2,6 @@ apiVersion: v2
 name: helpudoc
 description: HelpUDoc deployment for HPE GreenLake Private Cloud AI
 type: application
-version: 0.2.0
-appVersion: "0.2.0-pcai"
+version: 0.3.0
+appVersion: "0.3.0-pcai"
 kubeVersion: ">=1.26.0-0"

@@ -32,6 +32,7 @@
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "helmet": "^8.1.0",
+    "jose": "6.2.17",
     "knex": "^3.1.0",
     "multer": "^2.0.2",
     "openid-client": "6.9.0",

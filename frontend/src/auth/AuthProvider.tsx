@@ -8,9 +8,10 @@ type AuthMeResponse = {
   authenticated: boolean;
   authMode?: string;
   googleConfigured?: boolean;
-  authProvider?: 'google' | 'oidc';
+  authProvider?: 'google' | 'oidc' | 'pcai-proxy';
   loginConfigured?: boolean;
   loginLabel?: string;
+  loginError?: string;
   user?: {
     userId: string;
     externalId: string;
@@ -63,7 +64,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<AuthUser | null>(() => (authMode === 'oidc' ? null : getAuthUser()));
   const [loading, setLoading] = useState(authMode !== 'headers');
   const [googleError, setGoogleError] = useState<string | null>(null);
-  const [authProvider, setAuthProvider] = useState<'google' | 'oidc'>('google');
+  const [authProvider, setAuthProvider] = useState<'google' | 'oidc' | 'pcai-proxy'>('google');
   const [loginLabel, setLoginLabel] = useState('Google');
   const [loginConfigured, setLoginConfigured] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -94,12 +95,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const serverMode = normalizeAuthMode(payload.authMode);
       setAuthMode(serverMode);
       const googleIsConfigured = Boolean(payload.googleConfigured);
-      const provider = payload.authProvider === 'oidc' ? 'oidc' : 'google';
+      const provider = payload.authProvider === 'pcai-proxy' ? 'pcai-proxy' : payload.authProvider === 'oidc' ? 'oidc' : 'google';
       const configured = payload.loginConfigured ?? googleIsConfigured;
       setAuthProvider(provider);
-      setLoginLabel(payload.loginLabel || (provider === 'oidc' ? 'Single sign-on' : 'Google'));
+      setLoginLabel(payload.loginLabel || (provider === 'google' ? 'Google' : 'Single sign-on'));
       setLoginConfigured(configured);
-      setLoginError(serverMode !== 'headers' && !configured ? 'Sign-in is unavailable. Contact your administrator.' : null);
+      setLoginError(payload.loginError || (serverMode !== 'headers' && !configured ? 'Sign-in is unavailable. Contact your administrator.' : null));
       setGoogleError(
         serverMode !== 'headers' && !googleIsConfigured
           ? 'Google sign-in is unavailable (server OAuth is not configured).'
@@ -139,6 +140,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signIn = useCallback(async (returnTo?: string) => {
     if (authMode === 'headers') throw new Error('Single sign-on is disabled in development mode.');
     setLoginError(null);
+    if (authProvider === 'pcai-proxy') {
+      // A top-level navigation lets PCAI renew its own SSO session. No browser
+      // token storage or separate application OAuth client is needed.
+      const target = new URL(returnTo || '/', window.location.origin);
+      window.location.assign(target.origin === window.location.origin ? target.toString() : window.location.origin);
+      return;
+    }
     const url = new URL(`${API_URL}/auth/${authProvider === 'oidc' ? 'oidc' : 'google'}/start`, window.location.origin);
     if (returnTo) url.searchParams.set('returnTo', returnTo);
     window.location.assign(url.toString());

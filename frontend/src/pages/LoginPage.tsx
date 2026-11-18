@@ -124,11 +124,15 @@ const LoginPage = () => {
           <h2>{authMode === 'headers' ? 'Development sign-in' : 'Continue to your workspace'}</h2>
           <p>{authMode === 'headers'
             ? 'Use a local identity for this development environment.'
-            : authProvider === 'oidc' ? 'Sign in securely with your organization account.' : 'Sign in securely with your Google account.'}</p>
+            : authProvider === 'pcai-proxy' ? 'Use your PCAI sign-in to open Lumo Studio.'
+              : authProvider === 'oidc' ? 'Sign in securely with your organization account.' : 'Sign in securely with your Google account.'}</p>
         </div>
 
         {error ? (
           <Banner status="error" title="Sign-in needs attention" description={error} />
+        ) : null}
+        {authProvider === 'pcai-proxy' && loginError ? (
+          <Banner status="error" title="PCAI sign-in needs attention" description={loginError} />
         ) : null}
 
         {authMode === 'headers' ? (
@@ -165,7 +169,7 @@ const LoginPage = () => {
               onClick={() => void handleHeaderLogin()}
             />
           </div>
-        ) : loginError ? (
+        ) : loginError && authProvider !== 'pcai-proxy' ? (
           <Banner status="error" title="Sign-in is unavailable" description={loginError} />
         ) : (
           <Button

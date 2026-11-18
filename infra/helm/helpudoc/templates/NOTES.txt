@@ -7,6 +7,15 @@ Use the site registry images and provision Secret {{ .Values.existingSecret }}
 and a site runtime ConfigMap before installing. See the chart README.
 
 Application login provider: {{ .Values.auth.provider }}
+{{- if eq .Values.auth.provider "pcai-proxy" }}
+PCAI manages sign-in; no separate Keycloak client or client secret is required.
+Verify the forwarded JWT issuer, audience and authorized party against this site.
+The gateway's oauth2-proxy policy must protect the application hostname.
+{{- if .Values.ezua.authorizationPolicy.existingPolicy }}
+External policy dependency: {{ .Values.ezua.authorizationPolicy.existingPolicy }}
+{{- end }}
+Return to PCAI keeps the shared platform sign-in active.
+{{- end }}
 {{- if eq .Values.auth.provider "oidc" }}
 Register callback: {{ .Values.publicUrl }}/api/auth/oidc/callback
 Register post-logout redirect: {{ .Values.publicUrl }}/login
