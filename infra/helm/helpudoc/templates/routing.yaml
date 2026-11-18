@@ -11,7 +11,8 @@ spec:
   hosts: [{{ .Values.ezua.virtualService.endpoint | quote }}]
   http:
     - match: [{uri: {prefix: /}}]
-      timeout: 0s
+      # Omit timeout to preserve streaming without a request deadline. PCAI's
+      # installed CRD rejects an explicit zero duration.
       route:
         - destination:
             host: {{ include "helpudoc.fullname" . }}-gateway.{{ .Release.Namespace }}.svc.cluster.local

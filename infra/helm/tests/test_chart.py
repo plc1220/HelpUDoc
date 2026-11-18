@@ -60,6 +60,9 @@ class ChartTests(unittest.TestCase):
         objects = render(values, release="tenant-a", namespace="tenant-one")
         vs = next(o for o in objects if o["kind"] == "VirtualService")
         self.assertEqual(vs["spec"]["hosts"], [values["ezua"]["virtualService"]["endpoint"]])
+        # PCAI's installed CRD rejects zero durations. Istio defaults to no
+        # request timeout when this field is absent, preserving long streams.
+        self.assertNotIn("timeout", vs["spec"]["http"][0])
         destination = vs["spec"]["http"][0]["route"][0]["destination"]["host"]
         self.assertEqual(destination, "tenant-a-helpudoc-gateway.tenant-one.svc.cluster.local")
         policy = next(o for o in objects if o["kind"] == "AuthorizationPolicy")
