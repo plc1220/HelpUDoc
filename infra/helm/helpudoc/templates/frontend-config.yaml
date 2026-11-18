@@ -7,7 +7,8 @@ metadata:
     {{- include "helpudoc.labels" . | nindent 4 }}
 data:
   main.conf: |
-    worker_processes auto;
+    # Large PCAI nodes can report far more CPUs than this container's limit.
+    worker_processes 1;
     pid /tmp/nginx.pid;
     error_log /dev/stderr warn;
     events { worker_connections 1024; }
