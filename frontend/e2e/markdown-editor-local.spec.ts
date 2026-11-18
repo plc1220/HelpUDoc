@@ -46,7 +46,7 @@ async function setup(page: Page, baseURL: string, initialMarkdown = markdown) {
     import RefreshRuntime from '/@react-refresh'; RefreshRuntime.injectIntoGlobalHook(window); window.$RefreshReg$=()=>{}; window.$RefreshSig$=()=>type=>type; window.__vite_plugin_react_preamble_installed__=true;
     </script><style>body{margin:0}.editor-harness{height:100vh;display:flex;flex-direction:column;background:var(--color-background-surface);color:var(--color-text-primary)}.editor-harness header{padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--color-border-subtle)}.editor-harness header strong{flex:1}.editor-workspace{display:flex;flex:1;min-height:0}.editor-files{width:220px;flex-shrink:0;border-right:1px solid var(--color-border-subtle);padding:10px}.editor-document{flex:1;min-width:0}@media(max-width:600px){.editor-files{display:none}.editor-harness header{padding:8px;gap:6px;flex-wrap:wrap}.editor-harness header strong{font-size:12px;flex-basis:100%}}</style></head><body><div id="root"></div><script type="module">
     import React from '/node_modules/.vite/deps/react.js'; import ReactDOM from '/node_modules/.vite/deps/react-dom_client.js';
-    import {AppThemeRoot} from '/src/AppThemeRoot.tsx'; import FileEditor from '/src/components/FileEditor.tsx'; import FileRenderer from '/src/components/FileRenderer.tsx'; import WorkspaceFileTree from '/src/components/WorkspaceFileTree.tsx';
+    import {AppThemeRoot} from '/src/AppThemeRoot.tsx'; import FileEditor from '/src/components/FileEditor.tsx'; import FileRenderer from '/src/components/FileRenderer.tsx'; import WorkspaceFileTree from '/src/components/WorkspaceFileTree.tsx'; import WorkspaceFileDropZone from '/src/components/WorkspaceFileDropZone.tsx';
     import {Button} from '/node_modules/.vite/deps/@astryxdesign_core_Button.js'; import {applyColorModeToDocument} from '/src/colorMode.ts';
     import {getFileContent,updateFileContent} from '/src/services/fileApi.ts'; import '/src/index.css';
     const files=[{id:'41',name:'07_commercials.md',path:'07_commercials.md',mimeType:'text/markdown',version:1},{id:'42',name:'Project photo.jpg',path:'Project photo.jpg',mimeType:'image/jpeg',version:1}];
@@ -54,7 +54,7 @@ async function setup(page: Page, baseURL: string, initialMarkdown = markdown) {
     function Harness(){const [content,setContent]=React.useState(${JSON.stringify(initialMarkdown).replace(/</g, '\u003c')});const [mode,setMode]=React.useState('light');const [generation,setGeneration]=React.useState(0);const [dirty,setDirty]=React.useState(false);const [preview,setPreview]=React.useState(false);
       return React.createElement(AppThemeRoot,{},React.createElement('div',{className:'editor-harness'},
         React.createElement('header',{},React.createElement('strong',{},'07_commercials.md'),React.createElement(Button,{label:preview?'Edit file':'Preview file',variant:'secondary',size:'sm',onClick:()=>setPreview(value=>!value)}),React.createElement(Button,{label:'Toggle theme',variant:'tertiary',size:'sm',onClick:()=>{const next=mode==='light'?'dark':'light';applyColorModeToDocument(next);setMode(next)}}),React.createElement(Button,{label:'Reopen saved',variant:'secondary',size:'sm',onClick:async()=>{const saved=await getFileContent('markdown-editor','41');setContent(saved.content);setGeneration(n=>n+1);setDirty(false)}}),React.createElement(Button,{label:'Save',size:'sm',isDisabled:!dirty,onClick:async()=>{await updateFileContent('markdown-editor',41,content);setDirty(false)}})),
-        React.createElement('div',{className:'editor-workspace'},React.createElement('aside',{className:'editor-files','aria-label':'Workspace files'},React.createElement(WorkspaceFileTree,{files,colorMode:mode,selectedFileId:'41',selectedFiles:new Set(),copiedPublicUrlFileId:null,isDraftWorkspaceFile:()=>false,onSelectFile:file=>window.fileSelections.push(file.id),onToggleFileSelection:()=>{},onCopyPublicUrl:()=>{},onRenameFile:()=>{},onRenameFolder:()=>{},onDeleteFile:()=>{},onDeleteFolder:()=>{},onMoveFiles:(items,destination)=>window.fileMoves.push({items,destination}),onMoveFolder:()=>{}})),
+        React.createElement('div',{className:'editor-workspace'},React.createElement('aside',{className:'editor-files','aria-label':'Workspace files'},React.createElement(WorkspaceFileDropZone,{workspaceId:'markdown-editor',readOnly:false,onUploaded:async()=>{}},target=>React.createElement(WorkspaceFileTree,{uploadDropTargetPath:target,files,colorMode:mode,selectedFileId:'41',selectedFiles:new Set(),copiedPublicUrlFileId:null,isDraftWorkspaceFile:()=>false,onSelectFile:file=>window.fileSelections.push(file.id),onToggleFileSelection:()=>{},onCopyPublicUrl:()=>{},onRenameFile:()=>{},onRenameFolder:()=>{},onDeleteFile:()=>{},onDeleteFolder:()=>{},onMoveFiles:(items,destination)=>window.fileMoves.push({items,destination}),onMoveFolder:()=>{}}))),
           React.createElement('main',{className:'editor-document'},preview?React.createElement('section',{'aria-label':'File preview'},React.createElement(FileRenderer,{file:files[0],fileContent:content,workspaceId:'markdown-editor'})):React.createElement(FileEditor,{key:generation,file:files[0],fileContent:content,onContentChange:value=>{window.markdownChanges.push(value);setContent(value);setDirty(true)},workspaceId:'markdown-editor',colorMode:mode})))));}
     ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Harness));
     </script></body></html>` }));
@@ -130,7 +130,7 @@ test('Dragging a workspace photo inserts an embedded image without moving the so
   const { saves, requests } = await setup(page, baseURL!, '# Project overview\n\nDrop a project photo below.\n\nEnd of document.\n');
   const editor = page.getByRole('textbox', { name: 'editable markdown', exact: true });
   await expect(editor).toBeVisible();
-  await page.locator('[draggable="true"][title="Project photo.jpg"]').dragTo(editor.getByText('End of document.', { exact: true }), { targetPosition: { x: 1, y: 10 } });
+  await page.locator('[data-workspace-file-id="42"][draggable="true"]').dragTo(editor.getByText('End of document.', { exact: true }), { targetPosition: { x: 1, y: 10 } });
   const picture = editor.locator('img[src^="data:image/jpeg;base64,"]');
   await expect(picture).toBeVisible();
   expect(await picture.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
@@ -212,7 +212,7 @@ test('A failed workspace image fetch leaves the document and source file unchang
   }));
   const editor = page.getByRole('textbox', { name: 'editable markdown', exact: true });
   await expect(editor).toBeVisible();
-  await page.locator('[draggable="true"][title="Project photo.jpg"]').dragTo(editor.getByText('Keep every word here.', { exact: true }));
+  await page.locator('[data-workspace-file-id="42"][draggable="true"]').dragTo(editor.getByText('Keep every word here.', { exact: true }));
   await expect(page.getByRole('alert')).toContainText('Failed to fetch file content');
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   await expect(editor.locator('img')).toHaveCount(0);
@@ -234,7 +234,7 @@ test('Typing while an image loads keeps the new text and asks for a fresh insert
   const editor = page.getByRole('textbox', { name: 'editable markdown', exact: true });
   await expect(editor).toBeVisible();
   try {
-    await page.locator('[draggable="true"][title="Project photo.jpg"]').dragTo(editor.getByText('Keep every word here.', { exact: true }));
+    await page.locator('[data-workspace-file-id="42"][draggable="true"]').dragTo(editor.getByText('Keep every word here.', { exact: true }));
     await expect(page.getByText('Adding image…', { exact: true })).toBeVisible();
     await editor.getByText('Keep every word here.', { exact: true }).click();
     await page.keyboard.press('End');
@@ -252,7 +252,7 @@ test('Dragging a non-image file cannot insert its internal identifier into Markd
   await setup(page, baseURL!, original);
   const editor = page.getByRole('textbox', { name: 'editable markdown', exact: true });
   await expect(editor).toBeVisible();
-  await page.locator('[draggable="true"][title="07_commercials.md"]').dragTo(editor.getByText('Keep every word here.', { exact: true }));
+  await page.locator('[data-workspace-file-id="41"][draggable="true"]').dragTo(editor.getByText('Keep every word here.', { exact: true }));
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   expect(await page.evaluate(() => (window as unknown as { markdownChanges: string[] }).markdownChanges)).toEqual([]);
   // The native browser rejects a non-image move before drop. Also exercise the
@@ -269,7 +269,7 @@ test('Dragging a non-image file cannot insert its internal identifier into Markd
   await page.getByRole('button', { name: 'Markdown source', exact: true }).click();
   const sourceEditor = page.getByRole('textbox', { name: 'Markdown source', exact: true });
   await expect(sourceEditor).toHaveValue(original);
-  await page.locator('[draggable="true"][title="Project photo.jpg"]').dragTo(sourceEditor);
+  await page.locator('[data-workspace-file-id="42"][draggable="true"]').dragTo(sourceEditor);
   await expect(page.getByRole('alert')).toContainText('Switch to Write to insert an image.');
   await expect(sourceEditor).toHaveValue(original);
   expect(await page.evaluate(() => (window as unknown as { markdownChanges: string[] }).markdownChanges)).toEqual([]);

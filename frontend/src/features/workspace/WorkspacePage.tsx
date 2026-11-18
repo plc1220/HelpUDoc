@@ -1,5 +1,7 @@
 import NotificationCenter from '../../components/NotificationCenter';
 import WorkspaceNavigator from '../../components/WorkspaceNavigator';
+import WorkspaceFileDropZone from '../../components/WorkspaceFileDropZone';
+import { uploadWorkspaceBatch } from '../../utils/workspaceUploads';
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, type ChangeEvent } from 'react';
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -7734,14 +7736,6 @@ export default function WorkspacePage() {
     }
   };
 
-  const describeUploadFailure = (file: File, path: string | undefined, error: unknown) => {
-    const destination = path?.trim() || file.name || 'Untitled file';
-    const message = error instanceof Error && error.message.trim()
-      ? error.message.trim()
-      : 'Upload failed';
-    return `${destination}: ${message}`;
-  };
-
   const uploadWorkspaceFiles = async (
     filesToUpload: File[],
     getDestinationPath?: (file: File) => string | undefined,
@@ -7751,25 +7745,24 @@ export default function WorkspacePage() {
     }
 
     const workspaceId = selectedWorkspace.id;
-    const failures: string[] = [];
-    let uploadedCount = 0;
-
-    for (const file of filesToUpload) {
+    const uploads = filesToUpload.map(file => {
       const destinationPath = getDestinationPath?.(file);
-      if (getDestinationPath && !destinationPath) {
-        failures.push(describeUploadFailure(file, destinationPath, new Error('Missing destination path')));
-        continue;
-      }
-
-      try {
-        await createFile(workspaceId, file, destinationPath);
-        markPrivateWorkspaceChanged(workspaceId);
-        uploadedCount += 1;
-      } catch (error) {
-        console.error('Failed to upload workspace file:', error);
-        failures.push(describeUploadFailure(file, destinationPath, error));
-      }
-    }
+      return { file, path: destinationPath || (!getDestinationPath ? file.name : '') };
+    });
+    const result = await uploadWorkspaceBatch(
+      workspaceId,
+      {
+        files: uploads.filter(item => item.path),
+        folders: [],
+        failures: uploads
+          .filter(item => !item.path)
+          .map(item => ({ path: item.file.name, message: 'Missing destination path' })),
+      },
+      { createFile, createFolder },
+    );
+    const uploadedCount = result.uploadedFiles;
+    const failures = result.failures.map(item => `${item.path}: ${item.message}`);
+    if (uploadedCount > 0) markPrivateWorkspaceChanged(workspaceId);
 
     if (uploadedCount > 0 && selectedWorkspaceIdRef.current === workspaceId) {
       await loadFilesForWorkspace(workspaceId);
@@ -9302,39 +9295,52 @@ export default function WorkspacePage() {
                         value={fileStatusFilter}
                         onChange={setFileStatusFilter}
                       />
-                      <WorkspaceFileTree
-                        fileStatusById={fileStatusById}
-                        workspaceId={selectedWorkspace?.id}
-                        onStatusChanged={() => {
-                          if (selectedWorkspace) void loadFilesForWorkspace(selectedWorkspace.id);
-                        }}
-                        files={statusFilteredFiles}
-                        folderPaths={visibleFolderPaths}
-                        colorMode={colorMode}
-                        selectedFileId={selectedFile?.id || null}
-                        selectedDashboardPath={selectedDashboardPath}
-                        selectedFiles={selectedFiles}
-                        copiedPublicUrlFileId={copiedPublicUrlFileId}
-                        dashboardArtifactsByPath={dashboardArtifactsByPath}
+                      <WorkspaceFileDropZone
+                        key={selectedWorkspace?.id || 'none'}
+                        workspaceId={selectedWorkspace?.id || ''}
                         readOnly={!canMutateContent}
-                        isDraftWorkspaceFile={isDraftWorkspaceFile}
-                        onSelectFile={(file) => {
-                          setIsCalendarCanvas(false);
-                          setSelectedFile(file);
-                          setSelectedFileDetails(null);
-                          setFileContent('');
-                          setIsEditMode(canMutateContent && shouldForceEditMode(file.name));
+                        onUploaded={async workspaceId => {
+                          markPrivateWorkspaceChanged(workspaceId);
+                          if (selectedWorkspaceIdRef.current === workspaceId) await loadFilesForWorkspace(workspaceId);
                         }}
-                        onSelectFolder={handleDashboardFolderSelect}
-                        onToggleFileSelection={handleFileSelect}
-                        onCopyPublicUrl={handleCopyFilePublicUrl}
-                        onRenameFile={handleRenameFile}
-                        onRenameFolder={handleRenameFolder}
-                        onDeleteFile={handleDeleteSingleFile}
-                        onDeleteFolder={handleDeleteFolder}
-                        onMoveFiles={handleMoveFiles}
-                        onMoveFolder={handleMoveFolder}
-                      />
+                      >
+                        {uploadDropTargetPath => (
+                          <WorkspaceFileTree
+                            uploadDropTargetPath={uploadDropTargetPath}
+                            fileStatusById={fileStatusById}
+                            workspaceId={selectedWorkspace?.id}
+                            onStatusChanged={() => {
+                              if (selectedWorkspace) void loadFilesForWorkspace(selectedWorkspace.id);
+                            }}
+                            files={statusFilteredFiles}
+                            folderPaths={visibleFolderPaths}
+                            colorMode={colorMode}
+                            selectedFileId={selectedFile?.id || null}
+                            selectedDashboardPath={selectedDashboardPath}
+                            selectedFiles={selectedFiles}
+                            copiedPublicUrlFileId={copiedPublicUrlFileId}
+                            dashboardArtifactsByPath={dashboardArtifactsByPath}
+                            readOnly={!canMutateContent}
+                            isDraftWorkspaceFile={isDraftWorkspaceFile}
+                            onSelectFile={(file) => {
+                              setIsCalendarCanvas(false);
+                              setSelectedFile(file);
+                              setSelectedFileDetails(null);
+                              setFileContent('');
+                              setIsEditMode(canMutateContent && shouldForceEditMode(file.name));
+                            }}
+                            onSelectFolder={handleDashboardFolderSelect}
+                            onToggleFileSelection={handleFileSelect}
+                            onCopyPublicUrl={handleCopyFilePublicUrl}
+                            onRenameFile={handleRenameFile}
+                            onRenameFolder={handleRenameFolder}
+                            onDeleteFile={handleDeleteSingleFile}
+                            onDeleteFolder={handleDeleteFolder}
+                            onMoveFiles={handleMoveFiles}
+                            onMoveFolder={handleMoveFolder}
+                          />
+                        )}
+                      </WorkspaceFileDropZone>
                     </div>
                   </div>
                 </div>

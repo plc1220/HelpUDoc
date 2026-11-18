@@ -96,6 +96,7 @@ interface WorkspaceFileTreeProps {
   workspaceId?: string;
   onStatusChanged?: () => void;
   readOnly?: boolean;
+  uploadDropTargetPath?: string | null;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
   onSelectFolder?: (folderPath: string) => void;
@@ -717,6 +718,7 @@ export default function WorkspaceFileTree({
   workspaceId,
   onStatusChanged,
   readOnly = false,
+  uploadDropTargetPath = null,
   isDraftWorkspaceFile,
   onSelectFile,
   onSelectFolder,
@@ -907,7 +909,7 @@ export default function WorkspaceFileTree({
               setDraggedFolderPath,
               setDraggedFileId,
               setDropTargetPath,
-              dropTargetPath,
+              dropTargetPath: uploadDropTargetPath ?? dropTargetPath,
               colorMode,
               readOnly,
             })}
