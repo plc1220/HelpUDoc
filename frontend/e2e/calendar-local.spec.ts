@@ -40,7 +40,7 @@ async function setup(page: Page, baseURL: string, mobile = false, secondMeeting 
   return { calls, event, setConflict: (value: boolean) => { conflict = value; } };
 }
 
-test('Calendar uses Astryx and Cozy Owl; direct edits preserve draft on conflict', async ({ page, baseURL }, info) => {
+test('Calendar uses the original Astryx colors; direct edits preserve draft on conflict', async ({ page, baseURL }, info) => {
   test.skip(!baseURL?.startsWith('http://127.0.0.1:'), 'Local Vite required');
   await page.setViewportSize({ width: 1440, height: 1000 });
   const state = await setup(page, baseURL!);
@@ -48,7 +48,7 @@ test('Calendar uses Astryx and Cozy Owl; direct edits preserve draft on conflict
   await expect(page.getByRole('heading', { name: 'Related files' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Revised proposal' })).toBeVisible();
   const color = await page.locator('.calendar-workspace').evaluate(el => ({ background: getComputedStyle(el).backgroundColor, text: getComputedStyle(el).color }));
-  expect(color).toEqual({ background: 'rgb(249, 238, 217)', text: 'rgb(66, 42, 30)' });
+  expect(color).toEqual({ background: 'rgb(255, 255, 255)', text: 'rgb(10, 19, 23)' });
   await page.screenshot({ path: info.outputPath('calendar-week-light.png'), fullPage: true });
   await page.getByRole('button', { name: 'Edit event', exact: true }).click();
   await page.getByRole('textbox', { name: 'Title Required', exact: true }).fill('Revised customer review');
@@ -69,10 +69,9 @@ test('Calendar uses Astryx and Cozy Owl; direct edits preserve draft on conflict
   expect(await page.evaluate(() => (window as unknown as { agentEventRef: string }).agentEventRef)).toBe('meeting:test');
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('helpudoc-color-mode-change', { detail: 'dark' })));
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  const dark = await page.locator('.calendar-workspace').evaluate(el => getComputedStyle(el).backgroundColor);
-  expect(dark).toBe('rgb(30, 20, 16)');
-  await expect(page.locator('.calendar-event-meeting').first()).toHaveCSS('background-color', 'rgb(30, 20, 16)');
-  await expect(page.locator('.calendar-event-meeting').first()).toHaveCSS('color', 'rgb(249, 238, 217)');
+  await expect(page.locator('.calendar-workspace')).toHaveCSS('background-color', 'rgb(31, 31, 34)');
+  await expect(page.locator('.calendar-event-meeting').first()).toHaveCSS('background-color', 'rgb(31, 31, 34)');
+  await expect(page.locator('.calendar-event-meeting').first()).toHaveCSS('color', 'rgb(223, 226, 229)');
   await page.screenshot({ path: info.outputPath('calendar-week-dark.png'), fullPage: true, animations: 'disabled' });
 });
 
@@ -126,8 +125,8 @@ test('Workspace calendar opens from existing navigation and occupies the center 
   await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click();
   await page.getByRole('button', { name: 'Close workspace menu', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(page.locator('.calendar-event-meeting').first()).toHaveCSS('background-color', 'rgb(30, 20, 16)');
-  await expect(page.getByRole('heading', { name: 'Files', exact: true })).toHaveCSS('color', 'rgb(249, 238, 217)');
+  await expect(page.locator('.calendar-event-meeting').first()).toHaveCSS('background-color', 'rgb(31, 31, 34)');
+  await expect(page.getByRole('heading', { name: 'Files', exact: true })).toHaveCSS('color', 'rgb(241, 245, 249)');
   await page.screenshot({ path: info.outputPath('calendar-workspace-canvas-dark.png'), fullPage: true, animations: 'disabled' });
   expect(errors).toEqual([]);
 });

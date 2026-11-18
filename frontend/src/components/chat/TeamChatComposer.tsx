@@ -145,7 +145,7 @@ export default function TeamChatComposer({ options, disabled, sending, reply, on
     if (event.key === 'Enter' && !event.shiftKey && !category) { event.preventDefault(); void send(); }
   };
   return <div className="relative space-y-2">
-    {open && <div className="absolute bottom-full left-0 z-40 mb-2 max-h-72 w-full overflow-y-auto rounded-xl border border-slate-500/40 bg-[var(--surface,var(--owl-espresso))] p-2 shadow-xl">
+    {open && <div className="absolute bottom-full left-0 z-40 mb-2 max-h-72 w-full overflow-y-auto rounded-xl border border-slate-500/40 bg-[var(--surface,#172033)] p-2 shadow-xl">
       {category && <input autoFocus aria-label={`Search ${category}`} placeholder={`Search ${category}`} value={search} onChange={(e) => { setSearch(e.target.value); setActive(0); }} onKeyDown={keyDown} className="mb-2 w-full rounded border border-slate-500 bg-transparent p-2" />}
       <div id="team-reference-options" role="listbox" aria-label="People, files and skills">
         {!results.length && <p className="p-2 text-sm">No matching {category || 'references'}.</p>}
@@ -165,7 +165,7 @@ export default function TeamChatComposer({ options, disabled, sending, reply, on
     </span>)}</div>}
     <div className="flex items-center gap-2">
       <button type="button" aria-label="Add people, files or skills" aria-expanded={menu} disabled={disabled || sending} onClick={() => setMenu(!menu)} className="rounded-lg border border-slate-500/40 p-2"><Plus size={16} /></button>
-      {menu && <div className="absolute bottom-14 left-0 z-40 flex w-full gap-2 rounded-xl border border-slate-500/40 bg-[var(--surface,var(--owl-espresso))] p-2 shadow-xl" aria-label="Add reference">{(['people', 'files', 'skills'] as const).map((group) => <button type="button" key={group} className="rounded px-2 py-1 text-xs hover:bg-blue-500/20" onClick={() => { setCategory(group); setMenu(false); setSearch(''); setActive(0); }}>{group[0].toUpperCase() + group.slice(1)}</button>)}</div>}
+      {menu && <div className="absolute bottom-14 left-0 z-40 flex w-full gap-2 rounded-xl border border-slate-500/40 bg-[var(--surface,#172033)] p-2 shadow-xl" aria-label="Add reference">{(['people', 'files', 'skills'] as const).map((group) => <button type="button" key={group} className="rounded px-2 py-1 text-xs hover:bg-blue-500/20" onClick={() => { setCategory(group); setMenu(false); setSearch(''); setActive(0); }}>{group[0].toUpperCase() + group.slice(1)}</button>)}</div>}
       <span className="min-w-0 flex-1 text-[10px] opacity-65"><AtSign size={12} className="inline" /> mentions · / skills<br />Shift+Enter for a new line</span>
       <button type="button" data-testid="composer-send" disabled={disabled || sending || !text.trim()} onClick={() => void send()} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white disabled:opacity-40"><Send size={14} />{sending ? 'Sending…' : sendLabel || (reply ? 'Reply' : 'Send')}</button>
     </div>

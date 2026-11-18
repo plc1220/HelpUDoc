@@ -8,6 +8,8 @@ import { ConversationService } from '../../services/conversationService';
 import type { KnowledgeService } from '../../services/knowledgeService';
 import { registerRunRoutes } from './runs';
 import { registerSlashRoutes } from './slash';
+import { registerPromptSuggestionRoute } from './promptSuggestion';
+import { registerWorkspaceStarterPromptsRoute } from './workspaceStarterPrompts';
 
 export default function(
   workspaceService: WorkspaceService,
@@ -19,6 +21,9 @@ export default function(
   calendarService?: CalendarService,
 ) {
   const router = Router();
+
+  registerPromptSuggestionRoute(router);
+  registerWorkspaceStarterPromptsRoute(router, workspaceService, fileService, conversationService);
 
   registerSlashRoutes(router, workspaceService, userService);
   registerRunRoutes(

@@ -1,4 +1,3 @@
-import { PALETTE } from './palette';
 import { createTheme, type PaletteMode } from '@mui/material/styles';
 
 export {
@@ -14,12 +13,12 @@ export {
  */
 export const buildAppTheme = (mode: PaletteMode) => {
   const isDark = mode === 'dark';
-  const background = isDark ? PALETTE.espresso : PALETTE.cream;
-  const surface = isDark ? PALETTE.cocoa : PALETTE.cream;
-  const textPrimary = isDark ? PALETTE.cream : PALETTE.cocoa;
-  const textSecondary = isDark ? PALETTE.taupe : PALETTE.cocoa;
-  const divider = PALETTE.gold;
-  const accent = PALETTE.amber;
+  const background = isDark ? '#1b1b1b' : '#f1f1f1';
+  const surface = isDark ? '#262626' : '#ffffff';
+  const textPrimary = isDark ? '#fafafa' : '#171717';
+  const textSecondary = isDark ? '#a3a3a3' : '#737373';
+  const divider = isDark ? 'rgba(255, 255, 255, 0.10)' : '#ebebeb';
+  const accent = isDark ? '#ebebeb' : '#262626';
 
   return createTheme({
     palette: {

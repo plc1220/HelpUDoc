@@ -24,3 +24,30 @@
 .canvas-annotations-list-row > :first-child {
   margin-block-start: var(--spacing-3);
 }
+.canvas-annotations-controls {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--spacing-2);
+}
+
+.canvas-annotations-comments-action {
+  position: relative;
+  display: inline-flex;
+}
+
+.canvas-annotations-count {
+  position: absolute;
+  inset-block-start: -0.125rem;
+  inset-inline-end: -0.25rem;
+  min-width: 1rem;
+  padding-inline: 0.2rem;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--color-on-accent);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1rem;
+  text-align: center;
+  pointer-events: none;
+}

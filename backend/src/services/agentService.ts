@@ -1,4 +1,5 @@
 import axios from "axios";
+import { z } from 'zod';
 import type { AxiosResponse } from "axios";
 import type { IncomingMessage } from "http";
 
@@ -330,6 +331,42 @@ export async function resumeAgentActionStream(
 export type InternalAnalyzeResponse = {
   text: string;
 };
+
+export type PromptSuggestionMessage = { role: 'user' | 'assistant'; content: string };
+
+export type WorkspaceStarterContext = {
+  name: string;
+  readOnly: boolean;
+  files: Array<{ name: string; mimeType: string }>;
+  recentTopics: string[];
+};
+export const starterPromptsSchema = z.object({
+  prompts: z.array(z.object({
+    label: z.string().trim().min(1).max(48),
+    prompt: z.string().trim().min(1).max(600),
+  }).strict()).min(2).max(4),
+}).strict().refine(({ prompts }) => new Set(prompts.map(item => item.label.toLowerCase())).size === prompts.length);
+export type StarterPrompt = { label: string; prompt: string };
+
+export async function suggestWorkspaceStarterPrompts(context: WorkspaceStarterContext, authToken: string) {
+  const result = await client.post('/internal/workspace-starter-prompts', context, {
+    headers: { Authorization: `Bearer ${authToken}` }, timeout: 20000, maxContentLength: 16384,
+  });
+  return starterPromptsSchema.parse(result.data);
+}
+
+export async function suggestFollowUpPrompt(
+  messages: PromptSuggestionMessage[],
+  authToken: string,
+): Promise<{ suggestion: string }> {
+  const result = await client.post('/internal/prompt-suggestion', { messages }, {
+    headers: { Authorization: `Bearer ${authToken}` },
+    timeout: 20000,
+    maxContentLength: 8192,
+  });
+  const suggestion = result.data?.suggestion;
+  return { suggestion: typeof suggestion === 'string' && suggestion.length <= 500 ? suggestion.trim() : '' };
+}
 
 export async function runInternalAnalysis(
   payload: {
