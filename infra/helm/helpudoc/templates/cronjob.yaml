@@ -1,0 +1,51 @@
+{{- if .Values.dailyReflection.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "helpudoc.fullname" . }}-reflection
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.dailyReflection.schedule | quote }}
+  timeZone: {{ .Values.dailyReflection.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            {{- include "helpudoc.podLabels" (dict "root" . "component" "reflection") | nindent 12 }}
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          {{- include "helpudoc.scheduling" . | nindent 10 }}
+          containers:
+            - name: reflection
+              image: {{ include "helpudoc.image" .Values.app.images.backend | quote }}
+              imagePullPolicy: {{ .Values.app.images.backend.pullPolicy }}
+              command: [npm, run, "generate:daily-reflection"]
+              envFrom:
+                {{- include "helpudoc.envFrom" . | nindent 16 }}
+              env:
+                - {name: NODE_ENV, value: production}
+                - {name: AGENT_URL, value: "http://{{ include "helpudoc.fullname" . }}-app:8001"}
+              resources:
+                {{- toYaml .Values.dailyReflection.resources | nindent 16 }}
+              {{- if .Values.trust.configMap }}
+              volumeMounts:
+                - {name: site-ca, mountPath: /etc/helpudoc-ca, readOnly: true}
+              {{- end }}
+          {{- if .Values.trust.configMap }}
+          volumes:
+            - name: site-ca
+              configMap:
+                name: {{ .Values.trust.configMap }}
+                items:
+                  - {key: {{ .Values.trust.key | quote }}, path: ca-bundle.crt}
+          {{- end }}
+{{- end }}

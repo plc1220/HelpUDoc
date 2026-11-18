@@ -86,6 +86,11 @@ class ToolFactory:
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
         tools: List[Tool] = []
         for name in tool_names:
+            if self.settings.model.provider == "openai-compatible" and name in {
+                "google_search", "url_context", "image_generation", "export_bigquery_query"
+            }:
+                logger.info("Skipping cloud-only tool '%s' for private inference", name)
+                continue
             config = self.settings.get_tool(name)
             try:
                 built = self._build_tool(config, workspace_state)

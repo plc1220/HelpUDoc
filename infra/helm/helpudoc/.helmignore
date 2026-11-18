@@ -1,0 +1,4 @@
+.git/
+tests/
+*.tgz
+values-*.local.yaml

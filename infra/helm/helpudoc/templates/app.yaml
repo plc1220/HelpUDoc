@@ -1,0 +1,196 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "helpudoc.fullname" . }}-app
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      {{- include "helpudoc.selector" (dict "root" . "component" "app") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "helpudoc.podLabels" (dict "root" . "component" "app") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "helpudoc.scheduling" . | nindent 6 }}
+      initContainers:
+        - name: seed-runtime-assets
+          image: {{ include "helpudoc.image" .Values.app.images.agent | quote }}
+          imagePullPolicy: {{ .Values.app.images.agent.pullPolicy }}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              for asset in skills plugins; do
+                if [ ! -e /seed/$asset/.helpudoc-seeded ]; then
+                  cp -an /app/$asset-source/. /seed/$asset/
+                  touch /seed/$asset/.helpudoc-seeded
+                fi
+              done
+              if [ ! -e /seed/config/runtime.yaml ]; then
+                cp /default/runtime.yaml /seed/config/runtime.yaml
+              fi
+          volumeMounts:
+            - {name: skills, mountPath: /seed/skills}
+            - {name: plugins, mountPath: /seed/plugins}
+            - {name: config, mountPath: /seed/config}
+            - {name: default-runtime, mountPath: /default, readOnly: true}
+        - name: wait-for-database
+          image: {{ include "helpudoc.image" .Values.postgres.image | quote }}
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          envFrom:
+            {{- include "helpudoc.envFrom" . | nindent 12 }}
+          command: [/bin/sh, -ec]
+          args:
+            - 'until pg_isready -d "$DATABASE_URL"; do sleep 3; done'
+          {{- if .Values.trust.configMap }}
+          volumeMounts:
+            - {name: site-ca, mountPath: /etc/helpudoc-ca, readOnly: true}
+          {{- end }}
+        {{- if .Values.objectStore.enabled }}
+        - name: ensure-private-bucket
+          image: {{ include "helpudoc.image" .Values.app.images.backend | quote }}
+          imagePullPolicy: {{ .Values.app.images.backend.pullPolicy }}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 200m, memory: 256Mi}
+          envFrom:
+            {{- include "helpudoc.envFrom" . | nindent 12 }}
+          command: [node, -e]
+          args:
+            - |
+              const {S3Client, HeadBucketCommand, CreateBucketCommand, DeleteBucketPolicyCommand} = require('@aws-sdk/client-s3');
+              const client = new S3Client({endpoint: process.env.S3_ENDPOINT, region: process.env.AWS_REGION, forcePathStyle: true});
+              const Bucket = process.env.S3_BUCKET_NAME;
+              (async () => {
+                for (let attempt = 0; attempt < 120; attempt++) {
+                  try {
+                    try { await client.send(new HeadBucketCommand({Bucket})); }
+                    catch (e) {
+                      if (e.$metadata?.httpStatusCode !== 404) throw e;
+                      await client.send(new CreateBucketCommand({Bucket}));
+                    }
+                    await client.send(new DeleteBucketPolicyCommand({Bucket}));
+                    return;
+                  } catch (e) {
+                    if (attempt === 119) throw e;
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                  }
+                }
+              })().catch(e => { console.error(e); process.exit(1); });
+          {{- if .Values.trust.configMap }}
+          volumeMounts:
+            - {name: site-ca, mountPath: /etc/helpudoc-ca, readOnly: true}
+          {{- end }}
+        {{- end }}
+      containers:
+        {{- range $role := list "backend" "worker" "agent" }}
+        {{- $image := $.Values.app.images.backend }}
+        {{- if eq $role "agent" }}{{ $image = $.Values.app.images.agent }}{{ end }}
+        - name: {{ $role }}
+          image: {{ include "helpudoc.image" $image | quote }}
+          imagePullPolicy: {{ $image.pullPolicy }}
+          {{- if eq $role "worker" }}
+          command: [npm, run, "worker:knowledge"]
+          {{- else }}
+          ports:
+            - name: {{ $role }}
+              containerPort: {{ ternary 8001 3000 (eq $role "agent") }}
+          startupProbe:
+            httpGet: {path: {{ ternary "/health" "/api/health" (eq $role "agent") }}, port: {{ $role }}}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 120
+          readinessProbe:
+            httpGet: {path: {{ ternary "/ready" "/api/health" (eq $role "agent") }}, port: {{ $role }}}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: {{ ternary "/health" "/api/health" (eq $role "agent") }}, port: {{ $role }}}
+            periodSeconds: 30
+            timeoutSeconds: 3
+          {{- end }}
+          resources:
+            {{- toYaml (index $.Values.app.resources $role) | nindent 12 }}
+          envFrom:
+            {{- include "helpudoc.envFrom" $ | nindent 12 }}
+          env:
+            {{- include "helpudoc.appEnv" $ | nindent 12 }}
+            - name: PORT
+              value: {{ ternary "8001" "3000" (eq $role "agent") | quote }}
+            - name: AGENT_URL
+              value: http://localhost:8001
+            {{- with index $.Values.app (printf "%sEnv" $role) }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - {name: workspace, mountPath: /app/workspaces}
+            - {name: skills, mountPath: /app/skills}
+            - {name: plugins, mountPath: /app/plugins}
+            - {name: config, mountPath: /agent/config}
+            {{- if eq $role "agent" }}
+            - {name: skills, mountPath: /skills}
+            - {name: plugins, mountPath: /plugins}
+            {{- end }}
+            {{- if $.Values.runtimeConfigMap }}
+            - name: runtime-override
+              mountPath: /agent/config/runtime.yaml
+              subPath: runtime.yaml
+              readOnly: true
+            {{- end }}
+            {{- if $.Values.trust.configMap }}
+            - {name: site-ca, mountPath: /etc/helpudoc-ca, readOnly: true}
+            {{- end }}
+        {{- end }}
+      volumes:
+        - name: default-runtime
+          configMap:
+            name: {{ include "helpudoc.fullname" . }}-runtime-default
+        {{- range $name := list "workspace" "skills" "plugins" "config" }}
+        - name: {{ $name }}
+          persistentVolumeClaim:
+            claimName: {{ include "helpudoc.claim" (dict "root" $ "name" $name) }}
+        {{- end }}
+        {{- if .Values.runtimeConfigMap }}
+        - name: runtime-override
+          configMap:
+            name: {{ .Values.runtimeConfigMap }}
+        {{- end }}
+        {{- if .Values.trust.configMap }}
+        - name: site-ca
+          configMap:
+            name: {{ .Values.trust.configMap }}
+            items:
+              - {key: {{ .Values.trust.key | quote }}, path: ca-bundle.crt}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "helpudoc.fullname" . }}-app
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "helpudoc.selector" (dict "root" . "component" "app") | nindent 4 }}
+  ports:
+    - {name: http-backend, port: 3000, targetPort: backend}
+    - {name: http-agent, port: 8001, targetPort: agent}

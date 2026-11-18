@@ -1,0 +1,104 @@
+# Local profile: no external MCP servers or Gemini-only tools.
+inherit_defaults: false
+backend:
+  workspace_root: /app/workspaces
+  virtual_mode: true
+  skills_root: /app/skills
+  plugins_root: /app/plugins
+  sync_skills_to_workspace: false
+  implicit_input_guard: true
+  recursion_limit: 1000
+  code_interpreter:
+    enabled: true
+    tool_name: eval
+    memory_limit_bytes: 67108864
+    timeout_seconds: 5
+    max_ptc_calls: 64
+    max_result_chars: 4000
+    snapshot_between_turns: true
+    ptc_tools:
+    - inspect_document
+    - search_document
+    - knowledge_search
+    - knowledge_read
+  interrupt_on:
+    request_plan_approval:
+      allowed_decisions:
+      - approve
+      - edit
+      - reject
+    write_file: false
+    read_file: false
+    edit_file: false
+tools:
+- name: calendar_list_events
+  kind: builtin
+  description: List the selected calendar through the scoped Calendar domain
+- name: calendar_create_event
+  kind: builtin
+  description: Propose a new event for explicit human review and Save
+- name: calendar_update_event
+  kind: builtin
+  description: Propose an event edit for explicit human review and Save
+- name: calendar_delete_event
+  kind: builtin
+  description: Propose a cancellation for explicit human review and Delete
+- name: calendar_read
+  kind: builtin
+  description: Read permitted meeting context through the Calendar domain
+- name: create_pdf_from_images
+  kind: builtin
+  description: Create a multi-page PDF from workspace image files
+- name: get_image_url
+  kind: builtin
+  description: Describe private workspace images and their authorized workspace paths
+- name: document_inspection
+  kind: builtin
+  description: Inspect and search original PDF, DOCX, XLSX, and text workspace files
+    on demand
+- name: document_execute
+  kind: builtin
+  description: Atomically create or edit DOCX, XLSX, and PPTX workspace artifacts
+    with pinned OfficeCLI
+- name: knowledge_navigation
+  kind: builtin
+  description: Search and progressively read published OKF workspace knowledge
+- name: append_to_report
+  kind: builtin
+  description: Stitch generated proposal sections into a final document
+- name: list_skills
+  kind: builtin
+  description: List available skills and their descriptions
+- name: load_skill
+  kind: builtin
+  description: Load full skill content from the shared registry
+- name: request_plan_approval
+  kind: builtin
+  description: Request human approval for a generated execution plan
+- name: request_clarification
+  kind: builtin
+  description: Pause the run and ask the human for clarification with optional choices
+- name: request_human_action
+  kind: builtin
+  description: Pause the run and ask the human to choose from arbitrary actions
+- name: request_interaction
+  kind: builtin
+  description: Pause the run and request a semantic Interaction presentation
+- name: workflow_action
+  kind: builtin
+  description: Emit one structured workflow action; use request_user_interaction for
+    user-input gates
+- name: team_thread_history
+  kind: builtin
+  description: Retrieve exact authorized text of omitted or truncated messages from
+    the current Team Chat thread, scoped by the run's signed context
+mcp_servers:
+- name: data-artifacts
+  transport: stdio
+  command: node
+  args:
+  - /app/plugins/data-analytics/mcp/server.cjs
+  - --stdio
+  cwd: /app
+  default_access: allow
+  description: Local Data Analytics artifact validators and renderers

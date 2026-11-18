@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "helpudoc.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" . | nindent 4 }}
+data:
+  Caddyfile: |
+    {
+      auto_https off
+    }
+    :80 {
+      encode gzip zstd
+      route {
+        respond /healthz 200
+        @api path /api /api/*
+        reverse_proxy @api {{ include "helpudoc.fullname" . }}-app:3000 {
+          header_up X-Forwarded-Proto https
+          flush_interval -1
+        }
+        {{- if .Values.objectStore.enabled }}
+        @objects path /{{ .Values.objectStore.bucket }} /{{ .Values.objectStore.bucket }}/*
+        reverse_proxy @objects {{ include "helpudoc.fullname" . }}-objects:9000 {
+          header_up Host {http.request.host}
+        }
+        {{- end }}
+        reverse_proxy {{ include "helpudoc.fullname" . }}-frontend:80
+      }
+    }
+{{- range $component := list "frontend" "gateway" }}
+{{- $settings := index $.Values $component }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "helpudoc.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" $ | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "helpudoc.selector" (dict "root" $ "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "helpudoc.podLabels" (dict "root" $ "component" $component) | nindent 8 }}
+      annotations:
+        checksum/gateway: {{ toJson $.Values.objectStore | sha256sum }}
+        {{- with $.Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "helpudoc.scheduling" $ | nindent 6 }}
+      containers:
+        - name: {{ $component }}
+          image: {{ include "helpudoc.image" $settings.image | quote }}
+          imagePullPolicy: {{ $settings.image.pullPolicy }}
+          ports: [{name: http, containerPort: 80}]
+          resources:
+            {{- toYaml $settings.resources | nindent 12 }}
+          startupProbe:
+            httpGet: {path: {{ ternary "/healthz" "/" (eq $component "gateway") }}, port: http}
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: {{ ternary "/healthz" "/" (eq $component "gateway") }}, port: http}
+          livenessProbe:
+            httpGet: {path: {{ ternary "/healthz" "/" (eq $component "gateway") }}, port: http}
+            periodSeconds: 30
+          {{- if eq $component "gateway" }}
+          volumeMounts:
+            - {name: caddyfile, mountPath: /etc/caddy/Caddyfile, subPath: Caddyfile}
+            - {name: data, mountPath: /data}
+            - {name: config, mountPath: /config}
+          {{- end }}
+      {{- if eq $component "gateway" }}
+      volumes:
+        - name: caddyfile
+          configMap: {name: {{ include "helpudoc.fullname" $ }}-gateway}
+        - {name: data, emptyDir: {}}
+        - {name: config, emptyDir: {}}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "helpudoc.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" $ | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "helpudoc.selector" (dict "root" $ "component" $component) | nindent 4 }}
+  ports: [{name: http, port: 80, targetPort: http}]
+{{- end }}

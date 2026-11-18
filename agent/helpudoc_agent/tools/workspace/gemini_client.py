@@ -1,10 +1,11 @@
-"""Gemini client and LangChain chat model caching for workspace tools."""
+"""Chat model caching and optional Gemini SDK access for workspace tools."""
 from __future__ import annotations
 
 import os
 from typing import Any
 
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.language_models.chat_models import BaseChatModel
 
 try:
     import vertexai
@@ -18,22 +19,33 @@ from .timeouts import DEFAULT_HTTP_TIMEOUT, DEFAULT_SEARCH_HTTP_TIMEOUT, seconds
 
 
 class GeminiClientManager:
-    """Initializes and caches a Gemini client per service."""
+    """Keep the existing tool interface for Gemini and private chat providers."""
 
     def __init__(self, settings: Settings):
         model_cfg = settings.model
         self._model_cfg = model_cfg
         self._web_tool_chat_model: ChatGoogleGenerativeAI | None = None
-        self._attachment_chat_model: ChatGoogleGenerativeAI | None = None
-        self._lite_chat_model: ChatGoogleGenerativeAI | None = None
-        self._ingestion_chat_model: ChatGoogleGenerativeAI | None = None
-        self._reduce_chat_model: ChatGoogleGenerativeAI | None = None
+        self._attachment_chat_model: BaseChatModel | None = None
+        self._lite_chat_model: BaseChatModel | None = None
+        self._ingestion_chat_model: BaseChatModel | None = None
+        self._reduce_chat_model: BaseChatModel | None = None
         self._api_key = (
             model_cfg.api_key
             or os.getenv("GOOGLE_CLOUD_API_KEY")
             or os.getenv("GEMINI_API_KEY")
             or os.getenv("GOOGLE_API_KEY")
         )
+
+        if model_cfg.provider == "openai-compatible":
+            # Keep the manager's existing public interface for tools and Knowledge
+            # callers, while never constructing a Google SDK client in local mode.
+            self.client = None
+            self.model_name = model_cfg.chat_model_name
+            self.image_model_name = model_cfg.image_model_name
+            self._api_key = (os.getenv(model_cfg.api_key_env) or "").strip()
+            if not self._api_key:
+                raise ValueError(f"Private inference credential {model_cfg.api_key_env} is not configured")
+            return
 
         if model_cfg.provider != "gemini":
             raise ValueError(f"Unsupported model provider {model_cfg.provider}")
@@ -73,11 +85,17 @@ class GeminiClientManager:
         )
 
     def _require_configured_client(self) -> None:
+        if self._model_cfg.provider == "openai-compatible":
+            if not self._api_key:
+                raise RuntimeError("Private inference credential is not configured")
+            return
         if not self._api_key and not self._model_cfg.use_vertex_ai:
             raise RuntimeError("Gemini API key is not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY before using Gemini-backed tools.")
 
     def get_web_tool_chat_model(self) -> ChatGoogleGenerativeAI:
         """Chat model used internally by the public google_search and url_context tools."""
+        if self._model_cfg.provider != "gemini":
+            raise ValueError("Gemini web grounding is unavailable with private inference")
         self._require_configured_client()
         if self._web_tool_chat_model is None:
             from ...gemini_chat import create_chat_google_generative_ai
@@ -98,7 +116,7 @@ class GeminiClientManager:
             )
         return self._web_tool_chat_model
 
-    def get_attachment_chat_model(self) -> ChatGoogleGenerativeAI:
+    def get_attachment_chat_model(self) -> BaseChatModel:
         """Chat model with standard HTTP deadline for multimodal attachment understanding."""
         self._require_configured_client()
         if self._attachment_chat_model is None:
@@ -111,7 +129,7 @@ class GeminiClientManager:
             )
         return self._attachment_chat_model
 
-    def get_lite_chat_model(self) -> ChatGoogleGenerativeAI:
+    def get_lite_chat_model(self) -> BaseChatModel:
         """Configured Gemini Lite model for bounded Knowledge enrichment tasks."""
         self._require_configured_client()
         if self._lite_chat_model is None:
@@ -127,7 +145,7 @@ class GeminiClientManager:
             )
         return self._lite_chat_model
 
-    def get_ingestion_chat_model(self) -> ChatGoogleGenerativeAI:
+    def get_ingestion_chat_model(self) -> BaseChatModel:
         """Gemini Flash Lite with a larger structured-output budget for map/reduce parsing."""
         self._require_configured_client()
         if self._ingestion_chat_model is None:
@@ -135,7 +153,10 @@ class GeminiClientManager:
 
             model_name = self._model_cfg.resolve_chat_model_name("lite")
             configured = self._model_cfg.resolve_max_output_tokens("lite") or 4096
-            output_tokens = max(configured, int(os.environ.get("KNOWLEDGE_GEMINI_MAX_OUTPUT_TOKENS", "8192")))
+            output_tokens = (
+                configured if self._model_cfg.provider == "openai-compatible"
+                else max(configured, int(os.environ.get("KNOWLEDGE_GEMINI_MAX_OUTPUT_TOKENS", "8192")))
+            )
             self._ingestion_chat_model = create_chat_google_generative_ai(
                 self._model_cfg,
                 model_name,
@@ -145,7 +166,7 @@ class GeminiClientManager:
             )
         return self._ingestion_chat_model
 
-    def get_reduce_chat_model(self) -> ChatGoogleGenerativeAI:
+    def get_reduce_chat_model(self) -> BaseChatModel:
         """Model for hierarchical reduce merges, with a large structured-output budget.
 
         Reduce merges many child graphs into one structured object, so its output can be
@@ -159,7 +180,10 @@ class GeminiClientManager:
 
             model_name = self._model_cfg.resolve_chat_model_name("pro")
             configured = self._model_cfg.resolve_max_output_tokens("pro") or 32768
-            output_tokens = max(configured, int(os.environ.get("KNOWLEDGE_REDUCE_MAX_OUTPUT_TOKENS", "32768")))
+            output_tokens = (
+                configured if self._model_cfg.provider == "openai-compatible"
+                else max(configured, int(os.environ.get("KNOWLEDGE_REDUCE_MAX_OUTPUT_TOKENS", "32768")))
+            )
             self._reduce_chat_model = create_chat_google_generative_ai(
                 self._model_cfg,
                 model_name,

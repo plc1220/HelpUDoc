@@ -1,0 +1,34 @@
+# Replace example.com, the storage class, registry and image tags with site values.
+# This example contains no credentials. Keep actual overrides outside the repo.
+publicUrl: https://helpudoc.pcai.example.com
+existingSecret: helpudoc-secrets
+runtimeConfigMap: ""
+imagePullSecrets:
+  - name: harbor-pull
+ezua:
+  enabled: true
+  autoHelm: false
+  appName: helpudoc
+  virtualService:
+    endpoint: helpudoc.pcai.example.com
+    istioGateway: istio-system/ezaf-gateway
+  authorizationPolicy:
+    enabled: true
+    namespace: istio-system
+    providerName: oauth2-proxy
+    matchLabels: {istio: ingressgateway}
+persistence:
+  storageClass: pcai-storage-class
+app:
+  images:
+    backend: {repository: harbor.pcai.example.com/helpudoc/backend, tag: pcai-local-v1}
+    agent: {repository: harbor.pcai.example.com/helpudoc/agent, tag: pcai-local-v1}
+frontend:
+  image: {repository: harbor.pcai.example.com/helpudoc/frontend, tag: pcai-local-v1}
+model:
+  base_url: https://nim.pcai.example.com/v1
+  name: deployed-model-id
+  fast_name: deployed-model-id
+  lite_name: deployed-model-id
+  pro_name: deployed-model-id
+# For restricted egress, mirror gateway, postgres, redis and RustFS too.

@@ -54,6 +54,7 @@ jobs:
               - 'infra/cloudbuild.yaml'
               - 'tests/test_agent_*.py'
               - 'tests/test_mcp_binding.py'
+              - 'tests/test_pcai_local_models.py'
               - 'tests/test_tool_factory.py'
               - 'tests/test_skill_sandbox.py'
               - 'tests/office/**'
@@ -144,6 +145,8 @@ jobs:
           python -m pytest \
             tests/test_agent_import_smoke.py \
             tests/test_agent_configuration.py \
+            tests/test_gemini_chat_factory.py \
+            tests/test_pcai_local_models.py \
             tests/test_mcp_binding.py \
             tests/test_tool_factory.py \
             tests/test_skill_sandbox.py \

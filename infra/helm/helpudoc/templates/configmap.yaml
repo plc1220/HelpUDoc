@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "helpudoc.fullname" . }}-env
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  FRONTEND_URL: {{ .Values.publicUrl | quote }}
+  GOOGLE_OAUTH_POST_LOGIN_REDIRECT: {{ .Values.publicUrl | quote }}
+  GOOGLE_OAUTH_REDIRECT_URI: {{ printf "%s/api/auth/google/callback" (.Values.publicUrl | trimSuffix "/") | quote }}
+  POSTGRES_HOST: {{ ternary (printf "%s-postgres" (include "helpudoc.fullname" .)) .Values.postgres.externalHost .Values.postgres.enabled | quote }}
+  POSTGRES_PORT: {{ .Values.postgres.port | quote }}
+  POSTGRES_DB: {{ .Values.postgres.database | quote }}
+  POSTGRES_USER: {{ .Values.postgres.username | quote }}
+  {{- if .Values.redis.enabled }}
+  REDIS_URL: {{ printf "redis://%s-redis:6379" (include "helpudoc.fullname" .) | quote }}
+  {{- end }}
+  BACKEND_INTERNAL_URL: {{ printf "http://%s-app:3000" (include "helpudoc.fullname" .) | quote }}
+  S3_ENDPOINT: {{ include "helpudoc.s3Endpoint" . | quote }}
+  MINIO_ENDPOINT: {{ include "helpudoc.s3Endpoint" . | quote }}
+  S3_PUBLIC_ENDPOINT: {{ ternary .Values.publicUrl .Values.objectStore.externalPublicEndpoint .Values.objectStore.enabled | quote }}
+  S3_BUCKET_NAME: {{ .Values.objectStore.bucket | quote }}
+  S3_FORCE_PATH_STYLE: "true"
+  OBJECT_STORE_PROVIDER: s3
+  AWS_REGION: {{ .Values.objectStore.region | quote }}
+  KNOWLEDGE_OCR_MODE: "off"
+  {{- if .Values.trust.configMap }}
+  SSL_CERT_FILE: /etc/helpudoc-ca/ca-bundle.crt
+  REQUESTS_CA_BUNDLE: /etc/helpudoc-ca/ca-bundle.crt
+  NODE_EXTRA_CA_CERTS: /etc/helpudoc-ca/ca-bundle.crt
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "helpudoc.fullname" . }}-runtime-default
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" . | nindent 4 }}
+data:
+  runtime.yaml: |
+    model:
+      {{- toYaml .Values.model | nindent 6 }}
+    {{- .Files.Get "files/runtime.yaml" | nindent 4 }}

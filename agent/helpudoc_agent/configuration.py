@@ -40,6 +40,28 @@ class ModelConfig(BaseModel):
     location: Optional[str] = None
     api_key: Optional[str] = Field(default_factory=lambda: get_agent_runtime_env().gemini_api_key)
     use_vertex_ai: bool = Field(default=False)
+    # OpenAI-compatible private inference (PCAI NIM / MLIS / vLLM).
+    base_url: Optional[str] = None
+    api_key_env: str = "OPENAI_API_KEY"
+
+    @model_validator(mode="after")
+    def validate_provider(self) -> "ModelConfig":
+        if self.provider not in {"gemini", "openai-compatible"}:
+            raise ValueError(f"Unsupported model provider {self.provider!r}")
+        if self.provider == "openai-compatible":
+            from urllib.parse import urlparse
+
+            endpoint = urlparse(self.base_url or "")
+            if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+                raise ValueError("openai-compatible requires an explicit http(s) base_url")
+            if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
+                raise ValueError("base_url must not contain credentials, a query, or a fragment")
+            if endpoint.hostname in {"api.openai.com", "generativelanguage.googleapis.com"}:
+                raise ValueError("openai-compatible requires a private inference endpoint")
+            if not self.api_key_env.strip():
+                raise ValueError("api_key_env must name the private inference credential variable")
+            self.use_vertex_ai = False
+        return self
 
     @property
     def chat_model_name(self) -> str:
@@ -421,7 +443,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
     path = config_path or DEFAULT_CONFIG_PATH
     base_config = _load_yaml(DEFAULT_CONFIG_PATH) if path != DEFAULT_CONFIG_PATH else {}
     config_dict = _load_yaml(path)
-    if base_config:
+    if base_config and config_dict.get("inherit_defaults", True):
         config_dict = _merge_runtime_config(base_config, config_dict)
     config_dict = _expand_env_vars(config_dict)
     override_base_dir = REPO_ROOT

@@ -8,7 +8,7 @@ from .chunking import plan_windows
 from .conversion import route_document
 from .extractors import pdf_pages_requiring_ocr
 from .models import DocumentPlan, SourceBlock
-from .ocr import GeminiFlashLiteOcrAdapter
+from .ocr import GeminiFlashLiteOcrAdapter, normalize_ocr_mode
 from .structure import detect_structure
 
 
@@ -62,7 +62,7 @@ async def extract_and_plan_document_with_gemini(
 ) -> DocumentPlan:
     """Run policy-controlled Gemini Flash Lite OCR, then deterministic locator planning."""
     adapter: GeminiFlashLiteOcrAdapter | None = None
-    if path.suffix.lower() == ".pdf":
+    if path.suffix.lower() == ".pdf" and normalize_ocr_mode(ocr_mode) != "off":
         adapter = GeminiFlashLiteOcrAdapter(
             client=client,
             model=model,

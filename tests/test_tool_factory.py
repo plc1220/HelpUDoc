@@ -10,6 +10,7 @@ from helpudoc_agent.tools_and_schemas import ToolFactory
 class SettingsStub:
     def __init__(self, tools):
         self._tools = tools
+        self.model = SimpleNamespace(provider="gemini")
 
     def get_tool(self, name: str) -> ToolConfig:
         return self._tools[name]

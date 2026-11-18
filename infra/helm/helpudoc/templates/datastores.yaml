@@ -1,0 +1,123 @@
+{{- range $component := list "postgres" "redis" "objects" }}
+{{- $settings := index $.Values $component }}
+{{- if eq $component "objects" }}{{ $settings = $.Values.objectStore }}{{ end }}
+{{- if $settings.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "helpudoc.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" $ | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      {{- include "helpudoc.selector" (dict "root" $ "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "helpudoc.podLabels" (dict "root" $ "component" $component) | nindent 8 }}
+      {{- with $.Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- if eq $component "objects" }}
+      securityContext: {fsGroup: 10001, fsGroupChangePolicy: OnRootMismatch}
+      {{- end }}
+      {{- include "helpudoc.scheduling" $ | nindent 6 }}
+      containers:
+        - name: {{ $component }}
+          image: {{ include "helpudoc.image" $settings.image | quote }}
+          imagePullPolicy: {{ $settings.image.pullPolicy }}
+          resources:
+            {{- toYaml $settings.resources | nindent 12 }}
+          {{- if eq $component "postgres" }}
+          env:
+            - {name: POSTGRES_DB, value: {{ $.Values.postgres.database | quote }}}
+            - {name: POSTGRES_USER, value: {{ $.Values.postgres.username | quote }}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ $.Values.existingSecret }}, key: POSTGRES_PASSWORD}
+          ports: [{name: tcp, containerPort: 5432}]
+          startupProbe:
+            exec: {command: [/bin/sh, -ec, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec: {command: [/bin/sh, -ec, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+          livenessProbe:
+            tcpSocket: {port: tcp}
+            periodSeconds: 30
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+          {{- else if eq $component "redis" }}
+          args: ["--appendonly", "yes"]
+          ports: [{name: tcp, containerPort: 6379}]
+          startupProbe:
+            exec: {command: [redis-cli, ping]}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec: {command: [redis-cli, ping]}
+          livenessProbe:
+            exec: {command: [redis-cli, ping]}
+            periodSeconds: 30
+          volumeMounts: [{name: data, mountPath: /data}]
+          {{- else }}
+          env:
+            - {name: RUSTFS_VOLUMES, value: /data}
+            - {name: RUSTFS_ADDRESS, value: "0.0.0.0:9000"}
+            - {name: RUSTFS_CONSOLE_ENABLE, value: "false"}
+            - {name: RUSTFS_OBS_LOG_DIRECTORY, value: /logs}
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ $.Values.existingSecret }}, key: AWS_ACCESS_KEY_ID}
+            - name: RUSTFS_SECRET_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ $.Values.existingSecret }}, key: AWS_SECRET_ACCESS_KEY}
+          ports: [{name: tcp, containerPort: 9000}]
+          startupProbe:
+            httpGet: {path: /health/ready, port: tcp}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /health/ready, port: tcp}
+          livenessProbe:
+            httpGet: {path: /health, port: tcp}
+            periodSeconds: 30
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: logs, mountPath: /logs}
+          {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "helpudoc.claim" (dict "root" $ "name" $component) }}
+        {{- if eq $component "objects" }}
+        - name: logs
+          emptyDir: {sizeLimit: 1Gi}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "helpudoc.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" $ | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "helpudoc.selector" (dict "root" $ "component" $component) | nindent 4 }}
+  ports:
+    - name: {{ ternary "http-s3" "tcp" (eq $component "objects") }}
+      port: {{ if eq $component "postgres" }}5432{{ else if eq $component "redis" }}6379{{ else }}9000{{ end }}
+      targetPort: tcp
+{{- end }}
+{{- end }}

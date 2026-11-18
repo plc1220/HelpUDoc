@@ -1,0 +1,32 @@
+name: PCAI Helm chart
+
+on:
+  pull_request:
+    paths:
+      - 'infra/helm/**'
+      - '.github/workflows/helm-pcai.yml'
+  push:
+    branches: [master, main]
+    paths:
+      - 'infra/helm/**'
+      - '.github/workflows/helm-pcai.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML==6.0.3
+      - run: helm lint infra/helm/helpudoc --strict
+      - run: helm lint infra/helm/helpudoc --strict -f infra/helm/helpudoc/values-pcai.example.yaml
+      - run: python -m unittest discover -s infra/helm/tests -v
+      - run: helm package infra/helm/helpudoc --destination /tmp/helpudoc-packages

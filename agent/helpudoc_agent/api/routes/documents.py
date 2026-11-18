@@ -89,6 +89,7 @@ def register_document_routes(
                 client=gemini_manager.client,
                 model=gemini_manager.lite_model_name,
                 include_plan=True,
+                **({"ocr_mode": "off"} if settings.model.provider == "openai-compatible" else {}),
             ))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -187,6 +188,8 @@ def register_document_routes(
         context = require_internal_user_context(request, agent_jwt_secret=agent_jwt_secret)
         if str(context.get("workspace_id") or "") != req.workspaceId:
             raise HTTPException(status_code=403, detail="Agent context does not allow this workspace")
+        if settings.model.provider == "openai-compatible":
+            raise HTTPException(status_code=422, detail="Local embeddings are not configured; use lexical-graph retrieval")
         try:
             inputs = [EmbeddingInput.model_validate(item) for item in req.inputs]
             embeddings = await embed_knowledge_inputs(
@@ -208,6 +211,8 @@ def register_document_routes(
         context = require_internal_user_context(request, agent_jwt_secret=agent_jwt_secret)
         if str(context.get("workspace_id") or "") != req.workspaceId:
             raise HTTPException(status_code=403, detail="Agent context does not allow this workspace")
+        if settings.model.provider == "openai-compatible":
+            raise HTTPException(status_code=422, detail="Local media embeddings are not configured")
         try:
             candidate = _resolve_workspace_document(
                 Path(settings.backend.workspace_root), req.workspaceId, req.relativePath,

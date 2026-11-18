@@ -1,0 +1,29 @@
+{{- range $name, $claim := .Values.persistence.claims }}
+{{- $enabled := true }}
+{{- if eq $name "postgres" }}{{ $enabled = $.Values.postgres.enabled }}{{ end }}
+{{- if eq $name "redis" }}{{ $enabled = $.Values.redis.enabled }}{{ end }}
+{{- if eq $name "objects" }}{{ $enabled = $.Values.objectStore.enabled }}{{ end }}
+{{- if and $enabled (not $claim.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "helpudoc.claim" (dict "root" $ "name" $name) }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: {{ toJson $claim.accessModes }}
+  {{- $storageClass := default $.Values.persistence.storageClass $claim.storageClass }}
+  {{- if eq $storageClass "-" }}
+  storageClassName: ""
+  {{- else if $storageClass }}
+  storageClassName: {{ $storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $claim.size }}
+{{- end }}
+{{- end }}
