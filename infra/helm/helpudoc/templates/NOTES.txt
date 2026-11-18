@@ -6,7 +6,12 @@ Check pods: kubectl -n {{ .Release.Namespace }} get pods,pvc
 Use the site registry images and provision Secret {{ .Values.existingSecret }}
 and a site runtime ConfigMap before installing. See the chart README.
 
-PCAI gateway authentication and HelpUDoc's Google sign-in are separate layers.
+Application login provider: {{ .Values.auth.provider }}
+{{- if eq .Values.auth.provider "oidc" }}
+Register callback: {{ .Values.publicUrl }}/api/auth/oidc/callback
+Register post-logout redirect: {{ .Values.publicUrl }}/login
+Provision Secret {{ .Values.auth.oidc.existingSecret }} / {{ .Values.auth.oidc.clientSecretKey }}.
+{{- end }}
 Private inference uses the configured OpenAI-compatible model endpoint.
 Gemini-only web/image/OCR/embedding features are unavailable in this profile.
 Sandbox execution and tracing are disabled by default.

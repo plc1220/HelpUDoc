@@ -1,9 +1,23 @@
 {{- if and .Values.ezua.enabled .Values.ingress.enabled }}
 {{- fail "Enable either ezua or ingress, not both" }}
 {{- end }}
+{{- if not (has .Values.auth.provider (list "oidc" "google")) }}
+{{- fail "auth.provider must be oidc or google" }}
+{{- end }}
+{{- if eq .Values.auth.provider "oidc" }}
+{{- if not (regexMatch "^https://[^/?#@]+(/[^?#]*)?$" .Values.auth.oidc.issuerUrl) }}
+{{- fail "auth.oidc.issuerUrl must be the HTTPS Keycloak realm issuer URL" }}
+{{- end }}
+{{- if or (empty .Values.auth.oidc.clientId) (empty .Values.auth.oidc.existingSecret) (empty .Values.auth.oidc.clientSecretKey) }}
+{{- fail "OIDC requires clientId and an existing Secret/key reference" }}
+{{- end }}
+{{- end }}
 {{- range $key, $value := .Values.config }}
 {{- if not (kindIs "string" $value) }}
 {{- fail (printf "config.%s must be a quoted string" $key) }}
+{{- end }}
+{{- if or (eq $key "AUTH_PROVIDER") (hasPrefix "OIDC_" $key) }}
+{{- fail (printf "config.%s is generated; use auth settings" $key) }}
 {{- end }}
 {{- if has $key (list "FRONTEND_URL" "GOOGLE_OAUTH_POST_LOGIN_REDIRECT" "GOOGLE_OAUTH_REDIRECT_URI" "POSTGRES_HOST" "POSTGRES_PORT" "POSTGRES_DB" "POSTGRES_USER" "REDIS_URL" "BACKEND_INTERNAL_URL" "S3_ENDPOINT" "MINIO_ENDPOINT" "S3_PUBLIC_ENDPOINT" "S3_BUCKET_NAME" "S3_FORCE_PATH_STYLE" "OBJECT_STORE_PROVIDER" "AWS_REGION" "KNOWLEDGE_OCR_MODE" "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "NODE_EXTRA_CA_CERTS") }}
 {{- fail (printf "config.%s is generated; use the corresponding chart setting" $key) }}

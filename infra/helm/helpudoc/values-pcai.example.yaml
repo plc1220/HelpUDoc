@@ -2,6 +2,16 @@
 # This example contains no credentials. Keep actual overrides outside the repo.
 publicUrl: https://helpudoc.pcai.example.com
 existingSecret: helpudoc-secrets
+auth:
+  provider: oidc
+  oidc:
+    # Obtain the exact realm issuer from the PCAI administrator/discovery document.
+    issuerUrl: https://keycloak.pcai.example.com/realms/site-realm
+    clientId: helpudoc
+    displayName: PCAI SSO
+    existingSecret: helpudoc-oidc
+    clientSecretKey: client-secret
+    logoutFromProvider: true
 runtimeConfigMap: ""
 imagePullSecrets:
   - name: harbor-pull
@@ -21,10 +31,10 @@ persistence:
   storageClass: pcai-storage-class
 app:
   images:
-    backend: {repository: harbor.pcai.example.com/helpudoc/backend, tag: pcai-local-v1}
-    agent: {repository: harbor.pcai.example.com/helpudoc/agent, tag: pcai-local-v1}
+    backend: {repository: harbor.pcai.example.com/helpudoc/backend, tag: pcai-oidc-v1}
+    agent: {repository: harbor.pcai.example.com/helpudoc/agent, tag: pcai-oidc-v1}
 frontend:
-  image: {repository: harbor.pcai.example.com/helpudoc/frontend, tag: pcai-local-v1}
+  image: {repository: harbor.pcai.example.com/helpudoc/frontend, tag: pcai-oidc-v1}
 model:
   base_url: https://nim.pcai.example.com/v1
   name: deployed-model-id

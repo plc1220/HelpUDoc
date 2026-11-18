@@ -24,7 +24,7 @@ function shouldAttachHeaderIdentity() {
     return false;
   }
 
-  if (user.provider === 'google') {
+  if (user.provider === 'google' || user.provider === 'oidc') {
     return false;
   }
 
@@ -33,7 +33,7 @@ function shouldAttachHeaderIdentity() {
   }
 
   // Older stored auth payloads may not have a provider; treat google-* identities as OIDC users.
-  return !user.id.startsWith('google-');
+  return !user.id.startsWith('google-') && !user.id.startsWith('oidc-');
 }
 
 function mergeAuthHeaders(init?: HeadersInit): Headers {

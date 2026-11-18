@@ -10,6 +10,15 @@ data:
   {{ $key }}: {{ $value | quote }}
   {{- end }}
   FRONTEND_URL: {{ .Values.publicUrl | quote }}
+  AUTH_PROVIDER: {{ .Values.auth.provider | quote }}
+  {{- if eq .Values.auth.provider "oidc" }}
+  OIDC_ISSUER_URL: {{ .Values.auth.oidc.issuerUrl | quote }}
+  OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId | quote }}
+  OIDC_DISPLAY_NAME: {{ .Values.auth.oidc.displayName | quote }}
+  OIDC_REDIRECT_URI: {{ printf "%s/api/auth/oidc/callback" .Values.publicUrl | quote }}
+  OIDC_POST_LOGOUT_REDIRECT_URI: {{ printf "%s/login" .Values.publicUrl | quote }}
+  OIDC_LOGOUT_FROM_PROVIDER: {{ .Values.auth.oidc.logoutFromProvider | quote }}
+  {{- end }}
   GOOGLE_OAUTH_POST_LOGIN_REDIRECT: {{ .Values.publicUrl | quote }}
   GOOGLE_OAUTH_REDIRECT_URI: {{ printf "%s/api/auth/google/callback" (.Values.publicUrl | trimSuffix "/") | quote }}
   POSTGRES_HOST: {{ ternary (printf "%s-postgres" (include "helpudoc.fullname" .)) .Values.postgres.externalHost .Values.postgres.enabled | quote }}

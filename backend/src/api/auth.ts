@@ -2,6 +2,8 @@ import { Request, Router } from 'express';
 import { createHash } from 'crypto';
 import { UserService, isUserDeactivated } from '../services/userService';
 import { GoogleOAuthService, GoogleOAuthConfigError, GOOGLE_OIDC_ISSUER } from '../services/googleOAuthService';
+import { OidcService, loginProvider } from '../services/oidcService';
+import oidcAuthRoutes from './oidcAuth';
 
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
 
@@ -13,7 +15,7 @@ function resolveAuthMode(raw?: string): AuthMode {
   return 'hybrid';
 }
 
-const AUTH_MODE = resolveAuthMode(process.env.AUTH_MODE);
+const authMode = () => resolveAuthMode(process.env.AUTH_MODE);
 
 type StartState = {
   state: string;
@@ -31,7 +33,7 @@ const OAUTH_VERIFIER_COOKIE = 'helpudoc.oauth.verifier';
 const OAUTH_RETURN_TO_COOKIE = 'helpudoc.oauth.return_to';
 const OAUTH_PURPOSE_COOKIE = 'helpudoc.oauth.purpose';
 const OAUTH_COOKIE_MAX_AGE_MS = 10 * 60 * 1000;
-const SESSION_COOKIE_NAME = process.env.SESSION_NAME || 'helpudoc.sid';
+const sessionCookieName = () => process.env.SESSION_NAME || 'helpudoc.sid';
 
 function cookieSecure(): boolean {
   const raw = (process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase();
@@ -88,8 +90,9 @@ export const signupMode = (): SignupMode => (
   (process.env.SIGNUP_MODE || '').trim().toLowerCase() === 'invite_only' ? 'invite_only' : 'open'
 );
 
-export default function authRoutes(userService: UserService, googleOAuthService: GoogleOAuthService) {
+export default function authRoutes(userService: UserService, googleOAuthService: GoogleOAuthService, oidcService = new OidcService()) {
   const router = Router();
+  router.use('/oidc', oidcAuthRoutes(userService, oidcService, signupMode));
   const sessionCookieOptions = {
     httpOnly: true,
     sameSite: 'lax' as const,
@@ -113,7 +116,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
     });
 
   router.get('/google/start', async (req, res) => {
-    if (AUTH_MODE === 'headers') {
+    if (authMode() === 'headers') {
       return res.status(400).json({ error: 'Google sign-in is disabled when AUTH_MODE=headers' });
     }
     if (!googleOAuthService.isConfigured()) {
@@ -130,6 +133,9 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         : [];
       const calendarOnly = req.query.calendar === 'true';
       const identityOnly = req.query.identityOnly === 'true';
+      if (loginProvider() === 'oidc' && !calendarOnly && !requestedExtras.length) {
+        return res.status(400).json({ error: 'Use the configured single sign-on provider' });
+      }
       if (identityOnly && (calendarOnly || requestedExtras.length)) return res.status(400).json({ error: 'Identity sign-in cannot request service permissions' });
       const extraScopes = [...new Set(calendarOnly && !requestedExtras.length ? ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly'] : requestedExtras)];
       if (!calendarOnly && extraScopes.some(scope => scope.includes('/auth/calendar.'))) return res.status(400).json({ error: 'Calendar permissions require a dedicated Calendar connection' });
@@ -255,6 +261,25 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         return res.redirect(302, target.toString());
       }
 
+      if (loginProvider() === 'oidc') {
+        // Google service consent belongs to the already authenticated Keycloak
+        // user; it must never replace the application login identity.
+        if (!sessionState?.expectedUserId || sessionState.expectedUserId !== req.userContext?.userId
+          || !sessionState.extraScopes?.length || Date.now() - sessionState.createdAt > OAUTH_COOKIE_MAX_AGE_MS) {
+          return redirectWithError('google_login_disabled');
+        }
+        await googleOAuthService.upsertUserGoogleToken(sessionState.expectedUserId, tokenResponse);
+        req.session!.googleOAuth = undefined;
+        await saveSession(req);
+        for (const name of [OAUTH_STATE_COOKIE, OAUTH_VERIFIER_COOKIE, OAUTH_RETURN_TO_COOKIE, OAUTH_PURPOSE_COOKIE]) {
+          res.clearCookie(name, { httpOnly: true, sameSite: 'lax', secure: cookieSecure() });
+        }
+        const target = new URL(googleOAuthService.getPostLoginRedirectUrl());
+        const returnTo = sanitizeReturnPath(sessionState.returnTo);
+        if (returnTo) target.searchParams.set('returnTo', returnTo);
+        return res.redirect(302, target.toString());
+      }
+
       // Under invite-only, a Google identity that matches neither an existing
       // account nor a pre-registered address is refused before any row is
       // created. Existing accounts are never gated, so turning the flag on
@@ -327,30 +352,44 @@ export default function authRoutes(userService: UserService, googleOAuthService:
     const user = req.userContext || null;
     return res.json({
       authenticated: Boolean(user),
-      authMode: AUTH_MODE,
+      authMode: authMode(),
+      authProvider: loginProvider(),
+      loginConfigured: loginProvider() === 'oidc' ? oidcService.isConfigured() : googleOAuthService.isConfigured(),
+      loginLabel: loginProvider() === 'oidc' ? oidcService.displayName : 'Google',
       googleConfigured: googleOAuthService.isConfigured(),
       user,
     });
   });
 
   router.post('/logout', async (req, res) => {
-    if (AUTH_MODE === 'headers') {
-      res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions);
+    if (authMode() === 'headers') {
+      res.clearCookie(sessionCookieName(), sessionCookieOptions);
       return res.status(200).json({ success: true });
     }
 
     if (!req.session) {
-      res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions);
+      res.clearCookie(sessionCookieName(), sessionCookieOptions);
       return res.status(200).json({ success: true });
     }
 
+    let redirectUrl: string | undefined;
+    if (req.session.oidcLogin) {
+      // An unrelated origin must not be able to terminate the shared SSO session.
+      if (req.headers.origin) {
+        try {
+          if (new URL(oidcService.loginRedirect()).origin !== req.headers.origin) return res.sendStatus(403);
+        } catch { return res.sendStatus(503); }
+      }
+      try { redirectUrl = await oidcService.logoutUrl(req.session.oidcLogin.idToken); }
+      catch { console.error('OIDC provider logout unavailable; clearing local session'); }
+    }
     req.session.destroy((error) => {
       if (error) {
         console.error('Failed to destroy session', error);
         return res.status(500).json({ error: 'Failed to logout' });
       }
-      res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions);
-      return res.status(200).json({ success: true });
+      res.clearCookie(sessionCookieName(), sessionCookieOptions);
+      return res.status(200).json({ success: true, ...(redirectUrl ? { redirectUrl } : {}) });
     });
   });
 

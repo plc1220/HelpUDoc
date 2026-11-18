@@ -136,6 +136,13 @@ spec:
               value: {{ ternary "8001" "3000" (eq $role "agent") | quote }}
             - name: AGENT_URL
               value: http://localhost:8001
+            {{- if and (eq $role "backend") (eq $.Values.auth.provider "oidc") }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.auth.oidc.existingSecret }}
+                  key: {{ $.Values.auth.oidc.clientSecretKey }}
+            {{- end }}
             {{- with index $.Values.app (printf "%sEnv" $role) }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

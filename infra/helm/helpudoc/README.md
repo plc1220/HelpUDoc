@@ -80,18 +80,63 @@ the non-secret tracing URL/flag through `config` and add its keys to the existin
 Secret. Cloud research MCPs, Google Workspace MCP and Google OAuth/calendar
 integrations require explicit configuration and allowed connectivity.
 
-## Application login and PCAI login
+## Application login with PCAI Keycloak
 
-PCAI gateway authentication is an outer access-control layer. HelpUDoc currently
-implements Google OAuth application sessions for `AUTH_MODE=oidc`; importing the
-chart does **not** add native PCAI Keycloak session support. Keep the application
-login configured, or implement and verify a site identity adapter before a
-fully disconnected rollout. Do not switch to `AUTH_MODE=headers`: client-supplied
-identity headers are not authenticated application identities.
+Chart 0.2.0 defaults to `auth.provider: oidc` and a confidential OIDC client for
+PCAI's existing Keycloak realm. The application discovers the realm endpoints,
+uses Authorization Code + PKCE (S256), validates signed RS256 identity tokens,
+issuer, audience, expiry, state and nonce, then creates its normal server-side
+session. Opening HelpUDoc can reuse the user's existing Keycloak SSO session.
+PCAI's gateway policy remains an outer access-control layer.
 
-With Google login enabled, supply its OAuth client ID and secret, register
-`https://<application-host>/api/auth/google/callback`, and build the frontend with
-the corresponding client ID. Local inference itself needs no Google credentials.
+Ask the PCAI administrator to register a confidential client for HelpUDoc in the
+existing realm. Enable Standard Flow and PKCE S256, use client-secret
+authentication (`client_secret_post`), and register these exact URLs:
+
+- Valid redirect URI: `https://<application-host>/api/auth/oidc/callback`
+- Valid post-logout redirect URI: `https://<application-host>/login`
+
+Obtain the exact **issuer** from the realm discovery document
+`<realm-issuer>/.well-known/openid-configuration`; do not infer its hostname or
+realm from the PCAI homepage. Set `auth.oidc.issuerUrl` and `auth.oidc.clientId`.
+The default scopes are only `openid email profile`. Include the standard name,
+email and `email_verified` claims in the ID token. Group/realm roles do not
+automatically grant HelpUDoc administrator permissions.
+
+Provision `auth.oidc.existingSecret` (default `helpudoc-oidc`) with the key named
+by `auth.oidc.clientSecretKey` (default `client-secret`) in the selected application
+namespace. Only the backend login container reads that secret reference. Never
+put the client secret in values, the chart package, the frontend build or a
+ConfigMap. If using a private CA, provide `trust.configMap`; the backend's
+`NODE_EXTRA_CA_CERTS` trusts it without disabling TLS verification. Both the
+browser and backend must reach and trust the realm's advertised endpoints.
+
+Identity is keyed by the exact issuer plus case-sensitive subject. Existing
+HelpUDoc permissions remain attached to the corresponding user record; an email
+match does not automatically merge an existing Google account. Account migration
+needs an explicit administrator-controlled identity-linking process. A verified
+email can claim an existing pending invitation. Unverified emails cannot claim
+invitations or match `ADMIN_EMAILS`. `SIGNUP_MODE=invite_only` can restrict account
+admission; `ADMIN_EMAILS` remains the existing verified-email bootstrap mechanism.
+
+`auth.oidc.logoutFromProvider: true` clears HelpUDoc's session and redirects to
+Keycloak logout, which can also end the user's shared PCAI SSO session. Set it to
+`false` for application-only sign-out. The provider must advertise an
+`end_session_endpoint` for SSO logout. A provider outage still permits local
+session destruction; server-side logout errors never expose token responses.
+Provider-initiated/back-channel logout and automatic realm-role synchronization
+are not implemented. Logging out in another PCAI tool does not immediately revoke
+an existing HelpUDoc session. Set `SESSION_TTL_SECONDS` for the site's session
+policy; HelpUDoc account deactivation still revokes application access.
+
+The frontend learns the provider and button label from `/api/auth/me`; Keycloak
+settings need no frontend build secrets. Backend CommonJS loading uses Node's
+native ESM support: Node 20.19+, 22.12+, or a later supported release is required.
+
+To retain Google login, set `auth.provider: google`, supply the existing Google
+OAuth credentials, and register `/api/auth/google/callback`. Google service
+connections remain separately configured; Keycloak login requires no Google
+credentials. Do not enable `AUTH_MODE=headers` for this deployment.
 
 ## Build and mirror images
 
@@ -102,14 +147,13 @@ confirm with the administrator).
 
 ```sh
 docker build --platform linux/amd64 -f backend/Dockerfile.gke \
-  -t <registry>/<project>/backend:pcai-local-v1 .
+  -t <registry>/<project>/backend:pcai-oidc-v1 .
 docker build --platform linux/amd64 -f agent/Dockerfile.gke \
   --build-arg GIT_COMMIT="$(git rev-parse HEAD)" \
-  -t <registry>/<project>/agent:pcai-local-v1 .
+  -t <registry>/<project>/agent:pcai-oidc-v1 .
 docker build --platform linux/amd64 -f frontend/Dockerfile.gke \
   --build-arg VITE_API_URL=/api --build-arg VITE_AUTH_MODE=oidc \
-  --build-arg VITE_GOOGLE_CLIENT_ID=<oauth-client-id> \
-  -t <registry>/<project>/frontend:pcai-local-v1 .
+  -t <registry>/<project>/frontend:pcai-oidc-v1 .
 ```
 
 Push those images to the site registry. For restricted egress, mirror Caddy,
@@ -135,8 +179,11 @@ by `existingSecret` through the site's approved secret mechanism. Required keys:
 | `DATABASE_URL` | Full, correctly URL-encoded PostgreSQL URI used by all app processes |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3 credentials; also bootstrap bundled RustFS |
 | `OPENAI_API_KEY` | PCAI inference API token (or key named by `model.api_key_env`) |
-| `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Required if retaining the existing Google application login |
+| `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Required only when `auth.provider: google` |
 | `REDIS_URL` | Required when `redis.enabled=false`; include credentials/TLS as appropriate |
+
+Separately provision the OIDC Secret/key above when `auth.provider: oidc`.
+The Helm package never creates credentials or registers the Keycloak client.
 
 With release `helpudoc`, bundled database connection:
 `postgresql://helpudoc:<URL-encoded-password>@helpudoc-postgres:5432/helpudoc`.
@@ -163,7 +210,7 @@ python -m unittest discover -s infra/helm/tests -v
 helm package infra/helm/helpudoc --destination /tmp/helpudoc-packages
 ```
 
-In **Tools & Frameworks → Import Framework**, upload `helpudoc-0.1.0.tgz`, set the
+In **Tools & Frameworks → Import Framework**, upload `helpudoc-0.2.0.tgz`, set the
 namespace and release name used above, and paste the private site override values.
 Keep `ezua.autoHelm=false`: this is a multi-service manual-integration chart.
 Some PCAI screens call the compressed chart a `tar.gz`; Helm's `.tgz` is the same
@@ -212,6 +259,8 @@ network isolation before production use. No existing GKE data is migrated.
 - [HPE AI Essentials 1.12.x documentation](https://support.hpe.com/hpesc/public/docDisplay?docId=a00aie112hen_us)
 - [HPE framework import / manual versus AutoHelm](https://support.hpe.com/hpesc/public/docDisplay?docId=a00aie111hen_us&docLocale=en_US&page=ManageClusters%2Fimporting-applications.html)
 - [HPE framework gateway SSO example](https://docs.ezmeral.hpe.com/unified-analytics/15/ManageClusters/sso-support-for-imported-apps.html)
+- [Keycloak OIDC endpoints and realm discovery](https://www.keycloak.org/securing-apps/oidc-layers)
+- [OpenID Client library](https://github.com/panva/openid-client)
 - [HPE PCAI model endpoint and API-token example](https://developer.hpe.com/blog/deploying-a-hugging-face-llm-in-hpe-private-cloud-ai/)
 - [HPE internal Harbor registry example](https://developer.hpe.com/blog/setting-up-harbor-as-a-local-container-registry-in-hpe-private-cloud-ai/)
 

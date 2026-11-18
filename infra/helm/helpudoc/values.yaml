@@ -5,6 +5,18 @@ imagePullSecrets: []
 existingSecret: helpudoc-secrets
 publicUrl: https://helpudoc.example.com
 
+auth:
+  provider: oidc  # oidc for PCAI Keycloak; google retains the existing login
+  oidc:
+    issuerUrl: https://keycloak.pcai.example.com/realms/site-realm
+    clientId: helpudoc
+    displayName: PCAI SSO
+    # Separate Secret read only by the backend login container.
+    existingSecret: helpudoc-oidc
+    clientSecretKey: client-secret
+    # true signs out of the shared Keycloak session as well as HelpUDoc.
+    logoutFromProvider: true
+
 ezua:
   enabled: false
   autoHelm: false
@@ -37,8 +49,8 @@ podLabels: {}
 # Recreate avoids simultaneous writers and RWO multi-attach on upgrades.
 app:
   images:
-    backend: {repository: helpudoc/backend, tag: pcai-local-v1, pullPolicy: IfNotPresent}
-    agent: {repository: helpudoc/agent, tag: pcai-local-v1, pullPolicy: IfNotPresent}
+    backend: {repository: helpudoc/backend, tag: pcai-oidc-v1, pullPolicy: IfNotPresent}
+    agent: {repository: helpudoc/agent, tag: pcai-oidc-v1, pullPolicy: IfNotPresent}
   resources:
     backend:
       requests: {cpu: 200m, memory: 384Mi}
@@ -55,7 +67,7 @@ app:
   agentEnv: []
 
 frontend:
-  image: {repository: helpudoc/frontend, tag: pcai-local-v1, pullPolicy: IfNotPresent}
+  image: {repository: helpudoc/frontend, tag: pcai-oidc-v1, pullPolicy: IfNotPresent}
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}

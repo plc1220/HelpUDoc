@@ -4,7 +4,6 @@ import { Card } from '@astryxdesign/core/Card';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import type { PaletteMode } from '@mui/material';
 import { Moon, Sun } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -26,10 +25,10 @@ const GoogleMark = () => (
 );
 
 const LoginPage = () => {
-  const { user, googleReady, googleError, authMode, signInWithGoogle, signInWithHeaders } = useAuth();
+  const { user, loginReady, loginError, loginLabel, authProvider, authMode, signIn, signInWithHeaders } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
+  const [colorMode, setColorMode] = useState<'light' | 'dark'>(resolveInitialColorMode);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [headerName, setHeaderName] = useState('');
@@ -43,25 +42,31 @@ const LoginPage = () => {
     const params = new URLSearchParams(location.search);
     const authError = params.get('authError');
     if (authError) {
-      setError(`Google sign-in failed: ${authError}`);
+      const messages: Record<string, string> = {
+        not_invited: 'Your account has not been invited. Contact your administrator.',
+        account_deactivated: 'Your account is deactivated. Contact your administrator.',
+        oidc_session_expired: 'Your sign-in session expired. Please try again.',
+        oidc_state_mismatch: 'Your sign-in session expired or could not be verified. Please try again.',
+      };
+      setError(messages[authError] || 'Sign-in could not be completed. Please try again.');
       return;
     }
     if (user) {
       const state = location.state as LocationState | null;
       const returnTo = params.get('returnTo');
-      const redirectTo = returnTo?.startsWith('/') ? returnTo : (state?.from || '/');
+      const redirectTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') && !/[\\\x00-\x20]/.test(returnTo) ? returnTo : (state?.from || '/');
       navigate(redirectTo, { replace: true });
     }
   }, [location.search, location.state, navigate, user]);
 
-  const handleGoogleLogin = async () => {
+  const handleLogin = async () => {
     setError(null);
     setSubmitting(true);
     try {
       const state = location.state as LocationState | null;
-      await signInWithGoogle(state?.from || '/');
+      await signIn(state?.from || '/');
     } catch (signInError) {
-      setError(signInError instanceof Error ? signInError.message : 'Unable to start Google sign-in.');
+      setError(signInError instanceof Error ? signInError.message : 'Unable to start sign-in.');
       setSubmitting(false);
     }
   };
@@ -119,7 +124,7 @@ const LoginPage = () => {
           <h2>{authMode === 'headers' ? 'Development sign-in' : 'Continue to your workspace'}</h2>
           <p>{authMode === 'headers'
             ? 'Use a local identity for this development environment.'
-            : 'Sign in securely with your Google account.'}</p>
+            : authProvider === 'oidc' ? 'Sign in securely with your organization account.' : 'Sign in securely with your Google account.'}</p>
         </div>
 
         {error ? (
@@ -160,18 +165,18 @@ const LoginPage = () => {
               onClick={() => void handleHeaderLogin()}
             />
           </div>
-        ) : googleError ? (
-          <Banner status="error" title="Google sign-in is unavailable" description={googleError} />
+        ) : loginError ? (
+          <Banner status="error" title="Sign-in is unavailable" description={loginError} />
         ) : (
           <Button
-            label="Continue with Google"
+            label={`Continue with ${loginLabel}`}
             variant="primary"
             size="lg"
             width="100%"
-            icon={<GoogleMark />}
+            icon={authProvider === 'google' ? <GoogleMark /> : undefined}
             isLoading={submitting}
-            isDisabled={!googleReady || submitting}
-            onClick={() => void handleGoogleLogin()}
+            isDisabled={!loginReady || submitting}
+            onClick={() => void handleLogin()}
           />
         )}
 

@@ -2,7 +2,7 @@ export type AuthUser = {
   id: string;
   name: string;
   email?: string | null;
-  provider?: 'google' | 'local';
+  provider?: 'google' | 'oidc' | 'local';
   avatarUrl?: string | null;
 };
 

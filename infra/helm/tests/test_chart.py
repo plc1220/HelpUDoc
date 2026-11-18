@@ -98,9 +98,41 @@ class ChartTests(unittest.TestCase):
             {"ezua": {"autoHelm": True}}, {"postgres": {"enabled": False}},
             {"config": {"AUTH_MODE": "headers"}}, {"publicUrl": "http://helpudoc.example.com"},
             {"config": {"SANDBOX_INLINE_ENABLED": "true"}},
+            {"auth": {"provider": "headers"}},
+            {"auth": {"oidc": {"issuerUrl": "http://keycloak.internal/realm"}}},
+            {"auth": {"oidc": {"existingSecret": ""}}},
+            {"config": {"OIDC_CLIENT_SECRET": "must-not-be-a-value"}},
             {"ezua": {"enabled": True, "virtualService": {"endpoint": "wrong.example.com"}}}]:
             with self.subTest(values=values):
                 self.assertNotEqual(render(values, fail=True).returncode, 0)
+
+    def test_oidc_metadata_callbacks_and_backend_only_secret(self):
+        objects = render({"auth": {"oidc": {"issuerUrl": "https://sso.internal/realms/site",
+            "clientId": "lumo", "existingSecret": "site-client", "clientSecretKey": "secret-key",
+            "logoutFromProvider": False}}})
+        env = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "helpudoc-env")["data"]
+        self.assertEqual(env["AUTH_PROVIDER"], "oidc")
+        self.assertEqual(env["OIDC_ISSUER_URL"], "https://sso.internal/realms/site")
+        self.assertEqual(env["OIDC_REDIRECT_URI"], "https://helpudoc.example.com/api/auth/oidc/callback")
+        self.assertEqual(env["OIDC_POST_LOGOUT_REDIRECT_URI"], "https://helpudoc.example.com/login")
+        self.assertEqual(env["OIDC_LOGOUT_FROM_PROVIDER"], "false")
+        self.assertNotIn("OIDC_CLIENT_SECRET", env)
+        app = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-app")
+        for container in app["spec"]["template"]["spec"]["containers"]:
+            refs = [e for e in container["env"] if e["name"] == "OIDC_CLIENT_SECRET"]
+            if container["name"] == "backend":
+                self.assertEqual(refs, [{"name": "OIDC_CLIENT_SECRET", "valueFrom": {
+                    "secretKeyRef": {"name": "site-client", "key": "secret-key"}}}])
+            else:
+                self.assertEqual(refs, [])
+
+    def test_google_provider_keeps_legacy_login_without_oidc_secret(self):
+        objects = render({"auth": {"provider": "google", "oidc": {"issuerUrl": "", "existingSecret": ""}}})
+        env = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "helpudoc-env")["data"]
+        self.assertEqual(env["AUTH_PROVIDER"], "google")
+        self.assertFalse(any(key.startswith("OIDC_") for key in env))
+        app = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "helpudoc-app")
+        self.assertFalse(any(e["name"] == "OIDC_CLIENT_SECRET" for c in app["spec"]["template"]["spec"]["containers"] for e in c["env"]))
 
 
 if __name__ == "__main__":

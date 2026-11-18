@@ -1,5 +1,6 @@
 import 'express-session';
 import { UserContext } from '../user';
+import type { OidcTransaction } from '../../services/oidcService';
 
 declare module 'express-session' {
   interface GoogleOAuthSessionState {
@@ -18,5 +19,7 @@ declare module 'express-session' {
     externalId?: string;
     isAdmin?: boolean;
     googleOAuth?: GoogleOAuthSessionState;
+    oidcTransaction?: OidcTransaction;
+    oidcLogin?: { idToken: string };
   }
 }

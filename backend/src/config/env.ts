@@ -112,6 +112,16 @@ const backendEnvSchema = z.object({
       }),
     }),
   }),
+  authProvider: z.enum(['google', 'oidc']),
+  oidc: z.object({
+    issuerUrl: z.string().optional(),
+    clientId: z.string().optional(),
+    clientSecret: z.string().optional(),
+    redirectUri: z.string().optional(),
+    postLogoutRedirectUri: z.string().optional(),
+    displayName: z.string(),
+    logoutFromProvider: z.boolean(),
+  }),
   googleOauth: z.object({
     clientId: z.string().optional(),
     clientSecret: z.string().optional(),
@@ -212,6 +222,16 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
           },
         };
       })(),
+    },
+    authProvider: backendEnvSchema.shape.authProvider.parse(trimEnv(e, 'AUTH_PROVIDER') || 'google'),
+    oidc: {
+      issuerUrl: trimEnv(e, 'OIDC_ISSUER_URL'),
+      clientId: trimEnv(e, 'OIDC_CLIENT_ID'),
+      clientSecret: trimEnv(e, 'OIDC_CLIENT_SECRET'),
+      redirectUri: trimEnv(e, 'OIDC_REDIRECT_URI'),
+      postLogoutRedirectUri: trimEnv(e, 'OIDC_POST_LOGOUT_REDIRECT_URI'),
+      displayName: trimEnv(e, 'OIDC_DISPLAY_NAME') || 'Single sign-on',
+      logoutFromProvider: trimEnv(e, 'OIDC_LOGOUT_FROM_PROVIDER') !== 'false',
     },
     googleOauth: {
       clientId: trimEnv(e, 'GOOGLE_OAUTH_CLIENT_ID'),
