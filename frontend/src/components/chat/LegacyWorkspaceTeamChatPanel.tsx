@@ -293,7 +293,7 @@ export default function LegacyWorkspaceTeamChatPanel({
       <article
         key={message.id}
         id={`team-message-${message.id}`}
-        style={targetMessageId === message.id ? { outline: '2px solid var(--owl-taupe)', outlineOffset: 2 } : undefined}
+        style={targetMessageId === message.id ? { outline: '2px solid #8b5cf6', outlineOffset: 2 } : undefined}
         className={`group rounded-2xl border px-3 py-2.5 ${
           isReply ? 'ml-7' : ''
         } ${
@@ -406,7 +406,7 @@ export default function LegacyWorkspaceTeamChatPanel({
   };
 
   return (
-    <div className={`flex min-h-0 flex-1 flex-col ${isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-50'}`}>
+    <div className={`flex min-h-0 flex-1 flex-col ${isDarkMode ? 'bg-[#0d1524]' : 'bg-slate-50'}`}>
       <div className={`border-b px-4 py-2.5 ${
         isDarkMode ? 'border-slate-800 bg-slate-950/30' : 'border-slate-200 bg-white'
       }`}>
@@ -481,7 +481,7 @@ export default function LegacyWorkspaceTeamChatPanel({
         )}
       </div>
 
-      <div className={`border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'}`}>
+      <div className={`border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
         {replyTo ? (
           <div className={`mb-2 flex items-center justify-between rounded-xl px-3 py-2 text-xs ${
             isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'

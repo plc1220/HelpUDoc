@@ -85,6 +85,8 @@ export default function AgentChatPane({
   interruptErrorByMessageId,
   agentChatFocusKey,
   chatMessage,
+  promptSuggestion,
+  onAcceptPromptSuggestion,
   chatAttachments,
   commandTags,
   isMentionOpen,
@@ -174,6 +176,8 @@ export default function AgentChatPane({
   interruptErrorByMessageId: Record<string, string>;
   agentChatFocusKey?: number;
   chatMessage: string;
+  promptSuggestion?: string;
+  onAcceptPromptSuggestion?: () => void;
   chatAttachments: ChatComposerAttachment[];
   commandTags: CommandTag[];
   isMentionOpen: boolean;
@@ -387,6 +391,8 @@ export default function AgentChatPane({
                 <ChatInputArea
                   colorMode={colorMode}
                   chatMessage={chatMessage}
+                  promptSuggestion={promptSuggestion}
+                  onAcceptPromptSuggestion={onAcceptPromptSuggestion}
                   chatAttachments={chatAttachments}
                   placeholder={isSharedWorkspace
                     ? sharedLumoCanWrite

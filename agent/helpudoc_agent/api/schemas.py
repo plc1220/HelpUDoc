@@ -1,9 +1,9 @@
 """Pydantic models for the agent HTTP API."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatRequest(BaseModel):
@@ -23,6 +23,42 @@ class ChatResponse(BaseModel):
 class InternalAnalyzeRequest(BaseModel):
     systemPrompt: str
     userPrompt: str
+
+
+class PromptSuggestionMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=8000)
+
+
+class PromptSuggestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    messages: List[PromptSuggestionMessage] = Field(min_length=2, max_length=6)
+
+
+class WorkspaceStarterFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=300)
+    mimeType: str = Field(default="", max_length=100)
+
+
+class WorkspaceStarterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=255)
+    readOnly: bool
+    files: List[WorkspaceStarterFile] = Field(max_length=24)
+    recentTopics: List[str] = Field(max_length=5)
+
+
+class StarterPrompt(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    label: str = Field(min_length=1, max_length=48)
+    prompt: str = Field(min_length=1, max_length=600)
+
+
+class WorkspaceStarterResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    prompts: List[StarterPrompt] = Field(min_length=2, max_length=4)
 
 
 class InternalMemoryRequest(BaseModel):

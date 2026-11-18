@@ -1,4 +1,6 @@
 import NotificationCenter from '../../components/NotificationCenter';
+import { usePromptSuggestion } from '../../hooks/usePromptSuggestion';
+import { useWorkspaceStarterPrompts } from '../../hooks/useWorkspaceStarterPrompts';
 import WorkspaceNavigator from '../../components/WorkspaceNavigator';
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, type ChangeEvent } from 'react';
 import type { ComponentProps, CSSProperties } from 'react';
@@ -910,6 +912,25 @@ const isUsableWorkspaceId = (value: string | null | undefined): value is string 
   return Boolean(normalized && normalized !== 'undefined' && normalized !== 'null');
 };
 
+const STARTER_PROMPTS = [
+  {
+    label: 'Summarize a document', icon: BookOpen,
+    prompt: 'Help me summarize a document. Ask me to attach it, then highlight the key points, decisions, and follow-up actions with references to the relevant sections.',
+  },
+  {
+    label: 'Draft a proposal', icon: Edit,
+    prompt: 'Help me draft a proposal. Ask me about the client, objectives, scope, and intended audience, then propose an outline for review.',
+  },
+  {
+    label: 'Analyze data', icon: Sparkles,
+    prompt: 'Help me analyze a dataset. Ask me to attach the data and describe the questions I want to answer, then suggest an analysis plan for review.',
+  },
+  {
+    label: 'Create a presentation', icon: FileIcon,
+    prompt: 'Help me create a presentation. Ask me about the topic, audience, goals, and slide count, then propose an outline for review.',
+  },
+] as const;
+
 export default function WorkspacePage() {
   const navigate = useNavigate();
   const notificationLocation = useLocation();
@@ -926,6 +947,7 @@ export default function WorkspacePage() {
   const [isCalendarCanvas, setIsCalendarCanvas] = useState(false);
   const calendarAgentRef = useRef<string | undefined>(undefined);
   const calendarAgentSourceRef = useRef<string | undefined>(undefined);
+  const [annotationToolbarTarget, setAnnotationToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [calendarCanvasTarget, setCalendarCanvasTarget] = useState<HTMLDivElement | null>(null);
   const [scheduleDialogState, setScheduleDialogState] = useState<ScheduleDialogState | null>(null);
   const [scheduleSaving, setScheduleSaving] = useState(false);
@@ -1311,6 +1333,22 @@ export default function WorkspacePage() {
       ((activeConversationId ? conversationStreaming[activeConversationId] || false : false) || hasRunningAgentMessage),
     [activeConversationId, conversationStreaming, hasPendingInterruptMessage, hasRunningAgentMessage],
   );
+  const generatedPromptSuggestion = usePromptSuggestion(
+    messages,
+    `${selectedWorkspace?.id || ''}:${activeConversationId || ''}`,
+    isStreaming || hasPendingInterruptMessage,
+  );
+  const starterContextRevision = useMemo(() => JSON.stringify([
+    files.map(file => [file.id, file.name, file.currentVersionId]),
+    conversationHistory.map(conversation => [conversation.id, conversation.title, conversation.updatedAt]),
+  ]), [files, conversationHistory]);
+  const workspaceStarterPrompts = useWorkspaceStarterPrompts(
+    selectedWorkspace,
+    isLandingPageVisible && !isMobileViewport && !isPublishedMode,
+    starterContextRevision,
+  );
+  const starterPrompts = workspaceStarterPrompts.length
+    ? workspaceStarterPrompts.map(item => ({ ...item, icon: Sparkles })) : STARTER_PROMPTS;
   const systemFiles = useMemo(() => files.filter(isSystemFile), [files]);
   const fileStatusById = useMemo(() => {
     const byId: Record<string, { status: FileStatus; drift: boolean }> = {};
@@ -1976,7 +2014,7 @@ export default function WorkspacePage() {
       return;
     }
 
-    const wrapInDocument = (body: string) => `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${activeFile.name}</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;line-height:1.6;color:var(--owl-espresso);}pre{background:var(--owl-espresso);color:var(--owl-cream);padding:12px 16px;border-radius:12px;overflow-x:auto;}code{font-family:'SFMono-Regular',Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:0.9em;}img{max-width:100%;height:auto;border-radius:8px;}h1,h2,h3,h4,h5,h6{margin-top:1.5em;}</style></head><body>${body}</body></html>`;
+    const wrapInDocument = (body: string) => `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${activeFile.name}</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;line-height:1.6;color:#0f172a;}pre{background:#0f172a;color:#f8fafc;padding:12px 16px;border-radius:12px;overflow-x:auto;}code{font-family:'SFMono-Regular',Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:0.9em;}img{max-width:100%;height:auto;border-radius:8px;}h1,h2,h3,h4,h5,h6{margin-top:1.5em;}</style></head><body>${body}</body></html>`;
 
     const hasHtmlShell = /<html[\s>]/i.test(fileContent);
     const printableContent = isHtmlFile
@@ -7065,10 +7103,32 @@ export default function WorkspacePage() {
     updateAutocompleteState(target.value, target.selectionStart ?? target.value.length);
   };
 
+  const promptSuggestion = (!isLandingPageVisible || isMobileViewport)
+    && !chatMessage && !chatAttachments.length && !composerTags.length
+    && !isDriveImporting && !isMentionOpen && !isCommandOpen ? generatedPromptSuggestion : '';
+  const handleChooseComposerPrompt = (prompt: string) => {
+    setChatMessage(prompt);
+    closeMention();
+    closeCommand();
+    requestAnimationFrame(() => {
+      chatInputRef.current?.focus();
+      chatInputRef.current?.setSelectionRange(prompt.length, prompt.length);
+    });
+  };
+  const handleAcceptPromptSuggestion = () => {
+    if (promptSuggestion) handleChooseComposerPrompt(promptSuggestion);
+  };
+
   const handleChatInputKeyDown = (
     event: React.KeyboardEvent<HTMLTextAreaElement>,
     options?: { sendOnEnter?: boolean },
   ) => {
+    if (promptSuggestion && event.key === 'Tab' && !event.shiftKey && !event.altKey
+      && !event.ctrlKey && !event.metaKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      handleAcceptPromptSuggestion();
+      return;
+    }
     const shouldSendOnEnter = options?.sendOnEnter ?? true;
     if (isCommandOpen) {
       if (event.key === 'ArrowDown' && commandSuggestions.length) {
@@ -8021,9 +8081,9 @@ export default function WorkspacePage() {
   };
 
   const mobileCanvasView = isCalendarCanvas ? <div className="calendar-canvas-slot" ref={setCalendarCanvasTarget} /> : (
-    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-50'}`}>
+    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0e1728]' : 'bg-slate-50'}`}>
       <div className={`flex shrink-0 items-center justify-between border-b px-4 py-3 ${
-        isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'
+        isDarkMode ? 'border-slate-800 bg-[#08111f]' : 'border-slate-200 bg-white'
       }`}>
         <div className="min-w-0">
           <p className={`text-[10px] font-semibold uppercase tracking-normal ${
@@ -8035,7 +8095,8 @@ export default function WorkspacePage() {
             {canvasTitle}
           </h2>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          <div ref={setAnnotationToolbarTarget} className="flex items-center" />
           {isNativeDocx && canMutateContent && !isPublishedMode && <>
             <ToggleButton label="Edit file" icon={<Edit size={16}/>} size="sm" isPressed={isEditMode} isDisabled={nativeDocxState.saving || !/^\d+$/.test(selectedFile?.id || '')} onPressedChange={value => { void toggleFileEditing(value); }} />
             {isEditMode && <Button label={nativeDocxState.saving ? 'Saving…' : 'Save'} variant="primary" size="sm" isDisabled={!nativeDocxState.dirty || nativeDocxState.saving} onClick={saveActiveFile} />}
@@ -8080,7 +8141,7 @@ export default function WorkspacePage() {
       </div>
       {privateWorkBanner}
       <div className="min-h-0 flex-1 overflow-hidden">
-        <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} fileId={selectedFile && Number.isFinite(Number(selectedFile.id)) ? Number(selectedFile.id) : undefined} anchorVersionId={(selectedFileDetails && selectedFile && selectedFileDetails.id === selectedFile.id ? selectedFileDetails.currentVersionId : selectedFile?.currentVersionId) || undefined} sourceThreadId={releaseBReady ? activeThreadAssociation?.threadId : undefined} releaseBReady={releaseBReady} canvasDirty={canvasDirty} onAgentChat={handleAnnotationChat}>
+        <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations toolbarTarget={annotationToolbarTarget} workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} fileId={selectedFile && Number.isFinite(Number(selectedFile.id)) ? Number(selectedFile.id) : undefined} anchorVersionId={(selectedFileDetails && selectedFile && selectedFileDetails.id === selectedFile.id ? selectedFileDetails.currentVersionId : selectedFile?.currentVersionId) || undefined} sourceThreadId={releaseBReady ? activeThreadAssociation?.threadId : undefined} releaseBReady={releaseBReady} canvasDirty={canvasDirty} onAgentChat={handleAnnotationChat}>
         {isEditMode && selectedWorkspace ? (
           <Suspense fallback={editorLoadingFallback}>
             <FileEditor
@@ -8130,7 +8191,7 @@ export default function WorkspacePage() {
           </div>
         ) : (
           <div className={`flex h-full flex-col items-center justify-center px-6 text-center ${
-            isDarkMode ? 'bg-[var(--owl-espresso)] text-slate-400' : 'bg-slate-50 text-slate-500'
+            isDarkMode ? 'bg-[#0e1728] text-slate-400' : 'bg-slate-50 text-slate-500'
           }`}>
             <MobileLumoAvatar size={52} notify={hasPendingInterruptMessage} busy={isStreaming} />
             <p className={`mt-4 text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
@@ -8143,7 +8204,7 @@ export default function WorkspacePage() {
         )}
         </CanvasAnnotations></OfficeDocumentContext.Provider>
       </div>
-      <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'}`}>
+      <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
         <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
           isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-slate-50'
         }`}>
@@ -8174,10 +8235,10 @@ export default function WorkspacePage() {
 
   const mobileWorkspaceShell = (
     <div className={`flex h-[100dvh] w-screen flex-col overflow-hidden font-sans ${
-      isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-100'
+      isDarkMode ? 'bg-[#020817]' : 'bg-slate-100'
     }`}>
       <header className={`shrink-0 border-b px-4 py-3 ${
-        isDarkMode ? 'border-slate-800 bg-[var(--owl-espresso)]' : 'border-slate-200 bg-white'
+        isDarkMode ? 'border-slate-800 bg-[#08111f]' : 'border-slate-200 bg-white'
       }`}>
         <div className="flex items-center justify-between gap-3">
           <button
@@ -8290,7 +8351,7 @@ export default function WorkspacePage() {
       </header>
 
       {mobileSurface === 'chat' ? (
-        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-white'}`}>
+        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0d1524]' : 'bg-white'}`}>
           {selectedWorkspace?.visibility === 'team' ? (
             <div className={`border-b px-4 py-2 text-xs ${
               isDarkMode
@@ -8341,6 +8402,8 @@ export default function WorkspacePage() {
           <ChatInputArea
             colorMode={colorMode}
             chatMessage={chatMessage}
+            promptSuggestion={promptSuggestion}
+            onAcceptPromptSuggestion={handleAcceptPromptSuggestion}
             chatAttachments={chatAttachments}
             placeholder="Ask anything…"
             chatInputRef={chatInputRef}
@@ -8616,13 +8679,13 @@ export default function WorkspacePage() {
         >
           <div
             className={`flex font-sans h-full min-h-0 overflow-hidden ${
-              isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-gray-100'
+              isDarkMode ? 'bg-[#020817]' : 'bg-gray-100'
             }`}
             style={{ height: layoutHeight }}
           >
             {isLandingPageVisible ? (
               <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
-                isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-slate-50'
+                isDarkMode ? 'bg-[#020817]' : 'bg-slate-50'
               }`}>
                 <div className="flex flex-1 items-center justify-center px-6 py-8">
                   <div className="w-full max-w-4xl">
@@ -8631,7 +8694,7 @@ export default function WorkspacePage() {
                     }`}>
                       {landingUserName ? `Hi ${landingUserName}, What are we documenting today?` : 'What are we documenting today?'}
                     </h1>
-                    <div className={`relative rounded-[2rem] border shadow-[0_28px_70px_-48px_var(--color-overlay)] ${
+                    <div className={`relative rounded-[2rem] border shadow-[0_28px_70px_-48px_rgba(15,23,42,0.7)] ${
                       isDarkMode ? 'border-slate-700/80 bg-slate-950/80' : 'border-slate-200 bg-white'
                     }`}>
                       <textarea
@@ -8955,6 +9018,20 @@ export default function WorkspacePage() {
                         />
                       </div>
                     </div>
+                    {!chatMessage && !chatAttachments.length && !composerTags.length && !isDriveImporting && (
+                      <div className="landing-prompt-suggestions" role="group" aria-label="Starter prompts">
+                        {starterPrompts.map(({ label, prompt, icon: StarterIcon }) => <Button
+                          key={label}
+                          className="landing-prompt-chip"
+                          label={label}
+                          tooltip={prompt}
+                          icon={<StarterIcon size={16} />}
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleChooseComposerPrompt(prompt)}
+                        />)}
+                      </div>
+                    )}
                     <input
                       type="file"
                       ref={attachmentInputRef}
@@ -8975,7 +9052,7 @@ export default function WorkspacePage() {
             >
               {/* Workspace Header */}
               <div className={`px-4 py-3 flex items-center gap-3 ${
-                isDarkMode ? 'border-b border-[var(--owl-cocoa)] bg-[var(--owl-espresso)]' : 'border-b border-gray-200'
+                isDarkMode ? 'border-b border-[#223047] bg-[#08111f]' : 'border-b border-gray-200'
               }`}>
                 <button
                   type="button"
@@ -9088,7 +9165,7 @@ export default function WorkspacePage() {
                   role="status"
                   className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs ${
                     isDarkMode
-                      ? 'border-b border-[var(--owl-cocoa)] bg-slate-900/70 text-slate-300'
+                      ? 'border-b border-[#223047] bg-slate-900/70 text-slate-300'
                       : 'border-b border-gray-200 bg-slate-50 text-slate-600'
                   }`}
                 >
@@ -9114,13 +9191,13 @@ export default function WorkspacePage() {
                 {/* File Explorer */}
                 <div
                   className={`flex flex-col overflow-hidden min-h-0 ${
-                    isDarkMode ? 'bg-[var(--owl-espresso)] border-r border-[var(--owl-cocoa)]' : 'bg-white border-r border-gray-200'
+                    isDarkMode ? 'bg-[#08111f] border-r border-[#223047]' : 'bg-white border-r border-gray-200'
                   }`}
                   style={filePaneStyles}
                 >
                   <div
                     className={`px-3 py-3 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
-                      } ${isDarkMode ? 'border-b border-[var(--owl-cocoa)]' : 'border-b border-gray-200'
+                      } ${isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
                       }`}
                   >
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
@@ -9348,11 +9425,11 @@ export default function WorkspacePage() {
 
                 {/* Content Editor */}
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
-                  isDarkMode ? 'bg-[var(--owl-espresso)]' : 'bg-gray-50'
+                  isDarkMode ? 'bg-[#0e1728]' : 'bg-gray-50'
                 }`}>
                   {isCalendarCanvas ? <div className="calendar-canvas-slot" ref={setCalendarCanvasTarget} /> : <>
                   <div className={`px-4 py-3 flex flex-wrap gap-2 justify-between items-center ${
-                    isDarkMode ? 'border-b border-[var(--owl-cocoa)]' : 'border-b border-gray-200'
+                    isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
                   }`}>
                     <div className="flex min-w-0 flex-wrap items-center gap-3">
                       <h3 title={canvasTitle} className={`truncate text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
@@ -9384,6 +9461,7 @@ export default function WorkspacePage() {
                           onClick={() => setReviewChangesWorkspace(selectedWorkspace)}
                         />
                       ) : null}
+                      <div ref={setAnnotationToolbarTarget} className="flex items-center" />
                       {canCopyImageUrl && (
                         <IconButton
                           label={copiedImageUrl ? 'Copied to clipboard' : 'Copy image public URL'}
@@ -9490,7 +9568,7 @@ export default function WorkspacePage() {
                   </div>
                   <div className="flex-1 overflow-hidden min-h-0">
                     {privateWorkBanner}
-                    <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} fileId={selectedFile && Number.isFinite(Number(selectedFile.id)) ? Number(selectedFile.id) : undefined} anchorVersionId={(selectedFileDetails && selectedFile && selectedFileDetails.id === selectedFile.id ? selectedFileDetails.currentVersionId : selectedFile?.currentVersionId) || undefined} sourceThreadId={releaseBReady ? activeThreadAssociation?.threadId : undefined} releaseBReady={releaseBReady} canvasDirty={canvasDirty} onAgentChat={handleAnnotationChat}>
+                    <OfficeDocumentContext.Provider value={officeDocumentContext}><CanvasAnnotations toolbarTarget={annotationToolbarTarget} workspace={selectedWorkspace} filePath={isEditMode && isNativeDocx ? undefined : selectedFile?.name} fileId={selectedFile && Number.isFinite(Number(selectedFile.id)) ? Number(selectedFile.id) : undefined} anchorVersionId={(selectedFileDetails && selectedFile && selectedFileDetails.id === selectedFile.id ? selectedFileDetails.currentVersionId : selectedFile?.currentVersionId) || undefined} sourceThreadId={releaseBReady ? activeThreadAssociation?.threadId : undefined} releaseBReady={releaseBReady} canvasDirty={canvasDirty} onAgentChat={handleAnnotationChat}>
                     {isEditMode && !isPublishedMode && selectedWorkspace ? (
                       <Suspense fallback={editorLoadingFallback}>
                         <FileEditor
@@ -9582,6 +9660,8 @@ export default function WorkspacePage() {
               interruptSubmittingByMessageId={interruptSubmittingByMessageId}
               interruptErrorByMessageId={interruptErrorByMessageId}
               chatMessage={chatMessage}
+              promptSuggestion={promptSuggestion}
+              onAcceptPromptSuggestion={handleAcceptPromptSuggestion}
               chatAttachments={chatAttachments}
               commandTags={composerTags}
               isMentionOpen={isMentionOpen}

@@ -13,6 +13,7 @@ import { Token } from '@astryxdesign/core/Token';
 import {
   BookOpen,
   Check,
+  CornerDownLeft,
   FileIcon,
   Globe2,
   Paperclip,
@@ -57,6 +58,8 @@ export default function ChatInputArea({
   chatMessage,
   chatAttachments,
   placeholder = 'Ask anything…',
+  promptSuggestion,
+  onAcceptPromptSuggestion,
   chatInputRef,
   attachmentInputRef,
   isStreaming,
@@ -93,6 +96,8 @@ export default function ChatInputArea({
   chatMessage: string;
   chatAttachments: ChatComposerAttachment[];
   placeholder?: string;
+  promptSuggestion?: string;
+  onAcceptPromptSuggestion?: () => void;
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   isStreaming: boolean;
@@ -145,10 +150,11 @@ export default function ChatInputArea({
       CHAT_INPUT_MAX_HEIGHT,
       Math.max(CHAT_INPUT_MIN_HEIGHT, input.scrollHeight),
     )}px`;
-  }, [chatInputRef, chatMessage]);
+  }, [chatInputRef, chatMessage, promptSuggestion]);
 
   const canSend = Boolean(chatMessage.trim() || chatAttachments.length);
   const attachmentCount = chatAttachments.length + commandTags.length;
+  const inputPlaceholder = promptSuggestion || (isNarrow ? 'Ask anything…' : placeholder);
 
   return (
     <div className="lumo-composer-dock">
@@ -162,7 +168,7 @@ export default function ChatInputArea({
           onStop={onStopStreaming}
           isStopShown={isStreaming}
           isDisabled={isPreparingAttachments}
-          placeholder={isNarrow ? 'Ask anything…' : placeholder}
+          placeholder={inputPlaceholder}
           drawer={attachmentCount > 0 ? (
             <ChatComposerDrawer count={attachmentCount} label="Context" defaultIsCollapsed={false}>
               <div className="lumo-composer-tokens">
@@ -199,7 +205,7 @@ export default function ChatInputArea({
             <textarea
               ref={chatInputRef}
               className="lumo-composer-input"
-              placeholder={isNarrow ? 'Ask anything…' : placeholder}
+              placeholder={inputPlaceholder}
               value={chatMessage}
               rows={1}
               onChange={onChatInputChange}
@@ -212,6 +218,14 @@ export default function ChatInputArea({
           )}
           footerActions={(
             <div className="lumo-composer-footer-actions">
+              {promptSuggestion && <IconButton
+                label="Use suggested prompt"
+                tooltip="Use suggestion (Tab)"
+                variant="ghost"
+                size="md"
+                icon={<CornerDownLeft size={16} />}
+                onClick={onAcceptPromptSuggestion}
+              />}
               <IconButton
                 label="Attach files"
                 tooltip="Attach files"
