@@ -25,7 +25,7 @@ export default function WorkspaceUploadConflictDialog({
       <DialogTitle id="upload-conflict-title">Folders already exist</DialogTitle>
       <DialogContent>
         <p id="upload-conflict-description" className="mb-4 text-sm">
-          Choose where to upload each folder. Existing files will be kept; duplicate filenames get
+          Choose where to upload each folder. Existing files will be kept and duplicate filenames get
           numbered copies.
         </p>
         {conflicts.map((item) => (
