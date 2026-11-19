@@ -4,19 +4,21 @@ from __future__ import annotations
 import os
 import re
 import inspect
-from contextlib import AbstractContextManager
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional
 
 from deepagents.backends import StoreBackend
-from deepagents.backends.utils import create_file_data, file_data_to_string
+from deepagents.backends.utils import create_file_data
 from langgraph.store.base import BaseStore, Item
 from langgraph.store.memory import InMemoryStore
 
 try:  # pragma: no cover - import depends on optional package
     from langgraph.store.postgres import PostgresStore
+    from psycopg_pool import ConnectionPool
 except Exception:  # pragma: no cover - handled at runtime when store is requested
     PostgresStore = None  # type: ignore[assignment]
+    ConnectionPool = None  # type: ignore[assignment]
 
 
 MEMORY_ROUTE_PREFIX = "/memories/"
@@ -137,7 +139,7 @@ class MemoryStoreManager:
 
     def __init__(self) -> None:
         self._store: BaseStore | None = None
-        self._store_context: AbstractContextManager[Any] | None = None
+        self._store_context: ExitStack | None = None
 
     @property
     def store(self) -> BaseStore:
@@ -151,20 +153,30 @@ class MemoryStoreManager:
         if should_use_in_memory_store():
             self._store = InMemoryStore()
             return
-        if PostgresStore is None:
+        if PostgresStore is None or ConnectionPool is None:
             raise RuntimeError(
-                "langgraph.store.postgres is unavailable. Install langgraph-checkpoint-postgres and psycopg[binary]."
+                "The PostgreSQL memory store is unavailable. Install langgraph-checkpoint-postgres, "
+                "psycopg[binary], and psycopg-pool."
             )
-        conn_string = resolve_store_connection_string()
-        store_context = PostgresStore.from_conn_string(conn_string)
-        store = store_context.__enter__()
-        store.setup()
-        self._store_context = store_context
-        self._store = store
+        # A dropped idle connection must not permanently break memory reads.
+        with ExitStack() as startup:
+            store = startup.enter_context(PostgresStore.from_conn_string(
+                resolve_store_connection_string(),
+                pool_config={
+                    "min_size": 1,
+                    "max_size": 4,
+                    "timeout": 10.0,
+                    "check": ConnectionPool.check_connection,
+                    "kwargs": {"connect_timeout": 5},
+                },
+            ))
+            store.setup()
+            self._store_context = startup.pop_all()
+            self._store = store
 
     def stop(self) -> None:
         if self._store_context is not None:
-            self._store_context.__exit__(None, None, None)
+            self._store_context.close()
         self._store_context = None
         self._store = None
 
@@ -200,6 +212,9 @@ class MemoryStoreManager:
     def _item_content(item: Item) -> tuple[str, Optional[str]]:
         raw_content = item.value.get("content")
         modified_at = item.value.get("modified_at")
-        if not isinstance(raw_content, list):
-            return "", modified_at if isinstance(modified_at, str) else None
-        return file_data_to_string(item.value), modified_at if isinstance(modified_at, str) else None
+        timestamp = modified_at if isinstance(modified_at, str) else None
+        if isinstance(raw_content, str):
+            return raw_content, timestamp
+        if isinstance(raw_content, list) and all(isinstance(line, str) for line in raw_content):
+            return "\n".join(raw_content), timestamp
+        return "", timestamp
