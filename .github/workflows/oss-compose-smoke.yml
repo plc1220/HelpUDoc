@@ -1,0 +1,29 @@
+name: OSS Compose smoke
+
+on:
+  pull_request:
+    paths:
+      - 'infra/oss/**'
+      - 'infra/postgres-init/**'
+      - '.github/workflows/oss-compose-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oss-compose-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oss-smoke:
+    name: OSS clean boot and restart persistence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # Uses only throwaway credentials, network, loopback ports, and volumes
+      # on this ephemeral runner. No environments, application deploy, or secrets.
+      - name: Verify Postgres, Redis, and RustFS persistence
+        run: ./infra/oss/smoke.sh

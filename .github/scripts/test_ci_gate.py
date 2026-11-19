@@ -13,7 +13,7 @@ from ci_gate import JOB_FILTERS, failures
 
 def results(**filters: str) -> dict:
     return {
-        "changes": {"result": "success", "outputs": {"backend": "false", "frontend": "false", "agent": "false", **filters}},
+        "changes": {"result": "success", "outputs": {**dict.fromkeys(JOB_FILTERS.values(), "false"), **filters}},
         **{job: {"result": "success" if filters.get(path) == "true" else "skipped"} for job, path in JOB_FILTERS.items()},
     }
 
@@ -43,7 +43,7 @@ class GateTests(unittest.TestCase):
                 self.assertTrue(failures(needs, "pull_request", "refs/pull/1/merge"))
 
     def test_path_detection_missing_or_invalid_output_fails_gate(self):
-        for name in ["backend", "frontend", "agent"]:
+        for name in sorted(set(JOB_FILTERS.values())):
             for value in [None, "", "unknown", True]:
                 with self.subTest(name=name, value=value):
                     needs = results()
@@ -69,8 +69,16 @@ class GateTests(unittest.TestCase):
     def test_each_required_job_cannot_be_skipped(self):
         for job in JOB_FILTERS:
             with self.subTest(job=job):
-                needs = results(backend="true", frontend="true", agent="true")
+                needs = results(**dict.fromkeys(JOB_FILTERS.values(), "true"))
                 needs[job]["result"] = "skipped"
+                self.assertTrue(failures(needs, "pull_request", "refs/pull/1/merge"))
+
+    def test_oss_only_pr_requires_compose_and_can_skip_app_jobs(self):
+        needs = results(oss="true")
+        self.assertEqual(failures(needs, "pull_request", "refs/pull/1/merge"), [])
+        for result in ["skipped", "cancelled", "failure"]:
+            with self.subTest(result=result):
+                needs["oss-compose"]["result"] = result
                 self.assertTrue(failures(needs, "pull_request", "refs/pull/1/merge"))
 
     def test_unknown_job_result_fails_even_for_unrelated_job(self):

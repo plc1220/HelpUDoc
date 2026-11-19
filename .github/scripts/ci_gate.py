@@ -14,6 +14,7 @@ JOB_FILTERS = {
     "docker-backend": "backend",
     "docker-frontend": "frontend",
     "docker-agent": "agent",
+    "oss-compose": "oss",
 }
 
 
@@ -25,7 +26,7 @@ def failures(needs: dict, event: str, ref: str) -> list[str]:
     if changes.get("result") != "success":
         errors.append("Path detection did not succeed")
     outputs = changes.get("outputs", {})
-    for name in {"backend", "frontend", "agent"}:
+    for name in sorted(set(JOB_FILTERS.values())):
         if outputs.get(name) not in {"true", "false"}:
             errors.append(f"Missing or invalid path detection output: {name}")
 

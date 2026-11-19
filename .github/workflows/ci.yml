@@ -17,6 +17,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       agent: ${{ steps.filter.outputs.agent }}
+      oss: ${{ steps.filter.outputs.oss }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -60,6 +61,29 @@ jobs:
               - 'infra/env/**'
               - 'env/**'
               - '.github/workflows/ci.yml'
+            oss:
+              - 'infra/oss/**'
+              - 'infra/postgres-init/**'
+              - '.github/scripts/ci_gate.py'
+              - '.github/scripts/test_ci_gate.py'
+              - '.github/workflows/ci.yml'
+
+  oss-compose:
+    name: OSS Compose validation
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.oss == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Validate resolved OSS Compose configuration and images
+        run: ./infra/oss/check-compose.sh
 
   backend-test:
     name: Backend tests
@@ -252,6 +276,7 @@ jobs:
       - docker-backend
       - docker-frontend
       - docker-agent
+      - oss-compose
     if: always()
     runs-on: ubuntu-latest
     steps:
