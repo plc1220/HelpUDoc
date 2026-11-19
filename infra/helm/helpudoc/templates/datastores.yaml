@@ -1,18 +1,61 @@
+{{- if not (has $.Values.datastores.controller (list "StatefulSet" "Deployment")) }}
+{{- fail "datastores.controller must be StatefulSet or Deployment" }}
+{{- end }}
+{{- if and $.Values.datastores.quiesce (not $.Values.datastores.maintenance) }}
+{{- fail "datastores.quiesce requires datastores.maintenance" }}
+{{- end }}
 {{- range $component := list "postgres" "redis" "objects" }}
 {{- $settings := index $.Values $component }}
 {{- if eq $component "objects" }}{{ $settings = $.Values.objectStore }}{{ end }}
 {{- if $settings.enabled }}
+{{- $name := printf "%s-%s" (include "helpudoc.fullname" $) $component }}
+{{- $claim := include "helpudoc.claim" (dict "root" $ "name" $component) }}
+{{- $kind := ternary "Deployment" $.Values.datastores.controller (eq $component "objects") }}
+{{- $stateful := eq $kind "StatefulSet" }}
+{{- if ne $component "objects" }}
+{{- $oldKind := ternary "Deployment" "StatefulSet" $stateful }}
+{{- $old := lookup "apps/v1" $oldKind $.Release.Namespace $name }}
+{{- if $old }}
+{{- range $old.spec.template.spec.volumes }}
+{{- if and (eq .name "data") (ne .persistentVolumeClaim.claimName $claim) }}
+{{- fail (printf "keep the existing data claim when changing %s's controller" $name) }}
+{{- end }}
+{{- end }}
+{{- $pvc := lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $claim }}
+{{- if or (not $pvc) (ne $pvc.status.phase "Bound") }}
+{{- fail (printf "wait for PVC %s to bind before changing %s's controller" $claim $name) }}
+{{- end }}
+{{- if ne (int $old.spec.replicas) 0 }}
+{{- fail (printf "scale %s/%s to zero before changing its controller" $oldKind $name) }}
+{{- end }}
+{{- range (lookup "v1" "Pod" $.Release.Namespace "").items }}
+{{- $pod := .metadata.name }}
+{{- range .spec.volumes }}
+{{- if and .persistentVolumeClaim (eq .persistentVolumeClaim.claimName $claim) }}
+{{- fail (printf "wait for pod %s to stop using PVC %s before changing %s's controller" $pod $claim $name) }}
+{{- end }}
+{{- end }}
+{{- if not $.Values.datastores.quiesce }}
+{{- fail (printf "set datastores.quiesce=true and datastores.maintenance=true to switch %s at zero replicas" $name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: {{ $kind }}
 metadata:
-  name: {{ include "helpudoc.fullname" $ }}-{{ $component }}
+  name: {{ $name }}
   namespace: {{ $.Release.Namespace }}
   labels:
     {{- include "helpudoc.labels" $ | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ ternary 0 1 (and (ne $component "objects") $.Values.datastores.quiesce) }}
+  {{- if $stateful }}
+  serviceName: {{ $name }}-dns
+  {{- else }}
   strategy: {type: Recreate}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "helpudoc.selector" (dict "root" $ "component" $component) | nindent 6 }}
@@ -98,7 +141,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "helpudoc.claim" (dict "root" $ "name" $component) }}
+            claimName: {{ $claim }}
         {{- if eq $component "objects" }}
         - name: logs
           emptyDir: {sizeLimit: 1Gi}
@@ -107,7 +150,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "helpudoc.fullname" $ }}-{{ $component }}
+  name: {{ $name }}
   namespace: {{ $.Release.Namespace }}
   labels:
     {{- include "helpudoc.labels" $ | nindent 4 }}
@@ -119,5 +162,23 @@ spec:
     - name: {{ ternary "http-s3" "tcp" (eq $component "objects") }}
       port: {{ if eq $component "postgres" }}5432{{ else if eq $component "redis" }}6379{{ else }}9000{{ end }}
       targetPort: tcp
+{{- if $stateful }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-dns
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "helpudoc.labels" $ | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "helpudoc.selector" (dict "root" $ "component" $component) | nindent 4 }}
+  ports:
+    - name: tcp
+      port: {{ ternary 5432 6379 (eq $component "postgres") }}
+      targetPort: tcp
+{{- end }}
 {{- end }}
 {{- end }}

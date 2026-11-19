@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "helpudoc.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ ternary 0 1 .Values.datastores.maintenance }}
   strategy: {type: Recreate}
   selector:
     matchLabels:

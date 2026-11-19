@@ -89,6 +89,15 @@ gateway:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 256Mi}
 
+datastores:
+  # Deployment is available for a controlled rollback. See the migration runbook
+  # before changing the controller of an existing release.
+  controller: StatefulSet
+  # Pause the app and scheduled writers while validating datastore recovery.
+  maintenance: false
+  # Stage the replacement controllers at zero replicas during handoff.
+  quiesce: false
+
 postgres:
   enabled: true
   image: {repository: postgres, tag: "16.8", pullPolicy: IfNotPresent}

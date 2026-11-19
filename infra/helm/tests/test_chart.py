@@ -43,16 +43,53 @@ class ChartTests(unittest.TestCase):
         self.assertFalse({"google_search", "image_generation", "url_context"} & {t["name"] for t in runtime["tools"]})
         for obj in objects:
             if obj["kind"] == "Service":
-                self.assertEqual(obj["spec"]["type"], "ClusterIP")
-                self.assertTrue(any(d["kind"] == "Deployment" and all(
+                self.assertEqual(obj["spec"].get("type", "ClusterIP"), "ClusterIP")
+                self.assertTrue(any(d["kind"] in {"Deployment", "StatefulSet"} and all(
                     d["spec"]["template"]["metadata"]["labels"].get(k) == v
                     for k, v in obj["spec"]["selector"].items()) for d in objects))
             if obj["kind"] == "PersistentVolumeClaim":
                 self.assertEqual(obj["metadata"]["annotations"]["helm.sh/resource-policy"], "keep")
-            if obj["kind"] == "Deployment":
+            if obj["kind"] in {"Deployment", "StatefulSet"}:
                 for vol in obj["spec"]["template"]["spec"].get("volumes", []):
                     if "persistentVolumeClaim" in vol:
                         self.assertIn(("PersistentVolumeClaim", vol["persistentVolumeClaim"]["claimName"]), index)
+
+    def test_datastore_controller_switch_keeps_claims_and_client_services(self):
+        settings = {"persistence": {"claims": {"postgres": {"existingClaim": "postgres-data"}}},
+            "dailyReflection": {"enabled": True}, "datastores": {"maintenance": True}}
+        active = {(o["kind"], o["metadata"]["name"]): o for o in render(settings)}
+        settings["datastores"]["controller"] = "Deployment"
+        rollback = {(o["kind"], o["metadata"]["name"]): o for o in render(settings)}
+        for component, claim in (("postgres", "postgres-data"), ("redis", "helpudoc-redis")):
+            name = f"helpudoc-{component}"
+            with self.subTest(component=component):
+                self.assertNotIn(("Deployment", name), active)
+                self.assertNotIn(("StatefulSet", name), rollback)
+                stateful = active["StatefulSet", name]["spec"]
+                legacy = rollback["Deployment", name]["spec"]
+                self.assertEqual(legacy["strategy"]["type"], "Recreate")
+                self.assertEqual(stateful["replicas"], 1)
+                self.assertEqual(stateful["template"], legacy["template"])
+                self.assertNotIn("volumeClaimTemplates", stateful)
+                self.assertEqual(stateful["template"]["spec"]["volumes"], [
+                    {"name": "data", "persistentVolumeClaim": {"claimName": claim}},
+                ])
+                headless = active["Service", stateful["serviceName"]]["spec"]
+                self.assertEqual(headless["clusterIP"], "None")
+                service = active["Service", name]["spec"]
+                self.assertEqual(headless["selector"], service["selector"])
+                self.assertEqual(service, rollback["Service", name]["spec"])
+        self.assertNotIn(("PersistentVolumeClaim", "postgres-data"), active)
+        self.assertEqual(active["PersistentVolumeClaim", "helpudoc-redis"],
+            rollback["PersistentVolumeClaim", "helpudoc-redis"])
+        self.assertEqual(active["Deployment", "helpudoc-app"]["spec"]["replicas"], 0)
+        self.assertTrue(active["CronJob", "helpudoc-reflection"]["spec"]["suspend"])
+        self.assertIn(("Deployment", "helpudoc-objects"), active)
+        settings["datastores"].update({"controller": "StatefulSet", "quiesce": True})
+        staged = {(o["kind"], o["metadata"]["name"]): o for o in render(settings)}
+        for component in ("postgres", "redis"):
+            self.assertEqual(staged["StatefulSet", f"helpudoc-{component}"]["spec"]["replicas"], 0)
+        self.assertEqual(staged["Deployment", "helpudoc-objects"]["spec"]["replicas"], 1)
 
     def test_pcai_routes_labels_and_cron(self):
         values = yaml.safe_load((CHART / "values-pcai.example.yaml").read_text())
@@ -69,7 +106,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(policy["spec"]["action"], "CUSTOM")
         self.assertEqual(policy["metadata"]["namespace"], "istio-system")
         for obj in objects:
-            if obj["kind"] == "Deployment":
+            if obj["kind"] in {"Deployment", "StatefulSet"}:
                 self.assertEqual(obj["spec"]["template"]["metadata"]["labels"]["hpe-ezua/type"], "vendor-service")
         self.assertTrue(any(o["kind"] == "CronJob" for o in objects))
 
@@ -80,6 +117,7 @@ class ChartTests(unittest.TestCase):
             "persistence": {"claims": {"workspace": {"existingClaim": "existing-workspace"}}}})
         self.assertEqual(len([o for o in objects if o["kind"] == "PersistentVolumeClaim"]), 3)
         self.assertEqual(len([o for o in objects if o["kind"] == "Deployment"]), 3)
+        self.assertFalse(any(o["kind"] == "StatefulSet" for o in objects))
         env = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"].endswith("-env"))["data"]
         self.assertNotIn("REDIS_URL", env)
         self.assertEqual(env["S3_ENDPOINT"], "https://s3.internal")
@@ -106,7 +144,9 @@ class ChartTests(unittest.TestCase):
             {"auth": {"provider": "oidc", "oidc": {"issuerUrl": "http://keycloak.internal/realm"}}},
             {"auth": {"provider": "oidc", "oidc": {"existingSecret": ""}}},
             {"config": {"OIDC_CLIENT_SECRET": "must-not-be-a-value"}},
-            {"ezua": {"enabled": True, "virtualService": {"endpoint": "wrong.example.com"}}}]:
+            {"ezua": {"enabled": True, "virtualService": {"endpoint": "wrong.example.com"}}},
+            {"datastores": {"quiesce": True}},
+            {"datastores": {"controller": "DaemonSet"}}]:
             with self.subTest(values=values):
                 self.assertNotEqual(render(values, fail=True).returncode, 0)
 

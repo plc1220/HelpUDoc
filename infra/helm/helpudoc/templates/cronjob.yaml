@@ -10,6 +10,7 @@ spec:
   schedule: {{ .Values.dailyReflection.schedule | quote }}
   timeZone: {{ .Values.dailyReflection.timeZone | quote }}
   concurrencyPolicy: Forbid
+  suspend: {{ .Values.datastores.maintenance }}
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:

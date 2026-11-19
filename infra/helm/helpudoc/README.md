@@ -249,7 +249,7 @@ python -m unittest discover -s infra/helm/tests -v
 helm package infra/helm/helpudoc --destination /tmp/helpudoc-packages
 ```
 
-In **Tools & Frameworks → Import Framework**, upload `helpudoc-0.3.1.tgz`, set the
+In **Tools & Frameworks → Import Framework**, upload the packaged chart, set the
 namespace and release name used above, and paste the private site override values.
 Keep `ezua.autoHelm=false`: this is a multi-service manual-integration chart.
 Some PCAI screens call the compressed chart a `tar.gz`; Helm's `.tgz` is the same
@@ -284,6 +284,87 @@ actual runtime config and MCP inventory; do not infer that a ready pod proves
 model execution, OCR coverage or authentication acceptance.
 
 ## Persistence, updates and recovery
+
+### Migrate bundled PostgreSQL and Redis to StatefulSets
+
+Chart 0.3.4 uses single-replica StatefulSets for bundled PostgreSQL and Redis.
+It keeps the existing data claims, container data paths, and client Service
+names. The additional headless Services govern pod identity. Fresh installs
+use StatefulSets automatically. External PostgreSQL or Redis remains external.
+
+Schedule a maintenance window for existing releases. A controller switch must
+pass through zero replicas in both directions so that the Deployment and
+StatefulSet never mount the same claim at the same time. Keep the same
+namespace, release name, storage settings, and site values throughout. Use the
+existing Helm release or PCAI framework and serialize configuration changes.
+
+1. Record the data PVC names, UIDs and backing volume names, the current release
+   values and chart package, and the client Service names. For a PCAI framework
+   update, verify that the existing tile supports updating the chart, stage the
+   maintenance values below in the framework, and verify that the update will
+   preserve them. Then scale the app Deployment to zero and suspend any
+   reflection CronJob. Wait for the app and active CronJob pods to finish.
+   Take verified PostgreSQL and Redis backups and record a few read-only data
+   checks for use after the switch.
+2. Scale the old PostgreSQL and Redis Deployments to zero. Wait until their pod
+   objects have disappeared, including any pods in `Terminating`. Keep both
+   Deployments and their claims in place for Helm to reconcile.
+3. Upgrade the existing release using the new chart and the preserved site
+   values plus this overlay. With Helm CLI, use `helm upgrade RELEASE CHART -n
+   NAMESPACE -f SITE_VALUES -f MAINTENANCE_VALUES --wait --timeout 15m`.
+
+   ```yaml
+   datastores:
+     controller: StatefulSet
+     maintenance: true
+     quiesce: true
+   ```
+
+   The replacement controllers are created at zero replicas. Helm's live
+   rendering checks the old controller's replicas, claim name, bound claim,
+   and absence of pods mounting the claim. Offline `helm template` only checks
+   the manifests. Before proceeding, verify the old Deployments are gone and
+   the replacement StatefulSets are at zero.
+4. Apply `datastores.quiesce: false` with `datastores.maintenance: true`.
+   Verify both StatefulSets are ready, the PVC UIDs and volume names match the
+   recorded values, and PostgreSQL and Redis data are readable through the
+   existing Services. Apply `datastores.maintenance: false` and verify
+   application readiness and a representative Lumo run.
+
+For rollback, use the same chart and reverse the handoff. First apply
+`maintenance: true` with `controller: StatefulSet` to stop the application
+writers. After they stop, take backups, apply `quiesce: true`, and wait for the
+StatefulSet pods to disappear. Then apply `controller: Deployment` while
+keeping both flags true. Verify the old StatefulSets are gone and the
+Deployments are at zero, start the datastores and verify data, then resume the
+app as in step 4. A raw Helm rollback to a revision with active controllers
+can overlap writers and is unsafe for this handoff.
+
+### Connect an existing Langfuse instance
+
+Use a dedicated Langfuse project for Lumo traces. Obtain its project API key
+pair from **Project Settings → API Keys** and add `LANGFUSE_PUBLIC_KEY` and
+`LANGFUSE_SECRET_KEY` to the existing app Secret through the approved secret
+mechanism. From the app namespace, verify that the Langfuse API URL is
+reachable and accepts project API keys at `/api/public/projects`. A browser
+login or redirect from an SSO proxy cannot authenticate an SDK.
+
+```yaml
+config:
+  LANGFUSE_TRACING_ENABLED: "true"
+  LANGFUSE_BASE_URL: "https://langfuse.example.com"
+  LANGFUSE_NEXTAUTH_URL: "https://langfuse.example.com"
+```
+
+Set `LANGFUSE_BASE_URL` to the server URL reachable from the app pods and
+`LANGFUSE_NEXTAUTH_URL` to the browser URL for links in Lumo. Use the
+`trust.configMap` CA bundle when the service uses a private CA. Restart the app
+after updating its Secret and run a non-sensitive test prompt. Confirm that it
+appears in **Observability → Tracing** in the correct project. Traces can contain
+prompts, outputs, and tool inputs, so configure project access and retention
+before enabling capture for users.
+
+### Recover retained application volumes
 
 Skills, plugins and runtime are seeded only on the first boot, preserving edits
 on the claims. Changing the Helm `model` values later does **not** overwrite a
