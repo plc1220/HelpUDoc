@@ -1,0 +1,63 @@
+# Isolated clean-install data plane. Do not mount existing MinIO data here.
+name: helpudoc-oss
+services:
+  postgres:
+    image: docker.io/library/postgres:16.11-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-helpudoc}
+      POSTGRES_USER: ${POSTGRES_USER:-helpudoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ../postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+  redis:
+    image: docker.io/library/redis:7.4.7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis:/data
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+  rustfs:
+    # RustFS 1.0.4, same image as infra/gke/k8s/47-rustfs.yaml.
+    image: docker.io/rustfs/rustfs@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "false"
+    volumes:
+      - rustfs:/data
+    ports:
+      - "127.0.0.1:${S3_PORT:-19100}:9000"
+  bucket-init:
+    image: docker.io/amazon/aws-cli:2.31.0
+    depends_on:
+      - rustfs
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_MAX_ATTEMPTS: "1"
+      AWS_PAGER: ""
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
+    entrypoint: ["/bin/sh", "/oss/init-buckets.sh"]
+    volumes:
+      - ./init-buckets.sh:/oss/init-buckets.sh:ro
+
+volumes:
+  postgres:
+  redis:
+  rustfs:
