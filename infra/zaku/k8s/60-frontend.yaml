@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-frontend:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-frontend:c5108e6f6ad8ac36022f796feea6e207b4273826
           imagePullPolicy: Always
           ports:
             - containerPort: 80

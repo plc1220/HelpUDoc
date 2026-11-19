@@ -20,7 +20,7 @@ spec:
         # Copy image-bundled skills/config into PVCs only when the mount is empty,
         # so admin edits on the PVC are preserved across restarts.
         - name: seed-skills
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:c5108e6f6ad8ac36022f796feea6e207b4273826
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -41,7 +41,7 @@ spec:
             - name: skills-data
               mountPath: /pvc-skills
         - name: seed-plugins
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:c5108e6f6ad8ac36022f796feea6e207b4273826
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -62,7 +62,7 @@ spec:
             - name: plugins-data
               mountPath: /pvc-plugins
         - name: seed-agent-config
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:c5108e6f6ad8ac36022f796feea6e207b4273826
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -84,7 +84,7 @@ spec:
               mountPath: /pvc-agent-config
       containers:
         - name: backend
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:c5108e6f6ad8ac36022f796feea6e207b4273826
           ports:
             - containerPort: 3000
           startupProbe:
@@ -356,7 +356,7 @@ spec:
             - name: agent-config-data
               mountPath: /agent/config
         - name: knowledge-worker
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:c5108e6f6ad8ac36022f796feea6e207b4273826
           command: ["npm"]
           args: ["run", "worker:knowledge"]
           resources:
@@ -440,7 +440,7 @@ spec:
             - name: workspace-data
               mountPath: /app/workspaces
         - name: agent
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:c5108e6f6ad8ac36022f796feea6e207b4273826
           ports:
             - containerPort: 8001
           startupProbe:
