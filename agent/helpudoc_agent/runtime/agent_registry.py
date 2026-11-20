@@ -27,13 +27,13 @@ from helpudoc_agent.middleware.interaction_contract import InteractionContractMi
 from helpudoc_agent.middleware.slide_style_preview import SlideStylePreviewMiddleware
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
 from helpudoc_agent.middleware.mcp_discovery import MCPDiscoveryMiddleware
-from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from ..configuration import Settings
 from ..gemini_chat import create_chat_google_generative_ai
 from ..state import WorkspaceState, AgentRuntimeState
 from ..tools_and_schemas import ToolFactory
 from ..tools.workspace.timeouts import env_int
+from .summarization import build_summarization_middleware
 from ..skills_registry import (
     collect_tool_names,
     get_candidate_mcp_servers,
@@ -670,11 +670,7 @@ class AgentRegistry:
         middleware = [
             TodoListMiddleware(),
             FilesystemMiddleware(backend=make_backend),
-            SummarizationMiddleware(
-                model=model,
-                max_tokens_before_summary=_summary_trigger_tokens(),
-                messages_to_keep=6,
-            ),
+            build_summarization_middleware(model, _summary_trigger_tokens()),
             PatchToolCallsMiddleware(),
         ]
         if not builder_mode:
