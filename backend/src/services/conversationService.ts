@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
 import { WorkspaceService } from './workspaceService';
 import { NotFoundError } from '../errors';
+import type { StoredConversationSummary } from './conversationCompaction';
 
 export type ConversationSender = 'user' | 'agent';
 
@@ -267,6 +268,41 @@ export class ConversationService {
     await this.updateConversationMetadata(conversation, sender, text, userId);
 
     return message as ConversationMessageRecord;
+  }
+
+  // Storage for conversationCompaction.ts. No access check: callers have already checked
+  // the user's access to the conversation, and nothing here is returned to a client.
+  async getConversationSummary(conversationId: string): Promise<StoredConversationSummary | null> {
+    const row = await this.db('conversation_summaries').where({ conversationId }).first();
+    if (!row) {
+      return null;
+    }
+    return {
+      summary: String(row.summary || ''),
+      coveredCount: Number(row.coveredCount) || 0,
+      coveredHash: String(row.coveredHash || ''),
+      version: Number(row.version) || 0,
+    };
+  }
+
+  async saveConversationSummary(
+    conversationId: string,
+    expectedVersion: number | null,
+    value: { summary: string; coveredCount: number; coveredHash: string; coveredTokens: number },
+  ): Promise<boolean> {
+    if (expectedVersion === null) {
+      const inserted = await this.db('conversation_summaries')
+        .insert({ conversationId, ...value, version: 1 })
+        .onConflict('conversationId')
+        .ignore()
+        .returning('conversationId');
+      return inserted.length > 0;
+    }
+    // Compare-and-set: a concurrent job that saved first wins, and this result is dropped.
+    const updated = await this.db('conversation_summaries')
+      .where({ conversationId, version: expectedVersion })
+      .update({ ...value, version: expectedVersion + 1, updatedAt: this.db.fn.now() });
+    return updated > 0;
   }
 
   async deleteConversation(userId: string, conversationId: string): Promise<boolean> {

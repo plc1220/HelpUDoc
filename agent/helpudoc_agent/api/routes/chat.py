@@ -1395,6 +1395,31 @@ def register_chat_routes(
             return data[1]
         return {}
 
+    def _is_summarization_event(event: Any) -> bool:
+        """True for model output from LangChain's SummarizationMiddleware.
+
+        Its summary call runs inside the agent graph, so under streaming its tokens
+        arrive as ordinary model events. Relaying them showed the internal
+        "SESSION INTENT / SUMMARY / ARTIFACTS / NEXT STEPS" summary to the user as
+        the answer. LangChain tags the call with lc_source=summarization; the node
+        name is checked too in case a library upgrade drops the tag.
+        """
+        candidates: List[Any] = []
+        if isinstance(event, (list, tuple)) and len(event) >= 2:
+            candidates.append(event[1])
+        record = _event_record(event)
+        if isinstance(record, dict):
+            candidates.append(record.get("metadata"))
+        candidates.append(_v3_event_metadata(_event_raw_data(event)))
+        for metadata in candidates:
+            if not isinstance(metadata, dict):
+                continue
+            if str(metadata.get("lc_source") or "") == "summarization":
+                return True
+            if str(metadata.get("langgraph_node") or "").startswith("SummarizationMiddleware"):
+                return True
+        return False
+
     def _event_method(event: Any) -> str:
         event = _event_record(event)
         if not isinstance(event, dict):
@@ -1620,6 +1645,25 @@ def register_chat_routes(
         method = _event_method(event)
         data = _event_data(event)
         run_key = _event_run_id(event) or method
+
+        if _is_summarization_event(event):
+            # Drop every text event, including content-block-finish: with no deltas
+            # recorded, the finish branch below would emit the whole summary as its
+            # "missing suffix". Progress events still flow so the run looks the same.
+            if method in {
+                "on_chat_model_stream",
+                "on_llm_stream",
+                "messages",
+                "content-block-start",
+                "content-block-delta",
+                "content-block-finish",
+            }:
+                return False
+            if method in {"on_chat_model_end", "on_llm_end", "message-finish"}:
+                logger.info(
+                    "Context summarization ran (workspace=%s); its output was kept out of the chat stream",
+                    handler._workspace_id,
+                )
 
         if method in {"on_chat_model_start", "on_llm_start", "message-start"}:
             name = _event_name(event) or "model"

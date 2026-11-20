@@ -32,7 +32,7 @@ def _registry(monkeypatch, tmp_path, *, declare_all_tools=False):
         def with_config(self, _config):
             return self
 
-    for name in ("TodoListMiddleware", "FilesystemMiddleware", "SummarizationMiddleware", "PatchToolCallsMiddleware", "MCPDiscoveryMiddleware", "InteractionContractMiddleware", "SlideStylePreviewMiddleware"):
+    for name in ("TodoListMiddleware", "FilesystemMiddleware", "build_summarization_middleware", "PatchToolCallsMiddleware", "MCPDiscoveryMiddleware", "InteractionContractMiddleware", "SlideStylePreviewMiddleware"):
         monkeypatch.setattr(registry_module, name, lambda *_args, **_kwargs: object())
     monkeypatch.setattr(registry_module, "MCPServerManager", FixtureMCP)
     monkeypatch.setattr(registry_module, "get_candidate_mcp_servers", lambda *_args, **_kwargs: [])

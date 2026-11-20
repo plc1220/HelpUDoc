@@ -1597,3 +1597,186 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
                 "helpudoc_agent.app",
             ):
                 sys.modules.pop(name, None)
+
+# --- SummarizationMiddleware output must never reach the chat stream ----------------
+#
+# The summary call runs inside the agent graph, so under streaming its tokens arrive as
+# ordinary model events. Relaying them showed the internal "SESSION INTENT / SUMMARY /
+# ARTIFACTS / NEXT STEPS" summary to the user as the answer (#121).
+
+SUMMARY_TEXT = "SESSION INTENT None. SUMMARY None. ARTIFACTS None. NEXT STEPS None."
+ANSWER_TEXT = "Here is the reply in template 2a."
+
+
+@pytest.fixture(scope="module")
+def real_summarization_events():
+    """Stream a real LangChain agent whose summarization middleware (ARIA's) fires.
+
+    Module scope makes this run before client_with_stubs installs its stand-ins, so the
+    events have the shapes the installed LangChain and LangGraph actually produce.
+    The modules it imports are removed again afterwards, so client_with_stubs starts
+    from the same state as in every other test.
+    """
+    import asyncio
+    import inspect
+
+    modules_before = set(sys.modules)
+
+    from langchain.agents import create_agent
+    from helpudoc_agent.runtime.summarization import AriaSummarizationMiddleware
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    # One model serves both calls, as in AgentRegistry: the summary first, then the answer.
+    model = GenericFakeChatModel(messages=iter([AIMessage(SUMMARY_TEXT), AIMessage(ANSWER_TEXT)]))
+    agent = create_agent(
+        model=model,
+        tools=[],
+        middleware=[AriaSummarizationMiddleware(model=model, trigger=("tokens", 50), keep=("messages", 2))],
+    )
+    history = []
+    for turn in range(6):
+        history += [HumanMessage(f"question {turn} " + "w " * 40), AIMessage(f"answer {turn} " + "v " * 40)]
+    history.append(HumanMessage("Show templates 2a and 2b"))
+
+    async def record():
+        stream = agent.astream_events({"messages": history}, version="v3")
+        if inspect.isawaitable(stream):
+            stream = await stream
+        return [event async for event in stream]
+
+    try:
+        return asyncio.run(record())
+    finally:
+        for name in set(sys.modules) - modules_before:
+            sys.modules.pop(name, None)
+
+
+class ReplayStreamingAgent:
+    def __init__(self, events):
+        self._events = events
+
+    async def astream_events(self, *_args, **_kwargs):
+        for event in self._events:
+            yield event
+
+
+def _stream_tokens(client, registry, workspace_id, agent):
+    registry.set_runtime("research", workspace_id, DummyRuntime(workspace_id, agent))
+    with client.stream(
+        "POST",
+        f"/agents/research/workspace/{workspace_id}/chat/stream",
+        json={"message": "Show templates 2a and 2b", "history": []},
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+    tokens = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
+    return tokens, messages
+
+
+def test_real_summarization_events_carry_the_markers_the_filter_uses(real_summarization_events):
+    # Guards a LangChain or LangGraph upgrade: if neither marker is present any more,
+    # the filter in chat.py silently stops working.
+    summary_deltas = [
+        event
+        for event in real_summarization_events
+        if SUMMARY_TEXT.split()[0] in json.dumps(event, default=str)
+        and isinstance(event, dict)
+        and event.get("method") == "messages"
+    ]
+    assert summary_deltas, "the fake summary never streamed; the middleware did not fire"
+    for event in summary_deltas:
+        metadata = event["params"]["data"][1]
+        assert metadata.get("lc_source") == "summarization" or str(
+            metadata.get("langgraph_node", "")
+        ).startswith("SummarizationMiddleware")
+
+
+def test_chat_stream_hides_real_summarization_middleware_output(real_summarization_events, client_with_stubs):
+    client, registry, _ = client_with_stubs
+
+    tokens, messages = _stream_tokens(
+        client, registry, "workspace-real-summary", ReplayStreamingAgent(real_summarization_events)
+    )
+
+    assert tokens == ANSWER_TEXT
+    assert "SESSION INTENT" not in json.dumps(messages)
+    assert messages[-1]["type"] == "done"
+
+
+class V3SummarizationContentBlockAgent:
+    """Hand-built v3 events: a summary block, then the real answer block."""
+
+    def __init__(self, summary_metadata):
+        self._summary_metadata = summary_metadata
+
+    async def astream_events(self, *_args, **_kwargs):
+        answer_metadata = {"langgraph_node": "model", "run_id": "answer-run"}
+        blocks = [
+            (SUMMARY_TEXT, self._summary_metadata),
+            (ANSWER_TEXT, answer_metadata),
+        ]
+        seq = 0
+        for text, metadata in blocks:
+            for payload in (
+                {"event": "message-start", "role": "ai"},
+                {"event": "content-block-start", "index": 0, "content": {"type": "text", "text": ""}},
+                {"event": "content-block-delta", "index": 0, "delta": {"type": "text-delta", "text": text[:10]}},
+                {"event": "content-block-delta", "index": 0, "delta": {"type": "text-delta", "text": text[10:]}},
+                {"event": "content-block-finish", "index": 0, "content": {"type": "text", "text": text}},
+                {"event": "message-finish"},
+            ):
+                seq += 1
+                yield {
+                    "type": "event",
+                    "seq": seq,
+                    "method": "messages",
+                    "params": {"namespace": [], "timestamp": seq, "data": (payload, metadata)},
+                }
+
+
+@pytest.mark.parametrize(
+    "summary_metadata",
+    [
+        {"lc_source": "summarization", "langgraph_node": "SummarizationMiddleware.before_model"},
+        {"lc_source": "summarization"},
+        {"langgraph_node": "SummarizationMiddleware.before_model"},
+    ],
+    ids=["both-markers", "lc-source-only", "node-only"],
+)
+def test_chat_stream_hides_v3_summary_blocks_including_finish(summary_metadata, client_with_stubs):
+    client, registry, _ = client_with_stubs
+
+    tokens, _ = _stream_tokens(
+        client, registry, "workspace-v3-summary", V3SummarizationContentBlockAgent(summary_metadata)
+    )
+
+    # The finish event matters: with no deltas recorded for the summary block, the
+    # finish branch would otherwise emit the whole summary as a "missing suffix".
+    assert tokens == ANSWER_TEXT
+
+
+class V1SummarizationStreamingAgent:
+    async def astream_events(self, *_args, **_kwargs):
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "summary-run",
+            "metadata": {"lc_source": "summarization"},
+            "data": {"chunk": {"role": "assistant", "content": SUMMARY_TEXT}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "model-run",
+            "metadata": {"langgraph_node": "model"},
+            "data": {"chunk": {"role": "assistant", "content": ANSWER_TEXT}},
+        }
+
+
+def test_chat_stream_hides_v1_summarization_tokens(client_with_stubs):
+    client, registry, _ = client_with_stubs
+
+    tokens, _ = _stream_tokens(client, registry, "workspace-v1-summary", V1SummarizationStreamingAgent())
+
+    assert tokens == ANSWER_TEXT
