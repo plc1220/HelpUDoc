@@ -33,6 +33,7 @@ from ..configuration import Settings
 from ..gemini_chat import create_chat_google_generative_ai
 from ..state import WorkspaceState, AgentRuntimeState
 from ..tools_and_schemas import ToolFactory
+from ..tools.workspace.timeouts import env_int
 from ..skills_registry import (
     collect_tool_names,
     get_candidate_mcp_servers,
@@ -50,6 +51,16 @@ from ..slide_style_preview import preview_tool_error
 from ..memory_store import UserScopedStoreBackend
 
 logger = logging.getLogger(__name__)
+
+# Conversation size (estimated tokens) at which SummarizationMiddleware compresses older
+# messages. HELPUDOC_SUMMARY_TRIGGER_TOKENS exists so a test cluster can trigger it in a
+# short conversation; production keeps the default.
+_DEFAULT_SUMMARY_TRIGGER_TOKENS = 170000
+
+
+def _summary_trigger_tokens() -> int:
+    value = env_int("HELPUDOC_SUMMARY_TRIGGER_TOKENS", _DEFAULT_SUMMARY_TRIGGER_TOKENS)
+    return value if value > 0 else _DEFAULT_SUMMARY_TRIGGER_TOKENS
 
 GENERAL_SYSTEM_PROMPT = (
     "You are a general assistant. Use skills for specialized tasks. "
@@ -661,7 +672,7 @@ class AgentRegistry:
             FilesystemMiddleware(backend=make_backend),
             SummarizationMiddleware(
                 model=model,
-                max_tokens_before_summary=170000,
+                max_tokens_before_summary=_summary_trigger_tokens(),
                 messages_to_keep=6,
             ),
             PatchToolCallsMiddleware(),
