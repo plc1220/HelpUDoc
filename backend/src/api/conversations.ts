@@ -8,6 +8,9 @@ import {
 } from '../services/agentRunService';
 import type { ConversationMessageMetadata } from '@helpudoc/contracts/types';
 
+/** Most recent unrepaired agent messages recovered per conversation load. */
+const MAX_REPAIRS_PER_REQUEST = 3;
+
 export default function conversationRoutes(conversationService: ConversationService) {
   const router = Router();
 
@@ -71,15 +74,20 @@ export default function conversationRoutes(conversationService: ConversationServ
       // Redis run stream still held the complete assistant response. Repair
       // those rows on read so a rebuild/reload restores the durable message.
       let repairedMessage = false;
-      for (const message of conversation.messages) {
+      // Each repair reads a whole Redis run stream. Bound the work per request: a long
+      // conversation with many such rows exhausted the backend heap on every open.
+      const repairCandidates = conversation.messages.filter((message) => {
+        const metadata = message.metadata;
+        return message.sender === 'agent'
+          && metadata?.bodySource === 'summary'
+          && typeof metadata?.runId === 'string'
+          && Boolean(metadata.runId)
+          && Boolean(message.turnId);
+      }).slice(-MAX_REPAIRS_PER_REQUEST);
+      for (const message of repairCandidates) {
         const metadata = message.metadata;
         const runId = typeof metadata?.runId === 'string' ? metadata.runId : '';
-        if (
-          message.sender !== 'agent'
-          || metadata?.bodySource !== 'summary'
-          || !runId
-          || !message.turnId
-        ) {
+        if (!runId || !message.turnId) {
           continue;
         }
         const recovery = await getRunConversationRecoverySnapshot(runId).catch(() => null);

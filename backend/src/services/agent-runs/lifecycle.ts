@@ -1,4 +1,5 @@
 import type { NotificationService } from '../notificationService';
+import { capToolEventPayload, capToolEventText } from '../../lib/toolEventSummary';
 import { createHash, randomUUID } from 'crypto';
 import { isFrontendSlidesEditExistingRun, slideEditArtifactCandidates } from './slideEditIntent';
 import type { IncomingMessage } from 'http';
@@ -4533,9 +4534,9 @@ async function runAgentRunWorker(
                 : parsed.type === 'tool_end'
                   ? 'end'
                   : 'error',
-            summary: typeof parsed.content === 'string' ? parsed.content : undefined,
+            summary: typeof parsed.content === 'string' ? capToolEventText(parsed.content) : undefined,
             outputFiles: parsed.outputFiles,
-            payload: parsed,
+            payload: capToolEventPayload(parsed),
             eventAt: new Date().toISOString(),
           });
         } catch (telemetryError) {
