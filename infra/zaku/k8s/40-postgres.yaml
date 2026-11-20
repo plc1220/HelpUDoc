@@ -1,12 +1,11 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: helpudoc-postgres
   namespace: helpudoc
 spec:
+  serviceName: postgres
   replicas: 1
-  strategy:
-    type: Recreate
   selector:
     matchLabels:
       app: helpudoc-postgres
@@ -46,12 +45,18 @@ spec:
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           volumeMounts:
-            - name: postgres-data
+            - name: data
               mountPath: /var/lib/postgresql/data
-      volumes:
-        - name: postgres-data
-          persistentVolumeClaim:
-            claimName: postgres-pvc
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: edge-lvm
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi
 ---
 apiVersion: v1
 kind: Service

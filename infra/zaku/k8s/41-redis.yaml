@@ -1,12 +1,11 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: helpudoc-redis
   namespace: helpudoc
 spec:
+  serviceName: redis
   replicas: 1
-  strategy:
-    type: Recreate
   selector:
     matchLabels:
       app: helpudoc-redis
@@ -29,12 +28,18 @@ spec:
               cpu: "500m"
               memory: "512Mi"
           volumeMounts:
-            - name: redis-data
+            - name: data
               mountPath: /data
-      volumes:
-        - name: redis-data
-          persistentVolumeClaim:
-            claimName: redis-pvc
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: edge-lvm
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
 ---
 apiVersion: v1
 kind: Service
