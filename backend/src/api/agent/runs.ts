@@ -4,7 +4,9 @@ import type { CalendarService } from '../../services/calendarService';
 import { CalendarError, parseEventRef } from '../../services/calendarModel';
 import { z } from 'zod';
 import type { TaggedFileRef } from '@helpudoc/contracts/types';
-import { runAgent, runAgentStream, type AgentMessageContentBlock } from '../../services/agentService';
+import { runAgent, runAgentStream, runInternalAnalysis, type AgentMessageContentBlock } from '../../services/agentService';
+import { signAgentContextToken } from '../../services/agentToken';
+import { ConversationCompactor } from '../../services/conversationCompaction';
 import type { WorkspaceService } from '../../services/workspaceService';
 import type { FileService } from '../../services/fileService';
 import type { GoogleOAuthService } from '../../services/googleOAuthService';
@@ -316,6 +318,14 @@ export function registerRunRoutes(
   calendarService?: CalendarService,
 ) {
   const policyApi = createAgentPolicyApi(googleOAuthService, userService);
+  // Stored memory for long workspace chats. Background summary calls run as the user
+  // whose run triggered them, like the other internal analyses.
+  const conversationCompactor = new ConversationCompactor(conversationService, async (input, context) => {
+    const authToken =
+      signAgentContextToken({ sub: context.userId, userId: context.userId, workspaceId: context.workspaceId }) || undefined;
+    const result = await runInternalAnalysis(input, { authToken, timeoutMs: 5 * 60 * 1000 });
+    return String(result?.text || '');
+  });
   const calendarRefs = async (userId: string, ref?: string) => {
     if (!ref) return undefined;
     if (!calendarService) throw new HttpError(503, 'Calendar context is unavailable');
@@ -617,13 +627,17 @@ export function registerRunRoutes(
         enrichedPrompt,
         taggedContext.currentTurnFileRefs,
       );
+      // Long chats send a stored summary plus newer messages; shorter ones are unchanged.
+      const runHistory = conversationId && history?.length
+        ? await conversationCompactor.prepareHistory(conversationId, history)
+        : history;
       const { runId, status } = await startAgentRun({
         persona,
         workspaceId,
         conversationId,
         prompt: enrichedPrompt,
         userId: user.userId,
-        history,
+        history: runHistory,
         forceReset,
         turnId,
         authToken: authToken || undefined,
@@ -635,6 +649,10 @@ export function registerRunRoutes(
         userPrompt: prompt,
         taggedFileRefs: taggedContext.taggedFileRefs,
       });
+      if (conversationId && history?.length) {
+        // Not awaited: the summary is for the next turn, and compact() never throws.
+        void conversationCompactor.compact(conversationId, history, { userId: user.userId, workspaceId });
+      }
       res.json({ runId, status });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
