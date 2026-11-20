@@ -115,6 +115,51 @@ ALWAYS_AVAILABLE_TOOL_GROUPS = (
 )
 
 _STRUCTURED_DATA_SUFFIXES = frozenset({".csv", ".tsv", ".parquet", ".json"})
+
+# read_file returns non-text files whole, as base64. For documents that is useless to the
+# model and harmful: a 9 MB PDF arrived as 9.2M characters, which LangChain's token
+# estimate counts as ~2.3M tokens, so SummarizationMiddleware fired and the run lost its
+# context. Documents go through search_document / inspect_document instead (the pdf and
+# sheets skills already forbid read_file on them). Images still use read_file: the
+# document tools cannot read them.
+_READ_FILE_DOCUMENT_SUFFIXES = frozenset({".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"})
+# A scanned PDF has no text for the document tools, so read_file is the only way the
+# model sees it. Pass small ones through. 500 KB of PDF is ~680K base64 characters,
+# ~170K estimated tokens: the summarization trigger. Stay below it.
+_READ_FILE_SCANNED_PDF_MAX_BYTES = 500 * 1024
+_SCANNED_PDF_SAMPLE_PAGES = 3
+_SCANNED_PDF_MIN_TEXT_CHARS = 40
+
+
+def _pdf_has_text_layer(path: Path) -> bool:
+    """True when the first pages yield text. Unreadable PDFs count as text (route away)."""
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(str(path))
+        text = ""
+        for page in reader.pages[:_SCANNED_PDF_SAMPLE_PAGES]:
+            text += page.extract_text() or ""
+            if len(text.strip()) >= _SCANNED_PDF_MIN_TEXT_CHARS:
+                return True
+        return len(text.strip()) >= _SCANNED_PDF_MIN_TEXT_CHARS
+    except Exception:  # pragma: no cover - a damaged file must not break read_file
+        return True
+
+
+def _document_read_guidance(file_path: str, *, scanned_too_large: bool = False) -> str:
+    name = PurePosixPath(str(file_path).replace("\\", "/")).name or str(file_path)
+    if scanned_too_large:
+        return (
+            f"read_file does not return '{name}': it is a scanned PDF without a text layer and "
+            "too large to send whole. Use inspect_document on it for page count and metadata, "
+            "and ask the user which pages matter or for a smaller excerpt."
+        )
+    return (
+        f"read_file does not return the contents of '{name}'. For PDF, DOCX, XLSX and PPTX files, "
+        f"use search_document(file_path=\"{file_path}\", query=...) to find the relevant passages, "
+        f"then inspect_document(file_path=\"{file_path}\") to read specific pages, sheets or cells."
+    )
 _DATA_ARTIFACT_OUTPUT_DIRS = frozenset({"sandbox-runs", "charts", "dashboards", "reports"})
 
 
@@ -269,6 +314,25 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
                 visible_matches.append(match)
         return GrepResult(error=result.error, matches=visible_matches)
 
+    def _document_read_guidance(self, file_path: str) -> str | None:
+        """Guidance instead of a whole document, or None to read the file normally."""
+        suffix = PurePosixPath(str(file_path or "").replace("\\", "/")).suffix.lower()
+        if suffix not in _READ_FILE_DOCUMENT_SUFFIXES:
+            return None
+        if suffix != ".pdf":
+            return _document_read_guidance(file_path)
+        try:
+            resolved = self._resolve_path(file_path)
+            if not resolved.is_file():
+                return None  # let read() report the missing file as before
+            if _pdf_has_text_layer(resolved):
+                return _document_read_guidance(file_path)
+            if resolved.stat().st_size > _READ_FILE_SCANNED_PDF_MAX_BYTES:
+                return _document_read_guidance(file_path, scanned_too_large=True)
+        except Exception:  # pragma: no cover - fall back to the normal read path
+            return None
+        return None
+
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         is_data_skill, context = self._data_skill_context()
         skill_id = str(context.get("active_skill") or "").strip()
@@ -326,6 +390,9 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
                     "of paging raw rows into model context."
                 )
             )
+        guidance = self._document_read_guidance(file_path)
+        if guidance:
+            return ReadResult(error=guidance)
         return super().read(file_path, offset=offset, limit=limit)
 
 

@@ -157,7 +157,8 @@ jobs:
             tests/office \
             tests/test_agent_main.py \
             tests/test_summary_trigger_tokens.py \
-            tests/test_conversation_summarization.py
+            tests/test_conversation_summarization.py \
+            tests/test_read_file_document_routing.py
 
   docker-backend:
     name: Docker build validation (backend)
