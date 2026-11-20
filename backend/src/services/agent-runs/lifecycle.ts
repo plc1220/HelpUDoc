@@ -1,4 +1,5 @@
 import type { NotificationService } from '../notificationService';
+import { getToolOutputAuditQueue } from '../toolOutputAudit';
 import { capToolEventPayload, capToolEventText } from '../../lib/toolEventSummary';
 import { createHash, randomUUID } from 'crypto';
 import { isFrontendSlidesEditExistingRun, slideEditArtifactCandidates } from './slideEditIntent';
@@ -4546,6 +4547,27 @@ async function runAgentRunWorker(
             error: safeErrorForLog(telemetryError),
           });
         }
+      }
+      // Full output for audit, uncapped. Queued in the background; the run does not wait.
+      if (
+        (parsed.type === 'tool_end' || parsed.type === 'tool_error')
+        && typeof parsed.name === 'string' && parsed.name.trim()
+        && typeof parsed.content === 'string' && parsed.content
+      ) {
+        getToolOutputAuditQueue(async (record, stored) => {
+          await runTelemetryService?.recordToolOutputAudit(record.runId, record.eventIndex, stored);
+        })?.enqueue({
+          runId,
+          eventIndex,
+          workspaceId: params.workspaceId,
+          userId: params.userId,
+          conversationId: params.conversationId,
+          turnId: params.turnId,
+          toolName: parsed.name.trim(),
+          eventType: parsed.type === 'tool_end' ? 'end' : 'error',
+          eventAt: new Date().toISOString(),
+          content: parsed.content,
+        });
       }
       if (repeatedSkillSandboxFailure) {
         loopErrorMessage = repeatedSkillSandboxFailure;
