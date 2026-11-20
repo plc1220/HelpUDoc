@@ -1,4 +1,6 @@
-# Zaku: ZStack's nginx ingress controller (IngressClass zstack-ingress, IP 10.3.100.103).
+# Zaku: ZStack's nginx ingress controller (IngressClass zstack-ingress). Entry point
+# 10.3.100.105 (controller LoadBalancer Service, MetalLB). The ADDRESS column shows
+# 10.3.100.103, the node IP, because the controller has no --publish-service.
 # ZStack's own zstack-gateway Ingress takes host "*", so every rule here needs a host.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
