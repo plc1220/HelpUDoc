@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   ConversationCompactor,
   KEEP_TOKENS,
+  MAX_SUMMARIZE_INPUT_TOKENS,
   RECOMPACT_STEP_TOKENS,
   SUMMARY_PREFIX,
   activationTokens,
@@ -177,6 +178,55 @@ test('compaction saves a summary that the next run then uses', async () => {
   const sent = await compactor.prepareHistory('c1', next);
   assert.ok(sent[0].content.startsWith(SUMMARY_PREFIX));
   assert.ok(estimateTokens(sent) < estimateTokens(next) / 2);
+});
+
+test('over-budget history retains early context and uncompacted turns across compactor instances', async () => {
+  const history = transcript(85, 3000); // ~510k tokens; one summary call cannot cover it.
+  const store = new MemoryStore();
+  let calls = 0;
+  const summarize = async ({ userPrompt }: { userPrompt: string }) => {
+    calls += 1;
+    if (calls === 1) {
+      assert.ok(userPrompt.includes('QUESTION-0 '));
+      return 'Early decision: use template 2a';
+    }
+    assert.ok(userPrompt.includes('Early decision: use template 2a'));
+    assert.ok(userPrompt.includes(`QUESTION-${firstCovered / 2} `));
+    return 'Early decision: use template 2a; later details added';
+  };
+
+  const first = new ConversationCompactor(store, summarize, quietLogger);
+  assert.equal(await first.compact('c1', history, context), 'saved');
+  const firstCovered = store.row!.coveredCount;
+  assert.ok(firstCovered > 0 && firstCovered < history.length);
+  assert.equal(history[firstCovered].role, 'user');
+  assert.ok(estimateTokens(history.slice(0, firstCovered)) <= MAX_SUMMARIZE_INPUT_TOKENS);
+  assert.ok(estimateTokens(history.slice(0, firstCovered + 2)) > MAX_SUMMARIZE_INPUT_TOKENS);
+
+  const reopened = new ConversationCompactor(store, summarize, quietLogger);
+  const resumed = await reopened.prepareHistory('c1', history);
+  assert.ok(resumed[0].content.includes('Early decision: use template 2a'));
+  assert.deepEqual(resumed.slice(1), history.slice(firstCovered));
+
+  assert.equal(await reopened.compact('c1', history, context), 'saved');
+  const extended = await reopened.prepareHistory('c1', history);
+  assert.ok(extended[0].content.includes('Early decision: use template 2a'));
+  assert.ok(store.row!.coveredCount > firstCovered);
+  assert.deepEqual(extended.slice(1), history.slice(store.row!.coveredCount));
+  assert.equal(calls, 2);
+});
+
+test('an oversized first unprocessed turn skips persistence without advancing coverage', async () => {
+  // The individual messages fit; their whole turn does not.
+  const history = transcript(1, Math.floor(MAX_SUMMARIZE_INPUT_TOKENS / 2))
+    .concat(transcript(30, 3000, 1));
+  const store = new MemoryStore();
+  const compactor = new ConversationCompactor(store, async () => assert.fail('must not summarize a partial turn'), quietLogger);
+
+  assert.equal(planCompaction(history, null, ACTIVATION), null);
+  assert.equal(await compactor.compact('c1', history, context), 'skipped');
+  assert.equal(store.row, null);
+  assert.equal(await compactor.prepareHistory('c1', history), history);
 });
 
 test('only one compaction runs per conversation at a time', async () => {

@@ -25,7 +25,7 @@ export const DEFAULT_ACTIVATION_TOKENS = 170000;
 export const KEEP_TOKENS = 40000;
 /** New messages beyond KEEP_TOKENS before the summary is extended again. */
 export const RECOMPACT_STEP_TOKENS = 60000;
-/** Upper bound on what one summary call reads. Older entries beyond it are dropped. */
+/** Upper bound on transcript entries sent in one summary call. */
 export const MAX_SUMMARIZE_INPUT_TOKENS = 300000;
 /** Same wording as LangChain's summary message, which the agent already handles. */
 export const SUMMARY_PREFIX = 'Here is a summary of the conversation to date:\n\n';
@@ -145,19 +145,38 @@ export function planCompaction(
   if (cut <= start) {
     return null;
   }
-  let entries = history.slice(start, cut).filter((entry) => !isLeakedSummaryReply(entry));
-  while (entries.length > 1 && estimateTokens(entries) > MAX_SUMMARIZE_INPUT_TOKENS) {
-    entries = entries.slice(1);
+  // Coverage must be a contiguous prefix. Stop at the last complete turn within
+  // budget; any remaining turns stay verbatim and can be summarized on a later run.
+  let coveredCount = start;
+  let inputTokens = 0;
+  const candidates: AgentHistoryEntry[] = [];
+  let coveredEntryCount = 0;
+  for (let index = start; index < cut; index += 1) {
+    const entry = history[index];
+    if (index > start && entry.role === 'user') {
+      coveredCount = index;
+      coveredEntryCount = candidates.length;
+    }
+    if (!isLeakedSummaryReply(entry)) {
+      inputTokens += estimateTokens([entry]);
+      if (inputTokens > MAX_SUMMARIZE_INPUT_TOKENS) break;
+      candidates.push(entry);
+    }
+    if (index === cut - 1) {
+      coveredCount = cut;
+      coveredEntryCount = candidates.length;
+    }
   }
-  if (!entries.length) {
+  // An oversized first unprocessed turn cannot be skipped by a prefix summary.
+  if (!coveredEntryCount) {
     return null;
   }
   return {
     previousSummary: matches && stored ? stored.summary : null,
-    entries,
-    coveredCount: cut,
-    coveredHash: hashEntries(history.slice(0, cut)),
-    coveredTokens: estimateTokens(history.slice(0, cut)),
+    entries: candidates.slice(0, coveredEntryCount),
+    coveredCount,
+    coveredHash: hashEntries(history.slice(0, coveredCount)),
+    coveredTokens: estimateTokens(history.slice(0, coveredCount)),
   };
 }
 
