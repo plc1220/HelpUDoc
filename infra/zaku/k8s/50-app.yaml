@@ -730,7 +730,7 @@ spec:
                   key: HELPUDOC_SANDBOX_IMAGE
                   optional: true
             - name: HELPUDOC_INLINE_SANDBOX_IMAGE
-              value: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-inline-sandbox:latest
+              value: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-inline-sandbox:c5108e6f6ad8ac36022f796feea6e207b4273826
             - name: HELPUDOC_INLINE_SANDBOX_TRANSPORT
               valueFrom:
                 configMapKeyRef:
