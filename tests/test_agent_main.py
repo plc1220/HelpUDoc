@@ -1597,3 +1597,16 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
                 "helpudoc_agent.app",
             ):
                 sys.modules.pop(name, None)
+
+
+def test_tool_start_carries_full_input_only_for_code_running_tools(client_with_stubs):
+    from helpudoc_agent.api.routes.chat import _tool_start_event
+
+    code = '{"inline_code": "import openpyxl\\n' + "x = 1\\n" * 400 + '"}'
+    event = _tool_start_event("run_skill_python_script", code)
+    assert event["content"] == code[:200]
+    assert event["auditInput"] == code  # the whole code, for the audit bucket
+
+    assert "auditInput" not in _tool_start_event("read_file", code)
+    assert _tool_start_event("eval", "1 + 1")["auditInput"] == "1 + 1"
+    assert "auditInput" not in _tool_start_event("run_skill_python_script", "")

@@ -74,6 +74,8 @@ from helpudoc_agent.utils import SourceTracker
 from ..auth_context import extract_agent_request_context
 from ..constants import (
     _ASSISTANT_ROLES,
+    _CODE_AUDIT_INPUT_MAX_CHARS,
+    _CODE_AUDIT_TOOL_NAMES,
     _INTERNAL_STREAM_TEXT_PATTERNS,
     _INTERRUPT_TOOL_NAMES,
     _TOOL_ROLES,
@@ -288,6 +290,14 @@ def _research_source_contract_error(
     )
 
 
+
+
+def _tool_start_event(name: str, preview: str) -> Dict[str, Any]:
+    """tool_start for the stream. Code-running tools also carry their full input for audit."""
+    event: Dict[str, Any] = {"type": "tool_start", "name": name, "content": preview[:200] if preview else ""}
+    if name in _CODE_AUDIT_TOOL_NAMES and preview:
+        event["auditInput"] = preview[:_CODE_AUDIT_INPUT_MAX_CHARS]
+    return event
 async def _emit_progress(
     handler,
     phase: str,
@@ -1112,13 +1122,7 @@ def register_chat_routes(
                 detail=name,
                 tool_name=name,
             )
-            await self._emit(
-                {
-                    "type": "tool_start",
-                    "name": name,
-                    "content": preview[:200] if preview else "",
-                }
-            )
+            await self._emit(_tool_start_event(name, preview))
 
         async def on_tool_end(self, output, *, run_id, **_: Any) -> None:
             run_key = str(run_id)
@@ -1710,13 +1714,7 @@ def register_chat_routes(
                 tool_name=name,
                 status="running",
             )
-            await handler._emit(
-                {
-                    "type": "tool_start",
-                    "name": name,
-                    "content": preview[:200] if preview else "",
-                }
-            )
+            await handler._emit(_tool_start_event(name, preview))
             return False
 
         if method in {"on_tool_end", "tools/end", "tool_end", "tool-finished"}:

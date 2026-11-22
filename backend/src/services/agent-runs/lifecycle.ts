@@ -1,5 +1,5 @@
 import type { NotificationService } from '../notificationService';
-import { getToolOutputAuditQueue } from '../toolOutputAudit';
+import { getToolOutputAuditQueue, takeAuditInput } from '../toolOutputAudit';
 import { capToolEventPayload, capToolEventText } from '../../lib/toolEventSummary';
 import { createHash, randomUUID } from 'crypto';
 import { isFrontendSlidesEditExistingRun, slideEditArtifactCandidates } from './slideEditIntent';
@@ -4368,8 +4368,12 @@ async function runAgentRunWorker(
     await stopAtInterrupt(interruptPayload);
   };
 
-  const processParsedLine = async (line: string): Promise<'continue' | 'stop'> => {
-    const rawParsed = parseLine(line);
+  const processParsedLine = async (incomingLine: string): Promise<'continue' | 'stop'> => {
+    const rawParsed = parseLine(incomingLine);
+    // The full code of a code-running tool goes to the audit bucket only. It is removed
+    // here, before the event reaches the stream, the browser, message metadata or telemetry.
+    const auditInput = takeAuditInput(rawParsed);
+    const line = auditInput === undefined ? incomingLine : JSON.stringify(rawParsed);
     const parsed = rawParsed
       ? safeTelemetryForPersistence(rawParsed) as Record<string, unknown>
       : null;
@@ -4548,12 +4552,12 @@ async function runAgentRunWorker(
           });
         }
       }
-      // Full output for audit, uncapped. Queued in the background; the run does not wait.
-      if (
-        (parsed.type === 'tool_end' || parsed.type === 'tool_error')
-        && typeof parsed.name === 'string' && parsed.name.trim()
-        && typeof parsed.content === 'string' && parsed.content
-      ) {
+      // Full output (and, for code-running tools, full input) for audit, uncapped.
+      // Queued in the background; the run does not wait.
+      const auditContent = parsed.type === 'tool_start'
+        ? auditInput
+        : typeof parsed.content === 'string' ? parsed.content : undefined;
+      if (typeof parsed.name === 'string' && parsed.name.trim() && auditContent) {
         getToolOutputAuditQueue(async (record, stored) => {
           await runTelemetryService?.recordToolOutputAudit(record.runId, record.eventIndex, stored);
         })?.enqueue({
@@ -4564,9 +4568,9 @@ async function runAgentRunWorker(
           conversationId: params.conversationId,
           turnId: params.turnId,
           toolName: parsed.name.trim(),
-          eventType: parsed.type === 'tool_end' ? 'end' : 'error',
+          eventType: parsed.type === 'tool_start' ? 'start' : parsed.type === 'tool_end' ? 'end' : 'error',
           eventAt: new Date().toISOString(),
-          content: parsed.content,
+          content: auditContent,
         });
       }
       if (repeatedSkillSandboxFailure) {

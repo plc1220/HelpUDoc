@@ -8,6 +8,8 @@ import { safeErrorForLog } from '../lib/safeError';
  * Message metadata and telemetry now keep only a 2,000-character preview of each tool
  * output (lib/toolEventSummary.ts). The audit policy still needs the complete output, so
  * each tool_end / tool_error is written to its own object in TOOL_OUTPUT_AUDIT_BUCKET.
+ * Code-running tools also write their full input (the code itself) on tool_start, as
+ * <index>-<tool>.input.txt next to the output, so an auditor can see exactly what ran.
  * Nothing in the chat reads these objects; only auditors do.
  *
  * Uploads run in the background so runs never wait on them. A small queue bounds
@@ -25,7 +27,7 @@ export type ToolOutputAuditRecord = {
   conversationId?: string;
   turnId?: string;
   toolName: string;
-  eventType: 'end' | 'error';
+  eventType: 'start' | 'end' | 'error';
   eventAt: string;
   content: string;
 };
@@ -47,10 +49,24 @@ export const DEFAULT_CONCURRENCY = 2;
 export const DEFAULT_MAX_PENDING_BYTES = 256 * 1024 * 1024;
 export const DEFAULT_ATTEMPTS = 3;
 
-export function toolOutputAuditKey(record: Pick<ToolOutputAuditRecord, 'workspaceId' | 'runId' | 'eventIndex' | 'toolName'>): string {
+export function toolOutputAuditKey(
+  record: Pick<ToolOutputAuditRecord, 'workspaceId' | 'runId' | 'eventIndex' | 'toolName'> & { eventType?: ToolOutputAuditRecord['eventType'] },
+): string {
   const tool = record.toolName.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 64) || 'tool';
   const index = String(record.eventIndex).padStart(5, '0');
-  return `tool-outputs/${record.workspaceId}/${record.runId}/${index}-${tool}.txt`;
+  const suffix = record.eventType === 'start' ? '.input.txt' : '.txt';
+  return `tool-outputs/${record.workspaceId}/${record.runId}/${index}-${tool}${suffix}`;
+}
+
+/**
+ * Removes auditInput (the full input of a code-running tool) from a parsed stream event,
+ * so it never reaches the stream or stored metadata. Returns it only for a tool_start.
+ */
+export function takeAuditInput(event: Record<string, unknown> | null): string | undefined {
+  if (!event || !('auditInput' in event)) return undefined;
+  const value = event.auditInput;
+  delete event.auditInput;
+  return event.type === 'tool_start' && typeof value === 'string' && value ? value : undefined;
 }
 
 type QueueItem = { record: ToolOutputAuditRecord; body: Buffer; sha256: string };

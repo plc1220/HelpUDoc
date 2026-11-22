@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
   ToolOutputAuditQueue,
+  takeAuditInput,
   toolOutputAuditKey,
   type AuditObjectWriter,
   type ToolOutputAuditRecord,
@@ -85,6 +86,28 @@ test('the object key groups outputs by workspace and run, in event order', () =>
     toolOutputAuditKey({ workspaceId: 'ws-1', runId: 'run-1', eventIndex: 12, toolName: 'mcp/bigquery query' }),
     'tool-outputs/ws-1/run-1/00012-mcp-bigquery-query.txt',
   );
+});
+
+test('the full input of a code-running tool sits next to its output', () => {
+  assert.equal(
+    toolOutputAuditKey({ workspaceId: 'ws-1', runId: 'run-1', eventIndex: 12, toolName: 'run_skill_python_script', eventType: 'start' }),
+    'tool-outputs/ws-1/run-1/00012-run_skill_python_script.input.txt',
+  );
+});
+
+test('takeAuditInput strips the full code from the event before it is relayed', () => {
+  const code = 'import openpyxl\n' + 'x = 1\n'.repeat(500);
+  const start: Record<string, unknown> = { type: 'tool_start', name: 'run_skill_python_script', content: code.slice(0, 200), auditInput: code };
+  assert.equal(takeAuditInput(start), code);
+  assert.equal('auditInput' in start, false);
+  assert.equal(start.content, code.slice(0, 200));
+
+  // Never relayed, and never audited, on any other event type.
+  const end: Record<string, unknown> = { type: 'tool_end', name: 'x', auditInput: 'spoofed' };
+  assert.equal(takeAuditInput(end), undefined);
+  assert.equal('auditInput' in end, false);
+  assert.equal(takeAuditInput({ type: 'tool_start', name: 'read_file', content: 'a' }), undefined);
+  assert.equal(takeAuditInput(null), undefined);
 });
 
 test('uploads run in the background with bounded concurrency', async () => {
