@@ -324,3 +324,78 @@ export class ConversationCompactor {
     }
   }
 }
+
+// --- Archive of earlier messages, searchable by the agent within one run ---------------
+//
+// Governance: built only from rows returned by
+// ConversationService.listConversationArchiveSource, which applies the same checks as
+// opening the conversation (workspace membership and conversation creator). Never built
+// from anything the browser sends. Passed to the agent with the run, never persisted.
+
+/** Below this the whole history is in the model's context, so no archive is needed. */
+export const ARCHIVE_MIN_HISTORY_TOKENS = 80000;
+/** Upper bound on archived history per run (the newest older messages are kept). */
+export const ARCHIVE_MAX_TOKENS = 300000;
+
+export type ConversationArchiveSourceRow = {
+  id: number | string;
+  sender: string;
+  text: string | null;
+  createdAt: Date | string;
+  bodySource?: string | null;
+};
+
+export type ConversationArchiveMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  createdAt: string;
+  content: string;
+};
+
+export type ConversationArchive = {
+  conversationId: string;
+  truncated: boolean;
+  messages: ConversationArchiveMessage[];
+};
+
+/** Earlier messages that the model may no longer see, oldest first. Null when not needed. */
+export function buildConversationArchive(
+  conversationId: string,
+  rows: ConversationArchiveSourceRow[],
+): ConversationArchive | null {
+  // Same filter as the history the frontend sends (mapMessagesToAgentHistory).
+  const messages: ConversationArchiveMessage[] = rows
+    .filter((row) => typeof row.text === 'string' && row.text.trim().length > 0)
+    .filter((row) => !(row.sender === 'agent' && row.bodySource === 'summary'))
+    .map((row) => ({
+      id: String(row.id),
+      role: row.sender === 'agent' ? ('assistant' as const) : ('user' as const),
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+      content: String(row.text).trim(),
+    }));
+  if (estimateTokens(messages) < ARCHIVE_MIN_HISTORY_TOKENS) {
+    return null;
+  }
+  // The newest ~KEEP_TOKENS stay in the model's context; archive what is older.
+  let tail = 0;
+  let split = messages.length;
+  while (split > 0) {
+    const next = estimateTokens([messages[split - 1]]);
+    if (tail + next > KEEP_TOKENS) break;
+    tail += next;
+    split -= 1;
+  }
+  const older = messages.slice(0, split);
+  let budget = 0;
+  let start = older.length;
+  while (start > 0) {
+    const next = estimateTokens([older[start - 1]]);
+    if (budget + next > ARCHIVE_MAX_TOKENS) break;
+    budget += next;
+    start -= 1;
+  }
+  if (!older.length) {
+    return null;
+  }
+  return { conversationId, truncated: start > 0, messages: older.slice(start) };
+}

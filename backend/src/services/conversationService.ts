@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
 import { WorkspaceService } from './workspaceService';
 import { NotFoundError } from '../errors';
-import type { StoredConversationSummary } from './conversationCompaction';
+import type { ConversationArchiveSourceRow, StoredConversationSummary } from './conversationCompaction';
 import { capToolEventsInMetadata } from '../lib/toolEventSummary';
 
 export type ConversationSender = 'user' | 'agent';
@@ -273,6 +273,32 @@ export class ConversationService {
     await this.updateConversationMetadata(conversation, sender, text, userId);
 
     return message as ConversationMessageRecord;
+  }
+
+  /**
+   * Text of a conversation's messages for the agent's run archive. Same access rules as
+   * getConversationWithMessages: the user must be a workspace member AND the
+   * conversation's creator. Returns null otherwise; never another user's conversation.
+   */
+  async listConversationArchiveSource(
+    userId: string,
+    conversationId: string,
+  ): Promise<ConversationArchiveSourceRow[] | null> {
+    if (!userId || !conversationId) {
+      return null;
+    }
+    const conversation = await this.db('conversations').where({ id: conversationId }).first();
+    if (!conversation) {
+      return null;
+    }
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId);
+    if (conversation.createdBy !== userId) {
+      return null;
+    }
+    return this.db('conversation_messages')
+      .where({ conversationId })
+      .orderBy([{ column: 'createdAt', order: 'asc' }, { column: 'id', order: 'asc' }])
+      .select('id', 'sender', 'text', 'createdAt', this.db.raw(`metadata->>'bodySource' as "bodySource"`));
   }
 
   // Storage for conversationCompaction.ts. No access check: callers have already checked

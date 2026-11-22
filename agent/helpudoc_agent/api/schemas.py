@@ -13,6 +13,9 @@ class ChatRequest(BaseModel):
     messageContent: List[Dict[str, Any]] | None = None
     internetSearchEnabled: bool = False
     knowledgeRefs: List[Dict[str, Any]] = Field(default_factory=list)
+    # Earlier messages of this user's own conversation, built by the backend after its
+    # access checks. Searchable within this run only (conversation_archive.py).
+    conversationArchive: Dict[str, Any] | None = None
     langfuseTraceContext: Dict[str, Any] | None = None
 
 

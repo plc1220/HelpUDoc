@@ -6,7 +6,13 @@ import { z } from 'zod';
 import type { TaggedFileRef } from '@helpudoc/contracts/types';
 import { runAgent, runAgentStream, runInternalAnalysis, type AgentMessageContentBlock } from '../../services/agentService';
 import { signAgentContextToken } from '../../services/agentToken';
-import { ConversationCompactor } from '../../services/conversationCompaction';
+import {
+  ARCHIVE_MIN_HISTORY_TOKENS,
+  ConversationCompactor,
+  buildConversationArchive,
+  estimateTokens,
+  type ConversationArchive,
+} from '../../services/conversationCompaction';
 import type { WorkspaceService } from '../../services/workspaceService';
 import type { FileService } from '../../services/fileService';
 import type { GoogleOAuthService } from '../../services/googleOAuthService';
@@ -38,7 +44,7 @@ const resolveCurrentTurnMultimodalMaxBytes = (): number => {
 
 const CURRENT_TURN_MULTIMODAL_MAX_BYTES = resolveCurrentTurnMultimodalMaxBytes();
 
-const runAgentSchema = z.object({
+export const runAgentSchema = z.object({
   persona: z.string().min(1),
   prompt: z.string().min(1),
   workspaceId: z.string().min(1),
@@ -631,6 +637,20 @@ export function registerRunRoutes(
       const runHistory = conversationId && history?.length
         ? await conversationCompactor.prepareHistory(conversationId, history)
         : history;
+      // Earlier messages the agent can search in this run (search_workspace). Built from the
+      // database for this user's own conversation only; never from the request body.
+      let conversationArchive: ConversationArchive | undefined;
+      if (conversationId && history?.length && estimateTokens(history) >= ARCHIVE_MIN_HISTORY_TOKENS) {
+        try {
+          const rows = await conversationService.listConversationArchiveSource(user.userId, conversationId);
+          conversationArchive = rows ? buildConversationArchive(conversationId, rows) || undefined : undefined;
+        } catch (error) {
+          console.warn('Conversation archive unavailable; the run continues without it', {
+            conversationId,
+            error: safeErrorForLog(error),
+          });
+        }
+      }
       const { runId, status } = await startAgentRun({
         persona,
         workspaceId,
@@ -638,6 +658,7 @@ export function registerRunRoutes(
         prompt: enrichedPrompt,
         userId: user.userId,
         history: runHistory,
+        conversationArchive,
         forceReset,
         turnId,
         authToken: authToken || undefined,

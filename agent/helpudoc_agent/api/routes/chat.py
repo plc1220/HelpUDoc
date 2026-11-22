@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from langgraph.errors import GraphInterrupt, GraphRecursionError
 from langgraph.types import Command
+from helpudoc_agent.tools.workspace.builtins.conversation_archive import bind_run_conversation_archive
 
 from helpudoc_agent.configuration import Settings
 from helpudoc_agent.document_tool_guard import (
@@ -2427,6 +2428,13 @@ def register_chat_routes(
         )
 
         async def _agent_runner():
+            # This run's own earlier messages, bound to this task only (see
+            # conversation_archive.py). Resumes and other callers get none.
+            bind_run_conversation_archive(
+                message.conversationArchive
+                if resume_decisions is None and resume_value is None
+                else None
+            )
             lf_handlers = langfuse_langchain_callbacks()
             run_thread_config: Dict[str, Any] | None = None
             try:

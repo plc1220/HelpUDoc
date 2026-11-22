@@ -1826,3 +1826,47 @@ def test_stream_settles_the_thread_of_a_run_only(client_with_stubs, monkeypatch)
         assert payloads[-1]["status"] == "completed"
     assert settled[0][0]["configurable"]["thread_id"] == "run-1" and settled[0][1] is False
     assert settled[1][0] is None  # no run id: a stable thread, left alone
+
+
+# --- Conversation archive is bound to one run (governance) -----------------------------------
+
+class ArchiveRecordingAgent:
+    """Records which conversation archive is visible inside the run's task."""
+
+    def __init__(self):
+        self.seen = []
+
+    async def astream_events(self, *_args, **_kwargs):
+        from helpudoc_agent.tools.workspace.builtins.conversation_archive import current_conversation_archive
+
+        archive = current_conversation_archive()
+        self.seen.append(archive.conversation_id if archive else None)
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "model-run",
+            "data": {"chunk": {"role": "assistant", "content": "ok"}},
+        }
+
+
+def test_conversation_archive_is_visible_only_in_the_run_it_was_sent_with(client_with_stubs):
+    client, registry, _ = client_with_stubs
+    agent = ArchiveRecordingAgent()
+    registry.set_runtime("research", "workspace-archive", DummyRuntime("workspace-archive", agent))
+    archive = {
+        "conversationId": "conv-alice",
+        "truncated": False,
+        "messages": [{"id": "1", "role": "user", "createdAt": "2026-11-16T05:04:00Z", "content": "case details"}],
+    }
+
+    for body in (
+        {"message": "first", "history": [], "conversationArchive": archive},
+        {"message": "second", "history": []},  # same cached runtime, no archive sent
+    ):
+        with client.stream("POST", "/agents/research/workspace/workspace-archive/chat/stream", json=body) as response:
+            assert response.status_code == 200
+            _collect_stream_payloads(response)
+
+    assert agent.seen == ["conv-alice", None]
+    runtime_context = registry._runtimes[("research", "workspace-archive")].workspace_state.context if hasattr(registry, "_runtimes") else {}
+    assert "conversationArchive" not in json.dumps(runtime_context, default=str)

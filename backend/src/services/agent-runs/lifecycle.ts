@@ -1,5 +1,6 @@
 import type { NotificationService } from '../notificationService';
 import { getToolOutputAuditQueue, takeAuditInput } from '../toolOutputAudit';
+import type { ConversationArchive } from '../conversationCompaction';
 import { capToolEventPayload, capToolEventText } from '../../lib/toolEventSummary';
 import { createHash, randomUUID } from 'crypto';
 import { isFrontendSlidesEditExistingRun, slideEditArtifactCandidates } from './slideEditIntent';
@@ -82,6 +83,12 @@ type StartRunParams = {
   userPrompt?: string;
   /** Files the user @-referenced for this turn. */
   taggedFileRefs?: Array<{ fileId: number; version?: number; name?: string }>;
+  /**
+   * Earlier messages of the user's own conversation (conversationCompaction.ts). Kept in
+   * memory for this run only: serializeRunContext does not write it to Redis, so a resumed
+   * or recovered run has none.
+   */
+  conversationArchive?: ConversationArchive;
 };
 
 type RunPendingInterrupt = {
@@ -4737,6 +4744,7 @@ async function runAgentRunWorker(
         })
       : await agentStreamClient.runAgentStream(params.persona, params.workspaceId, params.prompt, params.history, {
           forceReset: params.forceReset,
+          conversationArchive: params.conversationArchive,
           signal: controller.signal,
           authToken: params.authToken,
           messageContent: params.messageContent,
