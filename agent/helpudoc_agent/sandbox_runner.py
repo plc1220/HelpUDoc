@@ -28,6 +28,9 @@ from .state import WorkspaceState
 
 logger = logging.getLogger(__name__)
 
+# Writable /tmp for sandbox pods (LibreOffice). Counts toward the ephemeral-storage limit.
+SANDBOX_TMP_SIZE_LIMIT = "256Mi"
+
 # --- Inline sandbox limits (Gate B, section 6.2 of the execution spec) -------
 INLINE_RUN_ID_PREFIX = "inline-"
 INLINE_ENTRYPOINT_NAME = "inline_main.py"
@@ -42,7 +45,7 @@ INLINE_DEFAULT_TIMEOUT_SECONDS = 120
 INLINE_MAX_TIMEOUT_SECONDS = 300
 INLINE_MAX_STDOUT_BYTES = 64 * 1024
 INLINE_MAX_STDERR_BYTES = 32 * 1024
-INLINE_MAX_EXECUTIONS_PER_AGENT_RUN = 2
+INLINE_MAX_EXECUTIONS_PER_AGENT_RUN = 5
 INLINE_MAX_ACTIVE_JOBS_PER_WORKSPACE = 1
 INLINE_DEFAULT_GLOBAL_JOB_CEILING = 4
 INLINE_STALE_RUN_DIR_AGE_SECONDS = 3600
@@ -381,6 +384,9 @@ def build_sandbox_job_manifest(
                 "spec": {
                     "restartPolicy": "Never",
                     "automountServiceAccountToken": False,
+                    # No service host/port variables for the cluster's services. The
+                    # network is closed anyway; this keeps the addresses out of the code.
+                    "enableServiceLinks": False,
                     # The workspace PVC is ReadWriteOnce. Keep sandbox jobs on the
                     # same node as the app pod that already mounts that volume.
                     "affinity": {
@@ -448,7 +454,15 @@ def build_sandbox_job_manifest(
                                     "mountPath": "/workspace",
                                     "subPath": safe_workspace_id,
                                     "readOnly": True,
-                                }
+                                },
+                                {
+                                    # LibreOffice puts its pipe in /tmp, a fixed path that
+                                    # ignores TMPDIR. The root file system is read-only, so
+                                    # without this mount soffice exits with "no valid pipe
+                                    # path found" and the xlsx recalc script always fails.
+                                    "name": "sandbox-tmp",
+                                    "mountPath": "/tmp",
+                                },
                             ],
                         }
                     ],
@@ -456,7 +470,11 @@ def build_sandbox_job_manifest(
                         {
                             "name": "sandbox-workspace",
                             "persistentVolumeClaim": {"claimName": sandbox_config.workspace_pvc},
-                        }
+                        },
+                        {
+                            "name": "sandbox-tmp",
+                            "emptyDir": {"sizeLimit": SANDBOX_TMP_SIZE_LIMIT},
+                        },
                     ],
                 },
             },
@@ -1648,6 +1666,9 @@ def build_inline_sandbox_job_manifest(
                 "spec": {
                     "restartPolicy": "Never",
                     "automountServiceAccountToken": False,
+                    # No service host/port variables for the cluster's services. The
+                    # network is closed anyway; this keeps the addresses out of the code.
+                    "enableServiceLinks": False,
                     # The run directory lives on the same ReadWriteOnce PVC.
                     "affinity": {
                         "podAffinity": {
@@ -1706,7 +1727,15 @@ def build_inline_sandbox_job_manifest(
                                     "name": "sandbox-workspace",
                                     "mountPath": "/sandbox",
                                     "subPath": f"{safe_workspace_id}/sandbox-runs/{safe_run_id}",
-                                }
+                                },
+                                {
+                                    # LibreOffice puts its pipe in /tmp, a fixed path that
+                                    # ignores TMPDIR. The root file system is read-only, so
+                                    # without this mount soffice exits with "no valid pipe
+                                    # path found" and the xlsx recalc script always fails.
+                                    "name": "sandbox-tmp",
+                                    "mountPath": "/tmp",
+                                },
                             ],
                         }
                     ],
@@ -1714,7 +1743,11 @@ def build_inline_sandbox_job_manifest(
                         {
                             "name": "sandbox-workspace",
                             "persistentVolumeClaim": {"claimName": sandbox_config.workspace_pvc},
-                        }
+                        },
+                        {
+                            "name": "sandbox-tmp",
+                            "emptyDir": {"sizeLimit": SANDBOX_TMP_SIZE_LIMIT},
+                        },
                     ],
                 },
             },

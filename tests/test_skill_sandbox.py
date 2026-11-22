@@ -16,6 +16,7 @@ from agent.helpudoc_agent import sandbox_runner
 from agent.helpudoc_agent.sandbox_runner import (
     INLINE_ENTRYPOINT_NAME,
     INLINE_MAX_EXECUTIONS_PER_AGENT_RUN,
+    SANDBOX_TMP_SIZE_LIMIT,
     INLINE_MAX_SOURCE_BYTES,
     INLINE_RUN_MARKER_NAME,
     InlineSandboxDisabledError,
@@ -839,7 +840,7 @@ def test_inline_manifest_omits_workspace_mount_and_root_env() -> None:
     mount_paths = {mount["mountPath"] for mount in container["volumeMounts"]}
     env_names = {item["name"] for item in container["env"]}
 
-    assert mount_paths == {"/sandbox"}
+    assert mount_paths == {"/sandbox", "/tmp"}
     assert "/workspace" not in mount_paths
     assert "HELPUDOC_WORKSPACE_ROOT" not in env_names
     assert "HELPUDOC_WORKSPACE_OUTPUT_ROOT" not in env_names
@@ -1567,3 +1568,33 @@ def test_inline_tool_description_explains_enabled_kubernetes_mode(
     assert "private writable /workspace snapshot" in description
     assert "output_paths" in description
     assert "Never use inline_code merely to list, search, or read skill assets" in description
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_sandbox_pods_get_a_private_tmp_and_no_service_links(inline: bool) -> None:
+    # LibreOffice needs a writable /tmp for its pipe (the xlsx recalc script failed with
+    # "no valid pipe path found" in testing). It is a size-limited emptyDir, gone with the pod.
+    if inline:
+        manifest = build_inline_sandbox_job_manifest(
+            job_name="job", workspace_id="ws", run_id="inline-abc", timeout_seconds=120,
+            sandbox_config=_sandbox_config(),
+        )
+    else:
+        manifest = build_sandbox_job_manifest(
+            job_name="job", workspace_id="ws", run_id="run", staged_script_name="run.py", args=[],
+            script=SkillSandboxScript(name="run", path="scripts/run.py", sha256="abc", timeout_seconds=10),
+            sandbox_config=_sandbox_config(),
+        )
+    pod_spec = manifest["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    tmp_mount = [m for m in container["volumeMounts"] if m["mountPath"] == "/tmp"]
+    assert tmp_mount and "subPath" not in tmp_mount[0]
+    tmp_volume = [v for v in pod_spec["volumes"] if v["name"] == tmp_mount[0]["name"]][0]
+    assert tmp_volume["emptyDir"] == {"sizeLimit": SANDBOX_TMP_SIZE_LIMIT}
+    assert "persistentVolumeClaim" not in tmp_volume
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    assert pod_spec["enableServiceLinks"] is False
+
+
+def test_inline_limit_per_agent_run_is_five() -> None:
+    assert INLINE_MAX_EXECUTIONS_PER_AGENT_RUN == 5
