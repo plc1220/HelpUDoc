@@ -240,19 +240,26 @@ const normalizePrompt = (value: string): string => {
   return prompt;
 };
 
-const buildAgentPrompt = (schedule: WorkspaceScheduleRow): string => {
+// The agent may not ask questions in a schedule: nobody is there to answer, and a
+// clarification card would leave the run waiting. The agent's instructions tell it to
+// report what is missing instead when it sees this note.
+export const SCHEDULED_RUN_NOTE =
+  '[Scheduled run: no user is present to answer questions. If something needed is missing, report it instead of asking.]';
+
+export const buildAgentPrompt = (schedule: WorkspaceScheduleRow): string => {
   const rawPrompt = normalizePrompt(schedule.prompt);
   const skillMatch = rawPrompt.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
   const selectedSkills = normalizeStringArray(schedule.selectedSkills);
   const skillId = skillMatch?.[1]?.trim() || selectedSkills[0];
   if (!skillId) {
-    return rawPrompt;
+    return `${SCHEDULED_RUN_NOTE}\n${rawPrompt}`;
   }
   const prompt = skillMatch ? (skillMatch[2] || '').trim() : rawPrompt;
   return [
     '<<<HELPUDOC_DIRECTIVE',
     JSON.stringify({ kind: 'skill', skillId }),
     '>>>',
+    SCHEDULED_RUN_NOTE,
     prompt || 'Continue with the selected skill.',
   ].join('\n');
 };
