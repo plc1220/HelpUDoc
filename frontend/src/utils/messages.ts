@@ -30,20 +30,8 @@ const sanitizeRunPolicy = (
   return Object.keys(sanitized).length ? sanitized : undefined;
 };
 
-export const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
-  return messages
-    .filter((message) => {
-      if (typeof message.text !== 'string' || message.text.trim().length === 0) {
-        return false;
-      }
-      const metadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
-      return !(message.sender === 'agent' && metadata?.bodySource === 'summary');
-    })
-    .map((message) => ({
-      role: message.sender === 'agent' ? 'assistant' : 'user',
-      content: message.text.trim(),
-    }));
-};
+// Unanswered runs become closing notes; see agentHistory.ts.
+export { mapMessagesToAgentHistory } from './agentHistory.ts';
 
 export const mergeMessageMetadata = (message: ConversationMessage): ConversationMessage => {
   const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
