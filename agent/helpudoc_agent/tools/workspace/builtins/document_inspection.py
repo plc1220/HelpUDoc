@@ -20,6 +20,7 @@ from .workspace_files import _display_path, _resolve_under_root, _workspace_root
 from .conversation_archive import (
     current_conversation_archive,
     log_conversation_search,
+    run_search_state,
     search_conversation_archive,
 )
 
@@ -1205,6 +1206,20 @@ def build_search_workspace_tool(workspace_state: WorkspaceState) -> Tool:
                 DocumentToolError(ERROR_MISSING_QUERY, "query is required"),
             )
         limit = max(1, min(int(max_results or 20), _WORKSPACE_SEARCH_MAX_RESULTS))
+        # Loop guard. In testing the model repeated an empty search seven times instead of
+        # asking. The same query cannot find anything new within one run, so answer at once.
+        search_state = run_search_state()
+        if phrase in search_state["empty_queries"]:
+            return _ok_envelope({
+                "query": query,
+                "resultCount": 0,
+                "alreadySearched": True,
+                "nextStep": (
+                    "You already searched for this in this run and found nothing. Stop searching: ask the "
+                    "user with request_clarification which files or details to use, or report it as not "
+                    "found in an unattended run."
+                ),
+            })
         context = workspace_state.context if isinstance(workspace_state.context, dict) else {}
         active_skill = str(context.get("active_skill") or "").strip()
         data_skill_active = active_skill == "data" or active_skill.startswith("data/")
@@ -1289,6 +1304,15 @@ def build_search_workspace_tool(workspace_state: WorkspaceState) -> Tool:
             "coverage": coverage,
         }
         if total == 0:
+            search_state["empty_queries"].add(phrase)
+            search_state["empty_count"] += 1
+        if total == 0 and search_state["empty_count"] >= 3:
+            payload["nextStep"] = (
+                f"{search_state['empty_count']} searches in this run found nothing. Stop searching now: ask "
+                "the user with request_clarification which files or details to use, saying what was searched. "
+                "In an unattended run, report that it was not found."
+            )
+        elif total == 0:
             payload["nextStep"] = (
                 "Nothing matched in the places listed under coverage. Do not keep searching: ask the "
                 "user (request_clarification) which files or details to use, and say what was searched. "

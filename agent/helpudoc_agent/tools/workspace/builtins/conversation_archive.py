@@ -49,6 +49,10 @@ _RUN_CONVERSATION_ARCHIVE: ContextVar[Optional[ConversationArchive]] = ContextVa
     "helpudoc_run_conversation_archive", default=None
 )
 
+# Searches made in this run, for search_workspace's loop guard. Bound per run with the
+# archive, so concurrent runs never share it.
+_RUN_SEARCH_STATE: ContextVar[Optional[dict]] = ContextVar("helpudoc_run_search_state", default=None)
+
 
 def parse_conversation_archive(raw: Any) -> Optional[ConversationArchive]:
     """Validate the backend's payload. Anything malformed yields None (no archive)."""
@@ -91,7 +95,14 @@ def bind_run_conversation_archive(raw: Any) -> Optional[ConversationArchive]:
     """Bind this run's archive to the current task. Call at the start of the run's task."""
     archive = parse_conversation_archive(raw)
     _RUN_CONVERSATION_ARCHIVE.set(archive)
+    _RUN_SEARCH_STATE.set({"empty_queries": set(), "empty_count": 0})
     return archive
+
+
+def run_search_state() -> dict:
+    """This run's search history. Outside a bound run (tests), a fresh throwaway state."""
+    state = _RUN_SEARCH_STATE.get()
+    return state if state is not None else {"empty_queries": set(), "empty_count": 0}
 
 
 def current_conversation_archive() -> Optional[ConversationArchive]:

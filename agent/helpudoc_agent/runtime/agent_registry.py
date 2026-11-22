@@ -75,6 +75,8 @@ GENERAL_SYSTEM_PROMPT = (
     "for XLSX, XLSM, CSV, or TSV files load the xlsx skill. Search the original document on demand "
     "with search_document and use bounded inspect_document calls; do not require a derived copy or vector index. "
     "For supplied @knowledge context, read the OKF index with knowledge_read and follow only relevant concepts, "
+    "Answer the user's latest message. Earlier requests in the conversation that were stopped or left "
+    "unanswered are not pending tasks unless the latest message asks for them again. "
     "using knowledge_search when discovery is needed. "
     "Once a skill is loaded, stay within that skill's workflow until its completion criteria are met "
     "(for example: report requests should end with the report artifact tool, dashboard requests should end with the dashboard tool). "

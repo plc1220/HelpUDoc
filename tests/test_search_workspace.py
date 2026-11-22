@@ -236,3 +236,48 @@ def test_audit_log_has_no_message_content_or_query_text(tmp_path, caplog):  # G7
     assert record.query_chars == len("CASE-26-000571")
     rendered = record.getMessage() + json.dumps({k: str(v) for k, v in record.__dict__.items()})
     assert "SECRET-COMPLAINT-TEXT" not in rendered and "CASE-26-000571" not in rendered
+
+
+# --- loop guard: repeated empty searches -------------------------------------------------------
+
+def test_repeating_an_empty_search_returns_at_once_and_says_to_ask(tmp_path):
+    state = _workspace(tmp_path)
+    tool = build_search_workspace_tool(state)
+    bind_run_conversation_archive(None)  # start of a run: fresh search state
+    first = json.loads(tool.invoke({"query": "CASE-26-000002"}))
+    again = json.loads(tool.invoke({"query": "  case-26-000002 "}))
+
+    assert first["resultCount"] == 0 and "alreadySearched" not in first
+    assert again["alreadySearched"] is True and "request_clarification" in again["nextStep"]
+    assert "coverage" not in again  # nothing was searched the second time
+
+
+def test_third_empty_search_in_a_run_escalates(tmp_path):
+    tool = build_search_workspace_tool(_workspace(tmp_path))
+    bind_run_conversation_archive(None)
+    results = [json.loads(tool.invoke({"query": q})) for q in ("000571", "CASE", "C-26")]
+    assert "3 searches in this run found nothing" in results[2]["nextStep"]
+
+
+def test_a_query_that_found_something_can_be_repeated(tmp_path):
+    state = _workspace(tmp_path)
+    (state.root_path / "notes.md").write_text("Zebra Holdings agreement")
+    tool = build_search_workspace_tool(state)
+    bind_run_conversation_archive(None)
+    for _ in range(2):
+        assert json.loads(tool.invoke({"query": "Zebra"}))["resultCount"] == 1
+
+
+def test_each_run_starts_with_a_clean_search_history(tmp_path):
+    tool = build_search_workspace_tool(_workspace(tmp_path))
+
+    async def run():
+        bind_run_conversation_archive(None)
+        return [json.loads(await asyncio.to_thread(tool.invoke, {"query": "MISSING-1"})) for _ in range(2)]
+
+    async def main():
+        return await asyncio.gather(asyncio.create_task(run()), asyncio.create_task(run()))
+
+    for first, second in asyncio.run(main()):
+        assert "alreadySearched" not in first  # the other run's empty search does not count here
+        assert second["alreadySearched"] is True
