@@ -205,7 +205,7 @@ spec:
                   name: helpudoc-config
                   key: S3_BUCKET_NAME
             - name: S3_ENDPOINT
-              value: http://minio:9000
+              value: http://rustfs:9000
             - name: S3_PUBLIC_ENDPOINT
               value: https://lumo-studio.cloudmile-coe.com
             - name: S3_FORCE_PATH_STYLE
@@ -425,7 +425,7 @@ spec:
                   name: helpudoc-config
                   key: S3_BUCKET_NAME
             - name: S3_ENDPOINT
-              value: http://minio:9000
+              value: http://rustfs:9000
             - name: S3_FORCE_PATH_STYLE
               valueFrom:
                 configMapKeyRef:
@@ -556,9 +556,7 @@ spec:
             - name: PLUGINS_ROOT
               value: /app/plugins
             - name: S3_ENDPOINT
-              value: http://minio:9000
-            - name: MINIO_ENDPOINT
-              value: http://minio:9000
+              value: http://rustfs:9000
             - name: S3_BUCKET_NAME
               valueFrom:
                 configMapKeyRef:
@@ -746,7 +744,7 @@ spec:
                   key: HELPUDOC_SANDBOX_RUNTIME_CLASS
                   optional: true
             - name: HELPUDOC_SANDBOX_S3_ENDPOINT
-              value: http://minio.helpudoc.svc.cluster.local:9000
+              value: http://rustfs.helpudoc.svc.cluster.local:9000
             - name: HELPUDOC_SANDBOX_BACKEND
               valueFrom:
                 configMapKeyRef:
