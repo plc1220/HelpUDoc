@@ -121,8 +121,7 @@ spec:
             matchExpressions:
               - key: app
                 operator: In
-                # Keep the source available for a controlled rollback.
-                values: [helpudoc-minio, helpudoc-rustfs]
+                values: [helpudoc-rustfs]
       ports:
         - protocol: TCP
           port: 9000
