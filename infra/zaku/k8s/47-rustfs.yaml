@@ -1,4 +1,4 @@
-# Production object store. MinIO's separate PVC is retained for rollback.
+# Production object store.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -110,17 +110,18 @@ spec:
       port: 9000
       targetPort: s3
 ---
-# Always targets the retained MinIO deployment, including after the public-to-app
-# compatibility Service named "minio" is switched to RustFS.
+# Alias for RustFS. Kept only because the frontend image's nginx.conf has
+# `proxy_pass http://minio:9000` and nginx fails to start if the name does not
+# resolve. Remove once the frontend image no longer references minio.
 apiVersion: v1
 kind: Service
 metadata:
-  name: minio-rollback
+  name: minio
   namespace: helpudoc
 spec:
   selector:
-    app: helpudoc-minio
+    app: helpudoc-rustfs
   ports:
     - name: s3
       port: 9000
-      targetPort: 9000
+      targetPort: s3
