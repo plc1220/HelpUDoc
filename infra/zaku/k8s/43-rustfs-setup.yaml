@@ -1,21 +1,21 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: helpudoc-minio-setup
+  name: helpudoc-rustfs-setup
   namespace: helpudoc
   labels:
-    app: helpudoc-minio-setup
+    app: helpudoc-rustfs-setup
     app.kubernetes.io/managed-by: gcp-cloud-build-deploy
 spec:
   template:
     metadata:
       labels:
-        app: helpudoc-minio-setup
+        app: helpudoc-rustfs-setup
         app.kubernetes.io/managed-by: gcp-cloud-build-deploy
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: minio-setup
+        - name: rustfs-setup
           # RustFS client (rc), pinned. minio/mc no longer pulls from Docker Hub
           # or quay.io; this matches rustfs-setup in infra/docker-compose.dependencies.yml.
           image: docker.io/rustfs/rc:v0.1.37@sha256:7e93fd410a8fe51514f89373e093392c92095b98dc6140335fcfe956810c4c80
@@ -39,7 +39,7 @@ spec:
           args:
             - |
               set -eu
-              until rc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+              until rc alias set local http://rustfs:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
                 sleep 1
               done
               rc bucket create -p local/"$S3_BUCKET_NAME"
