@@ -188,3 +188,73 @@ def test_after_compaction_the_answer_call_still_has_the_early_detail_and_the_que
     assert detail in answer_input  # via the stored summary
     assert answer_call[-1].content == question.content  # the question itself was kept
     assert result["messages"][-1].content == "The budget is RM 42,000."
+
+
+def _pdf_base64(pages: int, padding: int) -> str:
+    import base64
+    import io
+
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=100, height=100)
+    writer.add_metadata({"/Padding": "x" * padding})
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def _attached_turn(data: str) -> HumanMessage:
+    return HumanMessage(content=[
+        {"type": "text", "text": "ASSESS-THIS"},
+        {"type": "file", "base64": data, "mime_type": "application/pdf", "filename": "bundle.pdf"},
+    ])
+
+
+def test_an_attached_pdf_is_counted_by_page_not_by_base64():
+    # Base64 counted as text exceeded the trigger on every step.
+    model = RecordingChatModel()
+    messages = [*_history(3, 1000), _attached_turn(_pdf_base64(11, 1_000_000))]
+    middleware = _middleware(model)
+    assert middleware.token_counter(messages) < TRIGGER
+    assert _run(middleware, messages) is None
+    assert model.prompts == []
+
+
+def test_a_truly_large_attachment_still_triggers_a_summary_once():
+    model = RecordingChatModel()
+    middleware = _middleware(model)
+    messages = [*_history(3, 1000), _attached_turn(_pdf_base64(200, 10))]
+    update = _run(middleware, messages)
+    assert update is not None and len(model.prompts) == 1
+    kept = update["messages"][1:]
+    assert any("ASSESS-THIS" in str(message.content)[:200] for message in kept)
+    # Later steps of the same turn: nothing new to compress, so no second summary.
+    for step in range(5):
+        kept = [*kept, AIMessage(f"step {step}")]
+        assert _run(middleware, kept) is None
+    assert len(model.prompts) == 1
+
+
+def test_text_only_counts_are_unchanged():
+    from langchain_core.messages.utils import count_tokens_approximately
+
+    messages = _history(4, 500)
+    assert _middleware(RecordingChatModel()).token_counter(messages) == count_tokens_approximately(
+        messages, use_usage_metadata_scaling=True
+    )
+
+
+def test_an_unreadable_attachment_never_fails_the_run():
+    for data in ("A" * 300_001, "!!!" * 1000, "é" * 500, ""):
+        assert _middleware(RecordingChatModel()).token_counter([_attached_turn(data)]) > 0
+
+
+def test_the_page_count_cache_does_not_hold_files():
+    from helpudoc_agent.runtime import summarization
+
+    data = _pdf_base64(3, 10)
+    _middleware(RecordingChatModel()).token_counter([_attached_turn(data)])
+    assert summarization._PDF_TOKENS
+    assert all(len(key) == 32 for key in summarization._PDF_TOKENS)
