@@ -56,6 +56,7 @@ from helpudoc_agent.plan_gates import (
     requested_dashboard_title,
 )
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
+from helpudoc_agent.run_checkpoints import settle_run_thread
 from helpudoc_agent.skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
@@ -2383,6 +2384,7 @@ def register_chat_routes(
 
         async def _agent_runner():
             lf_handlers = langfuse_langchain_callbacks()
+            run_thread_config: Dict[str, Any] | None = None
             try:
                 nonlocal saw_interrupt, defer_checkpoint_interrupt
                 nonlocal allow_rejection_summary, allow_approval_summary
@@ -2418,6 +2420,10 @@ def register_chat_routes(
                     message,
                     callbacks=lf_handlers or None,
                 )
+                if _clean_langfuse_value((message.langfuseTraceContext or {}).get("runId")):
+                    # Only threads that belong to one run. A caller without a run id keeps a
+                    # stable thread, and its next message continues from it.
+                    run_thread_config = {"configurable": dict(stream_config["configurable"])}
                 if resume_decisions is not None:
                     decision_value = {"decisions": resume_decisions}
                     normalized_interrupt_id = str(resume_interrupt_id or "").strip()
@@ -3022,6 +3028,12 @@ def register_chat_routes(
                     runtime.agent_name,
                     runtime.workspace_state.workspace_id,
                     elapsed,
+                )
+                await settle_run_thread(
+                    agent,
+                    getattr(registry, "_checkpointer", None),
+                    run_thread_config,
+                    saw_interrupt=saw_interrupt or handler.interrupt_emitted,
                 )
                 try:
                     lf_ev = emit_langfuse_trace_payload(lf_handlers)

@@ -28,7 +28,6 @@ from helpudoc_agent.middleware.slide_style_preview import SlideStylePreviewMiddl
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
 from helpudoc_agent.middleware.mcp_discovery import MCPDiscoveryMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
-from langgraph.checkpoint.memory import MemorySaver
 from ..configuration import Settings
 from ..gemini_chat import create_chat_google_generative_ai
 from ..state import WorkspaceState, AgentRuntimeState
@@ -48,6 +47,7 @@ from ..tool_guard import GuardedTool
 from ..skill_builder import SKILL_BUILDER_SYSTEM_PROMPT, SKILL_BUILDER_TOOL_GROUPS
 from ..slide_style_preview import preview_tool_error
 from ..memory_store import UserScopedStoreBackend
+from ..run_checkpoints import BoundedMemorySaver
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +363,7 @@ class AgentRegistry:
         self.tool_factory = tool_factory
         self._memory_store = memory_store
         self._models: Dict[str, object] = {}
-        self._checkpointer = MemorySaver()
+        self._checkpointer = BoundedMemorySaver()
         self._cache: Dict[Tuple[str, str, str], AgentRuntimeState] = {}
         self._default_agent_name = "general-assistant"
 

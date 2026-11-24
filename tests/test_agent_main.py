@@ -1610,3 +1610,36 @@ def test_tool_start_carries_full_input_only_for_code_running_tools(client_with_s
     assert "auditInput" not in _tool_start_event("read_file", code)
     assert _tool_start_event("eval", "1 + 1")["auditInput"] == "1 + 1"
     assert "auditInput" not in _tool_start_event("run_skill_python_script", "")
+
+
+class OneTokenAgent:
+    async def astream_events(self, *_args, **_kwargs):
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "model-run",
+            "data": {"chunk": {"role": "assistant", "content": "ok"}},
+        }
+
+
+def test_stream_settles_the_thread_of_a_run_only(client_with_stubs, monkeypatch):
+    import helpudoc_agent.api.routes.chat as chat_routes
+
+    client, registry, _ = client_with_stubs
+    registry.set_runtime("research", "workspace-settle", DummyRuntime("workspace-settle", OneTokenAgent()))
+    settled = []
+
+    async def record(agent, saver, config, *, saw_interrupt):
+        settled.append((config, saw_interrupt))
+
+    monkeypatch.setattr(chat_routes, "settle_run_thread", record)
+    for body in (
+        {"message": "a", "history": [], "langfuseTraceContext": {"runId": "run-1", "threadId": "run-1"}},
+        {"message": "b", "history": []},
+    ):
+        with client.stream("POST", "/agents/research/workspace/workspace-settle/chat/stream", json=body) as response:
+            assert response.status_code == 200
+            payloads = _collect_stream_payloads(response)
+        assert payloads[-1]["status"] == "completed"
+    assert settled[0][0]["configurable"]["thread_id"] == "run-1" and settled[0][1] is False
+    assert settled[1][0] is None  # no run id: a stable thread, left alone
