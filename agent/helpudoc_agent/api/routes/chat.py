@@ -294,6 +294,20 @@ def _research_source_contract_error(
 
 
 
+def _attachment_error_message(error: str, content: List[Dict[str, Any]] | None) -> str:
+    """Plain words when the model rejects a request that carries files."""
+    files = [block for block in content or [] if block.get("type") in {"file", "image"}]
+    if not files or "INVALID_ARGUMENT" not in error:
+        return error
+    names = [str(block["filename"]) for block in files if block.get("filename")]
+    label = ", ".join(names) if names else "an attached file"
+    return (
+        f"Lumo could not process {label}. The file may be damaged, password-protected or in a "
+        "format the model cannot read. Check that it opens, then upload it again or send your "
+        "message without it."
+    )
+
+
 def _tool_start_event(name: str, preview: str) -> Dict[str, Any]:
     """tool_start for the stream. Code-running tools also carry their full input for audit."""
     event: Dict[str, Any] = {"type": "tool_start", "name": name, "content": preview[:200] if preview else ""}
@@ -3060,8 +3074,9 @@ def register_chat_routes(
                     )
                 else:
                     error_message = _format_exception(exc)
-                stream_error_message = error_message
                 logger.exception("Agent stream error: %s", error_message)
+                error_message = _attachment_error_message(error_message, message.messageContent)
+                stream_error_message = error_message
                 await handler._emit({"type": "error", "message": error_message})
                 await _emit_progress(
                     handler,

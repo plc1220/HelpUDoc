@@ -32,17 +32,16 @@ import {
 import { blockingRedisClient } from '../../services/redisService';
 import { createAgentPolicyApi } from './policy';
 import { safeErrorForLog } from '../../lib/safeError';
+import {
+  currentTurnMultimodalMaxBytes,
+  skipReason,
+  skippedAttachmentsNote,
+  type SkippedAttachment,
+} from '../../services/turnAttachments';
 
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
-const DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES = 8 * 1024 * 1024;
-
-const resolveCurrentTurnMultimodalMaxBytes = (): number => {
-  const raw = Number(process.env.CURRENT_TURN_MULTIMODAL_MAX_BYTES || DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES);
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES;
-};
-
-const CURRENT_TURN_MULTIMODAL_MAX_BYTES = resolveCurrentTurnMultimodalMaxBytes();
+const CURRENT_TURN_MULTIMODAL_MAX_BYTES = currentTurnMultimodalMaxBytes();
 
 export const runAgentSchema = z.object({
   persona: z.string().min(1),
@@ -380,17 +379,18 @@ export function registerRunRoutes(
     userId: string,
     prompt: string,
     currentTurnFileRefs?: Array<{ fileId: number; version: number }>,
-  ): Promise<AgentMessageContentBlock[] | undefined> => {
+  ): Promise<{ prompt: string; messageContent?: AgentMessageContentBlock[] }> => {
     const normalizedRefs = Array.from(new Map(
       (currentTurnFileRefs || [])
         .filter((ref) => Number.isInteger(ref.fileId) && ref.fileId > 0 && Number.isInteger(ref.version) && ref.version > 0)
         .map((ref) => [ref.fileId, ref] as const),
     ).values());
     if (!normalizedRefs.length) {
-      return undefined;
+      return { prompt };
     }
 
     const fileBlocks: AgentMessageContentBlock[] = [];
+    const skipped: SkippedAttachment[] = [];
 
     for (const ref of normalizedRefs) {
       const fileId = ref.fileId;
@@ -398,22 +398,23 @@ export function registerRunRoutes(
       const mimeType = typeof download.mimeType === 'string' && download.mimeType.trim()
         ? download.mimeType.trim()
         : 'application/octet-stream';
-      const encoded = download.buffer.toString('base64');
-      if (!encoded) {
+      if (!download.buffer.length) {
         continue;
       }
-      const byteLength = Buffer.byteLength(encoded, 'base64');
-      if (byteLength > CURRENT_TURN_MULTIMODAL_MAX_BYTES) {
-        console.info('Skipping oversized current-turn multimodal attachment', {
+      const reason = skipReason(download.buffer, mimeType, CURRENT_TURN_MULTIMODAL_MAX_BYTES);
+      if (reason) {
+        console.info('Skipping current-turn multimodal attachment', {
           workspaceId,
           fileId,
-          fileName: download.name,
           mimeType,
-          byteLength,
+          reason,
+          byteLength: download.buffer.length,
           maxBytes: CURRENT_TURN_MULTIMODAL_MAX_BYTES,
         });
+        skipped.push({ name: String(download.name || `file ${fileId}`), mimeType, bytes: download.buffer.length, reason });
         continue;
       }
+      const encoded = download.buffer.toString('base64');
       if (mimeType === 'application/pdf') {
         fileBlocks.push({
           type: 'file',
@@ -430,20 +431,23 @@ export function registerRunRoutes(
       }
     }
 
+    const note = skippedAttachmentsNote(skipped, CURRENT_TURN_MULTIMODAL_MAX_BYTES);
+    const notedPrompt = note ? `${prompt.trim()}\n\n${note}` : prompt;
     if (!fileBlocks.length) {
-      return undefined;
+      return { prompt: notedPrompt };
     }
 
     const promptText = [
-      prompt.trim(),
+      notedPrompt.trim(),
       'Use the attached file content as primary context for this turn before falling back to workspace search or web search.',
     ]
       .filter(Boolean)
       .join('\n\n');
 
-    return promptText
-      ? [{ type: 'text', text: promptText }, ...fileBlocks]
-      : fileBlocks;
+    return {
+      prompt: notedPrompt,
+      messageContent: promptText ? [{ type: 'text', text: promptText }, ...fileBlocks] : fileBlocks,
+    };
   };
 
   router.post('/run', async (req, res) => {
@@ -469,13 +473,13 @@ export function registerRunRoutes(
         policy,
         skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
-      const messageContent = await buildCurrentTurnMessageContent(
+      const { prompt: runPrompt, messageContent } = await buildCurrentTurnMessageContent(
         workspaceId,
         user.userId,
         enrichedPrompt,
         taggedContext.currentTurnFileRefs,
       );
-      const response = await runAgent(persona, workspaceId, enrichedPrompt, history, {
+      const response = await runAgent(persona, workspaceId, runPrompt, history, {
         forceReset,
         authToken: authToken || undefined,
         messageContent,
@@ -541,13 +545,13 @@ export function registerRunRoutes(
         policy,
         skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
-      const messageContent = await buildCurrentTurnMessageContent(
+      const { prompt: runPrompt, messageContent } = await buildCurrentTurnMessageContent(
         workspaceId,
         user.userId,
         enrichedPrompt,
         taggedContext.currentTurnFileRefs,
       );
-      streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
+      streamResponse = await runAgentStream(persona, workspaceId, runPrompt, history, {
         forceReset,
         signal: upstreamAbort.signal,
         authToken: authToken || undefined,
@@ -627,7 +631,7 @@ export function registerRunRoutes(
         calendarEventRefs: selectedCalendarRefs,
         calendarSourceIds: selectedSourceRefs,
       });
-      const messageContent = await buildCurrentTurnMessageContent(
+      const { prompt: runPrompt, messageContent } = await buildCurrentTurnMessageContent(
         workspaceId,
         user.userId,
         enrichedPrompt,
@@ -655,7 +659,7 @@ export function registerRunRoutes(
         persona,
         workspaceId,
         conversationId,
-        prompt: enrichedPrompt,
+        prompt: runPrompt,
         userId: user.userId,
         history: runHistory,
         conversationArchive,
