@@ -154,6 +154,7 @@ jobs:
             agent/tests/test_prompt_suggestions.py \
             agent/tests/test_langfuse_handler.py \
             agent/tests/test_run_checkpoints.py \
+            agent/tests/test_empty_reply.py \
             tests/office \
             tests/test_agent_main.py \
             tests/test_summary_trigger_tokens.py \

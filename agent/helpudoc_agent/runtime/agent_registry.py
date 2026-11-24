@@ -23,6 +23,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
 from langchain_quickjs.middleware import CodeInterpreterMiddleware
 
+from helpudoc_agent.middleware.empty_reply import EmptyReplyMiddleware
 from helpudoc_agent.middleware.interaction_contract import InteractionContractMiddleware
 from helpudoc_agent.middleware.slide_style_preview import SlideStylePreviewMiddleware
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
@@ -742,6 +743,8 @@ class AgentRegistry:
         interrupt_on = {name: config for name, config in interrupt_on.items() if config}
 
         middleware = [
+            # First, so its after_model runs last, after the guards have had their say.
+            EmptyReplyMiddleware(),
             TodoListMiddleware(),
             FilesystemMiddleware(backend=make_backend),
             build_summarization_middleware(model, _summary_trigger_tokens()),

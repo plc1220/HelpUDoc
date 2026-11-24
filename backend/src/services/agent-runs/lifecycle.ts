@@ -2572,9 +2572,24 @@ export const normalizeWorkflowActionEvent = (value: unknown): WorkflowActionEven
   };
 };
 
-const buildTerminalConversationSummary = (status: AgentRunStatus, error?: string): string => {
+export const skillSandboxFailureLimit = (content: string): number =>
+  (content.includes('Load a skill before running a skill script') ? 5 : 2);
+
+/** A run that produced something the user can see does not need a written reply. */
+export const buildTerminalConversationSummary = (
+  status: AgentRunStatus,
+  error?: string,
+  snapshot: Pick<ConversationRunSnapshot, 'toolEvents' | 'workflowActions' | 'pendingInterrupt'> = {},
+): string => {
   if (status === 'completed') {
-    return 'Completed successfully.';
+    const visibleResult = Boolean(
+      snapshot.pendingInterrupt
+      || snapshot.workflowActions?.length
+      || snapshot.toolEvents?.some((event) => event.outputFiles?.length),
+    );
+    return visibleResult
+      ? 'Completed successfully.'
+      : 'Lumo finished without writing a reply. Please send your message again.';
   }
   if (status === 'cancelled') {
     return 'The run was stopped.';
@@ -2598,7 +2613,7 @@ const persistRunConversationMessage = async (
   const assistantText = snapshot.assistantText?.trim() ? snapshot.assistantText : '';
   const terminalSummary =
     !assistantText && (status === 'completed' || status === 'failed' || status === 'cancelled')
-      ? buildTerminalConversationSummary(status, snapshot.error)
+      ? buildTerminalConversationSummary(status, snapshot.error, snapshot)
       : '';
   const text = assistantText || terminalSummary;
   const metadata: ConversationMessageMetadata = {
@@ -4512,9 +4527,10 @@ async function runAgentRunWorker(
           const signature = `${coerceText(parsed.name).trim()}\u0000${coerceText(parsed.content).trim()}`;
           const failureCount = (skillSandboxFailureCounts.get(signature) || 0) + 1;
           skillSandboxFailureCounts.set(signature, failureCount);
-          if (failureCount >= 2) {
+          // A missing skill is recoverable: the tool tells Lumo what to use instead.
+          if (failureCount >= skillSandboxFailureLimit(coerceText(parsed.content))) {
             repeatedSkillSandboxFailure =
-              'Agent stopped because the skill sandbox returned the same terminal error twice. Retrying the same request cannot succeed.';
+              'Agent stopped because the skill sandbox returned the same terminal error repeatedly. Retrying the same request cannot succeed.';
           }
         }
       }

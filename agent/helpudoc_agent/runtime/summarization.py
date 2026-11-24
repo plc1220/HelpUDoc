@@ -27,6 +27,8 @@ from typing import Any, Callable, Sequence
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langchain_core.messages import AnyMessage, HumanMessage
 
+from helpudoc_agent.middleware.empty_reply import NUDGE_SOURCE
+
 logger = logging.getLogger(__name__)
 
 # Keep the newest messages up to this many estimated tokens. The rest is summarized.
@@ -84,14 +86,14 @@ Respond only with the sections above."""
 
 
 def _is_user_turn(message: AnyMessage) -> bool:
-    # A previous summary is also a HumanMessage; it is not something the user asked.
+    # A previous summary and Lumo's own notes are also HumanMessages; the user wrote neither.
     return isinstance(message, HumanMessage) and (
-        message.additional_kwargs.get("lc_source") != "summarization"
+        message.additional_kwargs.get("lc_source") not in {"summarization", NUDGE_SOURCE}
     )
 
 
 def _is_summary(message: AnyMessage) -> bool:
-    return isinstance(message, HumanMessage) and not _is_user_turn(message)
+    return isinstance(message, HumanMessage) and message.additional_kwargs.get("lc_source") == "summarization"
 
 
 # Estimates by content fingerprint. The cache never holds the files themselves.

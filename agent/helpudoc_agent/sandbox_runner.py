@@ -216,7 +216,10 @@ def _resolve_skill(
         if isinstance(active_scope, dict):
             active_skill_id = str(active_scope.get("skill_id") or "").strip()
     if not active_skill_id:
-        raise SandboxExecutionError("Load a skill before running a skill script.")
+        raise SandboxExecutionError(
+            "Load a skill before running a skill script. If no loaded skill needs Python, do not call "
+            "this tool again in this run: use inspect_document, search_document or eval instead."
+        )
     skill = find_skill_for_context(skills_root, active_skill_id, workspace_state.context)
     if skill is None:
         raise SandboxExecutionError(f"Active skill '{active_skill_id}' was not found in the skills registry.")
