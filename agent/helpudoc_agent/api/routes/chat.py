@@ -294,10 +294,18 @@ def _research_source_contract_error(
 
 
 
+_UNREADABLE_FILE_ERRORS = (
+    "Request contains an invalid argument",
+    "The document has no pages",
+    "Unable to process input image",
+)
+
+
 def _attachment_error_message(error: str, content: List[Dict[str, Any]] | None) -> str:
     """Plain words when the model rejects a request that carries files."""
     files = [block for block in content or [] if block.get("type") in {"file", "image"}]
-    if not files or "INVALID_ARGUMENT" not in error:
+    # Only the replies Gemini gives for a file it cannot read. Anything else keeps its cause.
+    if not files or not any(reason in error for reason in _UNREADABLE_FILE_ERRORS):
         return error
     names = [str(block["filename"]) for block in files if block.get("filename")]
     label = ", ".join(names) if names else "an attached file"

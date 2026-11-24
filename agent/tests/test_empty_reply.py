@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+import pytest
 from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -59,3 +60,22 @@ def test_normal_replies_and_result_tools_are_not_nudged():
     card = [HumanMessage("make a skill"), ToolMessage("{}", tool_call_id="1", name="propose_skill"), AIMessage("")]
     assert guard.after_model({"messages": card}, None) is None
     assert guard.after_model({"messages": [AIMessage("", tool_calls=[{"name": "x", "args": {}, "id": "1"}])]}, None) is None
+
+
+@pytest.mark.parametrize("empty", ["", [], [{"type": "text", "text": ""}]])
+def test_the_request_after_the_nudge_is_one_gemini_accepts(empty):
+    # an empty list became a message with no parts, and Gemini
+    # rejected the request with 400.
+    from langchain_google_genai.chat_models import _parse_chat_history
+
+    sent = []
+
+    def reply(messages):
+        sent.append(list(messages))
+        return AIMessage("Example Pay") if is_nudge(messages[-1]) else AIMessage(empty)
+
+    result = _reply_agent(reply).invoke({"messages": [HumanMessage("which provider?")]})["messages"]
+    assert result[-1].content == "Example Pay"
+    _, history = _parse_chat_history(sent[-1])
+    assert all(content.parts for content in history)
+    assert not any(isinstance(m, AIMessage) for m in sent[-1])

@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,9 @@ class EmptyReplyMiddleware(AgentMiddleware):
                 break
             if isinstance(message, ToolMessage) and message.name in _TOOLS_THAT_END_A_RUN:
                 return None
+        if not last.id:
+            return None
         logger.warning("Run would have ended without a reply; asking the model once")
         nudge = HumanMessage(NUDGE_TEXT, additional_kwargs={"lc_source": NUDGE_SOURCE})
-        return {"messages": [nudge], "jump_to": "model"}
+        # Gemini rejects a message with no parts, so the empty one must not be sent back.
+        return {"messages": [RemoveMessage(id=last.id), nudge], "jump_to": "model"}
