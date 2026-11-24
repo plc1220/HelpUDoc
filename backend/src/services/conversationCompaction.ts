@@ -335,7 +335,7 @@ export class ConversationCompactor {
 /** Below this the whole history is in the model's context, so no archive is needed. */
 export const ARCHIVE_MIN_HISTORY_TOKENS = 80000;
 /** Upper bound on archived history per run (the newest older messages are kept). */
-export const ARCHIVE_MAX_TOKENS = 300000;
+export const ARCHIVE_MAX_TOKENS = 1000000;
 
 export type ConversationArchiveSourceRow = {
   id: number | string;

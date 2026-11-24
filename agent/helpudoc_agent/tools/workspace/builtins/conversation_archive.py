@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Defensive caps on what the agent accepts, independent of the backend's own caps.
 MAX_ARCHIVE_MESSAGES = 5000
-MAX_ARCHIVE_CHARS = 1_500_000  # ~375K tokens
+MAX_ARCHIVE_CHARS = 4_200_000  # above the backend's ARCHIVE_MAX_TOKENS (1M tokens)
 # A matched message up to this size is returned whole; larger ones as an excerpt.
 FULL_MESSAGE_MAX_CHARS = 12_000
 EXCERPT_CHARS = 1_500

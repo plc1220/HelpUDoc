@@ -49,7 +49,7 @@ test('empty and summary-only agent rows are left out, like the history the brows
 });
 
 test('beyond the cap, the oldest messages are dropped and the archive says so', () => {
-  const huge = rows(150, 3000); // ~450k tokens
+  const huge = rows(450, 3000); // ~1.35M tokens
   const archive = buildConversationArchive('c1', huge)!;
   assert.equal(archive.truncated, true);
   assert.ok(estimateTokens(archive.messages) <= ARCHIVE_MAX_TOKENS);
