@@ -152,6 +152,7 @@ jobs:
             agent/tests/test_team_thread_history_tool.py \
             agent/tests/test_tool_guard_schema.py \
             agent/tests/test_prompt_suggestions.py \
+            agent/tests/test_langfuse_handler.py \
             tests/office
 
   docker-backend:
