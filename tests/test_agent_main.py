@@ -1870,3 +1870,26 @@ def test_conversation_archive_is_visible_only_in_the_run_it_was_sent_with(client
     assert agent.seen == ["conv-alice", None]
     runtime_context = registry._runtimes[("research", "workspace-archive")].workspace_state.context if hasattr(registry, "_runtimes") else {}
     assert "conversationArchive" not in json.dumps(runtime_context, default=str)
+
+
+def test_a_run_stopped_at_its_limit_says_so_and_the_next_one_does_not(client_with_stubs):
+    from helpudoc_agent.run_work import mark_stopped
+
+    class LimitedAgent:
+        def __init__(self, stop):
+            self.stop = stop
+
+        async def astream_events(self, *_args, **_kwargs):
+            if self.stop:
+                mark_stopped()
+            yield {"event": "on_chat_model_stream", "name": "test-model", "run_id": "r",
+                   "data": {"chunk": {"role": "assistant", "content": "Part one."}}}
+
+    client, registry, _ = client_with_stubs
+    for stop in (True, False):
+        registry.set_runtime("research", f"workspace-limit-{stop}", DummyRuntime(f"workspace-limit-{stop}", LimitedAgent(stop)))
+        with client.stream("POST", f"/agents/research/workspace/workspace-limit-{stop}/chat/stream", json={"message": "a", "history": []}) as response:
+            payloads = _collect_stream_payloads(response)
+        text = "".join(p.get("content", "") for p in payloads if p.get("type") == "token")
+        assert text.startswith("Part one.") and ("work limit" in text) is stop
+        assert payloads[-1]["status"] == "completed"

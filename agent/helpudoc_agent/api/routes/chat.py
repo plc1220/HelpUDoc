@@ -58,6 +58,7 @@ from helpudoc_agent.plan_gates import (
 )
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
 from helpudoc_agent.run_checkpoints import settle_run_thread
+from helpudoc_agent.run_work import PARTIAL_NOTE, bind_run_work, stopped_at_the_limit
 from helpudoc_agent.skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
@@ -2457,6 +2458,7 @@ def register_chat_routes(
                 if resume_decisions is None and resume_value is None
                 else None
             )
+            bind_run_work()
             lf_handlers = langfuse_langchain_callbacks()
             run_thread_config: Dict[str, Any] | None = None
             try:
@@ -3046,6 +3048,10 @@ def register_chat_routes(
                         emitted = True
                         for event_payload in _emit_text("assistant", text):
                             await handler._emit(event_payload)
+
+                if stopped_at_the_limit():
+                    emitted = True
+                    await handler._emit({"type": "token", "content": PARTIAL_NOTE, "role": "assistant"})
 
                 if not emitted and not handler.has_events:
                     await handler._emit(

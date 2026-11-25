@@ -11,9 +11,11 @@ from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
+from langgraph.config import get_config
 from langgraph.runtime import Runtime
 
 from helpudoc_agent.interaction_contract import next_pending_gate
+from helpudoc_agent.run_work import mark_stopped, remaining_steps
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,26 @@ _STOP_TEXT = (
     "[ARIA system note] Your last {n} searches found nothing, so searching is over for this request. Answer "
     "the user's latest message now from what you have read. Say clearly what was not found. Do not invent it."
 )
+
+
+# Graph steps left before the run would fail. One model call with its tools takes about eight.
+STEPS_LEFT_WARN = 90
+STEPS_LEFT_STOP = 30
+_STEPS_WARN_TEXT = (
+    "[ARIA system note] This request is close to its work limit. Finish the most important part now and "
+    "prepare to answer. Do not start new work."
+)
+_STEPS_STOP_TEXT = (
+    "[ARIA system note] This request has reached its work limit. Answer the user's latest message now from "
+    "what you have. Say what is done and what is not done. Do not invent anything."
+)
+
+
+def _steps_left() -> int | None:
+    try:
+        return remaining_steps(get_config())
+    except Exception:
+        return None  # outside a graph run
 
 
 def _is_empty_search(message: ToolMessage) -> bool:
@@ -146,27 +168,38 @@ def _with_some_text(response: Any) -> Any:
 
 class EmptyReplyMiddleware(AgentMiddleware):
     @staticmethod
-    def _limit_empty_searches(request: Any) -> tuple[Any, bool]:
+    def _limit_work(request: Any) -> tuple[Any, bool]:
         """The request to send, and whether it is the final answer. Any doubt: unchanged."""
         try:
-            count = empty_searches_in_a_row(request.messages)
-            if count < EMPTY_SEARCHES_WARN:
+            steps = _steps_left()
+            searches = empty_searches_in_a_row(request.messages)
+            if steps is not None and steps <= STEPS_LEFT_STOP:
+                text, final = _STEPS_STOP_TEXT, True
+            elif searches >= EMPTY_SEARCHES_STOP:
+                text, final = _STOP_TEXT.format(n=searches), True
+            elif searches >= EMPTY_SEARCHES_WARN:
+                text, final = _WARN_TEXT.format(n=searches), False
+            elif steps is not None and steps <= STEPS_LEFT_WARN:
+                text, final = _STEPS_WARN_TEXT, False
+            else:
                 return request, False
             context = getattr(request.runtime, "context", None)
             if next_pending_gate(context if isinstance(context, dict) else None) is not None:
                 return request, False
-            final = count >= EMPTY_SEARCHES_STOP
-            logger.warning("%s searches in a row found nothing (final=%s)", count, final)
-            note = HumanMessage((_STOP_TEXT if final else _WARN_TEXT).format(n=count))
-            messages = [*request.messages, note]
-            return (request.override(messages=messages, tools=[]) if final
-                    else request.override(messages=messages)), final
+            logger.warning("Work limit note (empty searches=%s, steps left=%s, final=%s)", searches, steps, final)
+            messages = [*request.messages, HumanMessage(text)]
+            if text in (_STEPS_WARN_TEXT, _STEPS_STOP_TEXT):
+                # Also after the warning: a model that heeds it leaves work undone.
+                mark_stopped()
+            if not final:
+                return request.override(messages=messages), False
+            return request.override(messages=messages, tools=[]), True
         except Exception:
-            logger.warning("Empty-search check skipped", exc_info=True)
+            logger.warning("Work limit check skipped", exc_info=True)
             return request, False
 
     def wrap_model_call(self, request: Any, handler: Any) -> Any:
-        request, final = self._limit_empty_searches(request)
+        request, final = self._limit_work(request)
         response = handler(request)
         if not final:
             return response
@@ -178,7 +211,7 @@ class EmptyReplyMiddleware(AgentMiddleware):
         return _with_some_text(response)
 
     async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-        request, final = self._limit_empty_searches(request)
+        request, final = self._limit_work(request)
         response = await handler(request)
         if not final:
             return response
