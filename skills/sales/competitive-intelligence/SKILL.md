@@ -31,7 +31,7 @@ Help sellers position with evidence, not folklore. This skill should default to 
 1. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 2. Google Drive for battlecards, comparison docs, enablement notes, and proposal material
 3. Gmail or recap notes only when they contain direct competitor mentions
-4. Google Search for current pricing, releases, reviews, and positioning
+4. web search for current pricing, releases, reviews, and positioning
 5. CRM or win/loss data if available
 6. Chat systems only if connected and relevant
 
@@ -90,7 +90,7 @@ If the user explicitly wants a battlecard, preserve the richer structure from th
 ## Execution Rules
 
 - Reuse internal materials first so the output matches the team's current positioning.
-- Use Google Search to validate and refresh current competitor claims.
+- Use web search to validate and refresh current competitor claims.
 - Treat CRM, transcript, and chat context as optional enrichment, not a requirement.
 - Keep claims time-aware when discussing releases, pricing, or market moves.
 

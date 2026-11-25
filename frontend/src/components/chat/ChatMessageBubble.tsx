@@ -361,7 +361,7 @@ const getThinkingPlaceholder = (
   if (toolNames.has('request_clarification')) {
     return 'Waiting for the presentation details needed to continue.';
   }
-  if (activeSkill === 'research' || toolNames.has('google_search')) {
+  if (activeSkill === 'research' || toolNames.has('web_search') || toolNames.has('google_search')) {
     return 'Formulating a research plan based on your prompt and available context.';
   }
   return DEFAULT_THINKING_PLACEHOLDER;

@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+import yaml
+
 from helpudoc_agent.configuration import load_settings
 from helpudoc_agent.skills_registry import collect_tool_names, load_skills
 
@@ -14,7 +17,24 @@ def test_runtime_config_exposes_request_plan_approval_interrupt() -> None:
 
 def test_runtime_config_does_not_force_search_interrupts() -> None:
     settings = load_settings()
-    assert "google_search" not in settings.backend.interrupt_on
+    assert {"google_search", "web_search", "url_context"}.isdisjoint(settings.backend.interrupt_on)
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_persisted_google_search_interrupt_migrates_with_tool(tmp_path, explicit) -> None:
+    approval = {"allowed_decisions": ["approve", "reject"]}
+    rules = {"google_search": approval, "write_file": True}
+    if explicit:
+        rules["web_search"] = False
+    runtime = tmp_path / "runtime.yaml"
+    runtime.write_text(yaml.safe_dump({
+        "inherit_defaults": False,
+        "backend": {"workspace_root": str(tmp_path), "interrupt_on": rules},
+        "tools": [{"name": "google_search"}],
+    }))
+    settings = load_settings(runtime)
+    assert "web_search" in settings.tools
+    assert settings.backend.interrupt_on == {"web_search": False if explicit else approval, "write_file": True}
 
 
 def test_runtime_config_registers_request_plan_approval_tool() -> None:

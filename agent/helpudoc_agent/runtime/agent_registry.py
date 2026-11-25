@@ -87,7 +87,7 @@ GENERAL_SYSTEM_PROMPT = (
     "Treat tagged files, published knowledge, and prior workspace documents as grounded project context, "
     "but not as authoritative sources for facts that may have changed recently. "
     "When the user asks for the latest/current model version, pricing, dates, schedules, or other time-sensitive facts, "
-    "verify them with allowed fresh sources such as the requested MCP server, official documentation, google_search, "
+    "verify them with allowed fresh sources such as the requested MCP server, official documentation, web_search, "
     "or the url_context tool for explicit user-provided links instead of repeating stale artifact text. "
     "If fresh sources disagree with an attached artifact, say so clearly and prefer the verified fresh source for the answer. "
     "When the user message begins with a [Host time] block, treat those timestamps as authoritative for "
@@ -128,11 +128,11 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
         if (
             str(context.get("active_skill") or "").strip() == "research"
             and virtual_path == PurePosixPath("/final-research-report.md")
-            and int(context.get("google_search_source_count", 0) or 0) < 1
+            and int(context.get("web_search_source_count", 0) or 0) < 1
         ):
             return (
-                f"Cannot {operation} '{file_path}' because this research run has no verified Google Search sources. "
-                "Stop and report that live web research is unavailable; do not create a sourced report from model memory."
+                f"Cannot {operation} '{file_path}' because this research run has no verified web sources. "
+                "Read a relevant page with url_context when available. If retrieval fails, report the limitation."
             )
         is_published = context.get("workspace_mode") == "published_read_only"
         write_denied = context.get("can_write_workspace") is False
@@ -570,8 +570,8 @@ class AgentRegistry:
         if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:
             tool_names.append("run_skill_python_script")
         if workspace_state.context.get("internet_search_enabled"):
-            if "google_search" in self.settings.tools and "google_search" not in tool_names:
-                tool_names.append("google_search")
+            if "web_search" in self.settings.tools and "web_search" not in tool_names:
+                tool_names.append("web_search")
             if "url_context" in self.settings.tools and "url_context" not in tool_names:
                 tool_names.append("url_context")
 

@@ -93,7 +93,7 @@ class GeminiClientManager:
             raise RuntimeError("Gemini API key is not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY before using Gemini-backed tools.")
 
     def get_web_tool_chat_model(self) -> ChatGoogleGenerativeAI:
-        """Chat model used internally by the public google_search and url_context tools."""
+        """Chat model used internally by the Gemini search and URL context adapters."""
         if self._model_cfg.provider != "gemini":
             raise ValueError("Gemini web grounding is unavailable with private inference")
         self._require_configured_client()

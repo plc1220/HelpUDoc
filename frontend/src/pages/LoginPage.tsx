@@ -54,7 +54,11 @@ const LoginPage = () => {
     if (user) {
       const state = location.state as LocationState | null;
       const returnTo = params.get('returnTo');
-      const redirectTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') && !/[\\\x00-\x20]/.test(returnTo) ? returnTo : (state?.from || '/');
+      const redirectTo = returnTo?.startsWith('/')
+        && !returnTo.startsWith('//')
+        && Array.from(returnTo).every(char => char !== '\\' && char.charCodeAt(0) > 0x20)
+        ? returnTo
+        : (state?.from || '/');
       navigate(redirectTo, { replace: true });
     }
   }, [location.search, location.state, navigate, user]);

@@ -55,6 +55,10 @@ jobs:
               - 'tests/test_agent_*.py'
               - 'tests/test_mcp_binding.py'
               - 'tests/test_pcai_local_models.py'
+              - 'tests/test_web_search_provider.py'
+              - 'tests/test_google_search_tool.py'
+              - 'tests/test_structured_web_sources.py'
+              - 'tests/test_hitl_plan_approval_config.py'
               - 'tests/test_tool_factory.py'
               - 'tests/test_skill_sandbox.py'
               - 'tests/office/**'
@@ -148,6 +152,11 @@ jobs:
             tests/test_gemini_chat_factory.py \
             tests/test_pcai_local_models.py \
             tests/test_mcp_binding.py \
+            tests/test_web_search_provider.py \
+            tests/test_google_search_tool.py \
+            tests/test_structured_web_sources.py \
+            tests/test_hitl_plan_approval_config.py \
+            agent/tests/test_published_workspace_write_guard.py \
             tests/test_tool_factory.py \
             tests/test_skill_sandbox.py \
             agent/tests/test_document_quick_edit.py \

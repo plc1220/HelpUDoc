@@ -66,18 +66,18 @@ def _search_error_envelope(
 ) -> str:
     safe_error = str(error_text or "unknown error")[:300]
     if retryable:
-        next_call = "google_search: retry once with a narrower query"
-        message = f"Google Search failed after {attempts} attempt(s): {safe_error}."
+        next_call = "web_search: retry once with a narrower query"
+        message = f"Web search failed after {attempts} attempt(s): {safe_error}."
     else:
         next_call = "none: report that live web research is unavailable for this run"
         message = (
-            f"Google Search is unavailable after {attempts} attempt(s): {safe_error}. "
+            f"Web search is unavailable after {attempts} attempt(s): {safe_error}. "
             "Do not claim a sourced research result without successfully retrieved sources."
         )
     return json.dumps(
         {
             "status": "error",
-            "tool": "google_search",
+            "tool": "web_search",
             "errorCode": _search_error_code(error_text),
             "message": message,
             "retryable": retryable,
@@ -243,9 +243,9 @@ def build_google_search_tool(
     source_tracker: SourceTracker,
     llm: ChatGoogleGenerativeAI | None = None,
     *,
-    tool_name: str = "google_search",
+    tool_name: str = "web_search",
     tool_description: str = "Use Gemini's built-in search to gather fresh information.",
-    search_label: str = "google_search",
+    search_label: str = "web_search",
 ) -> Tool:
     """Public builder so YAML entrypoints stay accurate."""
     if llm is None:
@@ -254,7 +254,7 @@ def build_google_search_tool(
 
     @tool
     def grounded_search(query: str, max_results: int = 5) -> str:
-        """Run Gemini Google Search for the given query."""
+        """Run Gemini Web search for the given query."""
         blocked = apply_search_policy_guard(workspace_state, tool_name)
         if blocked:
             return blocked
@@ -278,8 +278,8 @@ def build_google_search_tool(
         attempts = 0
         for attempt in range(1, DEFAULT_SEARCH_MAX_ATTEMPTS + 1):
             attempts = attempt
-            workspace_state.context["google_search_upstream_attempt_count"] = (
-                int(workspace_state.context.get("google_search_upstream_attempt_count", 0) or 0) + 1
+            workspace_state.context["web_search_upstream_attempt_count"] = (
+                int(workspace_state.context.get("web_search_upstream_attempt_count", 0) or 0) + 1
             )
             response, error = invoke_lc_with_timeout(
                 lambda: llm_search.invoke([HumanMessage(content=search_prompt)], temperature=0),
@@ -290,27 +290,27 @@ def build_google_search_tool(
                 summary, _ = parse_structured_web_answer(response)
                 # Model-authored JSON URLs are not evidence. Only accept sources
                 # carried by Gemini's native grounding/citation metadata.
-                sources = verified_google_search_sources(response)
+                sources = verified_google_search_sources(response)[:max_results]
                 if sources:
-                    workspace_state.context["google_search_consecutive_failures"] = 0
-                    workspace_state.context["google_search_success_count"] = (
-                        int(workspace_state.context.get("google_search_success_count", 0) or 0) + 1
+                    workspace_state.context["web_search_consecutive_failures"] = 0
+                    workspace_state.context["web_search_success_count"] = (
+                        int(workspace_state.context.get("web_search_success_count", 0) or 0) + 1
                     )
-                    workspace_state.context["google_search_source_count"] = (
-                        int(workspace_state.context.get("google_search_source_count", 0) or 0) + len(sources)
+                    workspace_state.context["web_search_source_count"] = (
+                        int(workspace_state.context.get("web_search_source_count", 0) or 0) + len(sources)
                     )
-                    workspace_state.context.pop("google_search_terminal_error", None)
+                    workspace_state.context.pop("web_search_terminal_error", None)
                     break
                 response = None
                 error = "no grounded sources returned"
 
             error_text = str(error or "unknown error")
-            failures = int(workspace_state.context.get("google_search_consecutive_failures", 0) or 0) + 1
-            workspace_state.context["google_search_consecutive_failures"] = failures
+            failures = int(workspace_state.context.get("web_search_consecutive_failures", 0) or 0) + 1
+            workspace_state.context["web_search_consecutive_failures"] = failures
             transient = _is_transient_search_error(error_text)
             terminal = not transient or failures >= DEFAULT_SEARCH_MAX_CONSECUTIVE_FAILURES
             if terminal:
-                workspace_state.context["google_search_terminal_error"] = True
+                workspace_state.context["web_search_terminal_error"] = True
                 break
             if attempt < DEFAULT_SEARCH_MAX_ATTEMPTS:
                 delay = search_retry_delay(attempt)
@@ -325,7 +325,7 @@ def build_google_search_tool(
                 time.sleep(delay)
 
         if response is None:
-            terminal = bool(workspace_state.context.get("google_search_terminal_error"))
+            terminal = bool(workspace_state.context.get("web_search_terminal_error"))
             return _search_error_envelope(
                 error_text=error_text,
                 attempts=attempts,
@@ -334,7 +334,7 @@ def build_google_search_tool(
 
         if sources:
             tracker.record(workspace_state, sources)
-        return summary + _format_sources_block(sources, max_results=max_results)
+        return json.dumps({"status": "ok", "evidence": "grounded_summary", "summary": summary, "results": sources}, ensure_ascii=False)
 
     grounded_search.name = tool_name
     grounded_search.description = tool_description
@@ -376,20 +376,42 @@ def build_url_context_tool(
             f"You are answering from these URLs:\n{url_block}\n\nQuestion or instructions:\n{question}\n\n"
             "Return JSON with summary and sources (url plus title when possible), grounded strictly in fetched page content."
         )
-        llm_urls = llm.bind(
-            tools=[{"url_context": {}}],
-            response_mime_type="application/json",
-            response_schema=StructuredWebAnswer.model_json_schema(),
-        )
+        # The LangChain message adapter drops candidate.url_context_metadata.
+        # Use the same configured client and model to retain retrieval receipts.
+        config = {
+            "tools": [{"url_context": {}}],
+            "temperature": 0,
+            "max_output_tokens": llm.max_output_tokens,
+            "response_mime_type": "application/json",
+            "response_schema": StructuredWebAnswer.model_json_schema(),
+        }
+        if llm.thinking_level:
+            config["thinking_config"] = {"thinking_level": llm.thinking_level}
         response, error = invoke_lc_with_timeout(
-            lambda: llm_urls.invoke([HumanMessage(content=prompt)], temperature=0),
+            lambda: llm.client.models.generate_content(model=llm.model, contents=prompt, config=config),
             timeout_s=DEFAULT_SEARCH_TIMEOUT,
             label=label,
         )
         if error or response is None:
             return f"URL context failed ({error or 'unknown error'})."
 
-        summary, sources = parse_structured_web_answer(response)
-        if sources:
-            tracker.record(workspace_state, sources)
+        summary, reported_sources = parse_structured_web_answer(response)
+        candidate = response.candidates[0] if response.candidates else None
+        metadata = candidate.url_context_metadata if candidate else None
+        receipts = metadata.url_metadata or [] if metadata else []
+        retrieved = {entry.retrieved_url for entry in receipts
+                     if entry.url_retrieval_status == "URL_RETRIEVAL_STATUS_SUCCESS"}
+        titles = {source["url"]: source["title"] for source in reported_sources}
+        sources = [{"url": url, "title": titles.get(url) or url}
+                   for url in dict.fromkeys(normalized) if url in retrieved]
+        if not sources or not summary:
+            return "URL context failed (no verified content from the requested URLs)."
+        tracker.record(workspace_state, sources)
+        workspace_state.context["web_search_source_count"] = (
+            int(workspace_state.context.get("web_search_source_count", 0) or 0) + len(sources)
+        )
         return summary + _format_sources_block(sources, empty_message="No URL sources returned.")
+
+    url_context.name = tool_name
+    url_context.description = tool_description
+    return url_context

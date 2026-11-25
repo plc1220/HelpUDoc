@@ -49,7 +49,7 @@ Pull the context automatically and produce the briefing.
 4. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 5. Google Sheets for trackers or account plans
 6. CRM if connected
-7. Google Search only when a priority account needs same-day external context
+7. web search only when a priority account needs same-day external context
 
 ## Output Format
 
@@ -191,4 +191,4 @@ If the daily briefing reveals a high-stakes meeting with a fast-changing account
 1. Calendar and Gmail are the biggest time savers.
 2. Drive and Sheets add useful prep and tracker context.
 3. CRM helps, but the workflow should still work well without it.
-4. Google Search is enrichment, not the starting point.
+4. web search is enrichment, not the starting point.

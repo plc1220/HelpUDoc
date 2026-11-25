@@ -118,6 +118,7 @@ def _friendly_tool_label(name: str) -> str:
         "list_skills": "Checking available skills",
         "load_skill": "Loading the selected skill",
         "google_search": "Searching the web",
+        "web_search": "Searching the web",
         "url_context": "Reading the provided link",
         "image_generation": "Generating an image",
         "run_sql_query": "Querying the database",
@@ -140,8 +141,8 @@ def _configured_recursion_limit(settings: Any) -> int:
     return limit if limit >= 1 else 1000
 
 
-def _json_status_error(text: str) -> Optional[dict[str, Any]]:
-    """Return the parsed envelope when a tool result is a JSON error envelope."""
+def _json_tool_status(text: str) -> Optional[dict[str, Any]]:
+    """Return a structured tool result before interpreting any free-form content."""
     stripped = str(text or "").strip()
     if not stripped.startswith("{") or '"status"' not in stripped:
         return None
@@ -151,29 +152,53 @@ def _json_status_error(text: str) -> Optional[dict[str, Any]]:
         return None
     if not isinstance(parsed, dict):
         return None
-    if str(parsed.get("status") or "").strip().lower() != "error":
+    if str(parsed.get("status") or "").strip().lower() not in {"ok", "error"}:
         return None
     return parsed
 
 
-def _is_terminal_tool_failure(name: str, text: str) -> bool:
+@dataclass(frozen=True)
+class _ToolResultProgress:
+    label: str
+    detail: str
+    failed: bool = False
+    terminal: bool = False
+
+
+def _tool_result_progress(name: str, text: str) -> _ToolResultProgress:
     normalized_name = str(name or "").strip().lower()
-    normalized_text = str(text or "").strip().lower()
-    envelope = _json_status_error(text)
+    label = _friendly_tool_label(name)
+    success = _ToolResultProgress(f"Finished {label}", name)
+    envelope = _json_tool_status(text)
     if envelope is not None:
-        # Structured tool envelopes are terminal unless the tool says the call
-        # can be retried as-is. LOOP_BREAK is always terminal.
-        if envelope.get("errorCode") == LOOP_BREAK_ERROR_CODE:
-            return True
-        return envelope.get("retryable") is not True
-    if normalized_name == "google_search":
-        return (
-            normalized_text.startswith('{"ok": false')
-            or normalized_text.startswith("{'ok': false")
-            or "google search timed out" in normalized_text
-            or "search failed" in normalized_text
-        )
-    return False
+        if str(envelope["status"]).strip().lower() == "ok":
+            return success
+        retryable = envelope.get("retryable") is True and envelope.get("errorCode") != LOOP_BREAK_ERROR_CODE
+        if retryable and normalized_name not in {"web_search", "google_search", "url_context"}:
+            return success  # Preserve the existing progress behavior for non-retrieval tools.
+        timed_out = envelope.get("errorCode") == "SEARCH_TIMEOUT"
+    else:
+        normalized_text = str(text or "").strip().lower()
+        timed_out = "google search timed out" in normalized_text
+        if normalized_name == "url_context":
+            if not normalized_text.startswith("url context failed ("):
+                return success
+        elif normalized_name not in {"google_search", "web_search"} or not (
+            normalized_text.startswith(('{"ok": false', "{'ok': false")) or timed_out or "search failed" in normalized_text
+        ):
+            return success
+        retryable = False
+
+    return _ToolResultProgress(
+        f"{label} hit a timeout" if timed_out else f"{label} failed",
+        "The agent can retry this tool." if retryable else "The agent will continue without retrying this tool.",
+        failed=True,
+        terminal=not retryable,
+    )
+
+
+def _is_terminal_tool_failure(name: str, text: str) -> bool:
+    return _tool_result_progress(name, text).terminal
 
 
 _TERMINAL_SANDBOX_FAILURE_LIMIT = 3
@@ -278,12 +303,14 @@ def _research_source_contract_error(
     if str(context.get("active_skill") or "").strip() != "research":
         return ""
     if (
-        int(context.get("google_search_source_count", 0) or 0) > 0
+        int(context.get("web_search_source_count", 0) or 0) > 0
         and source_tracker.list_sources(runtime.workspace_state)
     ):
         return ""
+    if context.get("web_search_returned_snippets"):
+        return "Search returned snippets. A sourced research report requires verified source content."
     return (
-        "Research cannot complete because Google Search did not return any verified web sources "
+        "Research cannot complete because web search did not return any verified web sources "
         "during this run. No sourced report was produced; retry when live web research is available."
     )
 
@@ -1134,11 +1161,12 @@ def register_chat_routes(
                 # resume payload was applied. Stale checkpoint interrupt events
                 # may precede this callback and must not end the resumed stream.
                 self._resume_interrupt_consumed = True
-            tool_failed = _is_terminal_tool_failure(name, text)
+            result_progress = _tool_result_progress(name, text)
+            tool_failed = result_progress.failed
             should_abort = _record_terminal_tool_failure(
                 self._terminal_tool_failure_counts,
                 name=name,
-                failed=tool_failed,
+                failed=result_progress.terminal,
             )
             if should_abort:
                 self._fatal_tool_failure_message = (
@@ -1148,20 +1176,8 @@ def register_chat_routes(
             await _emit_progress(
                 self,
                 "using_tool",
-                (
-                    f"{_friendly_tool_label(name)} hit a timeout"
-                    if tool_failed and name == "google_search" and "timed out" in text.lower()
-                    else f"{_friendly_tool_label(name)} failed"
-                    if tool_failed
-                    else f"Finished {_friendly_tool_label(name)}"
-                ),
-                detail=(
-                    self._fatal_tool_failure_message
-                    if should_abort
-                    else "The agent will continue without retrying this tool."
-                    if tool_failed
-                    else name
-                ),
+                result_progress.label,
+                detail=self._fatal_tool_failure_message if should_abort else result_progress.detail,
                 tool_name=name,
                 status="error" if tool_failed else "completed",
             )
@@ -1729,18 +1745,13 @@ def register_chat_routes(
                     handler.queue_pending_interrupt(interrupt_payload)
                     return False
                 handler._resume_interrupt_consumed = True
-            tool_failed = _is_terminal_tool_failure(name, text)
+            result_progress = _tool_result_progress(name, text)
+            tool_failed = result_progress.failed
             await _emit_progress(
                 handler,
                 "using_tool",
-                (
-                    f"{_friendly_tool_label(name)} hit a timeout"
-                    if tool_failed and name == "google_search" and "timed out" in text.lower()
-                    else f"{_friendly_tool_label(name)} failed"
-                    if tool_failed
-                    else f"Finished {_friendly_tool_label(name)}"
-                ),
-                detail=("The agent will continue without retrying this tool." if tool_failed else name),
+                result_progress.label,
+                detail=result_progress.detail,
                 tool_name=name,
                 status="error" if tool_failed else "completed",
             )
@@ -2058,12 +2069,13 @@ def register_chat_routes(
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
         context["post_plan_search_count"] = 0
-        context["google_search_count"] = 0
-        context["google_search_upstream_attempt_count"] = 0
-        context["google_search_consecutive_failures"] = 0
-        context["google_search_success_count"] = 0
-        context["google_search_source_count"] = 0
-        context.pop("google_search_terminal_error", None)
+        context.pop("web_search_returned_snippets", None)
+        context["web_search_count"] = 0
+        context["web_search_upstream_attempt_count"] = 0
+        context["web_search_consecutive_failures"] = 0
+        context["web_search_success_count"] = 0
+        context["web_search_source_count"] = 0
+        context.pop("web_search_terminal_error", None)
         # Sources are scoped to a top-level user turn. Explicit resumes bypass
         # this reset so plan approval does not discard already gathered evidence.
         source_tracker.reset(runtime.workspace_state)
@@ -2136,8 +2148,9 @@ def register_chat_routes(
         if message.internetSearchEnabled:
             internet_guidance = (
                 "Internet search is enabled for this turn. "
-                "Use the google_search tool for current, external, or web-grounded information before answering, "
-                "and cite the useful sources it returns."
+                "Use url_context directly for a pasted public link. Use web_search for discovery, then read "
+                "relevant pages with url_context when available. Cite the supporting URLs. "
+                "If retrieval is unavailable, say so."
             )
             for index in range(len(payload) - 1, -1, -1):
                 role = str(payload[index].get("role") or "").strip().lower()

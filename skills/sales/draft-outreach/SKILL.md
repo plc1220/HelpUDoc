@@ -27,7 +27,7 @@ Research first, then draft. This skill should never send generic outreach. Start
 |                                                                  |
 |  Step 1: RESEARCH (always happens first)                         |
 |  - Gmail, Drive, Sheets, tagged files                            |
-|  - Google Search only after internal review                      |
+|  - web search only after internal review                      |
 |  - CRM or enrichment if available                                |
 |                                                                  |
 |  Step 2: DRAFT                                                   |
@@ -48,7 +48,7 @@ Research first, then draft. This skill should never send generic outreach. Start
 2. Google Drive for notes, decks, proposals, and account plans
 3. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 4. Google Sheets for territory or account-tracker context
-5. Google Search for current company, role, or market updates
+5. web search for current company, role, or market updates
 6. CRM or enrichment only if available
 
 ## Output Format
@@ -117,7 +117,7 @@ Use Sheets if relevant:
 
 ### Step 2: Enrich externally only when useful
 
-Use Google Search after internal review:
+Use web search after internal review:
 
 - recent company news
 - leadership or org change
@@ -254,4 +254,4 @@ If the seller says, "Draft outreach and make me a PowerPoint deck for the meetin
 ## Notes
 
 - Gmail drafts are preferred, but plain-text output is an acceptable fallback.
-- Do not default to Google Search before checking internal context.
+- Do not default to web search before checking internal context.

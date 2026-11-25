@@ -288,7 +288,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                             <div className="grid grid-cols-2 gap-4 mb-4">
                                 <div>
                                     <label className="block text-xs font-medium text-slate-700 mb-1">Tool Name</label>
-                                    <input type="text" value={newToolName} onChange={(e) => setNewToolName(e.target.value)} placeholder="e.g., google_search"
+                                    <input type="text" value={newToolName} onChange={(e) => setNewToolName(e.target.value)} placeholder="e.g., web_search"
                                         className={controlClass} />
                                 </div>
                                 <div>

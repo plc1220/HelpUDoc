@@ -20,7 +20,7 @@ Get a complete picture of a company or person before outreach or a meeting, but 
 ├─────────────────────────────────────────────────────────────────┤
 │  INTERNAL-FIRST                                                 │
 │  + Tagged files, Drive docs, Gmail history, Sheets notes       │
-│  + Google Search for current public context                    │
+│  + web search for current public context                    │
 │  + CRM and enrichment as optional sharpening layers            │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -31,7 +31,7 @@ Get a complete picture of a company or person before outreach or a meeting, but 
 2. Google Drive for notes, decks, proposals, or prior account plans
 3. Gmail for prior conversations or recap emails
 4. Google Sheets for trackers or territory notes
-5. Google Search for current public context
+5. web search for current public context
 6. CRM and enrichment if available
 
 ## Output Format
@@ -83,7 +83,7 @@ Get a complete picture of a company or person before outreach or a meeting, but 
 ## Execution Rules
 
 - Prefer internal context first when it exists.
-- Use Google Search to fill gaps or get current developments, not as the only source by default.
+- Use web search to fill gaps or get current developments, not as the only source by default.
 - If the user tagged files, use those before broad searching.
 - CRM and enrichment should sharpen the brief, not define the entire workflow.
 

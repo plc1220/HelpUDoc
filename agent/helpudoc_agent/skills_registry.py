@@ -515,7 +515,9 @@ def resolve_skill_scope(
         inherited_tools = list(plugin.default_tools)
         inherited_mcp_servers = list(plugin.default_mcp_servers)
         inherited_sandbox_scripts = list(plugin.default_sandbox_scripts)
-    declared_tools = _dedupe_ordered([*inherited_tools, *skill.tools])
+    declared_tools = _dedupe_ordered([
+        "web_search" if name == "google_search" else name for name in [*inherited_tools, *skill.tools]
+    ])
     runtime_tools = expand_runtime_tool_names(declared_tools)
     mcp_servers = _dedupe_ordered([*inherited_mcp_servers, *skill.mcp_servers])
     sandbox_scripts_by_name: dict[str, SkillSandboxScript] = {}
@@ -1018,6 +1020,8 @@ def is_tool_allowed(
     if active_skill is None:
         return True
     if tool_mcp_server is None:
+        if tool_name == "web_search" and "google_search" in active_skill.tools:
+            return True
         if tool_name in EXPLICIT_SKILL_TOOLS:
             return tool_name in active_skill.tools
         # Empty tool allowlists are intentionally treated as unrestricted access
