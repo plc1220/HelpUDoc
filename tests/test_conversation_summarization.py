@@ -1,4 +1,4 @@
-"""ARIA's settings for LangChain's SummarizationMiddleware (runtime/summarization.py).
+"""Lumo's settings for LangChain's SummarizationMiddleware (runtime/summarization.py).
 
 Below the trigger nothing may change: those are the conversations UAT validated. Above
 it, the user's latest message must survive, the summary must be built from the real
@@ -12,10 +12,10 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
 from helpudoc_agent.runtime.summarization import (
-    ARIA_SUMMARY_PROMPT,
+    LUMO_SUMMARY_PROMPT,
     SUMMARY_KEEP_TOKENS,
     SUMMARY_READ_TOKENS,
-    AriaSummarizationMiddleware,
+    LumoSummarizationMiddleware,
     build_summarization_middleware,
 )
 
@@ -51,11 +51,11 @@ def _history(turns: int, tokens_per_message: int) -> List[BaseMessage]:
     return messages
 
 
-def _middleware(model: RecordingChatModel) -> AriaSummarizationMiddleware:
+def _middleware(model: RecordingChatModel) -> LumoSummarizationMiddleware:
     return build_summarization_middleware(model, TRIGGER)
 
 
-def _run(middleware: AriaSummarizationMiddleware, messages: List[BaseMessage]):
+def _run(middleware: LumoSummarizationMiddleware, messages: List[BaseMessage]):
     return middleware.before_model({"messages": messages}, runtime=None)
 
 
@@ -149,7 +149,7 @@ def test_settings_and_node_name():
     assert middleware.keep == ("tokens", SUMMARY_KEEP_TOKENS)
     assert middleware.trim_tokens_to_summarize == SUMMARY_READ_TOKENS
     # LangChain fills the prompt with str.format; {messages} must be the only field.
-    assert ARIA_SUMMARY_PROMPT.format(messages="X").count("X") >= 1
+    assert LUMO_SUMMARY_PROMPT.format(messages="X").count("X") >= 1
 
 
 def test_after_compaction_the_answer_call_still_has_the_early_detail_and_the_question():
@@ -163,7 +163,7 @@ def test_after_compaction_the_answer_call_still_has_the_early_detail_and_the_que
         def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
             self.prompts.append(list(messages))
             text = "\n".join(str(m.content) for m in messages)
-            if "You are compressing an ARIA conversation" in text:
+            if "You are compressing a Lumo conversation" in text:
                 # A summary that carries the detail forward, as the prompt asks.
                 reply = f"## Decisions and preferences\n{detail}."
             else:
@@ -213,7 +213,7 @@ def _attached_turn(data: str) -> HumanMessage:
 
 
 def test_an_attached_pdf_is_counted_by_page_not_by_base64():
-    # Base64 counted as text exceeded the trigger on every step.
+    # base64 counted as text exceeded the trigger on every step.
     model = RecordingChatModel()
     messages = [*_history(3, 1000), _attached_turn(_pdf_base64(11, 1_000_000))]
     middleware = _middleware(model)

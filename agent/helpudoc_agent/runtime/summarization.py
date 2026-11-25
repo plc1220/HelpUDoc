@@ -1,6 +1,6 @@
 """Conversation summarization for long workspace chats.
 
-LangChain's SummarizationMiddleware with settings and a prompt for ARIA. Below the
+LangChain's SummarizationMiddleware with settings and a prompt for Lumo. Below the
 trigger nothing changes: the middleware never runs. Above it, the defaults lost the
 conversation (#121):
 
@@ -45,7 +45,7 @@ _PDF_BYTES_PER_PAGE = 20_000
 
 # The only placeholder is {messages}: LangChain fills this with str.format, so any other
 # literal brace must be doubled.
-ARIA_SUMMARY_PROMPT = """You are compressing an ARIA conversation so the assistant can keep working.
+LUMO_SUMMARY_PROMPT = """You are compressing a Lumo conversation so the assistant can keep working.
 The summary replaces the older messages below. The user never sees it. Do not answer
 the user or continue the task here; only record context.
 
@@ -149,7 +149,7 @@ def count_with_attachments(counter: Callable[..., int], messages: Sequence[AnyMe
     return counter(counted) + extra
 
 
-class AriaSummarizationMiddleware(SummarizationMiddleware):
+class LumoSummarizationMiddleware(SummarizationMiddleware):
     """SummarizationMiddleware that never summarizes away the user's latest message."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -180,11 +180,11 @@ class AriaSummarizationMiddleware(SummarizationMiddleware):
         return cutoff
 
 
-def build_summarization_middleware(model: Any, trigger_tokens: int) -> AriaSummarizationMiddleware:
-    return AriaSummarizationMiddleware(
+def build_summarization_middleware(model: Any, trigger_tokens: int) -> LumoSummarizationMiddleware:
+    return LumoSummarizationMiddleware(
         model=model,
         trigger=("tokens", trigger_tokens),
         keep=("tokens", SUMMARY_KEEP_TOKENS),
         trim_tokens_to_summarize=SUMMARY_READ_TOKENS,
-        summary_prompt=ARIA_SUMMARY_PROMPT,
+        summary_prompt=LUMO_SUMMARY_PROMPT,
     )

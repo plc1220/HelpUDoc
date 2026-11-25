@@ -180,9 +180,9 @@ export function planCompaction(
   };
 }
 
-// Keep the sections in step with ARIA_SUMMARY_PROMPT in
+// Keep the sections in step with LUMO_SUMMARY_PROMPT in
 // agent/helpudoc_agent/runtime/summarization.py, which summarizes inside a run.
-export const COMPACTION_SYSTEM_PROMPT = `You maintain the running summary of an ARIA conversation so the assistant can keep working.
+export const COMPACTION_SYSTEM_PROMPT = `You maintain the running summary of a Lumo conversation so the assistant can keep working.
 Your summary replaces the earlier messages in the assistant's context. The user never sees it.
 Do not answer the user or continue the task; only record context.
 

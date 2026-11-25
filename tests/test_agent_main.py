@@ -1610,7 +1610,7 @@ ANSWER_TEXT = "Here is the reply in template 2a."
 
 @pytest.fixture(scope="module")
 def real_summarization_events():
-    """Stream a real LangChain agent whose summarization middleware (ARIA's) fires.
+    """Stream a real LangChain agent whose summarization middleware (Lumo's) fires.
 
     Module scope makes this run before client_with_stubs installs its stand-ins, so the
     events have the shapes the installed LangChain and LangGraph actually produce.
@@ -1623,7 +1623,7 @@ def real_summarization_events():
     modules_before = set(sys.modules)
 
     from langchain.agents import create_agent
-    from helpudoc_agent.runtime.summarization import AriaSummarizationMiddleware
+    from helpudoc_agent.runtime.summarization import LumoSummarizationMiddleware
     from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
     from langchain_core.messages import AIMessage, HumanMessage
 
@@ -1632,7 +1632,7 @@ def real_summarization_events():
     agent = create_agent(
         model=model,
         tools=[],
-        middleware=[AriaSummarizationMiddleware(model=model, trigger=("tokens", 50), keep=("messages", 2))],
+        middleware=[LumoSummarizationMiddleware(model=model, trigger=("tokens", 50), keep=("messages", 2))],
     )
     history = []
     for turn in range(6):
