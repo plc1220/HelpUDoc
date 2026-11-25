@@ -152,6 +152,8 @@ jobs:
             agent/tests/test_team_thread_history_tool.py \
             agent/tests/test_tool_guard_schema.py \
             agent/tests/test_prompt_suggestions.py \
+            agent/tests/test_langfuse_handler.py \
+            agent/tests/test_run_checkpoints.py \
             tests/office \
             tests/test_agent_main.py \
             tests/test_summary_trigger_tokens.py \

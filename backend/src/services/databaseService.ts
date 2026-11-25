@@ -2019,6 +2019,10 @@ export class DatabaseService {
         table.text('summary');
         table.jsonb('outputFiles');
         table.jsonb('payload');
+        // Where the full tool output is kept for audit (toolOutputAudit.ts).
+        table.text('outputRef');
+        table.string('outputSha256', 64);
+        table.bigInteger('outputBytes');
         table.timestamp('eventAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
         table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
         table.unique(['runId', 'eventIndex']);
@@ -2035,6 +2039,9 @@ export class DatabaseService {
       await this.ensureColumn('agent_run_tool_events', 'summary', (table) => table.text('summary'));
       await this.ensureColumn('agent_run_tool_events', 'outputFiles', (table) => table.jsonb('outputFiles'));
       await this.ensureColumn('agent_run_tool_events', 'payload', (table) => table.jsonb('payload'));
+      await this.ensureColumn('agent_run_tool_events', 'outputRef', (table) => table.text('outputRef'));
+      await this.ensureColumn('agent_run_tool_events', 'outputSha256', (table) => table.string('outputSha256', 64));
+      await this.ensureColumn('agent_run_tool_events', 'outputBytes', (table) => table.bigInteger('outputBytes'));
       await this.ensureColumn('agent_run_tool_events', 'eventAt', (table) =>
         table.timestamp('eventAt', { useTz: true }).defaultTo(this.db.fn.now()));
       await this.ensureColumn('agent_run_tool_events', 'createdAt', (table) =>

@@ -60,7 +60,7 @@ class LangfuseCallbacksTest(unittest.TestCase):
         with patch.dict(os.environ, env, clear=False):
             if not _langfuse_installed():
                 self.skipTest("langfuse package not installed")
-            with patch("langfuse.langchain.CallbackHandler", return_value=MagicMock(name="handler")) as mock_cb:
+            with patch("helpudoc_agent.langfuse_handler.TrimmedLangfuseHandler", return_value=MagicMock(name="handler")) as mock_cb:
                 out = langfuse_langchain_callbacks()
         self.assertEqual(len(out), 1)
         mock_cb.assert_called_once()
@@ -68,7 +68,7 @@ class LangfuseCallbacksTest(unittest.TestCase):
     @unittest.skipUnless(_langfuse_installed(), "langfuse package not installed")
     def test_returns_handler_when_configured(self) -> None:
         with patch.dict(os.environ, self._base_env(), clear=False):
-            with patch("langfuse.langchain.CallbackHandler", return_value=MagicMock(name="handler")) as mock_cb:
+            with patch("helpudoc_agent.langfuse_handler.TrimmedLangfuseHandler", return_value=MagicMock(name="handler")) as mock_cb:
                 out = langfuse_langchain_callbacks()
         self.assertEqual(len(out), 1)
         mock_cb.assert_called_once()
@@ -79,7 +79,7 @@ class LangfuseCallbacksTest(unittest.TestCase):
         real_import = builtins.__import__
 
         def selective_import(name, *args, **kwargs):
-            if name == "langfuse" or name.startswith("langfuse."):
+            if name == "langfuse" or name.startswith("langfuse.") or name == "helpudoc_agent.langfuse_handler":
                 raise ModuleNotFoundError("langfuse")
             return real_import(name, *args, **kwargs)
 

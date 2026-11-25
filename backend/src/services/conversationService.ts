@@ -4,6 +4,7 @@ import { DatabaseService } from './databaseService';
 import { WorkspaceService } from './workspaceService';
 import { NotFoundError } from '../errors';
 import type { StoredConversationSummary } from './conversationCompaction';
+import { capToolEventsInMetadata } from '../lib/toolEventSummary';
 
 export type ConversationSender = 'user' | 'agent';
 
@@ -176,7 +177,11 @@ export class ConversationService {
 
     return {
       conversation: conversation as ConversationRecord,
-      messages: messages as ConversationMessageRecord[],
+      // Rows written before tool output was capped can hold megabytes per message.
+      messages: (messages as ConversationMessageRecord[]).map((message) => {
+        const metadata = capToolEventsInMetadata(message.metadata);
+        return metadata === message.metadata ? message : { ...message, metadata };
+      }),
     };
   }
 
@@ -237,7 +242,7 @@ export class ConversationService {
           authorId: sender === 'user' ? userId : existing.authorId,
         };
         if (nextMetadata !== undefined) {
-          updatePayload.metadata = nextMetadata;
+          updatePayload.metadata = capToolEventsInMetadata(nextMetadata);
         }
         const [updated] = await this.db('conversation_messages')
           .where({ id: existing.id })
@@ -260,7 +265,7 @@ export class ConversationService {
       insertPayload.turnId = turnId;
     }
     if (options.metadata !== undefined) {
-      insertPayload.metadata = options.metadata;
+      insertPayload.metadata = capToolEventsInMetadata(options.metadata);
     }
 
     const [message] = await this.db('conversation_messages').insert(insertPayload).returning('*');
