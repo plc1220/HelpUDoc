@@ -67,6 +67,7 @@ export class DatabaseService {
     await this.createKnowledgeIngestionTables();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
+    await this.createConversationSummariesTable();
     await this.createWorkspaceSchedulesTable();
     await this.createWorkspaceScheduleRunsTable();
     await ensureCalendarSchema(this.db);
@@ -1256,6 +1257,25 @@ export class DatabaseService {
     } else {
       await this.ensureColumn('conversations', 'createdBy', (table) => table.uuid('createdBy'));
       await this.ensureColumn('conversations', 'updatedBy', (table) => table.uuid('updatedBy'));
+    }
+  }
+
+  // One running summary per long conversation (see conversationCompaction.ts). Deleted
+  // with its conversation; covered by the same backups and retention as the messages.
+  private async createConversationSummariesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('conversation_summaries');
+    if (!exists) {
+      await this.db.schema.createTable('conversation_summaries', (table) => {
+        table.uuid('conversationId').primary().references('id').inTable('conversations').onDelete('CASCADE');
+        table.text('summary').notNullable();
+        table.integer('coveredCount').notNullable();
+        table.string('coveredHash', 64).notNullable();
+        table.integer('coveredTokens').notNullable().defaultTo(0);
+        table.integer('version').notNullable().defaultTo(1);
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      });
+      console.log('Created "conversation_summaries" table.');
     }
   }
 
