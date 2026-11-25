@@ -192,6 +192,17 @@ export class RunTelemetryService {
     };
   }
 
+  /** Points a tool event at its full output in the audit bucket. */
+  async recordToolOutputAudit(
+    runId: string,
+    eventIndex: number,
+    stored: { key: string; sha256: string; bytes: number },
+  ): Promise<void> {
+    await this.db('agent_run_tool_events')
+      .where({ runId, eventIndex })
+      .update({ outputRef: stored.key, outputSha256: stored.sha256, outputBytes: stored.bytes });
+  }
+
   async appendToolEvent(input: AgentRunToolEventInput): Promise<void> {
     const normalizedJson = normalizeToolEventJson(input);
     await this.db('agent_run_tool_events')

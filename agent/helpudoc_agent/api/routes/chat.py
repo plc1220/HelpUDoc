@@ -56,6 +56,7 @@ from helpudoc_agent.plan_gates import (
     requested_dashboard_title,
 )
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
+from helpudoc_agent.run_checkpoints import settle_run_thread
 from helpudoc_agent.skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
@@ -74,6 +75,8 @@ from helpudoc_agent.utils import SourceTracker
 from ..auth_context import extract_agent_request_context
 from ..constants import (
     _ASSISTANT_ROLES,
+    _CODE_AUDIT_INPUT_MAX_CHARS,
+    _CODE_AUDIT_TOOL_NAMES,
     _INTERNAL_STREAM_TEXT_PATTERNS,
     _INTERRUPT_TOOL_NAMES,
     _TOOL_ROLES,
@@ -288,6 +291,14 @@ def _research_source_contract_error(
     )
 
 
+
+
+def _tool_start_event(name: str, preview: str) -> Dict[str, Any]:
+    """tool_start for the stream. Code-running tools also carry their full input for audit."""
+    event: Dict[str, Any] = {"type": "tool_start", "name": name, "content": preview[:200] if preview else ""}
+    if name in _CODE_AUDIT_TOOL_NAMES and preview:
+        event["auditInput"] = preview[:_CODE_AUDIT_INPUT_MAX_CHARS]
+    return event
 async def _emit_progress(
     handler,
     phase: str,
@@ -1112,13 +1123,7 @@ def register_chat_routes(
                 detail=name,
                 tool_name=name,
             )
-            await self._emit(
-                {
-                    "type": "tool_start",
-                    "name": name,
-                    "content": preview[:200] if preview else "",
-                }
-            )
+            await self._emit(_tool_start_event(name, preview))
 
         async def on_tool_end(self, output, *, run_id, **_: Any) -> None:
             run_key = str(run_id)
@@ -1710,13 +1715,7 @@ def register_chat_routes(
                 tool_name=name,
                 status="running",
             )
-            await handler._emit(
-                {
-                    "type": "tool_start",
-                    "name": name,
-                    "content": preview[:200] if preview else "",
-                }
-            )
+            await handler._emit(_tool_start_event(name, preview))
             return False
 
         if method in {"on_tool_end", "tools/end", "tool_end", "tool-finished"}:
@@ -2385,6 +2384,7 @@ def register_chat_routes(
 
         async def _agent_runner():
             lf_handlers = langfuse_langchain_callbacks()
+            run_thread_config: Dict[str, Any] | None = None
             try:
                 nonlocal saw_interrupt, defer_checkpoint_interrupt
                 nonlocal allow_rejection_summary, allow_approval_summary
@@ -2420,6 +2420,10 @@ def register_chat_routes(
                     message,
                     callbacks=lf_handlers or None,
                 )
+                if _clean_langfuse_value((message.langfuseTraceContext or {}).get("runId")):
+                    # Only threads that belong to one run. A caller without a run id keeps a
+                    # stable thread, and its next message continues from it.
+                    run_thread_config = {"configurable": dict(stream_config["configurable"])}
                 if resume_decisions is not None:
                     decision_value = {"decisions": resume_decisions}
                     normalized_interrupt_id = str(resume_interrupt_id or "").strip()
@@ -3024,6 +3028,12 @@ def register_chat_routes(
                     runtime.agent_name,
                     runtime.workspace_state.workspace_id,
                     elapsed,
+                )
+                await settle_run_thread(
+                    agent,
+                    getattr(registry, "_checkpointer", None),
+                    run_thread_config,
+                    saw_interrupt=saw_interrupt or handler.interrupt_emitted,
                 )
                 try:
                     lf_ev = emit_langfuse_trace_payload(lf_handlers)
