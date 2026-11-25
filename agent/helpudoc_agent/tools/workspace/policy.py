@@ -61,11 +61,11 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _search_policy_error(error_code: str, message: str) -> str:
+def _search_policy_error(tool_name: str, error_code: str, message: str) -> str:
     return json.dumps(
         {
             "status": "error",
-            "tool": "google_search",
+            "tool": tool_name,
             "errorCode": error_code,
             "message": message,
             "retryable": False,
@@ -79,6 +79,8 @@ def apply_search_policy_guard(workspace_state: WorkspaceState, tool_name: str) -
     blocked = tagged_files_mode_guard(workspace_state.context, tool_name)
     if blocked:
         return blocked
+    if workspace_state.context.get("internet_search_enabled") is False:
+        return _search_policy_error(tool_name, "SEARCH_DISABLED", "Internet search is off for this turn.")
     policy = get_active_skill_policy(workspace_state)
     plan_approved = is_plan_approved(workspace_state)
     if policy.requires_hitl_plan and not plan_approved:
@@ -91,11 +93,11 @@ def apply_search_policy_guard(workspace_state: WorkspaceState, tool_name: str) -
         if limit <= 0 or used >= limit:
             return plan_gate_with_presearch_message(used, limit)
 
-    if tool_name == "google_search":
-        if bool(workspace_state.context.get("google_search_terminal_error")):
+    if tool_name in {"web_search", "url_context"}:
+        if tool_name == "web_search" and bool(workspace_state.context.get("web_search_terminal_error")):
             return _search_policy_error(
-                "SEARCH_CIRCUIT_OPEN",
-                "Google Search is unavailable for this run after repeated upstream failures.",
+                tool_name, "SEARCH_CIRCUIT_OPEN",
+                "Web search is unavailable for this run after repeated upstream failures.",
             )
         post_plan_limit = max(0, int(policy.post_plan_search_limit or 0))
         use_post_plan_budget = bool(
@@ -104,12 +106,12 @@ def apply_search_policy_guard(workspace_state: WorkspaceState, tool_name: str) -
         limit = (
             post_plan_limit
             if use_post_plan_budget
-            else max(1, _env_int("GOOGLE_SEARCH_MAX_CALLS_PER_RUN", 3))
+            else max(1, _env_int("WEB_SEARCH_MAX_CALLS_PER_RUN", _env_int("GOOGLE_SEARCH_MAX_CALLS_PER_RUN", 3)))
         )
         counter_key = (
             "post_plan_search_count"
             if use_post_plan_budget
-            else "google_search_count"
+            else "web_search_count"
         )
         raw_used = workspace_state.context.get(counter_key, 0)
         try:
@@ -118,8 +120,8 @@ def apply_search_policy_guard(workspace_state: WorkspaceState, tool_name: str) -
             used = 0
         if used >= limit:
             return _search_policy_error(
-                "SEARCH_CALL_LIMIT",
-                f"Google Search limit reached for this run ({used}/{limit}).",
+                tool_name, "SEARCH_CALL_LIMIT",
+                f"Web search limit reached for this run ({used}/{limit}).",
             )
         workspace_state.context[counter_key] = used + 1
     if policy.requires_hitl_plan and not plan_approved:

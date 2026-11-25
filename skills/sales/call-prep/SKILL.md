@@ -52,7 +52,7 @@ Follow this order every time:
 3. Google Drive for notes, decks, proposals, and transcript artifacts
 4. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 5. Google Sheets for account plans or trackers when relevant
-6. Google Search for current company, market, or attendee context
+6. web search for current company, market, or attendee context
 7. CRM only if connected or clearly requested
 
 If a source is missing, keep going. Do not block the workflow because CRM or a transcript system is absent.
@@ -254,4 +254,4 @@ If the user says, "Prep me for the QBR and make a PowerPoint deck for it," first
 
 - Transcript lookup should prefer Gmail recap emails, then Drive docs/files.
 - Do not assume direct Google Meet transcript APIs.
-- Do not jump straight to Google Search before checking internal context.
+- Do not jump straight to web search before checking internal context.

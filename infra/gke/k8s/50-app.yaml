@@ -514,6 +514,36 @@ spec:
                 secretKeyRef:
                   name: helpudoc-secrets
                   key: POSTGRES_PASSWORD
+            - name: WEB_SEARCH_PROVIDER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WEB_SEARCH_PROVIDER
+                  optional: true
+            - name: WEBSEARCHFREE_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WEBSEARCHFREE_BASE_URL
+                  optional: true
+            - name: WEBSEARCHFREE_SEARCH_BACKEND
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WEBSEARCHFREE_SEARCH_BACKEND
+                  optional: true
+            - name: SEARXNG_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SEARXNG_BASE_URL
+                  optional: true
+            - name: WEB_SEARCH_MAX_CALLS_PER_RUN
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WEB_SEARCH_MAX_CALLS_PER_RUN
+                  optional: true
             - name: GEMINI_SEARCH_HTTP_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:

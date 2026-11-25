@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
 
 from .config.env import env_trim, get_agent_runtime_env, is_local_dev_node_env
 
@@ -125,7 +125,7 @@ class CodeInterpreterConfig(BaseModel):
             "knowledge_search",
             "knowledge_read",
             "run_skill_python_script",
-            "google_search",
+            "web_search",
             "url_context",
         ]
     )
@@ -166,6 +166,8 @@ class CodeInterpreterConfig(BaseModel):
         seen: set[str] = set()
         for raw_name in value or []:
             name = str(raw_name or "").strip()
+            if name == "google_search":
+                name = "web_search"
             if not name or name in seen:
                 continue
             seen.add(name)
@@ -331,7 +333,22 @@ class ToolConfig(BaseModel):
     mcp_server: Optional[str] = None
 
 
+class WebSearchConfig(BaseModel):
+    provider: Literal["disabled", "gemini", "searxng", "websearchfree"]
+    base_url: AnyHttpUrl | None = None
+    search_backend: Literal["searxng", "direct"] = "searxng"
+
+    @model_validator(mode="after")
+    def validate_endpoint(self) -> "WebSearchConfig":
+        if self.provider in {"searxng", "websearchfree"} and self.base_url is None:
+            raise ValueError(f"{self.provider.upper()}_BASE_URL is required for this search provider")
+        if self.base_url and any((self.base_url.username, self.base_url.password, self.base_url.query, self.base_url.fragment)):
+            raise ValueError("The search service URL must contain only the service origin and optional path")
+        return self
+
+
 class Settings(BaseModel):
+    web_search: WebSearchConfig | None = None
     model: ModelConfig
     backend: BackendConfig
     tools: Dict[str, ToolConfig]
@@ -489,10 +506,36 @@ def load_settings(config_path: Path | None = None) -> Settings:
                 backend_cfg["recursion_limit"] = parsed_limit
                 config_dict["backend"] = backend_cfg
 
+    model_provider = config_dict.get("model", {}).get("provider", "gemini")
+    selected_search = env_trim("WEB_SEARCH_PROVIDER") or ("gemini" if model_provider == "gemini" else "disabled")
+    if selected_search == "gemini" and model_provider != "gemini":
+        raise ValueError("Gemini search requires a Gemini model profile")
+    search = WebSearchConfig(
+        provider=selected_search,
+        base_url=env_trim(f"{selected_search.upper()}_BASE_URL") if selected_search in {"searxng", "websearchfree"} else None,
+        search_backend=(env_trim("WEBSEARCHFREE_SEARCH_BACKEND") or "searxng") if selected_search == "websearchfree" else "searxng",
+    )
+    configured_tools = {}
+    for entry in config_dict.get("tools", []):
+        name = entry["name"]
+        if name == "google_search":
+            name = "web_search"
+        configured_tools[name] = {**entry, "name": name}
+    if selected_search in {"searxng", "websearchfree"}:
+        # Existing PCAI installations keep their original runtime.yaml on a PVC.
+        configured_tools.setdefault("web_search", {"name": "web_search"})
+    elif selected_search == "disabled":
+        configured_tools.pop("web_search", None)
+    if selected_search == "websearchfree":
+        configured_tools.setdefault("url_context", {"name": "url_context"})
+    elif selected_search in {"disabled", "searxng"}:
+        configured_tools.pop("url_context", None)
+
     payload = {
+        "web_search": search,
         "model": config_dict.get("model", {}),
         "backend": config_dict.get("backend", {}),
-        "tools": {tool["name"]: tool for tool in config_dict.get("tools", [])},
+        "tools": configured_tools,
         "mcp_servers": {srv["name"]: srv for srv in config_dict.get("mcp_servers", [])},
     }
     try:

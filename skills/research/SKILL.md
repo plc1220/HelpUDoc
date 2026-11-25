@@ -7,7 +7,8 @@ description: >
   claim verification, contradiction checking, uncertainty handling, and clear
   synthesis before final writing.
 tools:
-  - google_search
+  - web_search
+  - url_context
   - run_skill_python_script
   - request_plan_approval
   - request_clarification
@@ -352,13 +353,11 @@ If the user rejects the plan, stop.
 
 ### 6. Source Gathering
 
-Use `google_search` to collect sources.
+Use `web_search` to collect sources.
 
-`google_search` is the single canonical open-web discovery tool. It is backed
-internally by Gemini's native Google Search grounding; do not look for or call a
-separate `gemini_search` tool.
+`web_search` is the single canonical open-web discovery tool. The deployment selects the provider. Search snippets are discovery leads. Cite only what the returned evidence supports. Use `url_context` to read selected sources before writing the report. Check that the returned passage supports the specific claim.
 
-If `google_search` returns `SEARCH_CIRCUIT_OPEN`, `SEARCH_TIMEOUT`, or another
+If `web_search` returns `SEARCH_CIRCUIT_OPEN`, `SEARCH_TIMEOUT`, or another
 non-retryable structured error and no sources have been successfully collected:
 
 - stop evidence gathering;

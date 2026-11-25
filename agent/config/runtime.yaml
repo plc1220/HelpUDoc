@@ -36,7 +36,7 @@ backend:
       - knowledge_search
       - knowledge_read
       - run_skill_python_script
-      - google_search
+      - web_search
       - url_context
   interrupt_on:
     request_plan_approval:
@@ -63,12 +63,12 @@ tools:
   - name: calendar_read
     kind: builtin
     description: Read permitted meeting context through the Calendar domain
-  - name: google_search
+  - name: web_search
     kind: builtin
-    description: Gemini-native Google search tool
+    description: Find current information through the configured web search provider
   - name: url_context
     kind: builtin
-    description: Gemini URL context for explicit user-supplied links
+    description: Read selected public web pages using the configured provider
   - name: image_generation
     kind: builtin
     description: Generate or edit workspace images

@@ -23,6 +23,7 @@ from .state import WorkspaceState
 
 _PREFERRED_MCP_ONLY_BUILTINS = {
     "google_search",
+    "web_search",
     "url_context",
 }
 

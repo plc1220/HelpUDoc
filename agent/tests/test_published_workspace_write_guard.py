@@ -75,10 +75,10 @@ def test_research_final_report_requires_verified_search_sources(tmp_path):
     )
 
     blocked = backend.write("/final-research-report.md", "Ungrounded report")
-    assert "no verified google search sources" in (blocked.error or "").lower()
+    assert "no verified web sources" in (blocked.error or "").lower()
     assert not (tmp_path / "final-research-report.md").exists()
 
-    workspace.context["google_search_source_count"] = 1
+    workspace.context["web_search_source_count"] = 1
     allowed = backend.write("/final-research-report.md", "Grounded report")
     assert allowed.error is None
     assert (tmp_path / "final-research-report.md").read_text(encoding="utf-8") == "Grounded report"

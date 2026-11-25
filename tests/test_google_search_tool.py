@@ -77,17 +77,17 @@ def test_google_search_is_the_single_public_tool_and_retries_once(tmp_path, monk
 
     result = tool.invoke({"query": "current example", "max_results": 3})
 
-    assert tool.name == "google_search"
+    assert tool.name == "web_search"
     assert model.bind_kwargs == {"tools": [{"google_search": {}}]}
     assert model.bound.calls == 2
     assert "A grounded answer." in result
     assert "https://example.com/source" in result
     assert len(tracker.list_sources(workspace)) == 1
-    assert workspace.context["google_search_upstream_attempt_count"] == 2
-    assert workspace.context["google_search_consecutive_failures"] == 0
-    assert workspace.context["google_search_success_count"] == 1
-    assert workspace.context["google_search_source_count"] == 1
-    assert "google_search_terminal_error" not in workspace.context
+    assert workspace.context["web_search_upstream_attempt_count"] == 2
+    assert workspace.context["web_search_consecutive_failures"] == 0
+    assert workspace.context["web_search_success_count"] == 1
+    assert workspace.context["web_search_source_count"] == 1
+    assert "web_search_terminal_error" not in workspace.context
 
 
 def test_google_search_retries_a_response_without_grounding_sources(tmp_path, monkeypatch):
@@ -102,7 +102,7 @@ def test_google_search_retries_a_response_without_grounding_sources(tmp_path, mo
 
     assert model.bound.calls == 2
     assert "A grounded answer." in result
-    assert workspace.context["google_search_source_count"] == 1
+    assert workspace.context["web_search_source_count"] == 1
     assert len(tracker.list_sources(workspace)) == 1
 
 
@@ -127,7 +127,7 @@ def test_google_search_rejects_model_authored_urls_without_grounding_metadata(tm
     assert model.bound.calls == 2
     assert result["errorCode"] == "SEARCH_NO_SOURCES"
     assert result["retryable"] is False
-    assert workspace.context.get("google_search_source_count", 0) == 0
+    assert workspace.context.get("web_search_source_count", 0) == 0
     assert tracker.list_sources(workspace) == []
 
 
@@ -145,7 +145,7 @@ def test_google_search_opens_circuit_after_two_transient_failures(tmp_path, monk
     assert result["errorCode"] == "SEARCH_TIMEOUT"
     assert result["retryable"] is False
     assert result["attempts"] == 2
-    assert workspace.context["google_search_terminal_error"] is True
+    assert workspace.context["web_search_terminal_error"] is True
 
     blocked = json.loads(tool.invoke({"query": "must not reach upstream"}))
     assert blocked["errorCode"] == "SEARCH_CIRCUIT_OPEN"
@@ -165,7 +165,7 @@ def test_google_search_does_not_retry_non_transient_errors(tmp_path, monkeypatch
     assert model.bound.calls == 1
     assert result["errorCode"] == "SEARCH_FAILED"
     assert result["retryable"] is False
-    assert workspace.context["google_search_terminal_error"] is True
+    assert workspace.context["web_search_terminal_error"] is True
 
 
 def test_research_uses_separate_pre_and_post_plan_search_budgets(tmp_path):
@@ -176,16 +176,16 @@ def test_research_uses_separate_pre_and_post_plan_search_budgets(tmp_path):
         "post_plan_search_limit": 2,
     }
 
-    assert apply_search_policy_guard(workspace, "google_search") is None
+    assert apply_search_policy_guard(workspace, "web_search") is None
     assert workspace.context["pre_plan_search_count"] == 1
-    blocked_pre_plan = apply_search_policy_guard(workspace, "google_search")
+    blocked_pre_plan = apply_search_policy_guard(workspace, "web_search")
     assert blocked_pre_plan is not None
     assert "Pre-plan search limit reached (1/1)" in blocked_pre_plan
 
     workspace.context["plan_approved"] = True
-    assert apply_search_policy_guard(workspace, "google_search") is None
-    assert apply_search_policy_guard(workspace, "google_search") is None
-    blocked_post_plan = json.loads(apply_search_policy_guard(workspace, "google_search") or "{}")
+    assert apply_search_policy_guard(workspace, "web_search") is None
+    assert apply_search_policy_guard(workspace, "web_search") is None
+    blocked_post_plan = json.loads(apply_search_policy_guard(workspace, "web_search") or "{}")
     assert blocked_post_plan["errorCode"] == "SEARCH_CALL_LIMIT"
     assert "(2/2)" in blocked_post_plan["message"]
 
@@ -199,7 +199,7 @@ def test_research_completion_requires_newly_tracked_sources(tmp_path):
     assert "did not return any verified web sources" in _research_source_contract_error(runtime, tracker)
 
     tracker.record(workspace, [{"title": "Primary", "url": "https://example.com/primary"}])
-    workspace.context["google_search_source_count"] = 1
+    workspace.context["web_search_source_count"] = 1
     assert _research_source_contract_error(runtime, tracker) == ""
 
     workspace.context["active_skill"] = "proposal-writing"

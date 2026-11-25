@@ -393,3 +393,18 @@ network isolation before production use. No existing GKE data is migrated.
 
 The routing and SSO examples span documented HPE versions. Verify exact gateway
 labels, authorization provider, admission policy and storage behavior on 1.12.1.
+
+### Optional internet search
+
+Private inference starts with open-web search disabled. To enable search and page reading, point the agent at an internal WebSearchFree service using chart values like these.
+
+```yaml
+config:
+  WEB_SEARCH_PROVIDER: websearchfree
+  WEBSEARCHFREE_BASE_URL: http://websearchfree:8080
+  WEBSEARCHFREE_SEARCH_BACKEND: searxng
+```
+
+Set `WSF_SEARX_URL` **on the WebSearchFree service** to the internal SearXNG base URL. Enable JSON under `search.formats` in SearXNG. To use WebSearchFree’s direct engines, select `direct` instead. Both configurations support pasted URLs. Apply the service-side network restrictions in the [web retrieval guide](../../../docs/web-retrieval.md) before enabling extraction.
+
+Roll out the updated agent with these settings. The chart connects to operator-provided services. Existing installations can keep their seeded runtime file.

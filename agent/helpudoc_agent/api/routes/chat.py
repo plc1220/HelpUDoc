@@ -118,6 +118,7 @@ def _friendly_tool_label(name: str) -> str:
         "list_skills": "Checking available skills",
         "load_skill": "Loading the selected skill",
         "google_search": "Searching the web",
+        "web_search": "Searching the web",
         "url_context": "Reading the provided link",
         "image_generation": "Generating an image",
         "run_sql_query": "Querying the database",
@@ -166,7 +167,7 @@ def _is_terminal_tool_failure(name: str, text: str) -> bool:
         if envelope.get("errorCode") == LOOP_BREAK_ERROR_CODE:
             return True
         return envelope.get("retryable") is not True
-    if normalized_name == "google_search":
+    if normalized_name in {"google_search", "web_search"}:
         return (
             normalized_text.startswith('{"ok": false')
             or normalized_text.startswith("{'ok': false")
@@ -278,12 +279,14 @@ def _research_source_contract_error(
     if str(context.get("active_skill") or "").strip() != "research":
         return ""
     if (
-        int(context.get("google_search_source_count", 0) or 0) > 0
+        int(context.get("web_search_source_count", 0) or 0) > 0
         and source_tracker.list_sources(runtime.workspace_state)
     ):
         return ""
+    if context.get("web_search_returned_snippets"):
+        return "Search returned snippets. A sourced research report requires verified source content."
     return (
-        "Research cannot complete because Google Search did not return any verified web sources "
+        "Research cannot complete because web search did not return any verified web sources "
         "during this run. No sourced report was produced; retry when live web research is available."
     )
 
@@ -1150,7 +1153,7 @@ def register_chat_routes(
                 "using_tool",
                 (
                     f"{_friendly_tool_label(name)} hit a timeout"
-                    if tool_failed and name == "google_search" and "timed out" in text.lower()
+                    if tool_failed and name == "web_search" and "timed out" in text.lower()
                     else f"{_friendly_tool_label(name)} failed"
                     if tool_failed
                     else f"Finished {_friendly_tool_label(name)}"
@@ -1735,7 +1738,7 @@ def register_chat_routes(
                 "using_tool",
                 (
                     f"{_friendly_tool_label(name)} hit a timeout"
-                    if tool_failed and name == "google_search" and "timed out" in text.lower()
+                    if tool_failed and name == "web_search" and "timed out" in text.lower()
                     else f"{_friendly_tool_label(name)} failed"
                     if tool_failed
                     else f"Finished {_friendly_tool_label(name)}"
@@ -2058,12 +2061,13 @@ def register_chat_routes(
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
         context["post_plan_search_count"] = 0
-        context["google_search_count"] = 0
-        context["google_search_upstream_attempt_count"] = 0
-        context["google_search_consecutive_failures"] = 0
-        context["google_search_success_count"] = 0
-        context["google_search_source_count"] = 0
-        context.pop("google_search_terminal_error", None)
+        context.pop("web_search_returned_snippets", None)
+        context["web_search_count"] = 0
+        context["web_search_upstream_attempt_count"] = 0
+        context["web_search_consecutive_failures"] = 0
+        context["web_search_success_count"] = 0
+        context["web_search_source_count"] = 0
+        context.pop("web_search_terminal_error", None)
         # Sources are scoped to a top-level user turn. Explicit resumes bypass
         # this reset so plan approval does not discard already gathered evidence.
         source_tracker.reset(runtime.workspace_state)
@@ -2136,8 +2140,9 @@ def register_chat_routes(
         if message.internetSearchEnabled:
             internet_guidance = (
                 "Internet search is enabled for this turn. "
-                "Use the google_search tool for current, external, or web-grounded information before answering, "
-                "and cite the useful sources it returns."
+                "Use url_context directly for a pasted public link. Use web_search for discovery, then read "
+                "relevant pages with url_context when available. Cite the supporting URLs. "
+                "If retrieval is unavailable, say so."
             )
             for index in range(len(payload) - 1, -1, -1):
                 role = str(payload[index].get("role") or "").strip().lower()

@@ -37,6 +37,7 @@ from .builtins.workspace_files import (
 )
 from .gemini_client import GeminiClientManager
 from .image_generation import build_image_generation_tool
+from .oss_web import build_oss_search_tool, build_oss_url_context_tool
 from .web_sources import build_google_search_tool, build_url_context_tool
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ class ToolFactory:
         self.source_tracker = source_tracker
         self.gemini_manager = gemini_manager
         self._builtin_map: Dict[str, Callable[[WorkspaceState], Tool]] = {
-            "google_search": self._build_google_search_tool,
+            "web_search": self._build_web_search_tool,
             "url_context": self._build_url_context_tool,
             "image_generation": self._build_image_generation_tool,
             "export_bigquery_query": self._build_export_bigquery_query_tool,
@@ -87,10 +88,14 @@ class ToolFactory:
         tools: List[Tool] = []
         for name in tool_names:
             if self.settings.model.provider == "openai-compatible" and name in {
-                "google_search", "url_context", "image_generation", "export_bigquery_query"
+                "google_search", "image_generation", "export_bigquery_query"
             }:
                 logger.info("Skipping cloud-only tool '%s' for private inference", name)
                 continue
+            if name == "url_context" and self.settings.model.provider == "openai-compatible":
+                search = getattr(self.settings, "web_search", None)
+                if not search or search.provider != "websearchfree":
+                    continue
             config = self.settings.get_tool(name)
             try:
                 built = self._build_tool(config, workspace_state)
@@ -129,17 +134,25 @@ class ToolFactory:
         except TypeError:
             return factory()
 
-    def _build_google_search_tool(self, workspace_state: WorkspaceState) -> Tool:
+    def _build_web_search_tool(self, workspace_state: WorkspaceState) -> Tool:
+        search = self.settings.web_search
+        if search and search.provider in {"searxng", "websearchfree"}:
+            return build_oss_search_tool(workspace_state, search)
+        if self.settings.model.provider != "gemini" or (search and search.provider == "disabled"):
+            raise MissingToolBuilderError("Web search is disabled")
         return build_google_search_tool(
             workspace_state=workspace_state,
             source_tracker=self.source_tracker,
             llm=self.gemini_manager.get_web_tool_chat_model(),
-            tool_name="google_search",
+            tool_name="web_search",
             tool_description="Use Gemini's built-in search to gather fresh information.",
-            search_label="google_search",
+            search_label="web_search",
         )
 
     def _build_url_context_tool(self, workspace_state: WorkspaceState) -> Tool:
+        search = self.settings.web_search
+        if search and search.provider == "websearchfree":
+            return build_oss_url_context_tool(workspace_state, search, self.source_tracker)
         return build_url_context_tool(
             workspace_state=workspace_state,
             source_tracker=self.source_tracker,
@@ -148,7 +161,7 @@ class ToolFactory:
             tool_description=(
                 "Analyze specific HTTP(S) URLs the user provided using Gemini URL context. "
                 "Prefer this when the user pastes explicit links or wants a page summarized; "
-                "use google_search for open-ended discovery."
+                "use web_search for open-ended discovery."
             ),
             label="url_context",
         )
