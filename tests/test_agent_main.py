@@ -4,6 +4,9 @@ from types import ModuleType, SimpleNamespace
 from pathlib import Path
 
 import pytest
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
 from fastapi.testclient import TestClient
 from langgraph.types import Command
 
@@ -1893,3 +1896,133 @@ def test_a_run_stopped_at_its_limit_says_so_and_the_next_one_does_not(client_wit
         text = "".join(p.get("content", "") for p in payloads if p.get("type") == "token")
         assert text.startswith("Part one.") and ("work limit" in text) is stop
         assert payloads[-1]["status"] == "completed"
+
+
+class V3TextBlocksAgent:
+    """Each text is one model message, streamed in pieces of `size` characters."""
+
+    def __init__(self, *texts, size=3, finish=True):
+        self._texts, self._size, self._finish = texts, size, finish
+
+    async def astream_events(self, *_args, **_kwargs):
+        seq = 0
+        for number, text in enumerate(self._texts):
+            pieces = [text[i : i + self._size] for i in range(0, len(text), self._size)]
+            payloads = [
+                {"event": "message-start", "role": "ai"},
+                {"event": "content-block-start", "index": 0, "content": {"type": "text", "text": ""}},
+                *(
+                    {"event": "content-block-delta", "index": 0, "delta": {"type": "text-delta", "text": piece}}
+                    for piece in pieces
+                ),
+            ]
+            if self._finish:
+                payloads.append(
+                    {"event": "content-block-finish", "index": 0, "content": {"type": "text", "text": text}}
+                )
+            payloads.append({"event": "message-finish"})
+            for payload in payloads:
+                seq += 1
+                data = (payload, {"langgraph_node": "model", "run_id": f"run-{number}"})
+                yield {
+                    "type": "event",
+                    "seq": seq,
+                    "method": "messages",
+                    "params": {"namespace": [], "timestamp": seq, "data": data},
+                }
+
+
+WRITTEN_CALL = "call:default_api:write_todos{todos:[{content:Read the rules,status:completed}]}"
+
+
+@pytest.mark.parametrize("finish", [True, False], ids=["finish", "no-finish"])
+@pytest.mark.parametrize("size", [1, 4, 17, 500])
+@pytest.mark.parametrize(
+    "texts, shown",
+    [
+        ((WRITTEN_CALL, "The answer."), "The answer."),
+        (("First I read it. ", WRITTEN_CALL, "The answer."), "First I read it. The answer."),
+        (("```tool_code\nprint(default_api.read(a=1))\n```", "Done."), "Done."),
+        ((f"{WRITTEN_CALL} is not a real call.",), f"{WRITTEN_CALL} is not a real call."),
+        ((f"Gemini wrote {WRITTEN_CALL}",), f"Gemini wrote {WRITTEN_CALL}"),
+        (("print it, then call me",), "print it, then call me"),
+        (("call",), "call"),
+        (("```python\nprint(1)\n```",), "```python\nprint(1)\n```"),
+        (("\n\n  | A |\n|---|\n",), "\n\n  | A |\n|---|\n"),
+    ],
+    ids=["leak", "after-text", "tool-code", "explains", "mentions", "words", "one-word", "code", "table"],
+)
+def test_chat_stream_never_shows_a_written_tool_call(texts, shown, size, finish, client_with_stubs):
+    client, registry, _ = client_with_stubs
+
+    tokens, messages = _stream_tokens(
+        client, registry, "workspace-written-call", V3TextBlocksAgent(*texts, size=size, finish=finish)
+    )
+
+    assert tokens == shown
+    assert messages[-1]["type"] == "done"
+
+
+def test_chat_stream_releases_ordinary_text_with_its_first_piece(client_with_stubs):
+    client, registry, _ = client_with_stubs
+
+    _, messages = _stream_tokens(
+        client, registry, "workspace-first-piece", V3TextBlocksAgent("The answer is 4.", size=4)
+    )
+
+    assert [m["content"] for m in messages if m["type"] == "token"] == ["The ", "answ", "er i", "s 4."]
+
+
+class WrittenCallModel(BaseChatModel):
+    """Streams the next reply of a list, and the last one for ever after."""
+
+    replies: list
+    seen: list = []
+
+    @property
+    def _llm_type(self):
+        return "written-call"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise NotImplementedError
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        text = self.replies[min(len(self.seen), len(self.replies) - 1)]
+        self.seen.append(messages)
+        for start in range(0, len(text), 5):
+            piece = text[start : start + 5]
+            yield ChatGenerationChunk(message=AIMessageChunk(content=[{"type": "text", "text": piece, "index": 0}]))
+        yield ChatGenerationChunk(message=AIMessageChunk(content="", response_metadata={"finish_reason": "STOP"}))
+
+
+def _written_call_agent(*replies):
+    from langchain.agents import create_agent
+    from helpudoc_agent.middleware.empty_reply import EmptyReplyMiddleware
+
+    return create_agent(
+        model=WrittenCallModel(replies=list(replies), seen=[]), tools=[], middleware=[EmptyReplyMiddleware()]
+    )
+
+
+def test_a_real_agent_recovers_and_the_user_sees_only_the_answer(client_with_stubs):
+    client, registry, _ = client_with_stubs
+
+    tokens, messages = _stream_tokens(
+        client, registry, "workspace-recovers", _written_call_agent(WRITTEN_CALL, WRITTEN_CALL, "The answer.")
+    )
+
+    assert tokens == "The answer."
+    assert not any(m["type"] == "error" for m in messages)
+
+
+def test_a_real_agent_that_cannot_recover_fails_in_plain_words(client_with_stubs):
+    client, registry, _ = client_with_stubs
+
+    tokens, messages = _stream_tokens(client, registry, "workspace-no-recovery", _written_call_agent(WRITTEN_CALL))
+
+    errors = [m["message"] for m in messages if m["type"] == "error"]
+    assert tokens == "" and len(errors) == 1 and errors[0].startswith("ARIA could not finish this request")
+    assert "default_api" not in json.dumps(messages)

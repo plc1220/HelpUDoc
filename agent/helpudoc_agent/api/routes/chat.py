@@ -73,6 +73,7 @@ from helpudoc_agent.skills_registry import (
 from helpudoc_agent.state import AgentRuntimeState
 from helpudoc_agent.tools_and_schemas import GeminiClientManager
 from helpudoc_agent.utils import SourceTracker
+from helpudoc_agent.written_tool_call import is_written_tool_call, may_be_written_tool_call
 
 from ..auth_context import extract_agent_request_context
 from ..constants import (
@@ -975,6 +976,8 @@ def register_chat_routes(
             self._native_dashboard_builder_calls = 0
             self._native_dashboard_builder_run_keys: Set[str] = set()
             self._v3_text_blocks: Dict[Tuple[str, str], str] = {}
+            # Text that may be a tool call the model wrote; shown once it cannot be one.
+            self._v3_held_text: Dict[Tuple[str, str], str] = {}
             self._cancel_run: Optional[Callable[[], None]] = None
             self._terminal_tool_failure_counts: Dict[str, int] = {}
             self._fatal_tool_failure_message = ""
@@ -1727,11 +1730,18 @@ def register_chat_routes(
             block_key = (run_key, _content_block_index(event))
             if method == "content-block-start":
                 handler._v3_text_blocks[block_key] = ""
+                handler._v3_held_text[block_key] = ""
                 return False
             text = _content_block_text(event)
             text = strip_interrupt_payload_marker(text)
             if method == "content-block-delta":
                 if text and not _is_internal_stream_text(text):
+                    if block_key in handler._v3_held_text:
+                        text = handler._v3_held_text[block_key] + text
+                        if may_be_written_tool_call(text):
+                            handler._v3_held_text[block_key] = text
+                            return False
+                        del handler._v3_held_text[block_key]
                     handler._v3_text_blocks[block_key] = handler._v3_text_blocks.get(block_key, "") + text
                     await handler._emit({"type": "token", "content": text, "role": "assistant"})
                 return False
@@ -1742,6 +1752,10 @@ def register_chat_routes(
             # Emit only that missing suffix so the final answer is complete
             # without appending the full Markdown document a second time.
             streamed_text = handler._v3_text_blocks.get(block_key, "")
+            held_text = handler._v3_held_text.pop(block_key, "")
+            if not streamed_text and is_written_tool_call(text or held_text):
+                return False
+            text = text or held_text
             if not text or _is_internal_stream_text(text) or text == streamed_text:
                 return False
             if text.startswith(streamed_text):
@@ -1763,6 +1777,11 @@ def register_chat_routes(
             return False
 
         if method in {"on_chat_model_end", "on_llm_end", "message-finish"}:
+            # Normally released by content-block-finish; never lose text if a block had none.
+            for block_key in [key for key in handler._v3_held_text if key[0] == run_key]:
+                held_text = handler._v3_held_text.pop(block_key)
+                if held_text and not is_written_tool_call(held_text):
+                    await handler._emit({"type": "token", "content": held_text, "role": "assistant"})
             await handler._emit({"type": "model_end", "name": _event_name(event) or "model"})
             return False
 

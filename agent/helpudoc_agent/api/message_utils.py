@@ -4,6 +4,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+from helpudoc_agent.written_tool_call import is_written_tool_call
+
+from .constants import _ASSISTANT_ROLES
+
 
 def _copy_content_block(block: Any) -> Any:
     if isinstance(block, dict):
@@ -62,10 +66,19 @@ def _replace_content_text(content: Any, text: str) -> Any:
     return text
 
 
+def _is_saved_written_call(item: Any) -> bool:
+    # The model would learn to write its calls from one that was saved as a reply.
+    return (
+        isinstance(item, dict)
+        and str(item.get("role") or "").strip().lower() in _ASSISTANT_ROLES
+        and is_written_tool_call(item.get("content"))
+    )
+
+
 def prepare_current_turn_payload(message: str, history=None, message_content=None) -> List[Dict[str, Any]]:
     """Keep the current request authoritative without losing history or attachments."""
     payload = [dict(item) if isinstance(item, dict) else {"role": "user", "content": str(item)}
-               for item in (history or [])]
+               for item in (history or []) if not _is_saved_written_call(item)]
     trailing_user = bool(payload and str(payload[-1].get("role") or "").strip().lower() in {"user", "human"})
     if message_content:
         content = [_copy_content_block(block) for block in message_content]

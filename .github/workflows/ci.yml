@@ -164,7 +164,8 @@ jobs:
             tests/test_search_workspace.py \
             agent/tests/test_search_limit.py \
             agent/tests/test_work_limit.py \
-            agent/tests/test_sheet_ranges.py
+            agent/tests/test_sheet_ranges.py \
+            agent/tests/test_written_tool_call.py
 
   docker-backend:
     name: Docker build validation (backend)

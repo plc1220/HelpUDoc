@@ -16,6 +16,7 @@ from langgraph.runtime import Runtime
 
 from helpudoc_agent.interaction_contract import next_pending_gate
 from helpudoc_agent.run_work import mark_stopped, remaining_steps
+from helpudoc_agent.written_tool_call import WrittenToolCallError, is_written_tool_call
 
 logger = logging.getLogger(__name__)
 
@@ -97,17 +98,27 @@ def empty_searches_in_a_row(messages: Any) -> int:
     return count
 
 
+def _text_of(message: Any) -> str:
+    return str(message.text if isinstance(message.text, str) else message.text()).strip()
+
+
+def _with_text(message: AIMessage, text: str) -> AIMessage:
+    return AIMessage(
+        text, id=message.id, usage_metadata=message.usage_metadata, response_metadata=message.response_metadata
+    )
+
+
 def _without_tool_calls(response: Any) -> Any:
     result = getattr(response, "result", None)
     if not isinstance(result, list):
         return response
     for index, message in enumerate(result):
-        if isinstance(message, AIMessage) and (message.tool_calls or message.invalid_tool_calls):
-            text = message.text if isinstance(message.text, str) else message.text()
-            result[index] = AIMessage(
-                str(text), id=message.id, usage_metadata=message.usage_metadata,
-                response_metadata=message.response_metadata,
-            )
+        if not isinstance(message, AIMessage):
+            continue
+        if is_written_tool_call(_text_of(message)):
+            result[index] = _with_text(message, "")
+        elif message.tool_calls or message.invalid_tool_calls:
+            result[index] = _with_text(message, _text_of(message))
     return response
 
 
@@ -129,12 +140,59 @@ _PLAIN_SYSTEM = (
 )
 
 
-def _text_of(message: Any) -> str:
-    return str(message.text if isinstance(message.text, str) else message.text()).strip()
-
-
 def _has_text(response: Any) -> bool:
     return any(isinstance(m, AIMessage) and _text_of(m) for m in getattr(response, "result", None) or [])
+
+
+# Gemini could not turn the model's output into a call.
+_BAD_CALL_REASONS = ("MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL", "MALFORMED_RESPONSE")
+_RESENDS = 2
+_CORRECTION_TEXT = (
+    "[ARIA system note] Your last reply was a tool call written as text, so nothing ran. Make the call with the "
+    "tool interface, or write your reply to the user. Do not write a call as text."
+)
+
+
+def _failed_call(response: Any) -> str:
+    """Why this reply is a tool call that never happened, or an empty string."""
+    messages = [m for m in getattr(response, "result", None) or [] if isinstance(m, AIMessage)]
+    if not messages or any(m.tool_calls or m.invalid_tool_calls for m in messages):
+        return ""
+    texts = [_text_of(m) for m in messages]
+    if any(is_written_tool_call(text) for text in texts):
+        return "written as text"
+    reason = str((messages[-1].response_metadata or {}).get("finish_reason") or "")
+    # A reply with other text has been shown to the user, so it is not asked for again.
+    if not any(texts) and any(bad in reason for bad in _BAD_CALL_REASONS):
+        return "rejected"
+    return ""
+
+
+def _log_failed_call(response: Any, why: str, resend: int) -> None:
+    # Not the text: it holds the user's data.
+    for message in response.result:
+        if isinstance(message, AIMessage):
+            logger.warning(
+                "Tool call %s by the model (finish_reason=%s chars=%s resend=%s)",
+                why, (message.response_metadata or {}).get("finish_reason"), len(_text_of(message)), resend,
+            )
+
+
+def _resend(request: Any, attempt: int) -> Any:
+    if attempt == 0:
+        return request  # usually enough: the failure is rarely repeated
+    return request.override(messages=[*request.messages, HumanMessage(_CORRECTION_TEXT)])
+
+
+def _blank_written_call(response: Any, request: Any) -> Any:
+    """Make the reply empty, so the check for empty replies asks once more. Fail if it already did."""
+    for index, message in enumerate(response.result):
+        if isinstance(message, AIMessage) and not message.tool_calls and is_written_tool_call(_text_of(message)):
+            latest = next((m for m in reversed(request.messages) if isinstance(m, HumanMessage)), None)
+            if latest is not None and is_nudge(latest):
+                raise WrittenToolCallError()
+            response.result[index] = _with_text(message, "")
+    return response
 
 
 def _as_plain_text(request: Any) -> Any:
@@ -199,27 +257,39 @@ class EmptyReplyMiddleware(AgentMiddleware):
             return request, False
 
     def wrap_model_call(self, request: Any, handler: Any) -> Any:
-        request, final = self._limit_work(request)
-        response = handler(request)
+        sent, final = self._limit_work(request)
+        response = handler(sent)
         if not final:
-            return response
+            for attempt in range(_RESENDS):
+                why = _failed_call(response)
+                if not why:
+                    return response
+                _log_failed_call(response, why, attempt + 1)
+                response = handler(_resend(sent, attempt))
+            return _blank_written_call(response, request)
         response = _without_tool_calls(response)
         for _ in range(_PLAIN_TRIES):
             if _has_text(response):
                 break
-            response = _without_tool_calls(handler(_as_plain_text(request)))
+            response = _without_tool_calls(handler(_as_plain_text(sent)))
         return _with_some_text(response)
 
     async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-        request, final = self._limit_work(request)
-        response = await handler(request)
+        sent, final = self._limit_work(request)
+        response = await handler(sent)
         if not final:
-            return response
+            for attempt in range(_RESENDS):
+                why = _failed_call(response)
+                if not why:
+                    return response
+                _log_failed_call(response, why, attempt + 1)
+                response = await handler(_resend(sent, attempt))
+            return _blank_written_call(response, request)
         response = _without_tool_calls(response)
         for _ in range(_PLAIN_TRIES):
             if _has_text(response):
                 break
-            response = _without_tool_calls(await handler(_as_plain_text(request)))
+            response = _without_tool_calls(await handler(_as_plain_text(sent)))
         return _with_some_text(response)
 
     @hook_config(can_jump_to=["model"])
