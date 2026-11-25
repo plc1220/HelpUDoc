@@ -131,6 +131,40 @@ def _ok_envelope(payload: dict[str, Any]) -> str:
     return _clip(json.dumps(body, ensure_ascii=False, default=str, indent=2))
 
 
+def _ok_sheet_envelope(payload: dict[str, Any]) -> str:
+    """Success envelope for a sheet range that always stays valid JSON.
+
+    A range that fits is returned as before. One that does not used to be cut in the middle
+    of a cell, so the caller could not tell where to continue and read the same rows again.
+    Now whole rows are kept, and nextRange names the rest.
+    """
+    text = json.dumps({"status": "ok", **payload}, ensure_ascii=False, default=str, indent=2)
+    rows = payload.get("cells") or []
+    if _MAX_OUTPUT_CHARS <= 0 or len(text) <= _MAX_OUTPUT_CHARS or len(rows) < 2:
+        return _clip(text, _MAX_OUTPUT_CHARS)
+
+    def fitted(count: int) -> str:
+        body: dict[str, Any] = {"status": "ok", **payload, "cells": rows[:count]}
+        if count < len(rows):
+            body["outputTruncated"] = True
+            body["returnedRange"] = f"{rows[0][0]['cell']}:{rows[count - 1][-1]['cell']}"
+            body["nextRange"] = f"{rows[count][0]['cell']}:{rows[-1][-1]['cell']}"
+            body["nextStep"] = "Call inspect_document with cell_range set to nextRange. Do not read returnedRange again."
+        # Without indentation, so that more rows fit.
+        return json.dumps(body, ensure_ascii=False, default=str)
+
+    if not all(rows):
+        return _clip(text, _MAX_OUTPUT_CHARS)
+    low, high = 1, len(rows)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(fitted(middle)) <= _MAX_OUTPUT_CHARS:
+            low = middle
+        else:
+            high = middle - 1
+    return _clip(fitted(low), _MAX_OUTPUT_CHARS)
+
+
 def _error_envelope(tool_name: str, legacy_prefix: str, exc: BaseException) -> str:
     if isinstance(exc, DocumentToolError):
         code = exc.code
@@ -1083,6 +1117,8 @@ def build_inspect_document_tool(workspace_state: WorkspaceState) -> Tool:
                     f"Unsupported document type {suffix or '[none]'}. {_SUPPORTED_TYPES_HINT}",
                 )
             payload["file"] = _display_path(root, path)
+            if "cells" in payload:
+                return _ok_sheet_envelope(payload)
             return _ok_envelope(payload)
         except Exception as exc:
             return _error_envelope("inspect_document", _INSPECT_FAILURE_PREFIX, exc)
@@ -1092,7 +1128,8 @@ def build_inspect_document_tool(workspace_state: WorkspaceState) -> Tool:
         "Read a bounded range from an original workspace PDF, DOCX, XLSX/XLSM, "
         "PPTX, or text file. Start with metadata/headings/sheet or slide inventory, "
         "then request only the pages, paragraphs, slides, speaker notes, sheet, or "
-        "cells needed. PPTX inspection returns render-needed metadata for visual "
+        "cells needed. A sheet range too large for one result returns whole rows plus nextRange "
+        "for the rest. PPTX inspection returns render-needed metadata for visual "
         "questions. Returns JSON with "
         "status='ok', or status='error' plus errorCode, retryable, and "
         "suggestedNextCall. Do not repeat a call whose error is not retryable."
