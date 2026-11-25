@@ -2575,6 +2575,14 @@ export const normalizeWorkflowActionEvent = (value: unknown): WorkflowActionEven
 export const skillSandboxFailureLimit = (content: string): number =>
   (content.includes('Load a skill before running a skill script') ? 5 : 2);
 
+/** What the user reads for an error whose own text only helps an engineer. The error stays in the run record. */
+export const plainRunError = (error?: string): string => {
+  const text = (error || '').trim();
+  return /recursion limit/i.test(text)
+    ? 'ARIA reached its work limit for this request before it could finish. Ask for a smaller part, or send "continue".'
+    : text;
+};
+
 /** A run that produced something the user can see does not need a written reply. */
 export const buildTerminalConversationSummary = (
   status: AgentRunStatus,
@@ -2595,7 +2603,8 @@ export const buildTerminalConversationSummary = (
     return 'The run was stopped.';
   }
   if (status === 'failed') {
-    return error?.trim() ? `The run failed: ${error.trim()}` : 'The run failed.';
+    const reason = plainRunError(error);
+    return reason ? `The run failed: ${reason}` : 'The run failed.';
   }
   return '';
 };
