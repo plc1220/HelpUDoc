@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
-from helpudoc_agent.api.routes.chat import _research_source_contract_error
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from helpudoc_agent.api.routes.chat import _research_source_contract_error, register_chat_routes
 from helpudoc_agent.state import AgentRuntimeState, WorkspaceState
 from helpudoc_agent.tools.workspace import web_sources
 from helpudoc_agent.tools.workspace.web_sources import build_google_search_tool
@@ -205,3 +209,47 @@ def test_research_completion_requires_newly_tracked_sources(tmp_path):
     workspace.context["active_skill"] = "proposal-writing"
     tracker.reset(workspace)
     assert _research_source_contract_error(runtime, tracker) == ""
+
+
+def test_chat_stream_reports_retrieval_outcomes_independently_of_retryability(tmp_path):
+    snippet = {"status": "ok", "results": [{"snippet": "Why the previous search failed"}]}
+    timeout = {"status": "error", "errorCode": "SEARCH_TIMEOUT", "retryable": True}
+    rejected = {"status": "error", "errorCode": "INVALID_URL", "retryable": False}
+
+    class RetrievalEvents:
+        async def astream_events(self, *_args, **_kwargs):
+            for index, (name, result) in enumerate([
+                ("web_search", snippet), ("url_context", timeout), ("url_context", rejected),
+            ]):
+                event = {"run_id": str(index), "name": name}
+                yield {**event, "event": "on_tool_start", "data": {"input": {}}}
+                yield {**event, "event": "on_tool_end", "data": {"output": json.dumps(result)}}
+            yield {"event": "on_chat_model_stream", "name": "model", "data": {"chunk": "Done."}}
+
+    runtime = AgentRuntimeState("fast", WorkspaceState("ws-search", tmp_path), RetrievalEvents())
+    app = FastAPI()
+    register_chat_routes(
+        app,
+        settings=SimpleNamespace(backend=SimpleNamespace(skills_root=None, workspace_root=tmp_path)),
+        registry=SimpleNamespace(get_or_create=AsyncMock(return_value=runtime)),
+        source_tracker=SourceTracker(),
+        memory_store_manager=None,
+        gemini_manager=None,
+        agent_jwt_secret="",
+    )
+    with TestClient(app) as client:
+        response = client.post("/agents/fast/workspace/ws-search/chat/stream", json={
+            "message": "Find the source.", "internetSearchEnabled": True,
+        })
+        response.raise_for_status()
+        events = [json.loads(line) for line in response.iter_lines() if line]
+
+    finished = [event["type"] for event in events if event["type"] in {"tool_end", "tool_error"}]
+    assert finished == ["tool_end", "tool_error", "tool_error"]
+    progress = [event for event in events if event["type"] == "progress"
+                and event.get("toolName") and event["status"] != "running"]
+    assert [event["status"] for event in progress] == ["completed", "error", "error"]
+    assert "timeout" in progress[1]["label"]
+    assert progress[1]["detail"] == "The agent can retry this tool."
+    assert progress[2]["detail"] == "The agent will continue without retrying this tool."
+    assert events[-1] == {"type": "done", "status": "completed"}

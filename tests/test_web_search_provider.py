@@ -154,9 +154,35 @@ def test_discover_then_read_selected_sources(backend, engines, tmp_path, monkeyp
     assert _research_source_contract_error(runtime, tracker) == ""
     assert tracker.list_sources(ws) == [(1, "Docs", source)]
     assert calls == [
-        ("POST", "http://wsf.test/api/search", {"query": "which page?", "engines": engines, "search_depth": "basic", "max_results": 5}),
-        ("POST", "http://wsf.test/api/extract", {"urls": [source, other], "timeout_ms": 8000}),
+        ("POST", "http://wsf.test/api/search", {
+            "query": "which page?", "engines": engines, "search_depth": "basic", "max_results": 5,
+            "use_search_cache": False,
+        }),
+        ("POST", "http://wsf.test/api/extract", {"urls": [source, other], "timeout_ms": 8000, "use_cache": False}),
     ]
+
+
+@pytest.mark.parametrize(("reports", "results", "expected_status"), [
+    ([{"ok": False, "error": "no results"}], [], "ok"),
+    ([{"ok": False, "error": "timeout"}], [], "error"),
+    ([{"ok": False, "error": "no results"}, {"ok": False, "error": "timeout"}], [], "error"),
+    ([{"ok": False, "error": "timeout"}, {"ok": True}],
+     [{"url": "https://example.org/", "content": "A result from the available engine"}], "ok"),
+])
+def test_websearchfree_engine_outcomes(oss_tools, monkeypatch, reports, results, expected_status):
+    _, _, search, _ = oss_tools
+
+    @contextmanager
+    def stream(method, url, **kwargs):
+        yield httpx.Response(200, request=httpx.Request(method, url), json={"engines": reports, "results": results})
+
+    monkeypatch.setattr(oss_web.httpx, "stream", stream)
+    outcome = json.loads(search.invoke({"query": "example"}))
+    assert outcome["status"] == expected_status
+    if expected_status == "error":
+        assert outcome["errorCode"] == "SEARCH_FAILED"
+    else:
+        assert [hit["url"] for hit in outcome["results"]] == [hit["url"] for hit in results]
 
 
 def test_pasted_url_goes_directly_to_extract_and_empty_page_is_unverified(oss_tools, monkeypatch):

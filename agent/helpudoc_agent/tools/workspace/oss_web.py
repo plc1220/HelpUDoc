@@ -114,10 +114,19 @@ def build_oss_search_tool(workspace: WorkspaceState, config: WebSearchConfig):
                 unavailable = bool(payload.get("unresponsive_engines"))
             else:
                 engines = ["searx"] if config.search_backend == "searxng" else ["ddg", "brave", "wikipedia"]
-                payload = _results(endpoint, json={"query": query, "engines": engines,
-                                                   "search_depth": "basic", "max_results": limit})
+                payload = _results(endpoint, json={
+                    "query": query,
+                    "engines": engines,
+                    "search_depth": "basic",
+                    "max_results": limit,
+                    "use_search_cache": False,
+                })
                 reports = payload.get("engines") or []
-                unavailable = bool(reports) and all(isinstance(x, dict) and x.get("ok") is False for x in reports)
+                # WebSearchFree also marks successful empty searches as ok=false.
+                unavailable = any(
+                    isinstance(report, dict) and report.get("ok") is False and report.get("error") != "no results"
+                    for report in reports
+                )
             hits = _search_hits(payload, limit)
         except (httpx.HTTPError, ValueError) as exc:
             return _upstream_error("web_search", exc)
@@ -143,7 +152,7 @@ def build_oss_url_context_tool(workspace: WorkspaceState, config: WebSearchConfi
         if not 1 <= len(requested) <= 5 or not all(_public_url(url) for url in requested):
             return _error("url_context", "INVALID_URL", "Supply one to five publicly reachable HTTP(S) URLs.")
         try:
-            payload = _results(endpoint, json={"urls": requested, "timeout_ms": 8000})
+            payload = _results(endpoint, json={"urls": requested, "timeout_ms": 8000, "use_cache": False})
         except (httpx.HTTPError, ValueError) as exc:
             return _upstream_error("url_context", exc)
 

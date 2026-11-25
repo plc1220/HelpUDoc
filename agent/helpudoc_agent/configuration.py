@@ -209,6 +209,14 @@ class BackendConfig(BaseModel):
         ),
     )
 
+    @field_validator("interrupt_on")
+    @classmethod
+    def _normalize_search_interrupt(cls, rules: Dict[str, Any]) -> Dict[str, Any]:
+        if "google_search" in rules:
+            legacy_rule = rules.pop("google_search")
+            rules.setdefault("web_search", legacy_rule)
+        return rules
+
     @field_validator("workspace_root", mode="before")
     @classmethod
     def _resolve_workspace(cls, value: str | Path) -> Path:
