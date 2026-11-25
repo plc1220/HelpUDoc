@@ -376,20 +376,42 @@ def build_url_context_tool(
             f"You are answering from these URLs:\n{url_block}\n\nQuestion or instructions:\n{question}\n\n"
             "Return JSON with summary and sources (url plus title when possible), grounded strictly in fetched page content."
         )
-        llm_urls = llm.bind(
-            tools=[{"url_context": {}}],
-            response_mime_type="application/json",
-            response_schema=StructuredWebAnswer.model_json_schema(),
-        )
+        # The LangChain message adapter drops candidate.url_context_metadata.
+        # Use the same configured client and model to retain retrieval receipts.
+        config = {
+            "tools": [{"url_context": {}}],
+            "temperature": 0,
+            "max_output_tokens": llm.max_output_tokens,
+            "response_mime_type": "application/json",
+            "response_schema": StructuredWebAnswer.model_json_schema(),
+        }
+        if llm.thinking_level:
+            config["thinking_config"] = {"thinking_level": llm.thinking_level}
         response, error = invoke_lc_with_timeout(
-            lambda: llm_urls.invoke([HumanMessage(content=prompt)], temperature=0),
+            lambda: llm.client.models.generate_content(model=llm.model, contents=prompt, config=config),
             timeout_s=DEFAULT_SEARCH_TIMEOUT,
             label=label,
         )
         if error or response is None:
             return f"URL context failed ({error or 'unknown error'})."
 
-        summary, sources = parse_structured_web_answer(response)
-        if sources:
-            tracker.record(workspace_state, sources)
+        summary, reported_sources = parse_structured_web_answer(response)
+        candidate = response.candidates[0] if response.candidates else None
+        metadata = candidate.url_context_metadata if candidate else None
+        receipts = metadata.url_metadata or [] if metadata else []
+        retrieved = {entry.retrieved_url for entry in receipts
+                     if entry.url_retrieval_status == "URL_RETRIEVAL_STATUS_SUCCESS"}
+        titles = {source["url"]: source["title"] for source in reported_sources}
+        sources = [{"url": url, "title": titles.get(url) or url}
+                   for url in dict.fromkeys(normalized) if url in retrieved]
+        if not sources or not summary:
+            return "URL context failed (no verified content from the requested URLs)."
+        tracker.record(workspace_state, sources)
+        workspace_state.context["web_search_source_count"] = (
+            int(workspace_state.context.get("web_search_source_count", 0) or 0) + len(sources)
+        )
         return summary + _format_sources_block(sources, empty_message="No URL sources returned.")
+
+    url_context.name = tool_name
+    url_context.description = tool_description
+    return url_context
