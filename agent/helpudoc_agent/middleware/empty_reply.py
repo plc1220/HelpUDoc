@@ -41,12 +41,12 @@ EMPTY_SEARCHES_STOP = 15
 # Planning notes the model writes for itself. They find nothing, so they do not restart the count.
 _PLANNING_TOOLS = {"write_todos"}
 _WARN_TEXT = (
-    "[ARIA system note] Your last {n} searches found nothing. The value is probably not there. Do not "
+    "[Lumo system note] Your last {n} searches found nothing. The value is probably not there. Do not "
     "make up values to search for. Use what you have read, follow the task's rule for missing values, or "
     "ask the user with request_clarification if only they can know it."
 )
 _STOP_TEXT = (
-    "[ARIA system note] Your last {n} searches found nothing, so searching is over for this request. Answer "
+    "[Lumo system note] Your last {n} searches found nothing, so searching is over for this request. Answer "
     "the user's latest message now from what you have read. Say clearly what was not found. Do not invent it."
 )
 
@@ -55,11 +55,11 @@ _STOP_TEXT = (
 STEPS_LEFT_WARN = 90
 STEPS_LEFT_STOP = 30
 _STEPS_WARN_TEXT = (
-    "[ARIA system note] This request is close to its work limit. Finish the most important part now and "
+    "[Lumo system note] This request is close to its work limit. Finish the most important part now and "
     "prepare to answer. Do not start new work."
 )
 _STEPS_STOP_TEXT = (
-    "[ARIA system note] This request has reached its work limit. Answer the user's latest message now from "
+    "[Lumo system note] This request has reached its work limit. Answer the user's latest message now from "
     "what you have. Say what is done and what is not done. Do not invent anything."
 )
 
@@ -133,7 +133,7 @@ _PLAIN_TRIES = 2
 # The usual instructions tell the model to plan and use tools, which it then attempts even with
 # none available. The final answer is asked for without them.
 _PLAIN_SYSTEM = (
-    "You are ARIA. Write the final answer to the user as plain text or Markdown. You have no tools and cannot "
+    "You are Lumo. Write the final answer to the user as plain text or Markdown. You have no tools and cannot "
     "search, plan or call functions. Use only the conversation and the findings given. Keep the language and "
     "the output format the user or the findings ask for. Never invent a value: say what was not found. If the "
     "work is incomplete, say what is done and what is not."
@@ -148,7 +148,7 @@ def _has_text(response: Any) -> bool:
 _BAD_CALL_REASONS = ("MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL", "MALFORMED_RESPONSE")
 _RESENDS = 2
 _CORRECTION_TEXT = (
-    "[ARIA system note] Your last reply was a tool call written as text, so nothing ran. Make the call with the "
+    "[Lumo system note] Your last reply was a tool call written as text, so nothing ran. Make the call with the "
     "tool interface, or write your reply to the user. Do not write a call as text."
 )
 

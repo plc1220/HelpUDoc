@@ -7,7 +7,7 @@ from typing import Any, Optional
 _RUN_WORK: ContextVar[Optional[dict]] = ContextVar("helpudoc_run_work", default=None)
 
 PARTIAL_NOTE = (
-    "\n\n---\n*ARIA reached its work limit for this request, so this answer may be incomplete. "
+    "\n\n---\n*Lumo reached its work limit for this request, so this answer may be incomplete. "
     "Reply \"continue\" to carry on from here.*"
 )
 

@@ -20,7 +20,7 @@ test('a missing skill is tolerated longer than other sandbox errors', () => {
 
 test('a technical limit error is explained in plain words, other errors are kept', () => {
   const text = buildTerminalConversationSummary('failed', 'Agent stopped after reaching the LangGraph recursion limit of 2000 steps. Original error: x');
-  assert.match(text, /^The run failed: ARIA reached its work limit/);
+  assert.match(text, /^The run failed: Lumo reached its work limit/);
   assert.doesNotMatch(text, /LangGraph|recursion/i);
   assert.equal(plainRunError('Agent run stalled.'), 'Agent run stalled.');
   assert.equal(buildTerminalConversationSummary('failed'), 'The run failed.');

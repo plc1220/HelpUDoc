@@ -21,7 +21,7 @@ _WHOLE = re.compile(
 )
 
 STILL_WRITTEN_TEXT = (
-    "ARIA could not finish this request because the model kept returning an unusable reply. "
+    "Lumo could not finish this request because the model kept returning an unusable reply. "
     "Please send your message again."
 )
 

@@ -2579,7 +2579,7 @@ export const skillSandboxFailureLimit = (content: string): number =>
 export const plainRunError = (error?: string): string => {
   const text = (error || '').trim();
   return /recursion limit/i.test(text)
-    ? 'ARIA reached its work limit for this request before it could finish. Ask for a smaller part, or send "continue".'
+    ? 'Lumo reached its work limit for this request before it could finish. Ask for a smaller part, or send "continue".'
     : text;
 };
 

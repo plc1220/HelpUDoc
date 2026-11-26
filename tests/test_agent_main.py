@@ -2024,5 +2024,5 @@ def test_a_real_agent_that_cannot_recover_fails_in_plain_words(client_with_stubs
     tokens, messages = _stream_tokens(client, registry, "workspace-no-recovery", _written_call_agent(WRITTEN_CALL))
 
     errors = [m["message"] for m in messages if m["type"] == "error"]
-    assert tokens == "" and len(errors) == 1 and errors[0].startswith("ARIA could not finish this request")
+    assert tokens == "" and len(errors) == 1 and errors[0].startswith("Lumo could not finish this request")
     assert "default_api" not in json.dumps(messages)
