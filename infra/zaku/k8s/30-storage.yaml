@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-pvc
+  namespace: helpudoc
+spec:
+  storageClassName: edge-lvm
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: skills-pvc
+  namespace: helpudoc
+spec:
+  storageClassName: edge-lvm
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plugins-pvc
+  namespace: helpudoc
+spec:
+  storageClassName: edge-lvm
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-config-pvc
+  namespace: helpudoc
+spec:
+  storageClassName: edge-lvm
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-pvc
+  namespace: helpudoc
+spec:
+  storageClassName: edge-lvm
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

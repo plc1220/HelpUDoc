@@ -1,0 +1,127 @@
+# Production object store.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rustfs-pvc
+  namespace: helpudoc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: edge-lvm
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpudoc-rustfs
+  namespace: helpudoc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: helpudoc-rustfs
+  template:
+    metadata:
+      labels:
+        app: helpudoc-rustfs
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: rustfs
+          # RustFS 1.0.4, matching the version rehearsed in PR #103.
+          image: docker.io/rustfs/rustfs@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
+          env:
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: RUSTFS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: RUSTFS_VOLUMES
+              value: /data
+            - name: RUSTFS_ADDRESS
+              value: 0.0.0.0:9000
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: "false"
+            - name: RUSTFS_OBS_LOG_DIRECTORY
+              value: /logs
+          ports:
+            - name: s3
+              containerPort: 9000
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "2000m"
+              memory: 4Gi
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: s3
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: s3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: s3
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /logs
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: rustfs-pvc
+        - name: logs
+          emptyDir:
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+  namespace: helpudoc
+spec:
+  selector:
+    app: helpudoc-rustfs
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+---
+# Alias for RustFS. Kept only because the frontend image's nginx.conf has
+# `proxy_pass http://minio:9000` and nginx fails to start if the name does not
+# resolve. Remove once the frontend image no longer references minio.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: helpudoc
+spec:
+  selector:
+    app: helpudoc-rustfs
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3

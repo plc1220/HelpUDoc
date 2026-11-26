@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpudoc-frontend
+  namespace: helpudoc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: helpudoc-frontend
+  template:
+    metadata:
+      labels:
+        app: helpudoc-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-frontend:c5108e6f6ad8ac36022f796feea6e207b4273826
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helpudoc-frontend
+  namespace: helpudoc
+spec:
+  selector:
+    app: helpudoc-frontend
+  ports:
+    - port: 80
+      targetPort: 80

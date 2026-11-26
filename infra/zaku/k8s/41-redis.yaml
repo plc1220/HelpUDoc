@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: helpudoc-redis
+  namespace: helpudoc
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: helpudoc-redis
+  template:
+    metadata:
+      labels:
+        app: helpudoc-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--appendonly", "yes"]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: edge-lvm
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: helpudoc
+spec:
+  selector:
+    app: helpudoc-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
