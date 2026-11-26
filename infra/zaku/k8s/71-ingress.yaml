@@ -22,11 +22,11 @@ spec:
   # TODO(U5b): enable once ZStack says where the certificate comes from.
   # tls:
   #   - hosts:
-  #       - lumo-studio.cloudmile-coe.com
-  #       - langfuse.lumo-studio.cloudmile-coe.com
+  #       - lumostudio.cloudmile-coe.com
+  #       - langfuse.lumostudio.cloudmile-coe.com
   #     secretName: helpudoc-tls
   rules:
-    - host: lumo-studio.cloudmile-coe.com
+    - host: lumostudio.cloudmile-coe.com
       http:
         paths:
           - path: /
@@ -36,7 +36,7 @@ spec:
                 name: helpudoc-caddy
                 port:
                   number: 80
-    - host: langfuse.lumo-studio.cloudmile-coe.com
+    - host: langfuse.lumostudio.cloudmile-coe.com
       http:
         paths:
           - path: /

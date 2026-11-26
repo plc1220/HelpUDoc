@@ -207,7 +207,7 @@ spec:
             - name: S3_ENDPOINT
               value: http://rustfs:9000
             - name: S3_PUBLIC_ENDPOINT
-              value: https://lumo-studio.cloudmile-coe.com
+              value: https://lumostudio.cloudmile-coe.com
             - name: S3_FORCE_PATH_STYLE
               valueFrom:
                 configMapKeyRef:
