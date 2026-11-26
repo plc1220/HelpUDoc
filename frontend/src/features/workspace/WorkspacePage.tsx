@@ -94,6 +94,7 @@ import {
   type AgentRunStatus,
   type AgentStreamChunk,
 } from '../../services/agentApi';
+import { setAttachmentMaxBytes } from '../../utils/attachmentLimits';
 import { vitePublicEnv } from '../../config/env';
 import {
   fetchRecentConversations,
@@ -2522,7 +2523,8 @@ export default function WorkspacePage() {
 
     const loadSlashMetadata = async () => {
       try {
-        const { skills, mcpServers, plugins } = await fetchSlashMetadata(workspaceId);
+        const { skills, mcpServers, plugins, attachmentMaxBytes } = await fetchSlashMetadata(workspaceId);
+        setAttachmentMaxBytes(attachmentMaxBytes);
         if (cancelled) {
           return;
         }

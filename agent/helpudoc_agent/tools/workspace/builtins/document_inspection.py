@@ -17,6 +17,12 @@ from langchain_core.tools import Tool, tool
 
 from ....state import WorkspaceState
 from .workspace_files import _display_path, _resolve_under_root, _workspace_root
+from .conversation_archive import (
+    current_conversation_archive,
+    log_conversation_search,
+    run_search_state,
+    search_conversation_archive,
+)
 
 
 _TEXT_SUFFIXES = {
@@ -123,6 +129,40 @@ def _ok_envelope(payload: dict[str, Any]) -> str:
     body = {"status": "ok"}
     body.update(payload)
     return _clip(json.dumps(body, ensure_ascii=False, default=str, indent=2))
+
+
+def _ok_sheet_envelope(payload: dict[str, Any]) -> str:
+    """Success envelope for a sheet range that always stays valid JSON.
+
+    A range that fits is returned as before. One that does not used to be cut in the middle
+    of a cell, so the caller could not tell where to continue and read the same rows again.
+    Now whole rows are kept, and nextRange names the rest.
+    """
+    text = json.dumps({"status": "ok", **payload}, ensure_ascii=False, default=str, indent=2)
+    rows = payload.get("cells") or []
+    if _MAX_OUTPUT_CHARS <= 0 or len(text) <= _MAX_OUTPUT_CHARS or len(rows) < 2:
+        return _clip(text, _MAX_OUTPUT_CHARS)
+
+    def fitted(count: int) -> str:
+        body: dict[str, Any] = {"status": "ok", **payload, "cells": rows[:count]}
+        if count < len(rows):
+            body["outputTruncated"] = True
+            body["returnedRange"] = f"{rows[0][0]['cell']}:{rows[count - 1][-1]['cell']}"
+            body["nextRange"] = f"{rows[count][0]['cell']}:{rows[-1][-1]['cell']}"
+            body["nextStep"] = "Call inspect_document with cell_range set to nextRange. Do not read returnedRange again."
+        # Without indentation, so that more rows fit.
+        return json.dumps(body, ensure_ascii=False, default=str)
+
+    if not all(rows):
+        return _clip(text, _MAX_OUTPUT_CHARS)
+    low, high = 1, len(rows)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(fitted(middle)) <= _MAX_OUTPUT_CHARS:
+            low = middle
+        else:
+            high = middle - 1
+    return _clip(fitted(low), _MAX_OUTPUT_CHARS)
 
 
 def _error_envelope(tool_name: str, legacy_prefix: str, exc: BaseException) -> str:
@@ -1077,6 +1117,8 @@ def build_inspect_document_tool(workspace_state: WorkspaceState) -> Tool:
                     f"Unsupported document type {suffix or '[none]'}. {_SUPPORTED_TYPES_HINT}",
                 )
             payload["file"] = _display_path(root, path)
+            if "cells" in payload:
+                return _ok_sheet_envelope(payload)
             return _ok_envelope(payload)
         except Exception as exc:
             return _error_envelope("inspect_document", _INSPECT_FAILURE_PREFIX, exc)
@@ -1086,7 +1128,8 @@ def build_inspect_document_tool(workspace_state: WorkspaceState) -> Tool:
         "Read a bounded range from an original workspace PDF, DOCX, XLSX/XLSM, "
         "PPTX, or text file. Start with metadata/headings/sheet or slide inventory, "
         "then request only the pages, paragraphs, slides, speaker notes, sheet, or "
-        "cells needed. PPTX inspection returns render-needed metadata for visual "
+        "cells needed. A sheet range too large for one result returns whole rows plus nextRange "
+        "for the rest. PPTX inspection returns render-needed metadata for visual "
         "questions. Returns JSON with "
         "status='ok', or status='error' plus errorCode, retryable, and "
         "suggestedNextCall. Do not repeat a call whose error is not retryable."
@@ -1149,8 +1192,185 @@ def build_search_document_tool(workspace_state: WorkspaceState) -> Tool:
     return search_document
 
 
+# search_workspace: one call that searches file names, document text and this
+# conversation's earlier messages, and says what it could not search. A per-file probe
+# only rules out a sliver, so the model kept probing (100+ calls for one missing case
+# number in production); one conclusive result lets it stop and ask the user.
+_WORKSPACE_SEARCH_MAX_FILES = int(os.getenv("WORKSPACE_SEARCH_MAX_FILES", "300"))
+_WORKSPACE_SEARCH_MAX_FILE_BYTES = int(os.getenv("WORKSPACE_SEARCH_MAX_FILE_BYTES", str(50 * 1024 * 1024)))
+_WORKSPACE_SEARCH_TIME_BUDGET_S = float(os.getenv("WORKSPACE_SEARCH_TIME_BUDGET_S", "25"))
+_WORKSPACE_SEARCH_HITS_PER_DOCUMENT = 5
+_WORKSPACE_SEARCH_MAX_RESULTS = 30
+_SEARCHABLE_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"} | _TEXT_SUFFIXES
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
+# read_file blocks raw structured data while a data skill runs; search does the same.
+_STRUCTURED_DATA_SUFFIXES = {".csv", ".tsv", ".parquet", ".json"}
+
+
+def _is_hidden_path(relative_parts: Iterable[str]) -> bool:
+    # Product-managed storage (.system: file versions, caches, knowledge bundles) and any
+    # other dot-directory. Stricter than read_file, which hides .system only.
+    return any(part.startswith(".") for part in relative_parts)
+
+
+def _search_one_document(path: Path, phrase: str, tokens: list[str]) -> list[dict[str, Any]]:
+    suffix = path.suffix.lower()
+    limit = _WORKSPACE_SEARCH_HITS_PER_DOCUMENT
+    if suffix == ".pdf":
+        return _search_pdf(path, phrase, tokens, limit)
+    if suffix == ".docx":
+        return _search_docx(path, phrase, tokens, limit)
+    if suffix in {".xlsx", ".xlsm"}:
+        return _search_xlsx(path, phrase, tokens, limit)[0]
+    if suffix == ".pptx":
+        return _search_pptx(path, phrase, tokens, limit)[0]
+    return _search_text(path, phrase, tokens, limit)
+
+
+def build_search_workspace_tool(workspace_state: WorkspaceState) -> Tool:
+    root = _workspace_root(workspace_state)
+
+    @tool
+    def search_workspace(query: str, max_results: int = 20) -> str:
+        """Search file names, document text and this conversation's earlier messages at once."""
+        import time
+
+        phrase, tokens = _clean_query(query)
+        if not phrase:
+            return _error_envelope(
+                "search_workspace",
+                _SEARCH_FAILURE_PREFIX,
+                DocumentToolError(ERROR_MISSING_QUERY, "query is required"),
+            )
+        limit = max(1, min(int(max_results or 20), _WORKSPACE_SEARCH_MAX_RESULTS))
+        # Loop guard. In testing the model repeated an empty search seven times instead of
+        # asking. The same query cannot find anything new within one run, so answer at once.
+        search_state = run_search_state()
+        if phrase in search_state["empty_queries"]:
+            return _ok_envelope({
+                "query": query,
+                "resultCount": 0,
+                "alreadySearched": True,
+                "nextStep": (
+                    "You already searched for this in this run and found nothing. Stop searching: ask the "
+                    "user with request_clarification which files or details to use, or report it as not "
+                    "found in an unattended run."
+                ),
+            })
+        context = workspace_state.context if isinstance(workspace_state.context, dict) else {}
+        active_skill = str(context.get("active_skill") or "").strip()
+        data_skill_active = active_skill == "data" or active_skill.startswith("data/")
+        deadline = time.monotonic() + _WORKSPACE_SEARCH_TIME_BUDGET_S
+
+        name_hits: list[dict[str, Any]] = []
+        document_hits: list[dict[str, Any]] = []
+        files_seen = 0
+        documents_searched = 0
+        not_searched = {"images": 0, "unsupportedTypes": 0, "oversized": [], "skippedForTimeOrLimit": 0,
+                        "structuredDataWhileDataSkillActive": 0, "unreadable": []}
+
+        for path in sorted(root.rglob("*")):
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                continue
+            if _is_hidden_path(relative.parts) or not path.is_file():
+                continue
+            files_seen += 1
+            display = _display_path(root, path)
+            if files_seen > _WORKSPACE_SEARCH_MAX_FILES:
+                not_searched["skippedForTimeOrLimit"] += 1
+                continue
+            if _matches(relative.as_posix(), phrase, tokens) and len(name_hits) < limit:
+                name_hits.append({"file": display})
+            suffix = path.suffix.lower()
+            if suffix in _IMAGE_SUFFIXES:
+                not_searched["images"] += 1
+                continue
+            if suffix not in _SEARCHABLE_DOCUMENT_SUFFIXES:
+                not_searched["unsupportedTypes"] += 1
+                continue
+            if data_skill_active and suffix in _STRUCTURED_DATA_SUFFIXES:
+                not_searched["structuredDataWhileDataSkillActive"] += 1
+                continue
+            if path.stat().st_size > _WORKSPACE_SEARCH_MAX_FILE_BYTES:
+                not_searched["oversized"].append(display)
+                continue
+            if time.monotonic() > deadline:
+                not_searched["skippedForTimeOrLimit"] += 1
+                continue
+            try:
+                hits = _search_one_document(path, phrase, tokens)
+            except Exception:
+                not_searched["unreadable"].append(display)
+                continue
+            documents_searched += 1
+            for hit in hits:
+                if len(document_hits) >= limit:
+                    break
+                document_hits.append({"file": display, **hit})
+
+        archive = current_conversation_archive()
+        conversation_hits: list[dict[str, Any]] = []
+        if archive is not None:
+            conversation_hits = search_conversation_archive(archive, phrase, tokens, limit)
+            log_conversation_search(archive, query, len(conversation_hits), str(context.get("user_id") or ""))
+
+        coverage: dict[str, Any] = {
+            "fileNamesSearched": min(files_seen, _WORKSPACE_SEARCH_MAX_FILES),
+            "documentsSearched": documents_searched,
+            "earlierConversationMessagesSearched": len(archive.messages) if archive else None,
+            "notSearched": {key: value for key, value in not_searched.items() if value},
+        }
+        if archive is None:
+            coverage["conversationNote"] = (
+                "Earlier messages of this conversation were not searched: they are already in "
+                "your context, or this run has no access to them."
+            )
+        elif archive.truncated:
+            coverage["conversationNote"] = "The oldest messages of this conversation were beyond the search limit."
+        if not_searched["images"]:
+            coverage["imageNote"] = "Text inside images cannot be searched; ask the user which images matter."
+        total = len(name_hits) + len(document_hits) + len(conversation_hits)
+        payload = {
+            "query": query,
+            "resultCount": total,
+            "fileNameMatches": name_hits,
+            "documentMatches": document_hits,
+            "conversationMatches": conversation_hits,
+            "coverage": coverage,
+        }
+        if total == 0:
+            search_state["empty_queries"].add(phrase)
+            search_state["empty_count"] += 1
+        if total == 0 and search_state["empty_count"] >= 3:
+            payload["nextStep"] = (
+                f"{search_state['empty_count']} searches in this run found nothing. Stop searching now: ask "
+                "the user with request_clarification which files or details to use, saying what was searched. "
+                "In an unattended run, report that it was not found."
+            )
+        elif total == 0:
+            payload["nextStep"] = (
+                "Nothing matched in the places listed under coverage. Do not keep searching: ask the "
+                "user (request_clarification) which files or details to use, and say what was searched. "
+                "In an unattended run, report that it was not found."
+            )
+        return _ok_envelope(payload)
+
+    search_workspace.name = "search_workspace"
+    search_workspace.description = (
+        "Search the whole workspace in one call: file and folder names, the text of PDF, DOCX, "
+        "XLSX/XLSM, PPTX and text files, and earlier messages of this conversation that are no "
+        "longer in your context. Use it first when the user names a specific record, ID, case or "
+        "file. Returns matches with locations plus a coverage report of what was and was not "
+        "searched (for example images). If it finds nothing, ask the user instead of searching again."
+    )
+    return search_workspace
+
+
 def build_document_inspection_tools(workspace_state: WorkspaceState) -> List[Tool]:
     return [
         build_inspect_document_tool(workspace_state),
         build_search_document_tool(workspace_state),
+        build_search_workspace_tool(workspace_state),
     ]

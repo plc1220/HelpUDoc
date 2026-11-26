@@ -11,6 +11,11 @@ _INTERRUPT_TOOL_NAMES: Set[str] = {
     "request_interaction",
     "workflow_action",
 }
+# Tools that run code. Their tool_start events carry the full input as auditInput, so the
+# backend can store the exact code that ran in the audit bucket. The chat keeps the
+# 200-character preview. The sandbox caps inline source at 64 KB; this cap is a backstop.
+_CODE_AUDIT_TOOL_NAMES: Set[str] = {"run_skill_python_script", "eval"}
+_CODE_AUDIT_INPUT_MAX_CHARS = 256 * 1024
 _LOADED_SKILL_OUTPUT_ID = re.compile(r"^Loaded skill:\s*(\S+)", re.MULTILINE)
 _LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
 _TAGGED_HTML_EXTENSIONS: Set[str] = {".html", ".htm"}

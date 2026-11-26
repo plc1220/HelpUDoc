@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
 import { WorkspaceService } from './workspaceService';
 import { NotFoundError } from '../errors';
+import type { ConversationArchiveSourceRow, StoredConversationSummary } from './conversationCompaction';
+import { capToolEventsInMetadata } from '../lib/toolEventSummary';
 
 export type ConversationSender = 'user' | 'agent';
 
@@ -175,7 +177,11 @@ export class ConversationService {
 
     return {
       conversation: conversation as ConversationRecord,
-      messages: messages as ConversationMessageRecord[],
+      // Rows written before tool output was capped can hold megabytes per message.
+      messages: (messages as ConversationMessageRecord[]).map((message) => {
+        const metadata = capToolEventsInMetadata(message.metadata);
+        return metadata === message.metadata ? message : { ...message, metadata };
+      }),
     };
   }
 
@@ -236,7 +242,7 @@ export class ConversationService {
           authorId: sender === 'user' ? userId : existing.authorId,
         };
         if (nextMetadata !== undefined) {
-          updatePayload.metadata = nextMetadata;
+          updatePayload.metadata = capToolEventsInMetadata(nextMetadata);
         }
         const [updated] = await this.db('conversation_messages')
           .where({ id: existing.id })
@@ -259,7 +265,7 @@ export class ConversationService {
       insertPayload.turnId = turnId;
     }
     if (options.metadata !== undefined) {
-      insertPayload.metadata = options.metadata;
+      insertPayload.metadata = capToolEventsInMetadata(options.metadata);
     }
 
     const [message] = await this.db('conversation_messages').insert(insertPayload).returning('*');
@@ -267,6 +273,67 @@ export class ConversationService {
     await this.updateConversationMetadata(conversation, sender, text, userId);
 
     return message as ConversationMessageRecord;
+  }
+
+  /**
+   * Text of a conversation's messages for the agent's run archive. Same access rules as
+   * getConversationWithMessages: the user must be a workspace member AND the
+   * conversation's creator. Returns null otherwise; never another user's conversation.
+   */
+  async listConversationArchiveSource(
+    userId: string,
+    conversationId: string,
+  ): Promise<ConversationArchiveSourceRow[] | null> {
+    if (!userId || !conversationId) {
+      return null;
+    }
+    const conversation = await this.db('conversations').where({ id: conversationId }).first();
+    if (!conversation) {
+      return null;
+    }
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId);
+    if (conversation.createdBy !== userId) {
+      return null;
+    }
+    return this.db('conversation_messages')
+      .where({ conversationId })
+      .orderBy([{ column: 'createdAt', order: 'asc' }, { column: 'id', order: 'asc' }])
+      .select('id', 'sender', 'text', 'createdAt', this.db.raw(`metadata->>'bodySource' as "bodySource"`));
+  }
+
+  // Storage for conversationCompaction.ts. No access check: callers have already checked
+  // the user's access to the conversation, and nothing here is returned to a client.
+  async getConversationSummary(conversationId: string): Promise<StoredConversationSummary | null> {
+    const row = await this.db('conversation_summaries').where({ conversationId }).first();
+    if (!row) {
+      return null;
+    }
+    return {
+      summary: String(row.summary || ''),
+      coveredCount: Number(row.coveredCount) || 0,
+      coveredHash: String(row.coveredHash || ''),
+      version: Number(row.version) || 0,
+    };
+  }
+
+  async saveConversationSummary(
+    conversationId: string,
+    expectedVersion: number | null,
+    value: { summary: string; coveredCount: number; coveredHash: string; coveredTokens: number },
+  ): Promise<boolean> {
+    if (expectedVersion === null) {
+      const inserted = await this.db('conversation_summaries')
+        .insert({ conversationId, ...value, version: 1 })
+        .onConflict('conversationId')
+        .ignore()
+        .returning('conversationId');
+      return inserted.length > 0;
+    }
+    // Compare-and-set: a concurrent job that saved first wins, and this result is dropped.
+    const updated = await this.db('conversation_summaries')
+      .where({ conversationId, version: expectedVersion })
+      .update({ ...value, version: expectedVersion + 1, updatedAt: this.db.fn.now() });
+    return updated > 0;
   }
 
   async deleteConversation(userId: string, conversationId: string): Promise<boolean> {

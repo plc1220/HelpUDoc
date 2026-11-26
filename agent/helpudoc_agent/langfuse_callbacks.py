@@ -33,11 +33,16 @@ def langfuse_langchain_callbacks() -> List[Any]:
         )
         return []
     try:
-        from langfuse.langchain import CallbackHandler
+        from helpudoc_agent.langfuse_handler import TrimmedLangfuseHandler
     except ModuleNotFoundError as exc:
         logger.warning("Langfuse LangChain integration unavailable: %s", exc)
         return []
-    return [CallbackHandler()]
+    try:
+        return [TrimmedLangfuseHandler()]
+    except Exception:
+        # Tracing must never stop a chat run.
+        logger.warning("Langfuse handler could not be created; run continues untraced", exc_info=True)
+        return []
 
 
 def emit_langfuse_trace_payload(handlers: Sequence[Any]) -> Dict[str, str]:

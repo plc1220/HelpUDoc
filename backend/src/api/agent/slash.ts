@@ -8,6 +8,7 @@ import { collectSkillIds } from '../../services/skills/registry';
 import { getSkillMetadata } from '../../services/skills/metadata';
 import { buildPluginBySkillMap, filterPluginsForAccess, listPlugins } from '../../services/plugins/registry';
 import { loadRuntimeMcpServers, resolveRuntimeMcpAccess, resolveRuntimeSkillAccess } from './policy';
+import { currentTurnMultimodalMaxBytes } from '../../services/turnAttachments';
 
 type SlashSkillMetadata = {
   id: string;
@@ -107,6 +108,7 @@ export function registerSlashRoutes(
           .filter((server) => server.name);
 
       res.json({
+        attachmentMaxBytes: currentTurnMultimodalMaxBytes(),
         skills,
         mcpServers,
         plugins: filterPluginsForAccess(plugins, {

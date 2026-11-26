@@ -4,6 +4,7 @@ import {
   ChatSendButton,
 } from '@astryxdesign/core/Chat';
 import { Card } from '@astryxdesign/core/Card';
+import { Banner } from '@astryxdesign/core/Banner';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
@@ -29,6 +30,7 @@ import {
 } from 'react';
 
 import type { ChatComposerAttachment } from './chatTypes';
+import { oversizeAttachmentNotice, type AttachmentSize } from '../../utils/attachmentLimits';
 import GoogleDriveIcon from './GoogleDriveIcon';
 import type { AgentPersona } from '../../types';
 
@@ -39,6 +41,13 @@ type CommandSuggestion = {
   id: string;
   command: string;
   description: string;
+};
+
+const attachmentSize = (attachment: ChatComposerAttachment): AttachmentSize => {
+  if (attachment.source === 'local') {
+    return { name: attachment.name, mimeType: attachment.file.type, bytes: attachment.file.size };
+  }
+  return { name: attachment.name, mimeType: attachment.driveItem.mimeType, bytes: attachment.driveItem.size };
 };
 
 type CommandTag = {
@@ -155,6 +164,7 @@ export default function ChatInputArea({
   const canSend = Boolean(chatMessage.trim() || chatAttachments.length);
   const attachmentCount = chatAttachments.length + commandTags.length;
   const inputPlaceholder = promptSuggestion || (isNarrow ? 'Ask anything…' : placeholder);
+  const oversizeNotice = oversizeAttachmentNotice(chatAttachments.map(attachmentSize));
 
   return (
     <div className="lumo-composer-dock">
@@ -194,6 +204,9 @@ export default function ChatInputArea({
                   />
                 ))}
               </div>
+              {oversizeNotice ? (
+                <Banner status="warning" title="Large attachment" description={oversizeNotice} />
+              ) : null}
             </ChatComposerDrawer>
           ) : undefined}
           headerContext={isPreparingAttachments ? (

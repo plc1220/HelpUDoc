@@ -23,16 +23,17 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
 from langchain_quickjs.middleware import CodeInterpreterMiddleware
 
+from helpudoc_agent.middleware.empty_reply import EmptyReplyMiddleware
 from helpudoc_agent.middleware.interaction_contract import InteractionContractMiddleware
 from helpudoc_agent.middleware.slide_style_preview import SlideStylePreviewMiddleware
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
 from helpudoc_agent.middleware.mcp_discovery import MCPDiscoveryMiddleware
-from langchain.agents.middleware.summarization import SummarizationMiddleware
-from langgraph.checkpoint.memory import MemorySaver
 from ..configuration import Settings
 from ..gemini_chat import create_chat_google_generative_ai
 from ..state import WorkspaceState, AgentRuntimeState
 from ..tools_and_schemas import ToolFactory
+from ..tools.workspace.timeouts import env_int
+from .summarization import build_summarization_middleware
 from ..skills_registry import (
     collect_tool_names,
     get_candidate_mcp_servers,
@@ -48,8 +49,19 @@ from ..tool_guard import GuardedTool
 from ..skill_builder import SKILL_BUILDER_SYSTEM_PROMPT, SKILL_BUILDER_TOOL_GROUPS
 from ..slide_style_preview import preview_tool_error
 from ..memory_store import UserScopedStoreBackend
+from ..run_checkpoints import BoundedMemorySaver
 
 logger = logging.getLogger(__name__)
+
+# Conversation size (estimated tokens) at which SummarizationMiddleware compresses older
+# messages. HELPUDOC_SUMMARY_TRIGGER_TOKENS exists so a test cluster can trigger it in a
+# short conversation; production keeps the default.
+_DEFAULT_SUMMARY_TRIGGER_TOKENS = 170000
+
+
+def _summary_trigger_tokens() -> int:
+    value = env_int("HELPUDOC_SUMMARY_TRIGGER_TOKENS", _DEFAULT_SUMMARY_TRIGGER_TOKENS)
+    return value if value > 0 else _DEFAULT_SUMMARY_TRIGGER_TOKENS
 
 GENERAL_SYSTEM_PROMPT = (
     "You are a general assistant. Use skills for specialized tasks. "
@@ -64,6 +76,13 @@ GENERAL_SYSTEM_PROMPT = (
     "for XLSX, XLSM, CSV, or TSV files load the xlsx skill. Search the original document on demand "
     "with search_document and use bounded inspect_document calls; do not require a derived copy or vector index. "
     "For supplied @knowledge context, read the OKF index with knowledge_read and follow only relevant concepts, "
+    "Answer the user's latest message. Earlier requests in the conversation that were stopped or left "
+    "unanswered are not pending tasks unless the latest message asks for them again. "
+    "When the user names a specific record, ID, case or file that is not in your context, call search_workspace "
+    "once with that name: it searches file names, document text and earlier messages of this conversation. "
+    "If it finds nothing, do not keep searching: ask the user with request_clarification which files or details "
+    "to use, and say what was searched and what could not be (for example images). In a scheduled or unattended "
+    "run, report that it was not found instead of asking. "
     "using knowledge_search when discovery is needed. "
     "Once a skill is loaded, stay within that skill's workflow until its completion criteria are met "
     "(for example: report requests should end with the report artifact tool, dashboard requests should end with the dashboard tool). "
@@ -104,6 +123,51 @@ ALWAYS_AVAILABLE_TOOL_GROUPS = (
 )
 
 _STRUCTURED_DATA_SUFFIXES = frozenset({".csv", ".tsv", ".parquet", ".json"})
+
+# read_file returns non-text files whole, as base64. For documents that is useless to the
+# model and harmful: a 9 MB PDF arrived as 9.2M characters, which LangChain's token
+# estimate counts as ~2.3M tokens, so SummarizationMiddleware fired and the run lost its
+# context. Documents go through search_document / inspect_document instead (the pdf and
+# sheets skills already forbid read_file on them). Images still use read_file: the
+# document tools cannot read them.
+_READ_FILE_DOCUMENT_SUFFIXES = frozenset({".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"})
+# A scanned PDF has no text for the document tools, so read_file is the only way the
+# model sees it. Pass small ones through. 500 KB of PDF is ~680K base64 characters,
+# ~170K estimated tokens: the summarization trigger. Stay below it.
+_READ_FILE_SCANNED_PDF_MAX_BYTES = 500 * 1024
+_SCANNED_PDF_SAMPLE_PAGES = 3
+_SCANNED_PDF_MIN_TEXT_CHARS = 40
+
+
+def _pdf_has_text_layer(path: Path) -> bool:
+    """True when the first pages yield text. Unreadable PDFs count as text (route away)."""
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(str(path))
+        text = ""
+        for page in reader.pages[:_SCANNED_PDF_SAMPLE_PAGES]:
+            text += page.extract_text() or ""
+            if len(text.strip()) >= _SCANNED_PDF_MIN_TEXT_CHARS:
+                return True
+        return len(text.strip()) >= _SCANNED_PDF_MIN_TEXT_CHARS
+    except Exception:  # pragma: no cover - a damaged file must not break read_file
+        return True
+
+
+def _document_read_guidance(file_path: str, *, scanned_too_large: bool = False) -> str:
+    name = PurePosixPath(str(file_path).replace("\\", "/")).name or str(file_path)
+    if scanned_too_large:
+        return (
+            f"read_file does not return '{name}': it is a scanned PDF without a text layer and "
+            "too large to send whole. Use inspect_document on it for page count and metadata, "
+            "and ask the user which pages matter or for a smaller excerpt."
+        )
+    return (
+        f"read_file does not return the contents of '{name}'. For PDF, DOCX, XLSX and PPTX files, "
+        f"use search_document(file_path=\"{file_path}\", query=...) to find the relevant passages, "
+        f"then inspect_document(file_path=\"{file_path}\") to read specific pages, sheets or cells."
+    )
 _DATA_ARTIFACT_OUTPUT_DIRS = frozenset({"sandbox-runs", "charts", "dashboards", "reports"})
 
 
@@ -258,6 +322,25 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
                 visible_matches.append(match)
         return GrepResult(error=result.error, matches=visible_matches)
 
+    def _document_read_guidance(self, file_path: str) -> str | None:
+        """Guidance instead of a whole document, or None to read the file normally."""
+        suffix = PurePosixPath(str(file_path or "").replace("\\", "/")).suffix.lower()
+        if suffix not in _READ_FILE_DOCUMENT_SUFFIXES:
+            return None
+        if suffix != ".pdf":
+            return _document_read_guidance(file_path)
+        try:
+            resolved = self._resolve_path(file_path)
+            if not resolved.is_file():
+                return None  # let read() report the missing file as before
+            if _pdf_has_text_layer(resolved):
+                return _document_read_guidance(file_path)
+            if resolved.stat().st_size > _READ_FILE_SCANNED_PDF_MAX_BYTES:
+                return _document_read_guidance(file_path, scanned_too_large=True)
+        except Exception:  # pragma: no cover - fall back to the normal read path
+            return None
+        return None
+
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         is_data_skill, context = self._data_skill_context()
         skill_id = str(context.get("active_skill") or "").strip()
@@ -315,6 +398,9 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
                     "of paging raw rows into model context."
                 )
             )
+        guidance = self._document_read_guidance(file_path)
+        if guidance:
+            return ReadResult(error=guidance)
         return super().read(file_path, offset=offset, limit=limit)
 
 
@@ -363,7 +449,7 @@ class AgentRegistry:
         self.tool_factory = tool_factory
         self._memory_store = memory_store
         self._models: Dict[str, object] = {}
-        self._checkpointer = MemorySaver()
+        self._checkpointer = BoundedMemorySaver()
         self._cache: Dict[Tuple[str, str, str], AgentRuntimeState] = {}
         self._default_agent_name = "general-assistant"
 
@@ -657,13 +743,11 @@ class AgentRegistry:
         interrupt_on = {name: config for name, config in interrupt_on.items() if config}
 
         middleware = [
+            # First, so its after_model runs last, after the guards have had their say.
+            EmptyReplyMiddleware(),
             TodoListMiddleware(),
             FilesystemMiddleware(backend=make_backend),
-            SummarizationMiddleware(
-                model=model,
-                max_tokens_before_summary=170000,
-                messages_to_keep=6,
-            ),
+            build_summarization_middleware(model, _summary_trigger_tokens()),
             PatchToolCallsMiddleware(),
         ]
         if not builder_mode:

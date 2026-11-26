@@ -25,6 +25,7 @@ export type SlashMetadataResponse = {
   skills: SkillDefinition[];
   mcpServers: Array<{ name: string; description?: string }>;
   plugins?: PluginDefinition[];
+  attachmentMaxBytes?: number;
 };
 
 export type AgentRunStartResponse = {

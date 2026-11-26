@@ -4,7 +4,15 @@ import type { CalendarService } from '../../services/calendarService';
 import { CalendarError, parseEventRef } from '../../services/calendarModel';
 import { z } from 'zod';
 import type { TaggedFileRef } from '@helpudoc/contracts/types';
-import { runAgent, runAgentStream, type AgentMessageContentBlock } from '../../services/agentService';
+import { runAgent, runAgentStream, runInternalAnalysis, type AgentMessageContentBlock } from '../../services/agentService';
+import { signAgentContextToken } from '../../services/agentToken';
+import {
+  ARCHIVE_MIN_HISTORY_TOKENS,
+  ConversationCompactor,
+  buildConversationArchive,
+  estimateTokens,
+  type ConversationArchive,
+} from '../../services/conversationCompaction';
 import type { WorkspaceService } from '../../services/workspaceService';
 import type { FileService } from '../../services/fileService';
 import type { GoogleOAuthService } from '../../services/googleOAuthService';
@@ -24,19 +32,18 @@ import {
 import { blockingRedisClient } from '../../services/redisService';
 import { createAgentPolicyApi } from './policy';
 import { safeErrorForLog } from '../../lib/safeError';
+import {
+  currentTurnMultimodalMaxBytes,
+  skipReason,
+  skippedAttachmentsNote,
+  type SkippedAttachment,
+} from '../../services/turnAttachments';
 
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
-const DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES = 8 * 1024 * 1024;
+const CURRENT_TURN_MULTIMODAL_MAX_BYTES = currentTurnMultimodalMaxBytes();
 
-const resolveCurrentTurnMultimodalMaxBytes = (): number => {
-  const raw = Number(process.env.CURRENT_TURN_MULTIMODAL_MAX_BYTES || DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES);
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES;
-};
-
-const CURRENT_TURN_MULTIMODAL_MAX_BYTES = resolveCurrentTurnMultimodalMaxBytes();
-
-const runAgentSchema = z.object({
+export const runAgentSchema = z.object({
   persona: z.string().min(1),
   prompt: z.string().min(1),
   workspaceId: z.string().min(1),
@@ -316,6 +323,14 @@ export function registerRunRoutes(
   calendarService?: CalendarService,
 ) {
   const policyApi = createAgentPolicyApi(googleOAuthService, userService);
+  // Stored memory for long workspace chats. Background summary calls run as the user
+  // whose run triggered them, like the other internal analyses.
+  const conversationCompactor = new ConversationCompactor(conversationService, async (input, context) => {
+    const authToken =
+      signAgentContextToken({ sub: context.userId, userId: context.userId, workspaceId: context.workspaceId }) || undefined;
+    const result = await runInternalAnalysis(input, { authToken, timeoutMs: 5 * 60 * 1000 });
+    return String(result?.text || '');
+  });
   const calendarRefs = async (userId: string, ref?: string) => {
     if (!ref) return undefined;
     if (!calendarService) throw new HttpError(503, 'Calendar context is unavailable');
@@ -364,17 +379,18 @@ export function registerRunRoutes(
     userId: string,
     prompt: string,
     currentTurnFileRefs?: Array<{ fileId: number; version: number }>,
-  ): Promise<AgentMessageContentBlock[] | undefined> => {
+  ): Promise<{ prompt: string; messageContent?: AgentMessageContentBlock[] }> => {
     const normalizedRefs = Array.from(new Map(
       (currentTurnFileRefs || [])
         .filter((ref) => Number.isInteger(ref.fileId) && ref.fileId > 0 && Number.isInteger(ref.version) && ref.version > 0)
         .map((ref) => [ref.fileId, ref] as const),
     ).values());
     if (!normalizedRefs.length) {
-      return undefined;
+      return { prompt };
     }
 
     const fileBlocks: AgentMessageContentBlock[] = [];
+    const skipped: SkippedAttachment[] = [];
 
     for (const ref of normalizedRefs) {
       const fileId = ref.fileId;
@@ -382,22 +398,23 @@ export function registerRunRoutes(
       const mimeType = typeof download.mimeType === 'string' && download.mimeType.trim()
         ? download.mimeType.trim()
         : 'application/octet-stream';
-      const encoded = download.buffer.toString('base64');
-      if (!encoded) {
+      if (!download.buffer.length) {
         continue;
       }
-      const byteLength = Buffer.byteLength(encoded, 'base64');
-      if (byteLength > CURRENT_TURN_MULTIMODAL_MAX_BYTES) {
-        console.info('Skipping oversized current-turn multimodal attachment', {
+      const reason = skipReason(download.buffer, mimeType, CURRENT_TURN_MULTIMODAL_MAX_BYTES);
+      if (reason) {
+        console.info('Skipping current-turn multimodal attachment', {
           workspaceId,
           fileId,
-          fileName: download.name,
           mimeType,
-          byteLength,
+          reason,
+          byteLength: download.buffer.length,
           maxBytes: CURRENT_TURN_MULTIMODAL_MAX_BYTES,
         });
+        skipped.push({ name: String(download.name || `file ${fileId}`), mimeType, bytes: download.buffer.length, reason });
         continue;
       }
+      const encoded = download.buffer.toString('base64');
       if (mimeType === 'application/pdf') {
         fileBlocks.push({
           type: 'file',
@@ -414,20 +431,23 @@ export function registerRunRoutes(
       }
     }
 
+    const note = skippedAttachmentsNote(skipped, CURRENT_TURN_MULTIMODAL_MAX_BYTES);
+    const notedPrompt = note ? `${prompt.trim()}\n\n${note}` : prompt;
     if (!fileBlocks.length) {
-      return undefined;
+      return { prompt: notedPrompt };
     }
 
     const promptText = [
-      prompt.trim(),
+      notedPrompt.trim(),
       'Use the attached file content as primary context for this turn before falling back to workspace search or web search.',
     ]
       .filter(Boolean)
       .join('\n\n');
 
-    return promptText
-      ? [{ type: 'text', text: promptText }, ...fileBlocks]
-      : fileBlocks;
+    return {
+      prompt: notedPrompt,
+      messageContent: promptText ? [{ type: 'text', text: promptText }, ...fileBlocks] : fileBlocks,
+    };
   };
 
   router.post('/run', async (req, res) => {
@@ -453,13 +473,13 @@ export function registerRunRoutes(
         policy,
         skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
-      const messageContent = await buildCurrentTurnMessageContent(
+      const { prompt: runPrompt, messageContent } = await buildCurrentTurnMessageContent(
         workspaceId,
         user.userId,
         enrichedPrompt,
         taggedContext.currentTurnFileRefs,
       );
-      const response = await runAgent(persona, workspaceId, enrichedPrompt, history, {
+      const response = await runAgent(persona, workspaceId, runPrompt, history, {
         forceReset,
         authToken: authToken || undefined,
         messageContent,
@@ -525,13 +545,13 @@ export function registerRunRoutes(
         policy,
         skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
-      const messageContent = await buildCurrentTurnMessageContent(
+      const { prompt: runPrompt, messageContent } = await buildCurrentTurnMessageContent(
         workspaceId,
         user.userId,
         enrichedPrompt,
         taggedContext.currentTurnFileRefs,
       );
-      streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
+      streamResponse = await runAgentStream(persona, workspaceId, runPrompt, history, {
         forceReset,
         signal: upstreamAbort.signal,
         authToken: authToken || undefined,
@@ -611,19 +631,38 @@ export function registerRunRoutes(
         calendarEventRefs: selectedCalendarRefs,
         calendarSourceIds: selectedSourceRefs,
       });
-      const messageContent = await buildCurrentTurnMessageContent(
+      const { prompt: runPrompt, messageContent } = await buildCurrentTurnMessageContent(
         workspaceId,
         user.userId,
         enrichedPrompt,
         taggedContext.currentTurnFileRefs,
       );
+      // Long chats send a stored summary plus newer messages; shorter ones are unchanged.
+      const runHistory = conversationId && history?.length
+        ? await conversationCompactor.prepareHistory(conversationId, history)
+        : history;
+      // Earlier messages the agent can search in this run (search_workspace). Built from the
+      // database for this user's own conversation only; never from the request body.
+      let conversationArchive: ConversationArchive | undefined;
+      if (conversationId && history?.length && estimateTokens(history) >= ARCHIVE_MIN_HISTORY_TOKENS) {
+        try {
+          const rows = await conversationService.listConversationArchiveSource(user.userId, conversationId);
+          conversationArchive = rows ? buildConversationArchive(conversationId, rows) || undefined : undefined;
+        } catch (error) {
+          console.warn('Conversation archive unavailable; the run continues without it', {
+            conversationId,
+            error: safeErrorForLog(error),
+          });
+        }
+      }
       const { runId, status } = await startAgentRun({
         persona,
         workspaceId,
         conversationId,
-        prompt: enrichedPrompt,
+        prompt: runPrompt,
         userId: user.userId,
-        history,
+        history: runHistory,
+        conversationArchive,
         forceReset,
         turnId,
         authToken: authToken || undefined,
@@ -635,6 +674,10 @@ export function registerRunRoutes(
         userPrompt: prompt,
         taggedFileRefs: taggedContext.taggedFileRefs,
       });
+      if (conversationId && history?.length) {
+        // Not awaited: the summary is for the next turn, and compact() never throws.
+        void conversationCompactor.compact(conversationId, history, { userId: user.userId, workspaceId });
+      }
       res.json({ runId, status });
     } catch (error: any) {
       if (error instanceof z.ZodError) {

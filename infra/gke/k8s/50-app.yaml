@@ -483,6 +483,10 @@ spec:
                   optional: true
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
+            # Graph steps per run. One model call with its tools takes about eight. Near the
+            # limit the run ends with a partial answer (run_work.py).
+            - name: AGENT_RECURSION_LIMIT
+              value: "2000"
             - name: KNOWLEDGE_MARKITDOWN_MODE
               value: primary
             - name: KNOWLEDGE_OCR_MODE

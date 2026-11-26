@@ -1,4 +1,7 @@
 import type { NotificationService } from '../notificationService';
+import { getToolOutputAuditQueue, takeAuditInput } from '../toolOutputAudit';
+import type { ConversationArchive } from '../conversationCompaction';
+import { capToolEventPayload, capToolEventText } from '../../lib/toolEventSummary';
 import { createHash, randomUUID } from 'crypto';
 import { isFrontendSlidesEditExistingRun, slideEditArtifactCandidates } from './slideEditIntent';
 import type { IncomingMessage } from 'http';
@@ -80,6 +83,12 @@ type StartRunParams = {
   userPrompt?: string;
   /** Files the user @-referenced for this turn. */
   taggedFileRefs?: Array<{ fileId: number; version?: number; name?: string }>;
+  /**
+   * Earlier messages of the user's own conversation (conversationCompaction.ts). Kept in
+   * memory for this run only: serializeRunContext does not write it to Redis, so a resumed
+   * or recovered run has none.
+   */
+  conversationArchive?: ConversationArchive;
 };
 
 type RunPendingInterrupt = {
@@ -2563,15 +2572,39 @@ export const normalizeWorkflowActionEvent = (value: unknown): WorkflowActionEven
   };
 };
 
-const buildTerminalConversationSummary = (status: AgentRunStatus, error?: string): string => {
+export const skillSandboxFailureLimit = (content: string): number =>
+  (content.includes('Load a skill before running a skill script') ? 5 : 2);
+
+/** What the user reads for an error whose own text only helps an engineer. The error stays in the run record. */
+export const plainRunError = (error?: string): string => {
+  const text = (error || '').trim();
+  return /recursion limit/i.test(text)
+    ? 'Lumo reached its work limit for this request before it could finish. Ask for a smaller part, or send "continue".'
+    : text;
+};
+
+/** A run that produced something the user can see does not need a written reply. */
+export const buildTerminalConversationSummary = (
+  status: AgentRunStatus,
+  error?: string,
+  snapshot: Pick<ConversationRunSnapshot, 'toolEvents' | 'workflowActions' | 'pendingInterrupt'> = {},
+): string => {
   if (status === 'completed') {
-    return 'Completed successfully.';
+    const visibleResult = Boolean(
+      snapshot.pendingInterrupt
+      || snapshot.workflowActions?.length
+      || snapshot.toolEvents?.some((event) => event.outputFiles?.length),
+    );
+    return visibleResult
+      ? 'Completed successfully.'
+      : 'Lumo finished without writing a reply. Please send your message again.';
   }
   if (status === 'cancelled') {
     return 'The run was stopped.';
   }
   if (status === 'failed') {
-    return error?.trim() ? `The run failed: ${error.trim()}` : 'The run failed.';
+    const reason = plainRunError(error);
+    return reason ? `The run failed: ${reason}` : 'The run failed.';
   }
   return '';
 };
@@ -2589,7 +2622,7 @@ const persistRunConversationMessage = async (
   const assistantText = snapshot.assistantText?.trim() ? snapshot.assistantText : '';
   const terminalSummary =
     !assistantText && (status === 'completed' || status === 'failed' || status === 'cancelled')
-      ? buildTerminalConversationSummary(status, snapshot.error)
+      ? buildTerminalConversationSummary(status, snapshot.error, snapshot)
       : '';
   const text = assistantText || terminalSummary;
   const metadata: ConversationMessageMetadata = {
@@ -4366,8 +4399,12 @@ async function runAgentRunWorker(
     await stopAtInterrupt(interruptPayload);
   };
 
-  const processParsedLine = async (line: string): Promise<'continue' | 'stop'> => {
-    const rawParsed = parseLine(line);
+  const processParsedLine = async (incomingLine: string): Promise<'continue' | 'stop'> => {
+    const rawParsed = parseLine(incomingLine);
+    // The full code of a code-running tool goes to the audit bucket only. It is removed
+    // here, before the event reaches the stream, the browser, message metadata or telemetry.
+    const auditInput = takeAuditInput(rawParsed);
+    const line = auditInput === undefined ? incomingLine : JSON.stringify(rawParsed);
     const parsed = rawParsed
       ? safeTelemetryForPersistence(rawParsed) as Record<string, unknown>
       : null;
@@ -4499,9 +4536,10 @@ async function runAgentRunWorker(
           const signature = `${coerceText(parsed.name).trim()}\u0000${coerceText(parsed.content).trim()}`;
           const failureCount = (skillSandboxFailureCounts.get(signature) || 0) + 1;
           skillSandboxFailureCounts.set(signature, failureCount);
-          if (failureCount >= 2) {
+          // A missing skill is recoverable: the tool tells Lumo what to use instead.
+          if (failureCount >= skillSandboxFailureLimit(coerceText(parsed.content))) {
             repeatedSkillSandboxFailure =
-              'Agent stopped because the skill sandbox returned the same terminal error twice. Retrying the same request cannot succeed.';
+              'Agent stopped because the skill sandbox returned the same terminal error repeatedly. Retrying the same request cannot succeed.';
           }
         }
       }
@@ -4533,9 +4571,9 @@ async function runAgentRunWorker(
                 : parsed.type === 'tool_end'
                   ? 'end'
                   : 'error',
-            summary: typeof parsed.content === 'string' ? parsed.content : undefined,
+            summary: typeof parsed.content === 'string' ? capToolEventText(parsed.content) : undefined,
             outputFiles: parsed.outputFiles,
-            payload: parsed,
+            payload: capToolEventPayload(parsed),
             eventAt: new Date().toISOString(),
           });
         } catch (telemetryError) {
@@ -4545,6 +4583,27 @@ async function runAgentRunWorker(
             error: safeErrorForLog(telemetryError),
           });
         }
+      }
+      // Full output (and, for code-running tools, full input) for audit, uncapped.
+      // Queued in the background; the run does not wait.
+      const auditContent = parsed.type === 'tool_start'
+        ? auditInput
+        : typeof parsed.content === 'string' ? parsed.content : undefined;
+      if (typeof parsed.name === 'string' && parsed.name.trim() && auditContent) {
+        getToolOutputAuditQueue(async (record, stored) => {
+          await runTelemetryService?.recordToolOutputAudit(record.runId, record.eventIndex, stored);
+        })?.enqueue({
+          runId,
+          eventIndex,
+          workspaceId: params.workspaceId,
+          userId: params.userId,
+          conversationId: params.conversationId,
+          turnId: params.turnId,
+          toolName: parsed.name.trim(),
+          eventType: parsed.type === 'tool_start' ? 'start' : parsed.type === 'tool_end' ? 'end' : 'error',
+          eventAt: new Date().toISOString(),
+          content: auditContent,
+        });
       }
       if (repeatedSkillSandboxFailure) {
         loopErrorMessage = repeatedSkillSandboxFailure;
@@ -4710,6 +4769,7 @@ async function runAgentRunWorker(
         })
       : await agentStreamClient.runAgentStream(params.persona, params.workspaceId, params.prompt, params.history, {
           forceReset: params.forceReset,
+          conversationArchive: params.conversationArchive,
           signal: controller.signal,
           authToken: params.authToken,
           messageContent: params.messageContent,

@@ -70,6 +70,8 @@ export type AgentInterruptActionResponse = {
 
 type RunAgentOptions = {
   forceReset?: boolean;
+  /** Earlier messages of the user's own conversation, for search within this run only. */
+  conversationArchive?: import('./conversationCompaction').ConversationArchive;
   signal?: AbortSignal;
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
@@ -228,6 +230,9 @@ export async function runAgentStream(
   }
   if (options?.knowledgeRefs?.length) {
     payload.knowledgeRefs = options.knowledgeRefs;
+  }
+  if (options?.conversationArchive?.messages?.length) {
+    payload.conversationArchive = options.conversationArchive;
   }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;

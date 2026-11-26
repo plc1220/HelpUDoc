@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from langgraph.errors import GraphInterrupt, GraphRecursionError
 from langgraph.types import Command
+from helpudoc_agent.tools.workspace.builtins.conversation_archive import bind_run_conversation_archive
 
 from helpudoc_agent.configuration import Settings
 from helpudoc_agent.document_tool_guard import (
@@ -56,6 +57,8 @@ from helpudoc_agent.plan_gates import (
     requested_dashboard_title,
 )
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
+from helpudoc_agent.run_checkpoints import settle_run_thread
+from helpudoc_agent.run_work import PARTIAL_NOTE, bind_run_work, stopped_at_the_limit
 from helpudoc_agent.skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
@@ -70,10 +73,13 @@ from helpudoc_agent.skills_registry import (
 from helpudoc_agent.state import AgentRuntimeState
 from helpudoc_agent.tools_and_schemas import GeminiClientManager
 from helpudoc_agent.utils import SourceTracker
+from helpudoc_agent.written_tool_call import is_written_tool_call, may_be_written_tool_call
 
 from ..auth_context import extract_agent_request_context
 from ..constants import (
     _ASSISTANT_ROLES,
+    _CODE_AUDIT_INPUT_MAX_CHARS,
+    _CODE_AUDIT_TOOL_NAMES,
     _INTERNAL_STREAM_TEXT_PATTERNS,
     _INTERRUPT_TOOL_NAMES,
     _TOOL_ROLES,
@@ -288,6 +294,36 @@ def _research_source_contract_error(
     )
 
 
+
+
+_UNREADABLE_FILE_ERRORS = (
+    "Request contains an invalid argument",
+    "The document has no pages",
+    "Unable to process input image",
+)
+
+
+def _attachment_error_message(error: str, content: List[Dict[str, Any]] | None) -> str:
+    """Plain words when the model rejects a request that carries files."""
+    files = [block for block in content or [] if block.get("type") in {"file", "image"}]
+    # Only the replies Gemini gives for a file it cannot read. Anything else keeps its cause.
+    if not files or not any(reason in error for reason in _UNREADABLE_FILE_ERRORS):
+        return error
+    names = [str(block["filename"]) for block in files if block.get("filename")]
+    label = ", ".join(names) if names else "an attached file"
+    return (
+        f"Lumo could not process {label}. The file may be damaged, password-protected or in a "
+        "format the model cannot read. Check that it opens, then upload it again or send your "
+        "message without it."
+    )
+
+
+def _tool_start_event(name: str, preview: str) -> Dict[str, Any]:
+    """tool_start for the stream. Code-running tools also carry their full input for audit."""
+    event: Dict[str, Any] = {"type": "tool_start", "name": name, "content": preview[:200] if preview else ""}
+    if name in _CODE_AUDIT_TOOL_NAMES and preview:
+        event["auditInput"] = preview[:_CODE_AUDIT_INPUT_MAX_CHARS]
+    return event
 async def _emit_progress(
     handler,
     phase: str,
@@ -940,6 +976,8 @@ def register_chat_routes(
             self._native_dashboard_builder_calls = 0
             self._native_dashboard_builder_run_keys: Set[str] = set()
             self._v3_text_blocks: Dict[Tuple[str, str], str] = {}
+            # Text that may be a tool call the model wrote; shown once it cannot be one.
+            self._v3_held_text: Dict[Tuple[str, str], str] = {}
             self._cancel_run: Optional[Callable[[], None]] = None
             self._terminal_tool_failure_counts: Dict[str, int] = {}
             self._fatal_tool_failure_message = ""
@@ -1112,13 +1150,7 @@ def register_chat_routes(
                 detail=name,
                 tool_name=name,
             )
-            await self._emit(
-                {
-                    "type": "tool_start",
-                    "name": name,
-                    "content": preview[:200] if preview else "",
-                }
-            )
+            await self._emit(_tool_start_event(name, preview))
 
         async def on_tool_end(self, output, *, run_id, **_: Any) -> None:
             run_key = str(run_id)
@@ -1395,6 +1427,31 @@ def register_chat_routes(
             return data[1]
         return {}
 
+    def _is_summarization_event(event: Any) -> bool:
+        """True for model output from LangChain's SummarizationMiddleware.
+
+        Its summary call runs inside the agent graph, so under streaming its tokens
+        arrive as ordinary model events. Relaying them showed the internal
+        "SESSION INTENT / SUMMARY / ARTIFACTS / NEXT STEPS" summary to the user as
+        the answer. LangChain tags the call with lc_source=summarization; the node
+        name is checked too in case a library upgrade drops the tag.
+        """
+        candidates: List[Any] = []
+        if isinstance(event, (list, tuple)) and len(event) >= 2:
+            candidates.append(event[1])
+        record = _event_record(event)
+        if isinstance(record, dict):
+            candidates.append(record.get("metadata"))
+        candidates.append(_v3_event_metadata(_event_raw_data(event)))
+        for metadata in candidates:
+            if not isinstance(metadata, dict):
+                continue
+            if str(metadata.get("lc_source") or "") == "summarization":
+                return True
+            if str(metadata.get("langgraph_node") or "").startswith("SummarizationMiddleware"):
+                return True
+        return False
+
     def _event_method(event: Any) -> str:
         event = _event_record(event)
         if not isinstance(event, dict):
@@ -1621,6 +1678,25 @@ def register_chat_routes(
         data = _event_data(event)
         run_key = _event_run_id(event) or method
 
+        if _is_summarization_event(event):
+            # Drop every text event, including content-block-finish: with no deltas
+            # recorded, the finish branch below would emit the whole summary as its
+            # "missing suffix". Progress events still flow so the run looks the same.
+            if method in {
+                "on_chat_model_stream",
+                "on_llm_stream",
+                "messages",
+                "content-block-start",
+                "content-block-delta",
+                "content-block-finish",
+            }:
+                return False
+            if method in {"on_chat_model_end", "on_llm_end", "message-finish"}:
+                logger.info(
+                    "Context summarization ran (workspace=%s); its output was kept out of the chat stream",
+                    handler._workspace_id,
+                )
+
         if method in {"on_chat_model_start", "on_llm_start", "message-start"}:
             name = _event_name(event) or "model"
             await _emit_progress(
@@ -1654,11 +1730,18 @@ def register_chat_routes(
             block_key = (run_key, _content_block_index(event))
             if method == "content-block-start":
                 handler._v3_text_blocks[block_key] = ""
+                handler._v3_held_text[block_key] = ""
                 return False
             text = _content_block_text(event)
             text = strip_interrupt_payload_marker(text)
             if method == "content-block-delta":
                 if text and not _is_internal_stream_text(text):
+                    if block_key in handler._v3_held_text:
+                        text = handler._v3_held_text[block_key] + text
+                        if may_be_written_tool_call(text):
+                            handler._v3_held_text[block_key] = text
+                            return False
+                        del handler._v3_held_text[block_key]
                     handler._v3_text_blocks[block_key] = handler._v3_text_blocks.get(block_key, "") + text
                     await handler._emit({"type": "token", "content": text, "role": "assistant"})
                 return False
@@ -1669,6 +1752,10 @@ def register_chat_routes(
             # Emit only that missing suffix so the final answer is complete
             # without appending the full Markdown document a second time.
             streamed_text = handler._v3_text_blocks.get(block_key, "")
+            held_text = handler._v3_held_text.pop(block_key, "")
+            if not streamed_text and is_written_tool_call(text or held_text):
+                return False
+            text = text or held_text
             if not text or _is_internal_stream_text(text) or text == streamed_text:
                 return False
             if text.startswith(streamed_text):
@@ -1690,6 +1777,11 @@ def register_chat_routes(
             return False
 
         if method in {"on_chat_model_end", "on_llm_end", "message-finish"}:
+            # Normally released by content-block-finish; never lose text if a block had none.
+            for block_key in [key for key in handler._v3_held_text if key[0] == run_key]:
+                held_text = handler._v3_held_text.pop(block_key)
+                if held_text and not is_written_tool_call(held_text):
+                    await handler._emit({"type": "token", "content": held_text, "role": "assistant"})
             await handler._emit({"type": "model_end", "name": _event_name(event) or "model"})
             return False
 
@@ -1710,13 +1802,7 @@ def register_chat_routes(
                 tool_name=name,
                 status="running",
             )
-            await handler._emit(
-                {
-                    "type": "tool_start",
-                    "name": name,
-                    "content": preview[:200] if preview else "",
-                }
-            )
+            await handler._emit(_tool_start_event(name, preview))
             return False
 
         if method in {"on_tool_end", "tools/end", "tool_end", "tool-finished"}:
@@ -2384,7 +2470,16 @@ def register_chat_routes(
         )
 
         async def _agent_runner():
+            # This run's own earlier messages, bound to this task only (see
+            # conversation_archive.py). Resumes and other callers get none.
+            bind_run_conversation_archive(
+                message.conversationArchive
+                if resume_decisions is None and resume_value is None
+                else None
+            )
+            bind_run_work()
             lf_handlers = langfuse_langchain_callbacks()
+            run_thread_config: Dict[str, Any] | None = None
             try:
                 nonlocal saw_interrupt, defer_checkpoint_interrupt
                 nonlocal allow_rejection_summary, allow_approval_summary
@@ -2420,6 +2515,10 @@ def register_chat_routes(
                     message,
                     callbacks=lf_handlers or None,
                 )
+                if _clean_langfuse_value((message.langfuseTraceContext or {}).get("runId")):
+                    # Only threads that belong to one run. A caller without a run id keeps a
+                    # stable thread, and its next message continues from it.
+                    run_thread_config = {"configurable": dict(stream_config["configurable"])}
                 if resume_decisions is not None:
                     decision_value = {"decisions": resume_decisions}
                     normalized_interrupt_id = str(resume_interrupt_id or "").strip()
@@ -2969,6 +3068,10 @@ def register_chat_routes(
                         for event_payload in _emit_text("assistant", text):
                             await handler._emit(event_payload)
 
+                if stopped_at_the_limit():
+                    emitted = True
+                    await handler._emit({"type": "token", "content": PARTIAL_NOTE, "role": "assistant"})
+
                 if not emitted and not handler.has_events:
                     await handler._emit(
                         {
@@ -3004,8 +3107,9 @@ def register_chat_routes(
                     )
                 else:
                     error_message = _format_exception(exc)
-                stream_error_message = error_message
                 logger.exception("Agent stream error: %s", error_message)
+                error_message = _attachment_error_message(error_message, message.messageContent)
+                stream_error_message = error_message
                 await handler._emit({"type": "error", "message": error_message})
                 await _emit_progress(
                     handler,
@@ -3024,6 +3128,12 @@ def register_chat_routes(
                     runtime.agent_name,
                     runtime.workspace_state.workspace_id,
                     elapsed,
+                )
+                await settle_run_thread(
+                    agent,
+                    getattr(registry, "_checkpointer", None),
+                    run_thread_config,
+                    saw_interrupt=saw_interrupt or handler.interrupt_emitted,
                 )
                 try:
                     lf_ev = emit_langfuse_trace_payload(lf_handlers)

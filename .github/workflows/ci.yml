@@ -152,7 +152,20 @@ jobs:
             agent/tests/test_team_thread_history_tool.py \
             agent/tests/test_tool_guard_schema.py \
             agent/tests/test_prompt_suggestions.py \
-            tests/office
+            agent/tests/test_langfuse_handler.py \
+            agent/tests/test_run_checkpoints.py \
+            agent/tests/test_empty_reply.py \
+            agent/tests/test_attachment_errors.py \
+            tests/office \
+            tests/test_agent_main.py \
+            tests/test_summary_trigger_tokens.py \
+            tests/test_conversation_summarization.py \
+            tests/test_read_file_document_routing.py \
+            tests/test_search_workspace.py \
+            agent/tests/test_search_limit.py \
+            agent/tests/test_work_limit.py \
+            agent/tests/test_sheet_ranges.py \
+            agent/tests/test_written_tool_call.py
 
   docker-backend:
     name: Docker build validation (backend)

@@ -67,6 +67,7 @@ export class DatabaseService {
     await this.createKnowledgeIngestionTables();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
+    await this.createConversationSummariesTable();
     await this.createWorkspaceSchedulesTable();
     await this.createWorkspaceScheduleRunsTable();
     await ensureCalendarSchema(this.db);
@@ -1259,6 +1260,25 @@ export class DatabaseService {
     }
   }
 
+  // One running summary per long conversation (see conversationCompaction.ts). Deleted
+  // with its conversation; covered by the same backups and retention as the messages.
+  private async createConversationSummariesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('conversation_summaries');
+    if (!exists) {
+      await this.db.schema.createTable('conversation_summaries', (table) => {
+        table.uuid('conversationId').primary().references('id').inTable('conversations').onDelete('CASCADE');
+        table.text('summary').notNullable();
+        table.integer('coveredCount').notNullable();
+        table.string('coveredHash', 64).notNullable();
+        table.integer('coveredTokens').notNullable().defaultTo(0);
+        table.integer('version').notNullable().defaultTo(1);
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      });
+      console.log('Created "conversation_summaries" table.');
+    }
+  }
+
   private async createConversationMessagesTable(): Promise<void> {
     const exists = await this.db.schema.hasTable('conversation_messages');
     if (!exists) {
@@ -1999,6 +2019,10 @@ export class DatabaseService {
         table.text('summary');
         table.jsonb('outputFiles');
         table.jsonb('payload');
+        // Where the full tool output is kept for audit (toolOutputAudit.ts).
+        table.text('outputRef');
+        table.string('outputSha256', 64);
+        table.bigInteger('outputBytes');
         table.timestamp('eventAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
         table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
         table.unique(['runId', 'eventIndex']);
@@ -2015,6 +2039,9 @@ export class DatabaseService {
       await this.ensureColumn('agent_run_tool_events', 'summary', (table) => table.text('summary'));
       await this.ensureColumn('agent_run_tool_events', 'outputFiles', (table) => table.jsonb('outputFiles'));
       await this.ensureColumn('agent_run_tool_events', 'payload', (table) => table.jsonb('payload'));
+      await this.ensureColumn('agent_run_tool_events', 'outputRef', (table) => table.text('outputRef'));
+      await this.ensureColumn('agent_run_tool_events', 'outputSha256', (table) => table.string('outputSha256', 64));
+      await this.ensureColumn('agent_run_tool_events', 'outputBytes', (table) => table.bigInteger('outputBytes'));
       await this.ensureColumn('agent_run_tool_events', 'eventAt', (table) =>
         table.timestamp('eventAt', { useTz: true }).defaultTo(this.db.fn.now()));
       await this.ensureColumn('agent_run_tool_events', 'createdAt', (table) =>
