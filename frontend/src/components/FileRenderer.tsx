@@ -50,6 +50,8 @@ import {
 import PdfDocumentPreview from './PdfDocumentPreview';
 import OfficeDocumentPreview from './OfficeDocumentPreview';
 import WorkspaceHtmlPreviewFrame from './WorkspaceHtmlPreviewFrame';
+import SpreadsheetPreview from './SpreadsheetPreview';
+import { buildWorkbookPreview, type WorkbookPreview } from '../utils/spreadsheetPreview';
 
 const PlotlyChart = lazy(() => import('./PlotlyChart'));
 
@@ -368,8 +370,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const [parquetPreview, setParquetPreview] = useState<TabularPreview | null>(null);
   const [parquetError, setParquetError] = useState<string | null>(null);
   const [isParquetLoading, setIsParquetLoading] = useState(false);
-  const [spreadsheetPreview, setSpreadsheetPreview] = useState<TabularPreview | null>(null);
-  const [spreadsheetPreviewTitle, setSpreadsheetPreviewTitle] = useState('Spreadsheet preview');
+  const [spreadsheetPreview, setSpreadsheetPreview] = useState<WorkbookPreview | null>(null);
   const [spreadsheetError, setSpreadsheetError] = useState<string | null>(null);
   const [isSpreadsheetLoading, setIsSpreadsheetLoading] = useState(false);
   const parsedCsv = useMemo(() => {
@@ -513,62 +514,12 @@ const FileRenderer: React.FC<FileRendererProps> = ({
 
       try {
         const XLSX = await loadSpreadsheetRuntime();
-        const workbook = XLSX.read(decodeBase64ToArrayBuffer(fileContent), { type: 'array' });
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = firstSheetName ? workbook.Sheets[firstSheetName] : null;
-        const sheetRange = worksheet?.['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
-        const values = worksheet
-          ? (XLSX.utils.sheet_to_json(worksheet, {
-              header: 1,
-              raw: false,
-              defval: '',
-              blankrows: false,
-            }) as unknown[][])
-          : [];
-
-        if (!worksheet || values.length === 0) {
-          if (!cancelled) {
-            setSpreadsheetPreview({
-              headers: [],
-              rows: [],
-              totalRows: 0,
-              totalColumns: 0,
-              truncatedRows: false,
-              truncatedColumns: false,
-            });
-            setSpreadsheetPreviewTitle(firstSheetName ? `${firstSheetName} preview` : 'Spreadsheet preview');
-          }
-          return;
-        }
-
-        const totalRows = sheetRange ? sheetRange.e.r + 1 : values.length;
-        const totalColumns = sheetRange
-          ? sheetRange.e.c + 1
-          : values.reduce((max, row) => Math.max(max, row.length), 0);
-        const visibleColumnCount = Math.min(totalColumns, SPREADSHEET_PREVIEW_MAX_COLUMNS);
-        const headers = Array.from({ length: visibleColumnCount }, (_, index) => {
-          const headerValue = values[0]?.[index];
-          const formatted = formatPreviewCell(headerValue).trim();
-          return formatted || `Column ${index + 1}`;
+        const preview = buildWorkbookPreview(XLSX, decodeBase64ToArrayBuffer(fileContent), {
+          maxRows: SPREADSHEET_PREVIEW_MAX_ROWS,
+          maxColumns: SPREADSHEET_PREVIEW_MAX_COLUMNS,
         });
-        const visibleRows = values
-          .slice(1, SPREADSHEET_PREVIEW_MAX_ROWS + 1)
-          .map((row) =>
-            headers.map((_, columnIndex) => formatPreviewCell(row[columnIndex])),
-          );
-
         if (!cancelled) {
-          setSpreadsheetPreview({
-            headers,
-            rows: visibleRows,
-            totalRows,
-            totalColumns,
-            truncatedRows: totalRows > SPREADSHEET_PREVIEW_MAX_ROWS + 1,
-            truncatedColumns: totalColumns > SPREADSHEET_PREVIEW_MAX_COLUMNS,
-          });
-          setSpreadsheetPreviewTitle(
-            firstSheetName ? `${firstSheetName} preview` : 'Spreadsheet preview',
-          );
+          setSpreadsheetPreview(preview);
         }
       } catch (error) {
         console.error('Spreadsheet parse error', error);
@@ -952,7 +903,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
           </div>
         );
       }
-      if (!spreadsheetPreview || spreadsheetPreview.headers.length === 0) {
+      if (!spreadsheetPreview || spreadsheetPreview.sheets.length === 0) {
         return (
           <div className="flex h-full items-center justify-center text-sm text-gray-500">
             Empty or unsupported spreadsheet file.
@@ -960,12 +911,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         );
       }
 
-      return renderTabularPreview(
-        spreadsheetPreviewTitle,
-        spreadsheetPreview,
-        SPREADSHEET_PREVIEW_MAX_ROWS,
-        SPREADSHEET_PREVIEW_MAX_COLUMNS,
-      );
+      return <SpreadsheetPreview key={`${workspaceId}:${file.id}`} preview={spreadsheetPreview} />;
     }
     if (isOfficeFile) {
       const officeKind = getOfficeDocumentKind(file?.name || '', file?.mimeType);

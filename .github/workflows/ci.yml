@@ -17,6 +17,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       agent: ${{ steps.filter.outputs.agent }}
+      spreadsheet: ${{ steps.filter.outputs.spreadsheet }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -60,6 +61,19 @@ jobs:
               - 'infra/env/**'
               - 'env/**'
               - '.github/workflows/ci.yml'
+            # XLSX preview renderer, parser and fixtures (issue #106).
+            spreadsheet:
+              - 'frontend/src/components/FileRenderer.tsx'
+              - 'frontend/src/components/SpreadsheetPreview.*'
+              - 'frontend/src/utils/spreadsheetPreview.ts'
+              - 'frontend/tests/spreadsheetPreview.test.ts'
+              - 'frontend/e2e/xlsx-preview-local.spec.ts'
+              - 'frontend/e2e/fixtures/xlsx*'
+              - 'frontend/playwright.xlsx.config.ts'
+              - 'frontend/package.json'
+              - 'frontend/package-lock.json'
+              - '.github/workflows/ci.yml'
+              - '.github/scripts/ci_gate.py'
 
   backend-test:
     name: Backend tests
@@ -114,6 +128,42 @@ jobs:
         env:
           # Match the successful frontend image build's heap budget.
           NODE_OPTIONS: --max-old-space-size=6144
+
+  xlsx-preview:
+    name: XLSX preview tests
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.spreadsheet == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          # node --experimental-strip-types needs Node 22.6 or newer.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Parser unit tests
+        run: node --experimental-strip-types --test tests/spreadsheetPreview.test.ts
+      - name: Browser tests (read-only preview)
+        env:
+          CI: "true"
+          XLSX_E2E_REQUIRED: "1"
+        run: npx playwright test -c playwright.xlsx.config.ts
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xlsx-preview-test-results
+          path: |
+            frontend/test-results
+            frontend/playwright-report
+          retention-days: 7
 
   python-agent:
     name: Python agent smoke and core tests
@@ -248,6 +298,7 @@ jobs:
       - backend-test
       - calendar-review-tests
       - frontend
+      - xlsx-preview
       - python-agent
       - docker-backend
       - docker-frontend

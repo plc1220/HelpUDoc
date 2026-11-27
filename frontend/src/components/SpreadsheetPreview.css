@@ -1,0 +1,19 @@
+/* Read-only XLSX preview (issue #106). Theme tokens only, so it follows light and dark mode. */
+.spreadsheet-preview { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--color-background-surface); color: var(--color-text-primary); }
+.spreadsheet-preview-tabs { flex-shrink: 0; padding: 4px 12px 0; overflow-x: auto; }
+.spreadsheet-preview-summary { flex-shrink: 0; padding: 8px 16px; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 12px; }
+.spreadsheet-preview-summary strong { color: var(--color-text-primary); font-weight: 500; }
+.spreadsheet-preview-empty { margin: auto; padding: 24px; color: var(--color-text-secondary); font-size: 14px; }
+.spreadsheet-preview-grid { flex: 1; min-height: 0; overflow: auto; }
+.spreadsheet-preview-grid:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.spreadsheet-preview-grid table { border-collapse: separate; border-spacing: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.spreadsheet-preview-grid th,
+.spreadsheet-preview-grid td { height: 28px; padding: 4px 8px; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+.spreadsheet-preview-grid td { min-width: 96px; }
+.spreadsheet-preview-cell { max-width: 20rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Column letters stay visible while scrolling down; row numbers while scrolling right. */
+.spreadsheet-preview-grid th { position: sticky; background: var(--color-background-muted); color: var(--color-text-secondary); font-size: 12px; font-weight: 500; }
+.spreadsheet-preview-grid thead th { top: 0; z-index: 2; text-align: center; }
+.spreadsheet-preview-grid tbody th { left: 0; z-index: 1; min-width: 44px; text-align: right; }
+.spreadsheet-preview-grid thead th:first-child { left: 0; z-index: 3; }
+.spreadsheet-preview-formula-marker { color: var(--color-text-secondary); font-style: italic; cursor: help; }
