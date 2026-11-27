@@ -13,7 +13,7 @@ from ci_gate import JOB_FILTERS, failures
 
 def results(**filters: str) -> dict:
     return {
-        "changes": {"result": "success", "outputs": {"backend": "false", "frontend": "false", "agent": "false", **filters}},
+        "changes": {"result": "success", "outputs": {"backend": "false", "frontend": "false", "agent": "false", "spreadsheet": "false", **filters}},
         **{job: {"result": "success" if filters.get(path) == "true" else "skipped"} for job, path in JOB_FILTERS.items()},
     }
 
@@ -35,6 +35,20 @@ class GateTests(unittest.TestCase):
         del needs["docker-agent"]
         self.assertTrue(failures(needs, "pull_request", "refs/pull/1/merge"))
 
+    def test_required_xlsx_preview_cannot_skip_fail_cancel_or_be_missing(self):
+        self.assertEqual(failures(results(frontend="true", spreadsheet="true"), "pull_request", "refs/pull/1/merge"), [])
+        for result in ["skipped", "failure", "cancelled", None]:
+            with self.subTest(result=result):
+                needs = results(frontend="true", spreadsheet="true")
+                needs["xlsx-preview"]["result"] = result
+                self.assertTrue(failures(needs, "pull_request", "refs/pull/1/merge"))
+        needs = results(frontend="true", spreadsheet="true")
+        del needs["xlsx-preview"]
+        self.assertTrue(failures(needs, "pull_request", "refs/pull/1/merge"))
+
+    def test_unrelated_frontend_pr_can_skip_xlsx_preview(self):
+        self.assertEqual(failures(results(frontend="true"), "pull_request", "refs/pull/1/merge"), [])
+
     def test_path_detection_failure_cancellation_and_skip_fail_gate(self):
         for result in ["failure", "cancelled", "skipped", None]:
             with self.subTest(result=result):
@@ -43,7 +57,7 @@ class GateTests(unittest.TestCase):
                 self.assertTrue(failures(needs, "pull_request", "refs/pull/1/merge"))
 
     def test_path_detection_missing_or_invalid_output_fails_gate(self):
-        for name in ["backend", "frontend", "agent"]:
+        for name in ["backend", "frontend", "agent", "spreadsheet"]:
             for value in [None, "", "unknown", True]:
                 with self.subTest(name=name, value=value):
                     needs = results()
@@ -69,7 +83,7 @@ class GateTests(unittest.TestCase):
     def test_each_required_job_cannot_be_skipped(self):
         for job in JOB_FILTERS:
             with self.subTest(job=job):
-                needs = results(backend="true", frontend="true", agent="true")
+                needs = results(backend="true", frontend="true", agent="true", spreadsheet="true")
                 needs[job]["result"] = "skipped"
                 self.assertTrue(failures(needs, "pull_request", "refs/pull/1/merge"))
 

@@ -10,6 +10,7 @@ JOB_FILTERS = {
     "backend-test": "backend",
     "calendar-review-tests": "backend",
     "frontend": "frontend",
+    "xlsx-preview": "spreadsheet",
     "python-agent": "agent",
     "docker-backend": "backend",
     "docker-frontend": "frontend",
@@ -25,7 +26,7 @@ def failures(needs: dict, event: str, ref: str) -> list[str]:
     if changes.get("result") != "success":
         errors.append("Path detection did not succeed")
     outputs = changes.get("outputs", {})
-    for name in {"backend", "frontend", "agent"}:
+    for name in sorted(set(JOB_FILTERS.values())):
         if outputs.get(name) not in {"true", "false"}:
             errors.append(f"Missing or invalid path detection output: {name}")
 
